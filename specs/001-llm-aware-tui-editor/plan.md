@@ -20,8 +20,8 @@ what is open, and on-demand search with ripgrep's library crates. CI on all thre
 enforces the constitution's memory and startup budgets.
 
 **Status**: Design complete.
-- **One item blocks `/speckit-tasks`**: spike S-3, the idle-budget prototype (see "Gates before
-  tasks").
+- **No planning gates remain.** Spike S-3 passed on all three platforms on 2026-10-13 (see
+  "Gates before tasks"), so `/speckit-tasks` can run.
 - D-1 was resolved by constitution v3.0.0.
 - S-2 is now a macOS release blocker, not a planning gate (see "Release blockers").
 
@@ -77,7 +77,7 @@ Constitution v3.0.0. Evaluated before Phase 0 and after Phase 1 against v2.0.0. 
 
 | Principle / gate | How the design complies | Result |
 |---|---|---|
-| I. Memory efficiency | Desk estimate is about 8–16 MB idle and 20–60 MB loaded (R-12). Per-snapshot data covers only LLM group members. Search and recent-files results are capped. Grammars are not paged in until used. Undo is capped. CI fails at 50 or 150 MB. | PASS on paper. **S-3 must confirm.** |
+| I. Memory efficiency | Desk estimate is about 8–16 MB idle and 20–60 MB loaded (R-12). Per-snapshot data covers only LLM group members. Search and recent-files results are capped. Grammars are not paged in until used. Undo is capped. CI fails at 50 or 150 MB. S-3 measured peak idle RSS of 5.60 MB (Linux), 7.59 MB (macOS) and 11.46 MB (Windows) for the real crate set. | PASS (idle measured; loaded budget still to be measured by `bench-memory --loaded`) |
 | II. Startup < 100 ms, no implicit background work | First frame renders before the first process scan finishes (the panel shows "scanning…"). DNS starts after the first frame. Watches cover only open files and expanded directories. Search and recent-files scans run on demand. | PASS |
 | III. Terminal-only | ratatui and crossterm. No GUI, webview or browser runtime anywhere in the dependency tree (checked by `cargo deny` bans). | PASS |
 | IV. Observability over control | Control happens only through the ControlRequest lifecycle (data-model.md): confirmation → revalidation of (PID, start time) → execution. The default focus is Cancel and there is no "don't ask again". SC-008 is tested. | PASS |
@@ -114,7 +114,7 @@ Constitution v3.0.0. Evaluated before Phase 0 and after Phase 1 against v2.0.0. 
 
 | Gate | Owner / method | Pass criterion | Status |
 |---|---|---|---|
-| **S-3** Idle-budget prototype (R-12) | The `spike-idle-budget.yml` CI workflow (runs on push, or by manual dispatch) on `ubuntu-24.04`, `macos-15` and `windows-2025`, with the RSS series uploaded as an artifact. Same measurement harness on all three. Windows moved from local to CI on 2026-10-13 because of the ASR block (R-12, and "Development environment" below). | Peak RSS ≤ 25 MB over 5 min on each platform, recorded in research.md R-12 | OPEN |
+| **S-3** Idle-budget prototype (R-12) | The `spike-idle-budget.yml` CI workflow (runs on push, or by manual dispatch) on `ubuntu-24.04`, `macos-15` and `windows-2025`, with the RSS series uploaded as an artifact. Same measurement harness on all three. Windows moved from local to CI on 2026-10-13 because of the ASR block (R-12, and "Development environment" below). | Peak RSS ≤ 25 MB over 5 min on each platform, recorded in research.md R-12 | **CLOSED 2026-10-13**: PASS. Linux 5.60 MB, macOS 7.59 MB, Windows 11.46 MB (run 38411827336) |
 
 Closed or moved:
 
