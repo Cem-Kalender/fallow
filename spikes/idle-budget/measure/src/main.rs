@@ -55,8 +55,9 @@ fn main() {
         .unwrap_or_else(|e| fail(&format!("spawn: {e}")));
     drop(pair.slave);
     let pid = child.process_id().unwrap_or_else(|| fail("no child pid"));
-    let measured_exe = exe_path(pid).unwrap_or_else(|| "<unreadable>".into());
-    println!("harness_pid={} measured_pid={} measured_exe={}", std::process::id(), pid, measured_exe);
+    // On Unix the child is a fork of the harness until exec, so the executable is checked at
+    // the end of sampling, not here.
+    println!("harness_pid={} measured_pid={}", std::process::id(), pid);
 
     let writer = pair.master.take_writer().unwrap_or_else(|e| fail(&format!("writer: {e}")));
     let writer = Arc::new(Mutex::new(writer));
@@ -118,6 +119,8 @@ fn main() {
     }
 
     let elapsed = start.elapsed().as_secs_f64();
+    let measured_exe = exe_path(pid).unwrap_or_else(|| "<unreadable>".into());
+    println!("measured_exe_at_end={measured_exe}");
 
     // Ask the spike to quit so it writes its stats file, then give it up to 5 s.
     if let Ok(mut w) = writer.lock() {
