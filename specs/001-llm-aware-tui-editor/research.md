@@ -349,9 +349,25 @@ Pass: peak RSS ≤ 25 MB over 5 minutes on each platform. Results are recorded h
 
 | Platform | Peak RSS | Peak after 30 s | Result | Date / notes |
 |---|---|---|---|---|
-| Linux (`ubuntu-24.04`, CI) | pending | | | |
-| macOS (`macos-15`, CI) | pending | | | |
-| Windows (`windows-2025`, CI) | pending | | | |
+| Linux (`ubuntu-24.04`, CI) | **5.60 MB** (at 33 s) | 5.60 MB | **PASS** | 2026-10-13, run [38411827336](https://github.com/Cem-Kalender/fallow/actions/runs/38411827336), commit `83febda`. Final 5.60 MB. RSS from `/proc/<pid>/status` VmRSS. |
+| macOS (`macos-15`, CI) | **7.59 MB** (at 116 s) | 7.59 MB | **PASS** | Same run. Final 7.59 MB. RSS from `proc_pidinfo` `pti_resident_size`. |
+| Windows (`windows-2025`, CI) | **11.46 MB** (at 3 s) | 11.46 MB | **PASS** | Same run. Final 11.44 MB. RSS = `WorkingSetSize`, which includes shared DLL pages; that partly explains why it's higher than the others. |
+
+All three runs: rustc 1.99.0, release profile (thin LTO, `panic = "abort"`, stripped), 301
+one-second samples over 300 s, 120×40 PTY. Every run was **valid**: the first frame was drawn
+and output continued after warm-up, because the spike redraws on each 2 s snapshot. The highest
+peak, 11.46 MB, is under half the 25 MB spike limit and under a quarter of the 50 MB constitution
+budget. It sits at the low end of the desk estimate (8–16 MB).
+
+**Invalid earlier result (kept for the record)**: Run
+[38409989505](https://github.com/Cem-Kalender/fallow/actions/runs/38409989505) reported Windows
+at a flat 2.28 MB, with only two distinct values in 301 samples. The cause was ConPTY: at startup
+it sends a cursor-position request (`ESC[6n`) to the host terminal and holds the child until it
+gets an answer. The harness didn't answer, so the spike was stalled before its first frame. The
+harness now answers these requests, and it marks any run INVALID (exit 2) unless the first-frame
+marker was seen and output continued after 30 s. That run's Linux (5.61 MB) and macOS (7.58 MB)
+figures match the valid run. **Lesson for the CI benchmark (R-13)**: the harness must answer
+terminal queries and must prove the binary is live. A low memory figure alone isn't evidence.
 
 **Context: why Windows is measured in CI.** The local run planned for 2026-10-13 was blocked. The
 development machine's Microsoft Defender Attack Surface Reduction policy, rule
@@ -365,7 +381,8 @@ environment).
 fleets. It will block an unsigned, low-prevalence Fallow binary for users on such machines. The
 release plan needs code signing for Windows and macOS; tracked as a follow-up for tasks.
 
-**Status**: **NOT YET VERIFIED.** This is still a planning gate: `/speckit-tasks` waits for it.
+**Status**: **VERIFIED 2026-10-13: PASS on all three platforms** (peaks of 5.60, 7.59 and 11.46
+MB). The planning gate is closed.
 
 ## R-13: Benchmarks in CI (Principle VI, FR-053)
 
