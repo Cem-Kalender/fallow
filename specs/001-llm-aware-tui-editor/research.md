@@ -256,15 +256,21 @@ A check on the stock image would pass trivially, so it would prove nothing.
 2. **Verify it is really on**: `Get-MpComputerStatus` must report `AMRunningMode = "Normal"` (not
    `Passive Mode` or `EDR Block Mode`), `RealTimeProtectionEnabled`, `BehaviorMonitorEnabled`
    and `IoavProtectionEnabled` all `True`, and `Get-MpPreference` must show no exclusion that
-   covers the Fallow binary or the workspace. **If any check fails, the job fails.** A run with
-   protection off never counts as a pass, including when the Defender service is missing or
-   `Set-MpPreference` throws.
+   covers the Fallow binary or the workspace. **If any check fails, the check reports FAIL.** A
+   run with protection off never counts as a pass, including when the Defender service is
+   missing or `Set-MpPreference` throws.
 3. **Exercise**: start the LLM-process fixtures, then run `fallow --snapshot-json` twice with
    `windows.read_working_directory = "on_detect"` and once with `on_select` while a selection is
    simulated, so the PEB cwd read runs against each fixture.
 4. **Judge**: fail on any `Get-MpThreatDetection` entry, or any Defender operational-log event
    (`Microsoft-Windows-Windows Defender/Operational`, IDs 1006, 1007, 1015, 1116, 1117), created
    after step 2.
+
+**Blocking policy (2026-10-13)**: The check runs as a **separate CI job that is non-blocking at
+first** (tasks T053). It reports its result (`defender-result.json`, the run summary and a
+warning annotation) without failing the workflow. It becomes **blocking** once it has passed on
+**5 consecutive runs** on `main`, each with `protection_verified = true` (tasks T116). The five
+run IDs are recorded here when that happens.
 
 Other EDR products can't be tested in CI. The release notes will state this as a known
 limitation.

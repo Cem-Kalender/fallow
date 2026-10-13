@@ -21,7 +21,9 @@ filter, and any rename or new-name prompt.
 ```
 
 - Pane borders can be dragged with the mouse (FR-063).
-- At small sizes, panes become tabs that are switched with `Tab`.
+- Below **100×24** (columns × rows), panes become tabs that are switched with `Tab`.
+- Below **40×10**, Fallow shows only "terminal too small", centered, and keeps running and
+  processing input. It never draws garbled output.
 - The process panel always shows its coverage note (FR-018): "Not covered: containers, remote
   machines", plus "WSL2" on Windows.
 
@@ -37,6 +39,21 @@ At startup, Fallow asks the terminal to report modifier keys unambiguously:
 
 Every default binding below works in legacy mode, except where the
 [Known terminal conflicts](#known-terminal-conflicts) table says otherwise.
+
+## Hint bar content (FR-060)
+
+The hint bar always starts with a way to open help that doesn't need F1 (`? Help`, or
+`Ctrl-P › Help` in text inputs) and `Ctrl-P Commands`. Then it shows the primary commands of
+the focused context, in this order, as many as fit:
+
+| Context | Primary commands shown |
+|---|---|
+| Process panel | `m` Sort mem · `Enter` Details · `g` Go to dir · `p` Pause · `Shift-K` Kill |
+| Files pane | `Enter` Open · `a` New file · `F2` Rename · `d` Delete |
+| Editor | `Ctrl-S` Save · `Ctrl-F` Find · `Ctrl-G` Go to line · `Esc Tab` Next pane |
+| Find bar | `Tab` Scope: this file/project · `Enter` Next/Search · `Esc` Close |
+| Dialog | `y` Confirm · `Esc` Cancel |
+| Copy with no selection (3 s) | `Quit: Ctrl-Q` |
 
 ## Panes and focus (FR-065)
 

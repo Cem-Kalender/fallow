@@ -1,8 +1,17 @@
 <!--
 Sync Impact Report
 ==================
-Version change: 2.0.0 → 3.0.0
-Bump rationale: MAJOR. Principle VII is redefined. The blanket ban on reading environment
+Version change: 3.0.0 → 3.0.1
+Bump rationale: PATCH. Clarification only: the Performance Budgets table now defines how the
+startup budget is measured (p95 of 30 runs after 3 warm-ups, with one automatic retry of the
+whole benchmark job). No principle or budget value changes. Source:
+specs/001-llm-aware-tui-editor analysis finding A1.
+
+Modified sections:
+  - Performance Budgets & Measurement: Startup row "Measured as" column, plus a note on the
+    statistic.
+
+Previous amendment (3.0.0): MAJOR. Principle VII is redefined. The blanket ban on reading environment
 variable values becomes a ban on parsing, storing, displaying or logging them, with a bounded
 exception for platforms where a command-line read unavoidably returns them (macOS
 KERN_PROCARGS2; see specs/001-llm-aware-tui-editor/research.md R-2). Under this constitution's
@@ -127,8 +136,11 @@ hostnames reveals nothing about the user beyond the fact that Fallow is running.
 |---|---|---|
 | Idle memory | < 50 MB RSS | Peak RSS after startup with no project open, settled |
 | Loaded memory | < 150 MB RSS | Peak RSS with the reference large project open |
-| Startup | < 100 ms | Process launch to first interactive frame |
+| Startup | < 100 ms | Process launch to first interactive frame; p95 of 30 runs after 3 warm-ups |
 
+- Startup statistic: the budget is met when the **95th percentile of 30 measured launches**,
+  taken after 3 unmeasured warm-up launches, is under 100 ms. Shared CI runners are noisy, so a
+  failing benchmark job is re-run **once** automatically; the second result is final.
 - Budgets are measured on the CI benchmark runner, with background features at their
   defaults (off).
 - The reference large project MUST be a pinned, versioned fixture in the benchmark suite.
@@ -163,4 +175,4 @@ hostnames reveals nothing about the user beyond the fact that Fallow is running.
   Tracking section; unjustified violations block merge.
 - Compliance is reviewed at every PR and at every release.
 
-**Version**: 3.0.0 | **Ratified**: 2026-10-13 | **Last Amended**: 2026-10-13
+**Version**: 3.0.1 | **Ratified**: 2026-10-13 | **Last Amended**: 2026-10-13
