@@ -1,0 +1,21 @@
+# Rust build output (product and spikes)
+/target/
+**/target/
+
+# Local spike measurement output
+spikes/**/*.csv
+spikes/**/*.log
+
+# Backup files from rustfmt
+**/*.rs.bk
+
+# Local environment files (never commit)
+.env
+.env.*
+
+# Editor and OS clutter
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/
