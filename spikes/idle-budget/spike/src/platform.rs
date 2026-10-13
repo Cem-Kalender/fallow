@@ -105,9 +105,26 @@ mod imp {
     use std::mem::{size_of, zeroed};
     use zeroize::Zeroize;
 
+    // From xnu bsd/sys/proc_info.h. Layout of struct socket_fdinfo:
+    //   proc_fileinfo pfi (24 bytes) | socket_info psi
+    //   socket_info: vinfo_stat (136) … soi_kind at +232, soi_proto union at +240
+    //   tcp_sockinfo: in_sockinfo (80: insi_fport +0, insi_lport +4) then tcpsi_state at +80
+    const PROC_PIDFDSOCKETINFO: libc::c_int = 3;
+    const SOCKINFO_TCP: i32 = 2;
+    const TSI_S_LISTEN: i32 = 1;
+    const TSI_S_ESTABLISHED: i32 = 4;
+    const OFF_PSI: usize = 24;
+    const OFF_SOI_KIND: usize = OFF_PSI + 232;
+    const OFF_SOI_PROTO: usize = OFF_PSI + 240;
+    const OFF_INSI_FPORT: usize = OFF_SOI_PROTO;
+    const OFF_INSI_LPORT: usize = OFF_SOI_PROTO + 4;
+    const OFF_TCP_STATE: usize = OFF_SOI_PROTO + 80;
+
     pub struct Platform {
         args: Vec<u8>,
         fds: Vec<libc::proc_fdinfo>,
+        /// Larger than sizeof(struct socket_fdinfo); u64 for alignment.
+        sock: Vec<u64>,
     }
 
     impl Platform {
@@ -126,7 +143,7 @@ mod imp {
                 );
             }
             let argmax = if argmax > 0 { argmax as usize } else { 1 << 20 };
-            Self { args: vec![0; argmax], fds: Vec::with_capacity(256) }
+            Self { args: vec![0; argmax], fds: Vec::with_capacity(256), sock: vec![0; 128] }
         }
 
         /// KERN_PROCARGS2 returns argc, exec path, argv **and envp** (research R-2). Only argc
@@ -144,8 +161,9 @@ mod imp {
                     0,
                 )
             };
-            let result = if r == 0 { parse_procargs(&self.args[..size]) } else { None };
-            self.args[..size.min(self.args.len())].zeroize();
+            let filled = size.min(self.args.len());
+            let result = if r == 0 { parse_procargs(&self.args[..filled]) } else { None };
+            self.args[..filled].zeroize();
             result
         }
 
@@ -189,25 +207,31 @@ mod imp {
                     if fd.proc_fdtype != libc::PROX_FDTYPE_SOCKET as u32 {
                         continue;
                     }
-                    let mut si: libc::socket_fdinfo = unsafe { zeroed() };
-                    let sz = size_of::<libc::socket_fdinfo>() as libc::c_int;
+                    // libc has no socket_fdinfo, so read the needed fields at their offsets.
                     let r = unsafe {
                         libc::proc_pidfdinfo(
                             pid,
                             fd.proc_fd,
-                            libc::PROC_PIDFDSOCKETINFO,
-                            (&mut si as *mut libc::socket_fdinfo).cast(),
-                            sz,
+                            PROC_PIDFDSOCKETINFO,
+                            self.sock.as_mut_ptr().cast(),
+                            (self.sock.len() * 8) as libc::c_int,
                         )
                     };
-                    if r != sz || si.psi.soi_kind != libc::SOCKINFO_TCP {
+                    if r < (OFF_TCP_STATE + 4) as libc::c_int {
                         continue;
                     }
-                    let tcp = unsafe { si.psi.soi_proto.pri_tcp };
-                    let lp = u16::from_be(tcp.tcpsi_ini.insi_lport as u16);
-                    let rp = u16::from_be(tcp.tcpsi_ini.insi_fport as u16);
-                    let est = tcp.tcpsi_state == libc::TSI_S_ESTABLISHED;
-                    let listen = tcp.tcpsi_state == libc::TSI_S_LISTEN;
+                    let bytes = unsafe {
+                        std::slice::from_raw_parts(self.sock.as_ptr().cast::<u8>(), self.sock.len() * 8)
+                    };
+                    let i32_at = |off: usize| i32::from_ne_bytes(bytes[off..off + 4].try_into().unwrap());
+                    if i32_at(OFF_SOI_KIND) != SOCKINFO_TCP {
+                        continue;
+                    }
+                    let lp = u16::from_be(i32_at(OFF_INSI_LPORT) as u16);
+                    let rp = u16::from_be(i32_at(OFF_INSI_FPORT) as u16);
+                    let state = i32_at(OFF_TCP_STATE);
+                    let est = state == TSI_S_ESTABLISHED;
+                    let listen = state == TSI_S_LISTEN;
                     let interesting = (est && rp == 443)
                         || (listen && crate::LOCAL_MODEL_PORTS.contains(&lp))
                         || (est && crate::LOCAL_MODEL_PORTS.contains(&lp));

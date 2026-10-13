@@ -26,9 +26,18 @@ fn main() {
     let pair = pty
         .openpty(PtySize { rows: 40, cols: 120, pixel_width: 0, pixel_height: 0 })
         .unwrap_or_else(|e| fail(&format!("openpty: {e}")));
+    // portable-pty starts children in the home directory, so pass an absolute path and cwd.
+    let bin = std::path::absolute(bin).unwrap_or_else(|e| fail(&format!("binary {bin}: {e}")));
+    if !bin.exists() {
+        fail(&format!("binary {} does not exist", bin.display()));
+    }
+    let mut cmd = CommandBuilder::new(&bin);
+    if let Ok(cwd) = std::env::current_dir() {
+        cmd.cwd(cwd);
+    }
     let mut child = pair
         .slave
-        .spawn_command(CommandBuilder::new(bin))
+        .spawn_command(cmd)
         .unwrap_or_else(|e| fail(&format!("spawn: {e}")));
     drop(pair.slave);
     let pid = child.process_id().unwrap_or_else(|| fail("no child pid"));
