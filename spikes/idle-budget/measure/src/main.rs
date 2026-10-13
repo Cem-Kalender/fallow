@@ -5,12 +5,22 @@
 //! `pti_resident_size`, Windows `GetProcessMemoryInfo` `WorkingSetSize`.
 //!
 //! Usage: idle-measure <binary> [seconds=300] [limit_mb=25] [csv_out]
-//! Exits 1 if peak RSS exceeds the limit, 2 on harness errors.
+//! Exits 1 if peak RSS exceeds the limit, 2 on harness errors or an invalid run (no first frame,
+//! or no output after warm-up).
 
 use std::io::{Read, Write};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
+
+/// First-frame marker from contracts/cli.md: the hint bar always shows it.
+const FRAME_MARKER: &[u8] = b"Ctrl-P Commands";
+
+fn contains(hay: &[u8], needle: &[u8]) -> bool {
+    hay.windows(needle.len()).any(|w| w == needle)
+}
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -42,13 +52,43 @@ fn main() {
     drop(pair.slave);
     let pid = child.process_id().unwrap_or_else(|| fail("no child pid"));
 
-    // Drain the PTY so the child never blocks on output.
+    let writer = pair.master.take_writer().unwrap_or_else(|e| fail(&format!("writer: {e}")));
+    let writer = Arc::new(Mutex::new(writer));
+
+    // Drain the PTY so the child never blocks on output, answer cursor-position queries
+    // (ConPTY on Windows can hold the child until `ESC[6n` is answered), and record that the
+    // first frame was drawn plus how much output arrived later, as evidence the spike is live.
+    let frame_seen = Arc::new(AtomicBool::new(false));
+    let late_bytes = Arc::new(AtomicU64::new(0));
     let mut reader = pair.master.try_clone_reader().unwrap_or_else(|e| fail(&format!("reader: {e}")));
-    std::thread::spawn(move || {
-        let mut buf = [0u8; 8192];
-        while matches!(reader.read(&mut buf), Ok(n) if n > 0) {}
-    });
-    let mut writer = pair.master.take_writer().unwrap_or_else(|e| fail(&format!("writer: {e}")));
+    {
+        let (writer, frame_seen, late_bytes) = (writer.clone(), frame_seen.clone(), late_bytes.clone());
+        let begin = Instant::now();
+        std::thread::spawn(move || {
+            let mut buf = [0u8; 8192];
+            let mut tail: Vec<u8> = Vec::with_capacity(8192 + 64);
+            while let Ok(n) = reader.read(&mut buf) {
+                if n == 0 {
+                    break;
+                }
+                if begin.elapsed() >= Duration::from_secs(30) {
+                    late_bytes.fetch_add(n as u64, Ordering::Relaxed);
+                }
+                tail.extend_from_slice(&buf[..n]);
+                if contains(&tail, b"\x1b[6n") {
+                    if let Ok(mut w) = writer.lock() {
+                        let _ = w.write_all(b"\x1b[1;1R");
+                        let _ = w.flush();
+                    }
+                }
+                if contains(&tail, FRAME_MARKER) {
+                    frame_seen.store(true, Ordering::Relaxed);
+                }
+                let keep = tail.len().saturating_sub(32);
+                tail.drain(..keep);
+            }
+        });
+    }
 
     let start = Instant::now();
     let mut samples: Vec<(u64, u64)> = Vec::with_capacity(secs as usize + 1);
@@ -70,10 +110,14 @@ fn main() {
         }
     }
 
-    let _ = writer.write_all(b"q");
-    let _ = writer.flush();
+    if let Ok(mut w) = writer.lock() {
+        let _ = w.write_all(b"q");
+        let _ = w.flush();
+    }
     std::thread::sleep(Duration::from_millis(500));
     let _ = child.kill();
+    let frame = frame_seen.load(Ordering::Relaxed);
+    let late = late_bytes.load(Ordering::Relaxed);
 
     if let Some(path) = csv_path {
         let mut out = String::from("second,rss_bytes\n");
@@ -88,9 +132,13 @@ fn main() {
     let mb = |b: u64| b as f64 / 1_048_576.0;
     let after_warmup = samples.iter().filter(|(s, _)| *s >= 30).map(|(_, r)| *r).max().unwrap_or(0);
     let last = samples.last().map(|(_, r)| *r).unwrap_or(0);
-    let pass = mb(peak) <= limit_mb;
+    // A run only counts if the spike drew its first frame and kept producing output after
+    // warm-up (redraws on every 2 s snapshot); otherwise the process may have been stalled.
+    let valid = frame && late > 0;
+    let pass = valid && mb(peak) <= limit_mb;
+    let result = if !valid { "INVALID" } else if pass { "PASS" } else { "FAIL" };
     let line = format!(
-        "os={} duration_s={} samples={} peak_rss_mb={:.2} peak_at_s={} peak_after_30s_mb={:.2} final_rss_mb={:.2} limit_mb={:.0} result={}",
+        "os={} duration_s={} samples={} peak_rss_mb={:.2} peak_at_s={} peak_after_30s_mb={:.2} final_rss_mb={:.2} limit_mb={:.0} first_frame={} output_after_30s_bytes={} result={}",
         std::env::consts::OS,
         secs,
         samples.len(),
@@ -99,7 +147,9 @@ fn main() {
         mb(after_warmup),
         mb(last),
         limit_mb,
-        if pass { "PASS" } else { "FAIL" }
+        frame,
+        late,
+        result
     );
     println!("{line}");
     if let Ok(summary) = std::env::var("GITHUB_STEP_SUMMARY") {
@@ -113,11 +163,13 @@ fn main() {
                 mb(after_warmup),
                 mb(last),
                 limit_mb,
-                if pass { "PASS" } else { "FAIL" }
+                frame,
+                late,
+                result
             );
         }
     }
-    std::process::exit(if pass { 0 } else { 1 });
+    std::process::exit(if !valid { 2 } else if pass { 0 } else { 1 });
 }
 
 fn fail(msg: &str) -> ! {
