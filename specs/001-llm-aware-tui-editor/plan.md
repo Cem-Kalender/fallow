@@ -77,7 +77,7 @@ Constitution v3.0.0. Evaluated before Phase 0 and after Phase 1 against v2.0.0. 
 
 | Principle / gate | How the design complies | Result |
 |---|---|---|
-| I. Memory efficiency | Desk estimate is about 8–16 MB idle and 20–60 MB loaded (R-12). Per-snapshot data covers only LLM group members. Search and recent-files results are capped. Grammars are not paged in until used. Undo is capped. CI fails at 50 or 150 MB. S-3 measured peak idle RSS of 5.60 MB (Linux), 7.59 MB (macOS) and 11.46 MB (Windows) for the real crate set. | PASS (idle measured; loaded budget still to be measured by `bench-memory --loaded`) |
+| I. Memory efficiency | Desk estimate is about 8–16 MB idle and 20–60 MB loaded (R-12). Per-snapshot data covers only LLM group members. Search and recent-files results are capped. Grammars are not paged in until used. Undo is capped. CI fails at 50 or 150 MB. S-3 measured peak idle RSS of 5.71 MB (Linux), 7.97 MB (macOS) and 11.51 MB (Windows) for the real crate set on CI runners. | PASS (idle measured on CI as a lower bound; still to measure: a real developer machine under load, and the loaded budget via `bench-memory --loaded`) |
 | II. Startup < 100 ms, no implicit background work | First frame renders before the first process scan finishes (the panel shows "scanning…"). DNS starts after the first frame. Watches cover only open files and expanded directories. Search and recent-files scans run on demand. | PASS |
 | III. Terminal-only | ratatui and crossterm. No GUI, webview or browser runtime anywhere in the dependency tree (checked by `cargo deny` bans). | PASS |
 | IV. Observability over control | Control happens only through the ControlRequest lifecycle (data-model.md): confirmation → revalidation of (PID, start time) → execution. The default focus is Cancel and there is no "don't ask again". SC-008 is tested. | PASS |
@@ -114,7 +114,7 @@ Constitution v3.0.0. Evaluated before Phase 0 and after Phase 1 against v2.0.0. 
 
 | Gate | Owner / method | Pass criterion | Status |
 |---|---|---|---|
-| **S-3** Idle-budget prototype (R-12) | The `spike-idle-budget.yml` CI workflow (runs on push, or by manual dispatch) on `ubuntu-24.04`, `macos-15` and `windows-2025`, with the RSS series uploaded as an artifact. Same measurement harness on all three. Windows moved from local to CI on 2026-10-13 because of the ASR block (R-12, and "Development environment" below). | Peak RSS ≤ 25 MB over 5 min on each platform, recorded in research.md R-12 | **CLOSED 2026-10-13**: PASS. Linux 5.60 MB, macOS 7.59 MB, Windows 11.46 MB (run 38411827336) |
+| **S-3** Idle-budget prototype (R-12) | The `spike-idle-budget.yml` CI workflow (runs on push, or by manual dispatch) on `ubuntu-24.04`, `macos-15` and `windows-2025`, with the RSS series uploaded as an artifact. Same measurement harness on all three. Windows moved from local to CI on 2026-10-13 because of the ASR block (R-12, and "Development environment" below). | Peak RSS ≤ 25 MB over 5 min on each platform, recorded in research.md R-12 | **CLOSED 2026-10-13**: PASS. Linux 5.71 MB, macOS 7.97 MB, Windows 11.51 MB (run 38414881466). Confirmed from CI logs: each run lasted 300 s; the measured PID was the spike on every platform (spike-written PID = measured PID, executable `idle-spike`); procmon ran 148 / 145 / 150 refresh cycles over 245–261 / 441–516 / 140–154 processes. **CI lower bound**: no LLM processes on the runners. Re-measuring is carried into tasks (below). |
 
 Closed or moved:
 
@@ -124,6 +124,17 @@ Closed or moved:
 | S-2 macOS footprint vs Activity Monitor | No longer a gate. Now a macOS platform task with SC-012 as its acceptance test, and a macOS release blocker (below). |
 | S-4 truncated KERN_PROCARGS2 | Runs on the physical Mac as part of the macOS release blocker. If truncated reads exclude envp, the reader uses them (R-2). |
 | R-10 Windows cwd and Defender | Resolved as a design. The CI job explicitly enables Defender real-time protection, verifies it, and fails if it can't (R-10). |
+
+## Carried into tasks
+
+Work items decided during planning that `/speckit-tasks` must include.
+
+| ID | Task | Acceptance |
+|---|---|---|
+| CT-1 | **Re-measure idle RSS on a real developer machine** once LLM detection is implemented. Run `xtask bench-memory --idle` (the R-13 harness, with the R-12 validity checks) on a developer machine with at least three agent CLIs running, a local model server with a model loaded, language servers, and a browser open. Run it on each platform available, and on the macOS hardware from the release blocker. | Peak RSS < 50 MB (constitution I). The run is valid only if the R-12 evidence holds: full duration, measured PID = Fallow, refresh cycles ≥ 90% of expected, **and at least one LLM process group detected**. Record results, process counts and LLM group counts in research.md R-12 next to the CI lower bound. |
+| CT-2 | macOS hardware checklist (`checklists/macos-hardware.md`) | See "Release blockers". |
+| CT-3 | Code signing for Windows and macOS releases | Signed binaries are not blocked by Defender's prevalence rule on a managed machine (research.md R-12, product implication). |
+| CT-4 | README platform-support section kept in step with the macOS release blocker | Already present; update when the "beta" label is removed. |
 
 ## Development environment
 

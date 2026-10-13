@@ -347,27 +347,78 @@ Pass: peak RSS ≤ 25 MB over 5 minutes on each platform. Results are recorded h
 
 **Results**
 
-| Platform | Peak RSS | Peak after 30 s | Result | Date / notes |
-|---|---|---|---|---|
-| Linux (`ubuntu-24.04`, CI) | **5.60 MB** (at 33 s) | 5.60 MB | **PASS** | 2026-10-13, run [38411827336](https://github.com/Cem-Kalender/fallow/actions/runs/38411827336), commit `83febda`. Final 5.60 MB. RSS from `/proc/<pid>/status` VmRSS. |
-| macOS (`macos-15`, CI) | **7.59 MB** (at 116 s) | 7.59 MB | **PASS** | Same run. Final 7.59 MB. RSS from `proc_pidinfo` `pti_resident_size`. |
-| Windows (`windows-2025`, CI) | **11.46 MB** (at 3 s) | 11.46 MB | **PASS** | Same run. Final 11.44 MB. RSS = `WorkingSetSize`, which includes shared DLL pages; that partly explains why it's higher than the others. |
+Recorded run: [38414881466](https://github.com/Cem-Kalender/fallow/actions/runs/38414881466),
+commit `0259825`, 2026-10-13. rustc 1.99.0, release profile (thin LTO, `panic = "abort"`,
+stripped), 301 one-second samples, 120×40 PTY.
 
-All three runs: rustc 1.99.0, release profile (thin LTO, `panic = "abort"`, stripped), 301
-one-second samples over 300 s, 120×40 PTY. Every run was **valid**: the first frame was drawn
-and output continued after warm-up, because the spike redraws on each 2 s snapshot. The highest
-peak, 11.46 MB, is under half the 25 MB spike limit and under a quarter of the 50 MB constitution
-budget. It sits at the low end of the desk estimate (8–16 MB).
+| Platform | Peak RSS | Peak after 30 s | Final | Result | RSS source |
+|---|---|---|---|---|---|
+| Linux (`ubuntu-24.04`) | **5.71 MB** (at 29 s) | 5.71 MB | 5.71 MB | **PASS** | `/proc/<pid>/status` VmRSS |
+| macOS (`macos-15`) | **7.97 MB** (at 72 s) | 7.97 MB | 7.97 MB | **PASS** | `proc_pidinfo` `pti_resident_size` |
+| Windows (`windows-2025`) | **11.51 MB** (at 1 s) | 11.51 MB | 11.50 MB | **PASS** | `WorkingSetSize`, which includes shared DLL pages; that partly explains why it's higher than the others |
+
+**Run validity evidence (from the CI logs of run 38414881466)**
+
+| Check | Linux | macOS | Windows |
+|---|---|---|---|
+| Measurement lasted the full 300 s: harness wall clock | 300.0 s | 300.1 s | 300.0 s |
+| Same, from the GitHub step timestamps | 14:37:37→14:42:37 (300 s) | 14:37:58→14:42:58 (300 s) | 14:38:51→14:43:52 (301 s) |
+| Harness PID / measured PID | 3762 / 3763 | 3134 / 3135 | 4172 / 3404 |
+| PID written by the spike itself (`--stats`) | 3763 ✔ matches | 3135 ✔ matches | 3404 ✔ matches |
+| Executable of the measured PID, read at the end of sampling | `…/target/release/idle-spike` ✔ | `…/target/release/idle-spike` ✔ | `…\target\release\idle-spike.exe` ✔ |
+| Procmon refresh cycles (expected about 150 at 2 s; at least 135 required) | 148 | 145 | 150 |
+| Processes seen per cycle: min / max / last | 245 / 261 / 248 | 441 / 516 / 491 | 140 / 154 / 146 |
+| Processes of the runner's own user (max) | 54 | 263 | 38 |
+| Command lines cached (last) | 53 | 261 | 31 |
+| Interesting TCP connections (max) | 9 | 10 | 13 |
+| LLM processes detected (max) | 0 | 0 | 0 |
+| First frame drawn / output after 30 s | yes / 4,937 bytes | yes / 6,640 bytes | yes / 1,239 bytes |
+| Spike exited cleanly on `q` and wrote its stats | yes | yes | yes |
+
+The harness now fails a run as INVALID (exit 2) unless all of the following hold:
+- the spike-written PID equals the measured PID;
+- the measured executable is `idle-spike`;
+- the full duration elapsed;
+- at least 90% of the expected refresh cycles ran;
+- the first frame was drawn and output continued after warm-up.
+
+**Consistency across runs**: The previous valid run,
+[38411827336](https://github.com/Cem-Kalender/fallow/actions/runs/38411827336) (commit
+`83febda`, before the evidence checks existed), measured 5.60, 7.59 and 11.46 MB, within 0.4 MB
+of the recorded run. In run
+[38413742547](https://github.com/Cem-Kalender/fallow/actions/runs/38413742547) the executable
+check fired too early on Linux and macOS. It read `/proc/<pid>/exe` and `proc_pidpath` right
+after `fork`, before `exec`, and saw the harness binary. The spike-written PID still matched the
+measured PID on all three platforms, so the measurement was correct and only the check was
+early. The check now runs at the end of sampling.
+
+**These figures are a lower bound.** CI runners are quiet machines:
+- 140–516 processes in total and 38–263 for the runner's own user;
+- about 10 relevant TCP connections;
+- **no LLM processes** at all, so the footprint reads, LLM grouping and per-LLM snapshot rows
+  were never exercised.
+
+A real developer machine with several agents, a local model server, language servers and a
+browser will have more processes, more connections and non-empty LLM groups. Fallow's idle RSS
+will be higher there. The highest CI peak, 11.51 MB, is under half the 25 MB spike limit and
+under a quarter of the 50 MB constitution budget, at the low end of the desk estimate
+(8–16 MB). That leaves room, but it doesn't prove the budget holds under real load. **Task
+carried into tasks.md**: re-measure on a real developer machine once detection is implemented
+(plan.md, "Carried into tasks").
 
 **Invalid earlier result (kept for the record)**: Run
 [38409989505](https://github.com/Cem-Kalender/fallow/actions/runs/38409989505) reported Windows
 at a flat 2.28 MB, with only two distinct values in 301 samples. The cause was ConPTY: at startup
 it sends a cursor-position request (`ESC[6n`) to the host terminal and holds the child until it
 gets an answer. The harness didn't answer, so the spike was stalled before its first frame. The
-harness now answers these requests, and it marks any run INVALID (exit 2) unless the first-frame
-marker was seen and output continued after 30 s. That run's Linux (5.61 MB) and macOS (7.58 MB)
-figures match the valid run. **Lesson for the CI benchmark (R-13)**: the harness must answer
-terminal queries and must prove the binary is live. A low memory figure alone isn't evidence.
+harness now answers these requests, and runs without proof of liveness are marked INVALID (see
+above). That run's Linux (5.61 MB) and macOS (7.58 MB) figures match the valid runs. **Lessons
+for the CI benchmark (R-13)**:
+- The harness must answer terminal queries.
+- It must prove that the measured PID is the product, after `exec`.
+- It must prove that the binary was live: first frame, continued output, and refresh cycles.
+
+A low memory figure alone isn't evidence.
 
 **Context: why Windows is measured in CI.** The local run planned for 2026-10-13 was blocked. The
 development machine's Microsoft Defender Attack Surface Reduction policy, rule
@@ -381,8 +432,10 @@ environment).
 fleets. It will block an unsigned, low-prevalence Fallow binary for users on such machines. The
 release plan needs code signing for Windows and macOS; tracked as a follow-up for tasks.
 
-**Status**: **VERIFIED 2026-10-13: PASS on all three platforms** (peaks of 5.60, 7.59 and 11.46
-MB). The planning gate is closed.
+**Status**: **VERIFIED 2026-10-13: PASS on all three platforms** (peaks of 5.71, 7.97 and 11.51
+MB, run 38414881466). Duration, the measured PID and procmon activity are confirmed from the CI
+logs. The planning gate is closed. The figures are a CI lower bound; re-measuring on a real
+developer machine is a task.
 
 ## R-13: Benchmarks in CI (Principle VI, FR-053)
 
