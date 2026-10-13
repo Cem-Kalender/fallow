@@ -15,8 +15,9 @@ use std::time::{Duration, Instant};
 
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 
-/// First-frame marker from contracts/cli.md: the hint bar always shows it.
-const FRAME_MARKER: &[u8] = b"Ctrl-P Commands";
+/// First-frame marker. contracts/cli.md specifies "Ctrl-P Commands" in the hint bar; only the
+/// word is matched because ConPTY may re-encode spaces as cursor movement.
+const FRAME_MARKER: &[u8] = b"Commands";
 
 fn contains(hay: &[u8], needle: &[u8]) -> bool {
     hay.windows(needle.len()).any(|w| w == needle)
@@ -75,14 +76,15 @@ fn main() {
                     late_bytes.fetch_add(n as u64, Ordering::Relaxed);
                 }
                 tail.extend_from_slice(&buf[..n]);
+                if contains(&tail, FRAME_MARKER) {
+                    frame_seen.store(true, Ordering::Relaxed);
+                }
                 if contains(&tail, b"\x1b[6n") {
                     if let Ok(mut w) = writer.lock() {
                         let _ = w.write_all(b"\x1b[1;1R");
                         let _ = w.flush();
                     }
-                }
-                if contains(&tail, FRAME_MARKER) {
-                    frame_seen.store(true, Ordering::Relaxed);
+                    tail.clear();
                 }
                 let keep = tail.len().saturating_sub(32);
                 tail.drain(..keep);
