@@ -42,7 +42,8 @@ cargo xtask defender-check             # Windows only: enables + verifies real-t
 | V5 | Find the culprit (US2, SC-001) | Press `m` | The largest group is first. |
 | V6 | Explain detection (US4) | Select the script and press `Enter` | It shows "provider connection: <provider> via resolved \| range, likely". |
 | V7 | Jump to the work (US5) | Select the agent and press `g` | The tree opens in `~/a`, and the recent changes list shows files newest first with the disclaimer. |
-| V8 | Kill with confirmation (US6) | Select the script, press `K`, then `Esc` | The process is still running. Press `K` and `y`: the process is gone. |
+| V8 | Kill with confirmation (US6) | Select the script, press `Shift-K`, then `Esc` | The process is still running. Press `Shift-K` and `y`: on Linux/macOS it receives SIGTERM and exits; on Windows the dialog says the kill is immediate with no cleanup. |
+| V8b | Force kill (Linux/macOS) | Run `python -c "import signal,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(600)"` as a detected process, then `Shift-K`, `y` | After 5 s a second "Force kill" dialog appears. `Esc`: still running. Repeat and confirm: it stops. |
 | V9 | Windows pause note (FR-052) | On Windows, select a process and press `p` | The dialog contains the Windows difference text. |
 | V10 | Editor basics (US3) | Open a file, edit, `Ctrl-S`. Then `Ctrl-F`, type a string, `Tab` to "whole project", `Enter`, and open a hit. Then `Ctrl-G 10`. | The file is saved, the scope label switches, results appear, the hit opens at its line, and the cursor goes to line 10. |
 | V15 | Selection and clipboard (FR-008) | `Shift-→` ×5, `Ctrl-C`, paste in another app. Then `Ctrl-C` with no selection. Then paste a multi-line block with the terminal's paste. | The other app receives the 5 characters. With no selection, nothing is copied and the hint shows "Quit: Ctrl-Q". The pasted block is inserted verbatim with no auto-indent. |

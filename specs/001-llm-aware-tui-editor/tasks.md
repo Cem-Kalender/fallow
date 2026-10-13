@@ -157,7 +157,7 @@ gates enforced.
 
 ---
 
-## Phase 3: User Story 1 - See every LLM process at a glance (Priority: P1) 🎯 MVP
+## Phase 3a: User Story 1 - See every LLM process at a glance (Priority: P1) 🎯 MVP
 
 **Goal**: A system-wide LLM process panel, grouped, with status, footprint and confidence, plus
 the system summary, help overlay and command palette needed to operate it.
@@ -291,7 +291,7 @@ summary adds up.
 - [ ] T046 [P] [US1] Implement the command palette in `src/ui/palette.rs`: `Ctrl-P` opens it, typing filters, and each command shows its key binding. It includes "Help" and "Reload configuration" (stub until US4). In text inputs the hint bar shows `Ctrl-P › Help`. Satisfies: FR-062, FR-066.
 - [ ] T047 [US1] Implement mouse support for the panel and layout in `src/ui/processes.rs` and `src/ui/layout.rs`: click selects a row, the wheel scrolls the pane under the pointer, and dragging a pane border resizes panes. Satisfies: FR-063.
 
-### Test-only interface and CI checks
+### Test-only interface
 
 - [ ] T048 [US1] Implement `--snapshot-json` and `--snapshot-hold <SECS>` in `src/cli.rs` and `src/procmon/json.rs`:
   - run two refresh cycles, print the Snapshot as JSON (records limited to LLM group members) and exit;
@@ -300,6 +300,29 @@ summary adds up.
   - use a small hand-written JSON writer, with **no serde_json in the product** (the plan lists serde_json as dev-only).
 
   Satisfies: contracts/cli.md.
+- [ ] T054 [US1] **CT-1: re-measure idle memory on a real developer machine** once T031–T041 work.
+  - Setup: run `cargo xtask bench-memory --idle` on a developer machine (not the ASR-blocked one) with ≥ 3 agent CLIs running, a local model server with a model loaded, language servers and a browser open.
+  - Platforms: each platform available, plus the macOS hardware from T103.
+  - Validity: full duration, measured PID = Fallow, cycles ≥ 90%, **≥ 1 LLM group detected**.
+  - Pass: peak RSS < 50 MB.
+  - Record: results, process counts and LLM group counts in `specs/001-llm-aware-tui-editor/research.md` R-12, next to the CI lower bound.
+
+  Satisfies: CT-1, FR-040, Constitution I.
+
+**Checkpoint (Phase 3a, MVP)**: `fallow` with no arguments shows every LLM process with the
+correct fields, groups and statuses, the summary, help and palette. This is enough to start
+Phase 4 and later phases.
+
+---
+
+## Phase 3b: User Story 1 - Release verification (required before the first public release)
+
+**Goal**: The automated proofs for the detection quality and privacy claims. **Required before
+the first public release, but not blocking Phase 4 onward.**
+
+**Independent Test**: In CI, `detect-fixtures`, `canary` and `egress` pass on all three OSes,
+and the Defender job reports PASS with protection verified.
+
 - [ ] T049 [US1] Implement `cargo xtask detect-fixtures` in `xtask/src/detect_fixtures.rs` with fixtures in `tests/fixtures/detect/`:
   - an LLM reference set of ≥ 20 tools: stand-in binaries named or invoked like each built-in signature, interpreter scripts that open real TLS connections to provider hosts, and a stub local model server on 11434 with a client;
   - a non-LLM set of ≥ 20 processes: shells, build tools, language servers, and a browser with the browser category off;
@@ -321,29 +344,26 @@ summary adds up.
   It asserts that the only traffic is DNS queries for names in `providers.toml` (no reverse PTR lookups), and that a second run with `--no-dns` produces **zero** outbound traffic and no DNS queries. Satisfies: SC-009, FR-035, FR-022a, Constitution VII.
 - [ ] T052 [US1] Implement the **Windows Defender check** in `xtask/src/defender_check.rs` per research.md R-10:
   1. Enable: `Set-MpPreference -DisableRealtimeMonitoring $false -DisableBehaviorMonitoring $false -DisableIOAVProtection $false -DisableScriptScanning $false`, then `Remove-MpPreference -ExclusionPath C:\, D:\`, then try `Update-MpSignature` (on failure, warn and continue).
-  2. Verify with `Get-MpComputerStatus`: `AMRunningMode = "Normal"`, and `RealTimeProtectionEnabled`, `BehaviorMonitorEnabled` and `IoavProtectionEnabled` all `True`. `Get-MpPreference` must show no exclusion covering the binary or workspace. **Any failure fails the job**, and a run with protection off never passes.
+  2. Verify with `Get-MpComputerStatus`: `AMRunningMode = "Normal"`, and `RealTimeProtectionEnabled`, `BehaviorMonitorEnabled` and `IoavProtectionEnabled` all `True`. `Get-MpPreference` must show no exclusion covering the binary or workspace. **Any failure fails the check**, and a run with protection off never passes.
   3. Exercise: run the T049 fixtures with `fallow --snapshot-json` under `on_detect`, and once under `on_select` with a simulated selection.
   4. Judge: fail on any `Get-MpThreatDetection` entry or any Defender operational event 1006, 1007, 1015, 1116 or 1117 newer than step 2.
 
-  Satisfies: R-10, Constitution V.
+  The check writes `defender-result.json` (`{"protection_verified": bool, "detections": n, "result": "PASS" | "FAIL"}`) and appends it to `GITHUB_STEP_SUMMARY`, so T116 can count consecutive passes. Satisfies: R-10, Constitution V.
 - [ ] T053 [US1] Extend `.github/workflows/ci.yml`:
-  - `cargo xtask detect-fixtures` and `cargo xtask canary` on all three OSes;
-  - `cargo xtask egress` on all three;
-  - `cargo xtask defender-check` in the `windows-2025` job only.
+  - `cargo xtask detect-fixtures` and `cargo xtask canary` on all three OSes, blocking;
+  - `cargo xtask egress` on all three, blocking;
+  - `cargo xtask defender-check` as a **separate job** `defender` on `windows-2025` with `continue-on-error: true`. It is **non-blocking at first**: a failure is reported in the run summary and as a warning annotation but doesn't fail the workflow. It uploads `defender-result.json` as an artifact.
 
   Satisfies: SC-002, SC-003, SC-007, SC-009, R-10, FR-053.
-- [ ] T054 [US1] **CT-1: re-measure idle memory on a real developer machine** once T031–T041 work.
-  - Setup: run `cargo xtask bench-memory --idle` on a developer machine (not the ASR-blocked one) with ≥ 3 agent CLIs running, a local model server with a model loaded, language servers and a browser open.
-  - Platforms: each platform available, plus the macOS hardware from T103.
-  - Validity: full duration, measured PID = Fallow, cycles ≥ 90%, **≥ 1 LLM group detected**.
-  - Pass: peak RSS < 50 MB.
-  - Record: results, process counts and LLM group counts in `specs/001-llm-aware-tui-editor/research.md` R-12, next to the CI lower bound.
+- [ ] T116 [US1] Make the Defender job blocking once it has **passed on 5 consecutive runs** on `main`:
+  - check consecutive passes with `gh run list --workflow ci.yml --branch main --json conclusion,databaseId` plus each run's `defender-result.json` artifact. A pass requires `protection_verified = true` and `result = "PASS"`; a run with protection off never counts;
+  - then remove `continue-on-error` from the `defender` job in `.github/workflows/ci.yml` and add it to the required status checks of the `main` branch protection;
+  - record the five run IDs in `specs/001-llm-aware-tui-editor/research.md` R-10.
 
-  Satisfies: CT-1, FR-040, Constitution I.
+  Satisfies: R-10, Constitution V.
 
-**Checkpoint**: The MVP. `fallow` with no arguments shows every LLM process with the correct
-fields, groups and statuses, the summary, help and palette. The canary, egress, Defender and
-detection fixtures pass in CI.
+**Checkpoint (Phase 3b)**: The canary, egress and detection fixtures block CI on all three OSes.
+The Defender job reports on every run and becomes blocking after 5 consecutive passes (T116).
 
 ---
 
@@ -529,32 +549,62 @@ working.
 
 ## Phase 8: User Story 6 - Stop or pause a runaway process, with confirmation (Priority: P6)
 
-**Goal**: Kill, pause and resume, only through a confirmed, revalidated `ControlRequest`.
+**Goal**: Kill (graceful, with an optional confirmed force kill), pause and resume, only through confirmed, revalidated `ControlRequest`s.
 
-**Independent Test**: Quickstart V8 and V9. Select a dummy LLM process and press `Shift-K`, then `Esc`: it is still running. Press `Shift-K` and `y`: it has stopped. On Windows, `p` shows the Windows difference text.
+**Independent Test**: Quickstart V8, V8b and V9.
+- Select a dummy LLM process and press `Shift-K`, then `Esc`: it is still running.
+- Press `Shift-K` and `y`: on Linux and macOS it receives SIGTERM and exits.
+- A dummy that ignores SIGTERM is still alive after 5 s, so "Force kill" is offered. Cancelling leaves it running; confirming sends SIGKILL.
+- On Windows, the Kill dialog says it is immediate with no cleanup, and `p` shows the Windows difference text.
 
 - [ ] T094 [P] [US6] Write the **SC-008 confirmation test** in `tests/control_requires_confirmation.rs`:
   - (a) at compile level, `platform::{suspend, resume, kill}` are `pub(in crate::procmon)` and only `ControlRequest::execute` calls them; a `trybuild` compile-fail case shows they can't be called from `ui` or `app`;
   - (b) `execute` requires a `ConfirmedToken` (T069), which only the confirmation dialog can construct;
   - (c) cancel, `Esc`, `n` and `q` produce `Discarded`, with no platform call recorded by a mock platform;
   - (d) revalidation: if any target's `(pid, start_time)` changed, the result is `Aborted("process is gone")` and nothing is signalled;
-  - (e) "No path reaches `Executing` without passing through `AwaitingConfirmation`".
+  - (e) "No path reaches `Executing` without passing through `AwaitingConfirmation`";
+  - (f) graceful kill on Unix: confirming Kill sends only `SIGTERM` to the mock platform. If the target exits within 5 s, the result is `Done(Ok)` and no force kill is offered;
+  - (g) a target still alive after 5 s produces `AwaitingForceConfirmation`. **No `SIGKILL` is sent until a second, separate `ConfirmedToken` for `ForceKill` is presented**; the first Kill token can't be reused for it (compile-fail or runtime rejection);
+  - (h) cancelling the force-kill confirmation sends nothing further and leaves `Done(StillRunning)`;
+  - (i) a target that exits, or whose `(pid, start_time)` changes, during the 5 s wait or while the force dialog is open produces `Gone`, and no `SIGKILL` is sent;
+  - (j) on Windows, Kill maps to a single `TerminateProcess` after one confirmation, with no force step.
 
   Satisfies: SC-008, FR-032, FR-033, Constitution IV.
-- [ ] T095 [P] [US6] Implement Unix control in `src/procmon/platform/linux.rs` and `src/procmon/platform/macos.rs`: `suspend` = `SIGSTOP`, `resume` = `SIGCONT`, `kill` = `SIGKILL`. Map `EPERM` to `PermissionDenied` and `ESRCH` to `Gone`. Satisfies: FR-032, FR-052.
+- [ ] T095 [P] [US6] Implement Unix control in `src/procmon/platform/linux.rs` and `src/procmon/platform/macos.rs`:
+  - `suspend` = `SIGSTOP`, `resume` = `SIGCONT`;
+  - `terminate` = `SIGTERM` (the graceful Kill);
+  - `force_kill` = `SIGKILL`, called only after the second confirmation (T097);
+  - `is_alive(ProcessKey)` checks that PID **and** start time still match;
+  - map `EPERM` to `PermissionDenied` and `ESRCH` to `Gone`.
+
+  Satisfies: FR-032, FR-033, FR-052.
 - [ ] T096 [P] [US6] Implement Windows control in `src/procmon/platform/windows.rs`:
   - `suspend` / `resume` with `NtSuspendProcess` / `NtResumeProcess` from `ntdll` on a `PROCESS_SUSPEND_RESUME` handle;
   - Fallow counts its own suspends per `ProcessKey` and resumes the same number of times;
-  - `kill` with `TerminateProcess` on a `PROCESS_TERMINATE` handle;
+  - `terminate` with `TerminateProcess` on a `PROCESS_TERMINATE` handle. This is immediate: the process runs no cleanup, so Windows has **no** separate force-kill step;
   - access denied maps to `PermissionDenied`.
 
   Satisfies: R-7, FR-052.
-- [ ] T097 [US6] Implement the `ControlRequest` lifecycle in `src/procmon/control.rs` per data-model.md: `Requested → AwaitingConfirmation → (Discarded | Revalidating → (Aborted | Executing → Done(per-target Ok | PermissionDenied | Gone | Error)))`. Acting on a group includes the members in `targets` and sets `include_children`. Satisfies: FR-032, FR-033.
-- [ ] T098 [US6] Extend the confirmation dialog in `src/ui/confirm.rs` for process actions: it shows the action, process name, PID, owner (in all-users mode), group size and whether children are included. On Windows, pause and resume also show the R-7 difference text: no notice to the process, stacking suspend counts, racy for new threads, windowed apps show "Not responding", children are not suspended unless the group is selected. Satisfies: FR-032, FR-052.
-- [ ] T099 [US6] Wire `p` / `r` / `Shift-K` in `src/app/keymap.rs` and `src/ui/processes.rs`. Show per-target results. `PermissionDenied` shows "permission denied" and **never** prompts for elevation. Satisfies: US6 AS1–AS4, FR-031.
+- [ ] T097 [US6] Implement the `ControlRequest` lifecycle in `src/procmon/control.rs` per data-model.md: `Requested → AwaitingConfirmation → (Discarded | Revalidating → (Aborted | Executing → Done(per-target Ok | PermissionDenied | Gone | Error)))`. Acting on a group includes the members in `targets` and sets `include_children`.
+
+  Kill on Unix follows the extended lifecycle:
+  - after `Executing` (SIGTERM), go to `WaitingForExit`, polling `is_alive` every 250 ms for up to **5 s**, off the UI thread;
+  - targets that exit are `Ok`;
+  - if any target is still alive, go to `AwaitingForceConfirmation`, which opens a **second** confirmation for action `ForceKill` listing only the remaining targets;
+  - confirm → revalidate → `SIGKILL` → `Done`; cancel → `Done(StillRunning)`.
+
+  `ForceKill` needs its own `ConfirmedToken` (data-model.md, ControlRequest, "Kill on Linux/macOS"). Satisfies: FR-032, FR-033.
+- [ ] T098 [US6] Extend the confirmation dialog in `src/ui/confirm.rs` for process actions. It shows the action, process name, PID, owner (in all-users mode), group size and whether children are included. Action-specific text:
+  - **Kill on Linux/macOS**: "Sends SIGTERM so the process can clean up. If it is still running after 5 s, you will be asked whether to force kill."
+  - **Force kill** (second dialog): lists the processes still running and says "Sends SIGKILL. The process stops immediately and cannot clean up."
+  - **Kill on Windows**: "Terminates immediately. The process cannot clean up or save state."
+  - **Pause/resume on Windows**: the R-7 difference text: no notice to the process, stacking suspend counts, racy for new threads, windowed apps show "Not responding", children are not suspended unless the group is selected.
+
+  A progress line "Waiting for exit… (n s)" is shown during the 5 s wait. Satisfies: FR-032, FR-052.
+- [ ] T099 [US6] Wire `p` / `r` / `Shift-K` in `src/app/keymap.rs` and `src/ui/processes.rs`. "Force kill" has no key of its own: it is reachable **only** through the second dialog after a graceful Kill, so it can never be triggered directly. Show per-target results. `PermissionDenied` shows "permission denied" and **never** prompts for elevation. Satisfies: US6 AS1–AS6, FR-031.
 - [ ] T100 [P] [US6] Write the user documentation for pause and resume differences in `docs/platform-differences.md` (Windows vs Linux and macOS, from research.md R-7) and link it from the help overlay in `src/ui/help.rs`. Satisfies: FR-052.
 
-**Checkpoint**: All six stories work, and control is provably confirmation-gated.
+**Checkpoint**: All six stories work. Control is provably confirmation-gated, and force kill needs a second confirmation.
 
 ---
 
@@ -598,13 +648,21 @@ working.
 ### Release packaging and signing
 
 - [ ] T110 Create `.github/workflows/release.yml`: build one self-contained binary per target (x86_64/aarch64 Linux with musl static, x86_64/aarch64 macOS, x86_64 Windows), run the full CI gates first, and attach SHA-256 sums. Satisfies: plan Language/packaging.
-- [ ] T111 **Code signing for Windows releases** (R-12 ASR finding, CT-3):
-  - add Authenticode signing (Azure Trusted Signing or an OV/EV certificate in a GitHub environment secret) to `.github/workflows/release.yml`;
-  - verify with `signtool verify /pa`;
-  - document in `docs/release.md` that unsigned, low-prevalence binaries are blocked by Defender ASR rule `01443614-CD74-433A-B99E-2ECDC07BFC25` on managed machines.
+- [ ] T111 **Code signing for Windows releases** (R-12 ASR finding, CT-3). Options in order of preference:
+  1. **SignPath Foundation**: free code signing for open-source projects. Apply with the public repository, then integrate the SignPath GitHub Action into `.github/workflows/release.yml` so that only artifacts built by that workflow are signed.
+  2. **Azure Trusted Signing**: **verify eligibility first.** Availability for individual developers outside the US and Canada must be confirmed before choosing it. Record the finding in `docs/release.md`.
+  3. An OV certificate from a commercial CA, stored in a GitHub environment secret.
+
+  In every case:
+  - verify each signed `.exe` with `signtool verify /pa /v` in the workflow;
+  - document in `docs/release.md` the chosen option, and that unsigned, low-prevalence binaries are blocked by Defender ASR rule `01443614-CD74-433A-B99E-2ECDC07BFC25` on managed machines.
 
   Satisfies: CT-3, R-12.
-- [ ] T112 [P] macOS signing and notarization (Developer ID + `notarytool`) in `.github/workflows/release.yml`, documented in `docs/release.md`. Satisfies: CT-3.
+- [ ] T112 [P] macOS signing and notarization in `.github/workflows/release.yml` (Developer ID Application certificate, `codesign --options runtime`, `xcrun notarytool submit --wait`, `stapler staple`), documented in `docs/release.md`.
+  - **Notarization requires a paid Apple Developer Program membership (about $99/year).**
+  - **Until that membership exists**, macOS releases ship **unsigned and labeled beta**. `README.md` and `docs/release.md` then give install instructions: download, verify the SHA-256 sum, remove the quarantine attribute with `xattr -d com.apple.quarantine ./fallow`, or allow it via System Settings › Privacy & Security after the first launch attempt.
+
+  Satisfies: CT-3, plan Release blockers.
 
 ### Documentation and governance
 
@@ -620,14 +678,20 @@ working.
 
 - **Setup (Phase 1)**: none.
 - **Foundational (Phase 2)**: depends on Setup and blocks every story.
-- **US1 (Phase 3)**: depends on Foundational. It is the MVP.
-- **US2 (Phase 4)**: depends on US1 (it sorts the US1 panel).
+- **US1 Phase 3a**: depends on Foundational. It is the MVP.
+- **US1 Phase 3b** (release verification, T049–T053, T116): depends on Phase 3a (T048 and the
+  detection pipeline). It **does not block Phase 4 or later phases**, which may start as soon as
+  3a is done. It **must be complete before the first public release** (T110).
+- **US2 (Phase 4)**: depends on Phase 3a (it sorts the US1 panel).
 - **US3 (Phase 5)**: depends only on Foundational. It can run in parallel with US1 and US2.
   - The shared confirmation dialog (T069) comes from US3.
-- **US4 (Phase 6)**: depends on US1.
-- **US5 (Phase 7)**: depends on US1 (process selection) and US3 (Files pane and tree).
-- **US6 (Phase 8)**: depends on US1 and on T069 (confirmation dialog, US3).
+- **US4 (Phase 6)**: depends on Phase 3a.
+- **US5 (Phase 7)**: depends on Phase 3a (process selection) and US3 (Files pane and tree).
+- **US6 (Phase 8)**: depends on Phase 3a and on T069 (confirmation dialog, US3).
 - **Polish (Phase 9)**: depends on the stories each task verifies.
+  - T110 (first public release) also requires all of Phase 3b. The Defender job may still be
+    non-blocking at that point if T116's 5-pass condition hasn't been met, but its latest result
+    must be PASS with protection verified.
   - T102 waits for the macOS module (T032, T095) and T101.
   - T104 waits for T103.
 
@@ -642,7 +706,8 @@ working.
 - T020/T021 → T023/T024 → T025 (benchmarks before CI)
 - T018/T019 → T031–T033 → T034 → T035–T038 → T041–T042
 - T043 → T044–T046 (registry before keymap, help and palette)
-- T048 → T049–T052 → T053 (the snapshot interface before the CI tests that use it)
+- T048 → T049–T052 → T053 → T116 (the snapshot interface before the CI tests that use it; the
+  Defender job becomes blocking only after 5 consecutive passes)
 - T031–T041 → T054 (CT-1 needs working detection)
 - T069 → T070, T094, T097–T099
 - T082 → T083–T085
@@ -683,13 +748,18 @@ T094 tests/control_requires_confirmation.rs   T095 platform unix control   T096 
 
 1. Phase 1 Setup, then Phase 2 Foundational. CI is green with the startup and idle gates on
    three OSes.
-2. Phase 3 US1. **Stop and validate** with quickstart V1–V3. The canary, egress, Defender and
-   detection fixtures must pass in CI.
-3. Run CT-1 (T054) on a real developer machine.
+2. **Phase 3a** (T027–T048, T054): the working panel. **Stop and validate** with quickstart
+   V1–V3, and run CT-1 (T054) on a real developer machine. This is the MVP, usable locally and
+   from CI builds.
+3. **Phase 3b** (T049–T053, T116) runs alongside the next phases. The detection fixtures,
+   canary and egress tests become blocking CI gates as each lands. The Defender job starts
+   non-blocking and becomes blocking after 5 consecutive passes. All of 3b must be done
+   before the first public release.
 
 ### Incremental delivery
 
-1. US1, the MVP: a monitoring panel.
+1. US1 Phase 3a, the MVP: a monitoring panel. Then Phase 3b in parallel with the stories
+   below; it gates the first public release, not the next phase.
 2. US2: sorting, to find the culprit.
 3. US3: the editor, with the loaded budget enforced.
 4. US4: explainable detection.
@@ -700,7 +770,8 @@ T094 tests/control_requires_confirmation.rs   T095 platform unix control   T096 
 ### Parallel team strategy
 
 After Foundational:
-- one developer on US1 → US2 → US4;
+- one developer on US1 3a → US2 → US4;
+- one on Phase 3b (CI verification) once 3a's T048 exists;
 - one on US3 (independent of US1);
 - the platform tasks split by OS.
 

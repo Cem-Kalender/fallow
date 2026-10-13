@@ -147,7 +147,8 @@ only when `Enter` is pressed, never while typing.
 | Details (signals, FR-025) | `Enter` |
 | Go to working directory + recent changes (FR-017) | `g` |
 | Pause / Resume (confirmation) | `p` / `r` |
-| Kill (confirmation) | `Shift-K` (capital letter, to avoid accidental presses) |
+| Kill (confirmation) | `Shift-K` (capital letter, to avoid accidental presses). Linux/macOS: graceful SIGTERM, then a second confirmation offering "Force kill" if the process is still running after 5 s. Windows: immediate termination. |
+| Force kill | **No key.** Reachable only from the second dialog after a graceful Kill on Linux/macOS. |
 | Toggle browser category | palette only |
 
 Confidence has no single-key sort, because there is no free mnemonic letter. It is sorted by
@@ -158,6 +159,16 @@ header click or the palette. The current sort column shows `▾` or `▴` in the
 - **Process actions** show the action, process name, PID, owner (in all-users mode), group size,
   and whether children are included. On Windows, pause and resume also show the R-7 difference
   text.
+- **Kill on Linux/macOS** says: "Sends SIGTERM so the process can clean up. If it is still
+  running after 5 s, you will be asked whether to force kill." After confirming, the dialog
+  shows "Waiting for exit… (n s)".
+  - If every target exits within 5 s, the result is shown and nothing more happens.
+  - Otherwise a **second dialog, "Force kill"**, lists only the processes still running and
+    says: "Sends SIGKILL. The process stops immediately and cannot clean up." It follows the
+    same rules: default focus Cancel, its own confirmation. Cancelling leaves the processes
+    running, and the result says so.
+- **Kill on Windows** says: "Terminates immediately. The process cannot clean up or save state."
+  There is no force-kill step.
 - **File delete** shows the path and, for folders, the item counts.
 - In all dialogs, default focus is **Cancel**. `y`, or `Enter` on Confirm, confirms. `Esc`,
   `n` and `q` cancel. There is no "don't ask again".
