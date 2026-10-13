@@ -1,0 +1,17 @@
+# Spike S-3 (research.md R-12): measures idle RSS of the real crate set.
+# Throwaway. Its own workspace so it never joins the product build.
+[workspace]
+resolver = "3"
+members = ["spike", "measure"]
+
+[workspace.package]
+edition = "2024"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+strip = "symbols"

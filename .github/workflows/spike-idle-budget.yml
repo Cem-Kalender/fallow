@@ -1,0 +1,51 @@
+# Spike S-3 (specs/001-llm-aware-tui-editor/research.md R-12): peak RSS of the idle prototype
+# over 5 minutes, measured in a 120x40 PTY with the CI benchmark method (R-13).
+name: spike-idle-budget
+
+on:
+  push:
+    paths:
+      - "spikes/idle-budget/**"
+      - ".github/workflows/spike-idle-budget.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  measure:
+    name: S-3 idle RSS (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15, windows-2025]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    env:
+      EXE: ${{ runner.os == 'Windows' && '.exe' || '' }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: spikes/idle-budget
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust toolchain
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustc --version
+
+      - name: Build spike and harness
+        run: cargo build --release --locked || cargo build --release
+
+      - name: Measure peak RSS (300 s, limit 25 MB)
+        run: ./target/release/idle-measure$EXE ./target/release/idle-spike$EXE 300 25 rss-${{ matrix.os }}.csv
+
+      - name: Upload RSS series
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: s3-rss-${{ matrix.os }}
+          path: spikes/idle-budget/rss-${{ matrix.os }}.csv
+          if-no-files-found: warn
