@@ -11,7 +11,9 @@ mod platform;
 use std::collections::{HashMap, HashSet};
 use std::io::stdout;
 use std::net::ToSocketAddrs;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, SyncSender, TryRecvError};
+use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
@@ -54,9 +56,62 @@ struct Snapshot {
     llm: Vec<LlmRow>,
 }
 
+/// Evidence that the procmon loop ran, written to `--stats <path>` on exit (research R-12).
+#[derive(Default)]
+struct Stats {
+    cycles: AtomicU64,
+    procs_last: AtomicU64,
+    procs_min: AtomicU64,
+    procs_max: AtomicU64,
+    mine_last: AtomicU64,
+    mine_max: AtomicU64,
+    llm_max: AtomicU64,
+    conns_max: AtomicU64,
+    cmdlines_last: AtomicU64,
+}
+
+impl Stats {
+    fn record(&self, procs: u64, mine: u64, llm: u64, conns: u64, cmdlines: u64) {
+        let first = self.cycles.fetch_add(1, Ordering::Relaxed) == 0;
+        self.procs_last.store(procs, Ordering::Relaxed);
+        if first {
+            self.procs_min.store(procs, Ordering::Relaxed);
+        } else {
+            self.procs_min.fetch_min(procs, Ordering::Relaxed);
+        }
+        self.procs_max.fetch_max(procs, Ordering::Relaxed);
+        self.mine_last.store(mine, Ordering::Relaxed);
+        self.mine_max.fetch_max(mine, Ordering::Relaxed);
+        self.llm_max.fetch_max(llm, Ordering::Relaxed);
+        self.conns_max.fetch_max(conns, Ordering::Relaxed);
+        self.cmdlines_last.store(cmdlines, Ordering::Relaxed);
+    }
+
+    fn render(&self) -> String {
+        let g = |a: &AtomicU64| a.load(Ordering::Relaxed);
+        format!(
+            "pid={} cycles={} processes_last={} processes_min={} processes_max={} own_user_last={} own_user_max={} llm_detected_max={} interesting_tcp_max={} cmdlines_cached_last={}
+",
+            std::process::id(),
+            g(&self.cycles),
+            g(&self.procs_last),
+            g(&self.procs_min),
+            g(&self.procs_max),
+            g(&self.mine_last),
+            g(&self.mine_max),
+            g(&self.llm_max),
+            g(&self.conns_max),
+            g(&self.cmdlines_last),
+        )
+    }
+}
+
 fn main() {
+    let args: Vec<String> = std::env::args().collect();
+    let stats_path = args.iter().position(|a| a == "--stats").and_then(|i| args.get(i + 1)).cloned();
+    let stats = Arc::new(Stats::default());
     // Keep tree-sitter and one grammar linked without touching their tables at idle.
-    if std::env::args().any(|a| a == "--parse-self-test") {
+    if args.iter().any(|a| a == "--parse-self-test") {
         let mut parser = tree_sitter::Parser::new();
         parser.set_language(&tree_sitter_rust::LANGUAGE.into()).ok();
         let _ = parser.parse("fn main() {}", None);
@@ -68,7 +123,10 @@ fn main() {
     thread::Builder::new()
         .name("procmon".into())
         .stack_size(256 * 1024)
-        .spawn(move || procmon(tx))
+        .spawn({
+            let stats = stats.clone();
+            move || procmon(tx, stats)
+        })
         .expect("spawn procmon");
     thread::Builder::new()
         .name("dns".into())
@@ -96,6 +154,10 @@ fn main() {
     }
     let _ = execute!(stdout(), DisableMouseCapture, DisableBracketedPaste);
     ratatui::restore();
+
+    if let Some(path) = stats_path {
+        let _ = std::fs::write(path, stats.render());
+    }
 }
 
 fn run(terminal: &mut ratatui::DefaultTerminal, rx: Receiver<Snapshot>) {
@@ -187,7 +249,7 @@ fn draw(f: &mut ratatui::Frame, snap: Option<&Snapshot>) {
     f.render_widget(Paragraph::new("? Help  Ctrl-P Commands  Tab Next pane  q Quit (spike)"), hints);
 }
 
-fn procmon(tx: SyncSender<Snapshot>) {
+fn procmon(tx: SyncSender<Snapshot>, stats: Arc<Stats>) {
     let name_sig = Regex::new(r"(?i)^(claude|codex|aider|gemini|ollama|llama-server|lm-studio|cursor)(\.exe)?$")
         .expect("regex");
     let cmd_sig = Regex::new(r"(?i)(^|[\\/ ])(claude|codex|aider|ollama|llama-server)(\.exe|\.js)?( |$)")
@@ -271,6 +333,13 @@ fn procmon(tx: SyncSender<Snapshot>) {
             });
         }
 
+        stats.record(
+            sys.processes().len() as u64,
+            mine.len() as u64,
+            llm.len() as u64,
+            conns.len() as u64,
+            cmdlines.len() as u64,
+        );
         let snap = Snapshot {
             total_ram: sys.total_memory(),
             available_ram: sys.available_memory(),
