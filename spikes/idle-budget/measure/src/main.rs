@@ -158,7 +158,7 @@ fn main() {
         if let Ok(mut f) = std::fs::OpenOptions::new().append(true).open(summary) {
             let _ = writeln!(
                 f,
-                "### S-3 idle budget: {}\n\n| peak RSS | peak after 30 s | final | limit | result |\n|---|---|---|---|---|\n| {:.2} MB (at {} s) | {:.2} MB | {:.2} MB | {:.0} MB | **{}** |\n",
+                "### S-3 idle budget: {}\n\n| peak RSS | peak after 30 s | final | limit | first frame | output after 30 s | result |\n|---|---|---|---|---|---|---|\n| {:.2} MB (at {} s) | {:.2} MB | {:.2} MB | {:.0} MB | {} | {} bytes | **{}** |\n",
                 std::env::consts::OS,
                 mb(peak),
                 peak_at,
