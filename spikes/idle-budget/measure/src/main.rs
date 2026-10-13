@@ -42,16 +42,21 @@ fn main() {
     if !bin.exists() {
         fail(&format!("binary {} does not exist", bin.display()));
     }
+    let cwd = std::env::current_dir().unwrap_or_else(|e| fail(&format!("cwd: {e}")));
+    let stats_path = cwd.join("spike-stats.txt");
+    let _ = std::fs::remove_file(&stats_path);
     let mut cmd = CommandBuilder::new(&bin);
-    if let Ok(cwd) = std::env::current_dir() {
-        cmd.cwd(cwd);
-    }
+    cmd.arg("--stats");
+    cmd.arg(&stats_path);
+    cmd.cwd(&cwd);
     let mut child = pair
         .slave
         .spawn_command(cmd)
         .unwrap_or_else(|e| fail(&format!("spawn: {e}")));
     drop(pair.slave);
     let pid = child.process_id().unwrap_or_else(|| fail("no child pid"));
+    let measured_exe = exe_path(pid).unwrap_or_else(|| "<unreadable>".into());
+    println!("harness_pid={} measured_pid={} measured_exe={}", std::process::id(), pid, measured_exe);
 
     let writer = pair.master.take_writer().unwrap_or_else(|e| fail(&format!("writer: {e}")));
     let writer = Arc::new(Mutex::new(writer));
@@ -112,14 +117,46 @@ fn main() {
         }
     }
 
+    let elapsed = start.elapsed().as_secs_f64();
+
+    // Ask the spike to quit so it writes its stats file, then give it up to 5 s.
     if let Ok(mut w) = writer.lock() {
         let _ = w.write_all(b"q");
         let _ = w.flush();
     }
-    std::thread::sleep(Duration::from_millis(500));
-    let _ = child.kill();
+    let quit_by = Instant::now() + Duration::from_secs(5);
+    let mut clean_exit = false;
+    while Instant::now() < quit_by {
+        if let Ok(Some(_)) = child.try_wait() {
+            clean_exit = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    if !clean_exit {
+        let _ = child.kill();
+    }
     let frame = frame_seen.load(Ordering::Relaxed);
     let late = late_bytes.load(Ordering::Relaxed);
+
+    // Evidence: the stats file is written by the spike itself and carries its own PID.
+    let stats = std::fs::read_to_string(&stats_path).unwrap_or_default();
+    let field = |k: &str| -> Option<u64> {
+        stats.split_whitespace().find_map(|kv| kv.strip_prefix(k)?.strip_prefix('=')?.parse().ok())
+    };
+    let spike_pid = field("pid");
+    let cycles = field("cycles").unwrap_or(0);
+    let min_cycles = secs / 2 * 9 / 10; // 2 s refresh; allow 10% for scan time
+    let exe_ok = std::path::Path::new(&measured_exe)
+        .file_stem()
+        .is_some_and(|s| s.to_string_lossy() == "idle-spike");
+    let pid_ok = spike_pid == Some(pid as u64);
+    let duration_ok = elapsed >= secs as f64;
+    println!(
+        "evidence: elapsed_s={:.1} clean_exit={} exe_is_spike={} stats_pid_matches_measured={} cycles={} min_cycles={}",
+        elapsed, clean_exit, exe_ok, pid_ok, cycles, min_cycles
+    );
+    println!("spike_stats: {}", stats.trim());
 
     if let Some(path) = csv_path {
         let mut out = String::from("second,rss_bytes\n");
@@ -136,7 +173,8 @@ fn main() {
     let last = samples.last().map(|(_, r)| *r).unwrap_or(0);
     // A run only counts if the spike drew its first frame and kept producing output after
     // warm-up (redraws on every 2 s snapshot); otherwise the process may have been stalled.
-    let valid = frame && late > 0;
+    // It also needs proof that the measured PID is the spike and that procmon kept cycling.
+    let valid = frame && late > 0 && exe_ok && pid_ok && duration_ok && cycles >= min_cycles;
     let pass = valid && mb(peak) <= limit_mb;
     let result = if !valid { "INVALID" } else if pass { "PASS" } else { "FAIL" };
     let line = format!(
@@ -218,5 +256,37 @@ fn rss_bytes(pid: u32) -> Option<u64> {
         let ok = GetProcessMemoryInfo(h, &mut c, c.cb);
         CloseHandle(h);
         (ok != 0).then_some(c.WorkingSetSize as u64)
+    }
+}
+
+/// Executable path of the measured process, to prove it is the spike and not the harness.
+#[cfg(target_os = "linux")]
+fn exe_path(pid: u32) -> Option<String> {
+    std::fs::read_link(format!("/proc/{pid}/exe")).ok().map(|p| p.display().to_string())
+}
+
+#[cfg(target_os = "macos")]
+fn exe_path(pid: u32) -> Option<String> {
+    let mut buf = vec![0u8; 4096];
+    let n = unsafe { libc::proc_pidpath(pid as libc::c_int, buf.as_mut_ptr().cast(), buf.len() as u32) };
+    (n > 0).then(|| String::from_utf8_lossy(&buf[..n as usize]).into_owned())
+}
+
+#[cfg(windows)]
+fn exe_path(pid: u32) -> Option<String> {
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::System::Threading::{
+        OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
+    };
+    unsafe {
+        let h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if h.is_null() {
+            return None;
+        }
+        let mut buf = vec![0u16; 1024];
+        let mut len = buf.len() as u32;
+        let ok = QueryFullProcessImageNameW(h, 0, buf.as_mut_ptr(), &mut len);
+        CloseHandle(h);
+        (ok != 0).then(|| String::from_utf16_lossy(&buf[..len as usize]))
     }
 }
