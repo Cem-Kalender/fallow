@@ -13,6 +13,9 @@ description: "Task list for 001-llm-aware-tui-editor"
 SC-005–SC-010, SC-012), the constitution requires CI benchmarks (Principle VI) and the
 canary test (Principle VII), and plan.md lists the test files.
 
+**Task IDs**: T117–T122 were added after the first version and sit in the phase where they
+belong, so IDs aren't in numeric order inside Phases 3a and 3b.
+
 **Organization**: Phases follow the user-story priorities in spec.md: P1 process panel and
 summary, P2 sorting, P3 editor, P4 detection details, P5 jump to working directory, P6
 kill/pause/resume. Each phase ends with something that can be run and tested on its own.
@@ -67,7 +70,7 @@ crate, as in plan.md, Project Structure. Spikes stay in `spikes/` outside the wo
   - hidden `--snapshot-json`, `--snapshot-hold <SECS>` and `--bench-stats <PATH>`, parsed but not shown in `--help`.
 
   Write the parser by hand, with no argument-parsing crate, to keep startup cost down (FR-041). Satisfies: contracts/cli.md.
-- [ ] T008 Add the hidden `--bench-stats <PATH>` option to `specs/001-llm-aware-tui-editor/contracts/cli.md`. On exit it writes `pid=<own pid> cycles=<procmon refresh cycles>`, so benchmarks can prove they measured Fallow (R-12 lessons). Satisfies: R-12, R-13.
+- [ ] T008 Add the hidden `--bench-stats <PATH>` option to `specs/001-llm-aware-tui-editor/contracts/cli.md`. On exit it writes `pid=<own pid> ticks=<event-loop ticks> cycles=<procmon refresh cycles>`, so benchmarks can prove they measured a live Fallow (R-12 lessons). Also add the hidden `--snapshot-stream <SECS>` option (T048). Satisfies: R-12, R-13.
 - [ ] T009 Implement terminal lifecycle in `src/ui/terminal.rs`:
   - enter raw mode and the alternate screen;
   - enable bracketed paste;
@@ -76,16 +79,17 @@ crate, as in plan.md, Project Structure. Spikes stay in `spikes/` outside the wo
   - on Windows, skip the kitty flags (the console input API already reports modifiers);
   - restore everything (pop flags, disable mouse and paste, leave the alternate screen, leave raw mode) on normal exit **and** from a panic hook.
 
-  Satisfies: FR-067, FR-063, FR-008 (paste), FR-041.
+  Satisfies: FR-001, FR-067, FR-063, FR-008 (paste), FR-041.
 - [ ] T010 Implement the main event loop in `src/app/event_loop.rs` and `src/app/state.rs`:
-  - block on `crossterm::event::poll` with a timeout, drain the worker channels on every wake, and render only when state changed;
+  - block on `crossterm::event::poll` with a **250 ms** timeout, drain the worker channels on every wake, and render only when state changed;
+  - count every loop iteration in a `ticks` counter (the Phase 2 liveness counter for `--bench-stats`);
   - draw the **first frame before** any background thread does work.
 
   Satisfies: R-6, FR-041, Constitution II.
 - [ ] T011 [P] Implement the pane layout in `src/ui/layout.rs`:
   - three panes (Files, Editor, LLM Processes with a System area below it), with placeholder content for now;
   - pane sizes stored in state;
-  - collapse to tabs, switched with `Tab`, when the terminal is too small. Never draw garbled output.
+  - below **100×24**, collapse the panes to tabs switched with `Tab`; below **40×10**, show only "terminal too small" and keep processing input. Never draw garbled output.
 
   Satisfies: spec edge case "very small terminal", contracts/ui-commands.md Layout.
 - [ ] T012 [P] Implement the hint bar in `src/ui/hints.rs`. It always shows context-sensitive hints for the focused pane and mode, and it **must contain `Ctrl-P Commands` whenever no text input has focus** (the benchmark frame marker in contracts/cli.md). Satisfies: FR-060, contracts/cli.md.
@@ -131,24 +135,25 @@ crate, as in plan.md, Project Structure. Spikes stay in `spikes/` outside the wo
   - detect the frame marker `Commands`;
   - record output bytes after warm-up;
   - after sampling, check the executable path of the measured PID;
-  - pass `--bench-stats` and require `pid` equal to the measured PID and `cycles` ≥ 90% of expected.
+  - pass `--bench-stats` and require `pid` equal to the measured PID;
+  - liveness, selected by `--require ticks|cycles`: `ticks` requires ≥ 90% of the expected loop ticks (duration ÷ 250 ms). This is the default in Phase 2, before procmon exists. `cycles` requires procmon cycles ≥ 90% of expected (duration ÷ `refresh_interval_ms`) and becomes the default once T034 lands.
 
   A run that fails any check is INVALID (exit 2). Satisfies: R-12, R-13, Constitution VI.
 - [ ] T021 [P] Port the RSS readers and the executable-path readers into `xtask/src/rss.rs`: Linux `/proc/<pid>/status` VmRSS, macOS `proc_pidinfo(PROC_PIDTASKINFO)`, Windows `WorkingSetSize`. Satisfies: R-13 (RSS per constitution).
-- [ ] T022 Implement `--bench-stats` in `src/main.rs`: write `pid` and the procmon cycle count on exit (the cycle count is 0 until US1). Satisfies: T008.
+- [ ] T022 Implement `--bench-stats` in `src/main.rs`: on exit write `pid`, the event-loop `ticks` (T010) and the procmon `cycles` (0 until T034). Satisfies: T008, R-12.
 - [ ] T023 Implement `cargo xtask bench-startup` in `xtask/src/bench_startup.rs`:
   - 3 warm-ups, then 30 runs, timing from spawn to the frame marker;
-  - fail if **p95 ≥ 100 ms**, retrying once automatically before failing;
+  - fail if **p95 ≥ 100 ms** (constitution v3.0.1: p95 of 30 runs after 3 warm-ups). On failure, re-run the whole benchmark (warm-ups and 30 runs) once automatically; the second result is final;
   - print the p50, p95 and max, and append them to `GITHUB_STEP_SUMMARY`.
 
   Satisfies: FR-041, SC-006, R-13.
-- [ ] T024 Implement `cargo xtask bench-memory --idle` in `xtask/src/bench_memory.rs`: start Fallow with no project, wait 30 s, sample RSS every 1 s for 60 s, and fail if the max is **≥ 50 MB** or the run is INVALID. Upload the series as CSV. Satisfies: FR-040, SC-005, R-13.
+- [ ] T024 Implement `cargo xtask bench-memory --idle` in `xtask/src/bench_memory.rs`: start Fallow with no project, wait 30 s, sample RSS every 1 s for 60 s, and fail if the max is **≥ 50 MB** or the run is INVALID. Liveness uses `--require ticks` in Phase 2 (switched to `cycles` by T034). Upload the series as CSV. Satisfies: FR-040, SC-005, R-13.
 - [ ] T025 Create `.github/workflows/ci.yml` with the matrix `ubuntu-24.04`, `macos-15`, `windows-2025`. Steps:
   - `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo deny check`;
   - `cargo build --release`, `cargo test --workspace`;
   - `cargo xtask bench-startup` and `cargo xtask bench-memory --idle`.
 
-  The build fails if either budget is exceeded. Satisfies: FR-053, Constitution VI.
+  The build fails if either budget is exceeded. Satisfies: FR-050, FR-053, Constitution VI.
 - [ ] T026 [P] Write `tests/cli_args.rs`: every option in contracts/cli.md, exit code 2 on bad arguments, hidden options absent from `--help`. Satisfies: contracts/cli.md.
 
 **Checkpoint**: `fallow` opens a full-screen shell with three empty panes and the hint bar, `Tab`
@@ -192,6 +197,14 @@ summary adds up.
 
   Satisfies: R-2, R-3, R-4, FR-024.
 
+- [ ] T121 [P] [US1] Write `tests/platform_fallbacks.rs`, forcing every fallback path through injectable readers in each platform module:
+  - Linux: `smaps_rollup` missing (kernel < 4.14) or unreadable → footprint from `statm` with metric `Rss`, marked per process;
+  - Windows: `GetProcessMemoryInfo` with `PROCESS_MEMORY_COUNTERS_EX2` failing (builds before 1809) → `WorkingSetSize` with metric `WorkingSet`; a failed or disabled PEB read → `CwdState::Unavailable(reason)`;
+  - macOS: `proc_pid_rusage` failing → footprint `None` with a reason, never a wrong metric;
+  - all: the UI metric label matches the metric actually used.
+
+  Satisfies: FR-019, R-3, plan Target Platform (minimum versions).
+
 ### Platform implementations
 
 - [ ] T031 [P] [US1] Implement Linux in `src/procmon/platform/linux.rs`:
@@ -207,7 +220,7 @@ summary adds up.
   - `footprint` from `proc_pid_rusage(RUSAGE_INFO_V4)` → `ri_phys_footprint`, with metric `PhysFootprint`;
   - `tcp_table` from `proc_pidinfo(PROC_PIDLISTFDS)` + `proc_pidfdinfo(PROC_PIDFDSOCKETINFO)`, reading `soi_kind`, `insi_fport`/`insi_lport` and `tcpsi_state` at the xnu `proc_info.h` offsets validated in the spike.
 
-  Satisfies: R-2, R-3, R-4, FR-019, FR-024, Constitution VII.
+  **Not done until the macOS canary (T120) passes in CI.** Satisfies: R-2, R-3, R-4, FR-019, FR-024, Constitution VII.
 - [ ] T033 [P] [US1] Implement Windows in `src/procmon/platform/windows.rs`:
   - `cmdline` from `NtQueryInformationProcess(ProcessCommandLineInformation)` with `PROCESS_QUERY_LIMITED_INFORMATION`, split with `CommandLineToArgvW`;
   - `footprint` from `GetProcessMemoryInfo` with `PROCESS_MEMORY_COUNTERS_EX2` → `PrivateWorkingSetSize`, falling back to `WorkingSetSize` with metric `WorkingSet` on builds before 1809;
@@ -226,9 +239,10 @@ summary adds up.
   - command lines cached per `ProcessKey` and read once;
   - `cpu_samples` as a ring of the last 5 refreshes;
   - footprint and cwd read **only for LLM group members**;
-  - an `Arc<Snapshot>` sent over `sync_channel(1)`, and the cycle counter feeding `--bench-stats`.
+  - an `Arc<Snapshot>` sent over `sync_channel(1)`, and the cycle counter feeding `--bench-stats`;
+  - switch the default liveness requirement in `xtask/src/bench_memory.rs` from `ticks` to `cycles` (≥ 90% of expected procmon cycles) once this lands.
 
-  Satisfies: R-1, R-6, FR-010, FR-015, FR-030.
+  Satisfies: R-1, R-6, FR-010, FR-015, FR-030, R-12.
 - [ ] T035 [US1] Implement detection in `src/procmon/detect.rs`:
   - signatures: `match.name` glob (case-insensitive on Windows and macOS) and `match.cmdline` regex on argv joined with spaces, compiled once at config load;
   - provider connections against the `ResolvedProviderSet` (Established, port 443);
@@ -296,6 +310,7 @@ summary adds up.
 - [ ] T048 [US1] Implement `--snapshot-json` and `--snapshot-hold <SECS>` in `src/cli.rs` and `src/procmon/json.rs`:
   - run two refresh cycles, print the Snapshot as JSON (records limited to LLM group members) and exit;
   - `--snapshot-hold` then keeps all state in memory for `SECS` seconds;
+  - `--snapshot-stream <SECS>` prints one JSON line per refresh cycle (timestamp, cycle number, the `ProcessKey`s of detected LLM processes) for `SECS` seconds, so latency tests can watch processes appear and disappear;
   - never start the TUI; respect `--no-dns`;
   - use a small hand-written JSON writer, with **no serde_json in the product** (the plan lists serde_json as dev-only).
 
@@ -308,6 +323,38 @@ summary adds up.
   - Record: results, process counts and LLM group counts in `specs/001-llm-aware-tui-editor/research.md` R-12, next to the CI lower bound.
 
   Satisfies: CT-1, FR-040, Constitution I.
+
+### Phase 3a CI checks (performance claims, privileges, macOS canary)
+
+- [ ] T117 [US1] Implement `cargo xtask bench-refresh` in `xtask/src/bench_refresh.rs`:
+  - a process-spawning fixture raises the total process count to **about 600** (idle child processes, released afterwards);
+  - run Fallow in the PTY harness with the default 2 s refresh;
+  - after a 30 s warm-up, sample Fallow's CPU time for 120 s from the OS (Linux `/proc/<pid>/stat` utime+stime, macOS `proc_pid_rusage` user+system time, Windows `GetProcessTimes`);
+  - fail if the average exceeds **2% of one core**; record the process count actually reached;
+  - add the step to `.github/workflows/ci.yml` on all three OSes.
+
+  Satisfies: plan Performance Goals (refresh CPU), Constitution VI.
+- [ ] T118 [US1] Implement `cargo xtask bench-new-process` in `xtask/src/bench_new_process.rs`:
+  - run `fallow --snapshot-stream 60`;
+  - start a stand-in process matching a built-in signature at a random offset within a refresh interval, and record the time until its `ProcessKey` first appears;
+  - stop it and record the time until it disappears;
+  - repeat 10 times; fail if any appearance or disappearance takes longer than **two refresh intervals (4 s at the default)**;
+  - add the step to `.github/workflows/ci.yml` on all three OSes.
+
+  Satisfies: SC-004, Constitution VI.
+- [ ] T119 [US1] Run Fallow **unprivileged** in CI, in `.github/workflows/ci.yml` and `xtask/src/unprivileged.rs`:
+  - **Windows**: create a standard local user (`net user fallowci <random> /add`, not in Administrators), then run `fallow --snapshot-json` and the core detection checks (a signature process, a provider connection, a local model server and client) as that user with a non-elevated token, through a scheduled task or `CreateProcessWithLogonW`;
+  - **Linux and macOS**: run the same checks as a non-root user (`sudo -u nobody` or a created user), with the fixtures owned by that user;
+  - fail if Fallow requests elevation or exits non-zero, or if any **core field** for the user's own processes (name, PID, cwd, footprint, CPU, uptime, status, provider/model, confidence) is missing or `Unavailable` because of privileges. Windows cwd may be `Unavailable` only when `windows.read_working_directory = "never"`.
+
+  Satisfies: FR-030, Constitution V.
+- [ ] T120 [US1] Implement the **macOS canary** in `xtask/src/canary.rs` and add it to the `macos-15` job in `.github/workflows/ci.yml`:
+  - start a monitored child with an environment variable holding a random 32-byte canary and a command line matching an LLM signature, so Fallow reads it through KERN_PROCARGS2;
+  - run `fallow --snapshot-hold 20` and dump its memory with `sudo lldb -p <pid> --batch -o "process save-core <file>"`;
+  - search the core file, Fallow's stdout and screen output, logs, the config dir and the cache dir for the canary in UTF-8 and UTF-16LE;
+  - any hit fails. This gates T032 (Constitution VII: the canary test runs on the platform where the command-line read returns environment data).
+
+  Satisfies: SC-007, FR-024, Constitution VII.
 
 **Checkpoint (Phase 3a, MVP)**: `fallow` with no arguments shows every LLM process with the
 correct fields, groups and statuses, the summary, help and palette. This is enough to start
@@ -324,18 +371,22 @@ the first public release, but not blocking Phase 4 onward.**
 and the Defender job reports PASS with protection verified.
 
 - [ ] T049 [US1] Implement `cargo xtask detect-fixtures` in `xtask/src/detect_fixtures.rs` with fixtures in `tests/fixtures/detect/`:
-  - an LLM reference set of ≥ 20 tools: stand-in binaries named or invoked like each built-in signature, interpreter scripts that open real TLS connections to provider hosts, and a stub local model server on 11434 with a client;
+  - **real tools first**: install in CI and run, where possible, **at minimum Claude Code (`npm i -g @anthropic-ai/claude-code`), aider (`pip install aider-chat`) and Ollama** (official install script on Linux/macOS, installer on Windows). Record each one's real process name and command line into `tests/fixtures/detect/recorded/<tool>.json`, and use those recordings for tools that can't run in CI;
+  - **stand-ins only for tools that can't be installed or recorded**, each marked `"stand_in": true` in `tests/fixtures/detect/manifest.toml` and reported separately in the results;
+  - the LLM reference set has ≥ 20 tools in total;
+  - **provider connections without live network**: a test-only `--config-dir` whose `providers.toml` defines a test provider with range `127.0.0.2/32`, plus a local TLS server on `127.0.0.2:443` started with `sudo` (Linux/macOS) or as Administrator (Windows). Interpreter scripts connect to it. One optional live check against real provider hosts runs but doesn't fail the job;
+  - a stub local model server on 11434 with a client;
   - a non-LLM set of ≥ 20 processes: shells, build tools, language servers, and a browser with the browser category off;
-  - run `fallow --snapshot-json` and assert ≥ 95% detected, 100% of the signature-covered tools `certain`, and ≤ 1 false positive.
+  - run `fallow --snapshot-json` and assert ≥ 95% detected, 100% of the signature-covered tools `certain`, and ≤ 1 false positive. Report real and stand-in results separately.
 
   Satisfies: SC-002, SC-003.
-- [ ] T050 [US1] Implement the **SC-007 canary test** in `xtask/src/canary.rs`:
+- [ ] T050 [US1] Extend the **SC-007 canary test** in `xtask/src/canary.rs` (macOS is done in T120, Phase 3a) to Linux and Windows:
   - start a monitored child with an environment variable holding a random 32-byte canary and an LLM signature name, so Fallow reads its command line;
   - run `fallow --snapshot-hold 20`;
   - dump Fallow's memory: Linux via `/proc/<pid>/mem` with `sudo`; macOS via `sudo lldb -p <pid> --batch -o "process save-core <file>"`; Windows via `MiniDumpWriteDump` with `MiniDumpWithFullMemory`;
   - search the dump, Fallow's stdout and screen output, logs, the config dir and the cache dir for the canary in UTF-8 and UTF-16LE.
 
-  Any hit fails. Runs on all three platforms; it is mandatory on macOS per Constitution VII. Satisfies: SC-007, FR-024, Constitution VII.
+  Any hit fails. After this task the canary runs on all three platforms. Satisfies: SC-007, FR-024, Constitution VII.
 - [ ] T051 [US1] Implement the **SC-009 egress test** in `xtask/src/egress.rs`:
   - Linux: `strace -f -e trace=network` on Fallow plus `tcpdump` on port 53;
   - macOS: `sudo tcpdump -i pktap,all -k` filtered to Fallow's PID;
@@ -350,7 +401,7 @@ and the Defender job reports PASS with protection verified.
 
   The check writes `defender-result.json` (`{"protection_verified": bool, "detections": n, "result": "PASS" | "FAIL"}`) and appends it to `GITHUB_STEP_SUMMARY`, so T116 can count consecutive passes. Satisfies: R-10, Constitution V.
 - [ ] T053 [US1] Extend `.github/workflows/ci.yml`:
-  - `cargo xtask detect-fixtures` and `cargo xtask canary` on all three OSes, blocking;
+  - `cargo xtask detect-fixtures` on all three OSes and `cargo xtask canary` on Linux and Windows (macOS has run it since T120), blocking;
   - `cargo xtask egress` on all three, blocking;
   - `cargo xtask defender-check` as a **separate job** `defender` on `windows-2025` with `continue-on-error: true`. It is **non-blocking at first**: a failure is reported in the run summary and as a warning annotation but doesn't fail the workflow. It uploads `defender-result.json` as an artifact.
 
@@ -361,6 +412,14 @@ and the Defender job reports PASS with protection verified.
   - record the five run IDs in `specs/001-llm-aware-tui-editor/research.md` R-10.
 
   Satisfies: R-10, Constitution V.
+
+- [ ] T122 [US1] Measure and publish the memory cost of the **opt-in features**, in `xtask/src/bench_memory.rs`, `.github/workflows/ci.yml`, `docs/memory-costs.md` and `README.md`:
+  - `bench-memory --idle --all-users`: elevated (`sudo` on Linux/macOS, the elevated runner on Windows), with all users' processes shown;
+  - `bench-memory --idle --browsers`: browser category enabled, with a headless Chromium running;
+  - run both on all three OSes as separate, reporting CI steps. They don't count against the default 50 MB budget, but each profile's peak is published;
+  - write the latest figures per OS to `docs/memory-costs.md` with run IDs, and link them from the README.
+
+  Not blocking Phase 3a. Satisfies: Constitution I ("Opt-in features MUST document their memory cost"), Performance Budgets ("benchmarked separately and their cost published"), FR-026, FR-031.
 
 **Checkpoint (Phase 3b)**: The canary, egress and detection fixtures block CI on all three OSes.
 The Defender job reports on every run and becomes blocking after 5 consecutive passes (T116).
@@ -667,7 +726,7 @@ working.
 ### Documentation and governance
 
 - [ ] T113 [P] Update `README.md`: install, usage, key bindings summary, configuration paths, privacy statement (FR-035 / DNS exception), the platform support table, and the macOS beta status. Satisfies: CT-4.
-- [ ] T114 Amend `.specify/memory/constitution.md` (PATCH) to resolve TODO(REFERENCE_HARDWARE) with the GitHub-hosted runners `ubuntu-24.04`, `macos-15`, `windows-2025`, and TODO(LARGE_PROJECT_FIXTURE) with the `xtask gen-fixture` definition (T082), with an updated Sync Impact Report. Satisfies: R-13, Governance.
+- [ ] T114 Amend `.specify/memory/constitution.md` (PATCH; the startup statistic was already recorded in v3.0.1) to resolve TODO(REFERENCE_HARDWARE) with the GitHub-hosted runners `ubuntu-24.04`, `macos-15`, `windows-2025`, and TODO(LARGE_PROJECT_FIXTURE) with the `xtask gen-fixture` definition (T082), with an updated Sync Impact Report. Satisfies: R-13, Governance.
 - [ ] T115 Before tagging a release, re-run CT-1 (T054) with the full product: editor open on a real project and several LLM processes running. Record the result in research.md R-12. Satisfies: CT-1, FR-040.
 
 ---
@@ -679,7 +738,7 @@ working.
 - **Setup (Phase 1)**: none.
 - **Foundational (Phase 2)**: depends on Setup and blocks every story.
 - **US1 Phase 3a**: depends on Foundational. It is the MVP.
-- **US1 Phase 3b** (release verification, T049–T053, T116): depends on Phase 3a (T048 and the
+- **US1 Phase 3b** (release verification, T049–T053, T116, T122): depends on Phase 3a (T048 and the
   detection pipeline). It **does not block Phase 4 or later phases**, which may start as soon as
   3a is done. It **must be complete before the first public release** (T110).
 - **US2 (Phase 4)**: depends on Phase 3a (it sorts the US1 panel).
@@ -708,6 +767,10 @@ working.
 - T043 → T044–T046 (registry before keymap, help and palette)
 - T048 → T049–T052 → T053 → T116 (the snapshot interface before the CI tests that use it; the
   Defender job becomes blocking only after 5 consecutive passes)
+- T048 → T117, T118, T119, T120 (Phase 3a CI checks need the snapshot interface)
+- T120 → T032 done (the macOS command-line reader isn't done until the macOS canary passes)
+- T034 → the bench-memory liveness default switches from `ticks` to `cycles`
+- T053 → T122 (opt-in profiles reuse the Phase 3b CI wiring)
 - T031–T041 → T054 (CT-1 needs working detection)
 - T069 → T070, T094, T097–T099
 - T082 → T083–T085
@@ -719,6 +782,7 @@ working.
 ```text
 # Tests together:
 T027 tests/status_rules.rs   T028 tests/grouping.rs   T029 tests/detect.rs   T030 tests/platform_*.rs
+T121 tests/platform_fallbacks.rs
 
 # Platform implementations together (one per OS):
 T031 src/procmon/platform/linux.rs   T032 src/procmon/platform/macos.rs   T033 src/procmon/platform/windows.rs
@@ -748,10 +812,11 @@ T094 tests/control_requires_confirmation.rs   T095 platform unix control   T096 
 
 1. Phase 1 Setup, then Phase 2 Foundational. CI is green with the startup and idle gates on
    three OSes.
-2. **Phase 3a** (T027–T048, T054): the working panel. **Stop and validate** with quickstart
+2. **Phase 3a** (T027–T048, T054, T117–T121): the working panel, with the refresh-CPU,
+   new-process-latency, unprivileged and macOS canary checks. **Stop and validate** with quickstart
    V1–V3, and run CT-1 (T054) on a real developer machine. This is the MVP, usable locally and
    from CI builds.
-3. **Phase 3b** (T049–T053, T116) runs alongside the next phases. The detection fixtures,
+3. **Phase 3b** (T049–T053, T116, T122) runs alongside the next phases. The detection fixtures,
    canary and egress tests become blocking CI gates as each lands. The Defender job starts
    non-blocking and becomes blocking after 5 consecutive passes. All of 3b must be done
    before the first public release.

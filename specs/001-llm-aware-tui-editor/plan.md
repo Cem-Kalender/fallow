@@ -33,7 +33,7 @@ enforces the constitution's memory and startup budgets.
 keyboard enhancement flags), arboard, sysinfo, ropey, tree-sitter, tree-sitter-highlight,
 15 tree-sitter grammar crates, notify, grep-searcher, grep-regex, ignore, toml, serde, regex,
 globset, ipnet, compact_str, smallvec, zeroize, dirs. Platform: `libc` (Linux, macOS),
-`windows-sys` (Windows). Dev only: portable-pty, serde_json, proptest. Each dependency is
+`windows-sys` (Windows). Dev only: portable-pty, serde_json, proptest, trybuild. Each dependency is
 justified in the Dependency budget section below.
 
 **Storage**: None beyond the user's TOML config files and files the user saves.
@@ -48,10 +48,16 @@ RSS), macOS 13+ (arm64, x86_64), Windows 10 1809+ (x86_64; `PrivateWorkingSetSiz
 **Project Type**: Single native terminal application (one binary) plus a dev-only `xtask` crate.
 
 **Performance Goals**:
-- First frame in under 100 ms (p95).
-- Process refresh every 2 s, using under 2% of one core on average with about 600 processes.
-- Search returns its first results in under 1 s on the reference fixture (SC-010).
-- Input-to-render latency under 16 ms in the editor.
+- First frame in under 100 ms: p95 of 30 runs after 3 warm-ups (constitution v3.0.1). CI
+  benchmark T023.
+- Process refresh every 2 s, using under 2% of one core on average with about 600 processes. CI
+  benchmark T117.
+- A new or exited LLM process shows in the panel within two refresh intervals (SC-004). CI
+  benchmark T118.
+- Search returns its first results in under 1 s on the reference fixture (SC-010). CI
+  benchmark T084.
+- *Unmeasured target, not a claim (Principle VI)*: input-to-render latency of about 16 ms in
+  the editor. It must not be stated in docs, release notes or UI until a CI benchmark backs it.
 
 **Constraints**:
 - RSS under 50 MB idle and under 150 MB with the reference project (constitution I).
@@ -85,7 +91,7 @@ Constitution v3.0.0. Evaluated before Phase 0 and after Phase 1 against v2.0.0. 
 | VI. Benchmarked claims | `xtask bench-startup` and `bench-memory` run on all three platforms in GitHub Actions and fail the build when over budget (R-13). Constitution TODOs for the reference hardware and fixture are resolved in R-13. | PASS |
 | VII. Privacy | No telemetry. DNS is limited to configured provider hostnames, forward only, and can be disabled (R-5). No payload inspection. The environment is never requested. Linux and Windows read the command line without it. On macOS, the KERN_PROCARGS2 buffer is wiped before return, nothing after argv is parsed, and truncated reads are used if S-4 confirms they exclude envp (R-2). The SC-007 canary test runs on all three platforms, including macOS, as v3.0.0 requires. | PASS (v3.0.0) |
 | Workflow: dependency justification | See the Dependency budget section below. | PASS |
-| Workflow: control paths tested | SC-008 test: there is no code path to `platform::signal_*` except through `ControlRequest::execute`, which requires a confirmed token. | PASS |
+| Workflow: control paths tested | SC-008 test (T094): there is no code path to `platform::{suspend, resume, terminate, force_kill}` except through `ControlRequest::execute`, which requires a `ConfirmedToken`. Force kill needs its own second token. | PASS |
 | Workflow: network code paths | The only network-capable code is the `dns` module (`ToSocketAddrs`). A CI egress test (`xtask egress`) captures traffic and fails on anything except DNS queries for the configured names. | PASS |
 
 ## Dependency budget
@@ -106,6 +112,8 @@ Constitution v3.0.0. Evaluated before Phase 0 and after Phase 1 against v2.0.0. 
 | dirs | Platform config dir | |
 | arboard | Platform clipboard fallback for copy, cut and `Ctrl-V` (FR-008). OSC 52 is written directly, with no crate. | Opened lazily on the first clipboard use, never at startup. On X11 it keeps a helper thread alive after a copy, so the selection stays available. That costs about 1 MB and only after the first copy. `bench-memory --loaded` performs one copy so that this cost is measured. |
 | libc / windows-sys | Platform layer | `windows-sys` is raw bindings with no runtime cost. |
+| *Dev only*: portable-pty, serde_json, proptest | Benchmark harness, test JSON, parser property tests | Not linked into the shipped binary. |
+| *Dev only*: trybuild | Compile-fail tests proving the platform kill/suspend functions can't be called outside `ControlRequest` (T094, SC-008, Constitution IV) | Not linked into the shipped binary. |
 | **Rejected**: tokio, hickory-resolver, netstat2, crossbeam, anyhow in hot paths | R-5, R-4, R-6 | |
 
 ## Gates before tasks
@@ -123,7 +131,7 @@ Closed or moved:
 | D-1 macOS command line and environment | Option (a). Constitution v3.0.0, Principle VII. R-2 updated. |
 | S-2 macOS footprint vs Activity Monitor | No longer a gate. Now a macOS platform task with SC-012 as its acceptance test, and a macOS release blocker (below). |
 | S-4 truncated KERN_PROCARGS2 | Runs on the physical Mac as part of the macOS release blocker. If truncated reads exclude envp, the reader uses them (R-2). |
-| R-10 Windows cwd and Defender | Resolved as a design. The CI job explicitly enables Defender real-time protection, verifies it, and fails if it can't (R-10). |
+| R-10 Windows cwd and Defender | Resolved as a design. A separate CI job explicitly enables Defender real-time protection and verifies it is on. A run where protection isn't verified never counts as a pass. The job is **non-blocking at first** (T053) and becomes blocking after 5 consecutive verified passes on `main` (T116). |
 
 ## Carried into tasks
 

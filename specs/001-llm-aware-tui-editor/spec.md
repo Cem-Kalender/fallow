@@ -234,8 +234,9 @@ confirming stops it.
   limit open read-only with a warning, to protect the memory budget.
 - An agent deletes or renames a file that is open in the editor: the user is told and the buffer
   stays open as unsaved.
-- The terminal window is very small: the panel and editor collapse to a readable layout, never
-  garbled output.
+- The terminal window is very small: below 100×24 the panes collapse to tabs switched with Tab;
+  below 40×10 Fallow shows only "terminal too small" and keeps running. It never draws garbled
+  output.
 
 ## Requirements *(mandatory)*
 
@@ -288,7 +289,9 @@ confirming stops it.
 - **FR-013**: Descendant processes of an LLM process MUST be grouped under it, with group totals
   for memory and CPU. Descendants that are themselves LLM processes MUST appear as nested LLM
   entries.
-- **FR-014**: Users MUST be able to sort the panel by memory, CPU, uptime, name and confidence.
+- **FR-014**: Users MUST be able to sort the panel by memory, CPU, uptime, name, status and
+  confidence, using a key or by clicking the column header. Choosing the same sort again
+  reverses the order. Memory and CPU sort by group totals.
 - **FR-015**: The panel MUST refresh automatically, every 2 seconds by default, and the interval
   MUST be user-configurable.
 - **FR-016**: Fallow MUST show a system summary of total RAM, RAM used by LLM processes (group
@@ -389,8 +392,12 @@ confirming stops it.
 
 **Usability**
 
-- **FR-060**: A bar of key hints MUST always be visible, showing the most relevant keys for the
-  focused pane and current mode.
+- **FR-060**: A bar of key hints MUST always be visible. For the focused pane and current mode,
+  it MUST show:
+  - a way to open help that doesn't need F1 (FR-066);
+  - the command palette key;
+  - the 3–5 primary commands of that context, as listed per pane in
+    contracts/ui-commands.md.
 - **FR-061**: A help overlay MUST list every key binding, grouped by pane, and the known terminal
   conflicts. It MUST explain that while Fallow captures the mouse, the terminal's own text
   selection needs a modifier held while dragging (usually Shift), and that the optional Alt
@@ -400,8 +407,8 @@ confirming stops it.
 - **FR-063**: Users MUST be able to use the mouse to select items (files, processes, search
   results, editor positions), scroll any scrollable pane, and resize panes by dragging their
   borders, in terminals that report mouse events. Dragging in the editor MUST select text, and
-  clicking a process panel column header MUST sort by that column (clicking again reverses).
-  Every mouse action MUST also be reachable from the keyboard or the command palette.
+  column headers in the process panel MUST be clickable for sorting (FR-014). Every mouse action
+  MUST also be reachable from the keyboard or the command palette.
 - **FR-064**: No default key binding may lose its function because the default settings of
   Windows Terminal, macOS Terminal.app or iTerm2 intercept it. A terminal binding that intercepts
   a key but produces the same effect is acceptable if documented; for example, Windows Terminal's
@@ -443,6 +450,22 @@ confirming stops it.
 - **System Summary**: A snapshot of total RAM, LLM RAM, local model RAM, Fallow RAM and remaining
   RAM.
 - **Project**: An opened directory with its file tree and open buffers.
+
+## Constitution Check
+
+Required by the constitution's Development Workflow ("Every specification and plan MUST include
+a Constitution Check"). The table states this feature's expected impact against constitution
+v3.0.x.
+
+| Area | Expected impact | Governing requirements |
+|---|---|---|
+| **Memory** (Principle I) | Idle under 50 MB RSS with the process panel running; under 150 MB with the reference large project open. Per-snapshot data is kept only for LLM group members, and search results, recent-files results and undo history are capped. Opt-in features (all-users mode, browser category) are measured separately and their cost is published. | FR-040, FR-042, SC-005 |
+| **Startup** (Principle II) | First interactive screen in under 100 ms. Process scanning and DNS resolution start after the first frame. Nothing is indexed in the background. | FR-041, FR-042, FR-022c, SC-006 |
+| **Privileges** (Principle V) | No elevation needed for any core feature; only the current user's processes are shown by default. All-users mode works only if Fallow is already elevated, and Fallow never asks for elevation. Changes to other processes (kill, pause, resume) and file operations happen only after explicit confirmation. | FR-030, FR-031, FR-032, FR-033, FR-034, FR-068 |
+| **Data access** (Principle VII) | Detection uses only process metadata and connection endpoints, never payloads. Process environments are never requested. On macOS, where the command-line API also returns environment values, the buffer is wiped before the read returns. Nothing leaves the machine except forward DNS lookups of configured provider hostnames, which can be disabled. | FR-024, FR-027, FR-035, FR-022a, SC-007, SC-009 |
+| Terminal-only (Principle III) | Full-screen terminal application; no GUI, webview or browser runtime. | FR-001 |
+| Observability over control (Principle IV) | The panel observes. Control actions need confirmation, and force kill a second confirmation. | FR-032, FR-033, SC-008 |
+| Benchmarked claims (Principle VI) | Every performance figure in this spec has a CI benchmark: SC-004, SC-005, SC-006, SC-010. | FR-053 |
 
 ## Success Criteria *(mandatory)*
 
