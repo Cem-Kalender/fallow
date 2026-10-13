@@ -156,7 +156,7 @@ atomically when the DNS thread finishes a pass. It is never populated from any o
 ### ControlRequest (FR-032, FR-033)
 | Field | Type | Notes |
 |---|---|---|
-| action | enum `Kill` / `Pause` / `Resume` | |
+| action | enum `Kill` / `ForceKill` / `Pause` / `Resume` | `Kill` = SIGTERM on Linux/macOS, `TerminateProcess` on Windows. `ForceKill` = SIGKILL, Linux/macOS only, created only from `AwaitingForceConfirmation`. |
 | targets | Vec<ProcessKey> | Root plus members when acting on a group |
 | include_children | bool | Shown in the dialog |
 | platform_note | Option<&'static str> | Windows pause or resume text (FR-052) |
@@ -174,6 +174,22 @@ Requested ──▶ AwaitingConfirmation ──(cancel / esc / target exited)─
 ```
 No path reaches `Executing` without passing through `AwaitingConfirmation`. Tests assert this
 (SC-008).
+
+**Kill on Linux/macOS** (graceful first):
+```text
+Executing (SIGTERM) ──▶ WaitingForExit (poll every 250 ms, up to 5 s)
+        │ all targets exited ──▶ Done(Ok)
+        │ some still alive
+        ▼
+AwaitingForceConfirmation (second dialog, remaining targets only)
+        │ cancel / esc ──▶ Done(StillRunning)
+        │ confirm (new ConfirmedToken for ForceKill)
+        ▼
+Revalidating ──▶ Executing (SIGKILL) ──▶ Done
+```
+A target that exits or changes `(pid, start_time)` during the wait or while the second dialog is
+open becomes `Gone` and is never sent SIGKILL. On Windows, `Kill` is a single
+`TerminateProcess` with no force step.
 
 ## Editor
 

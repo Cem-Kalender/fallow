@@ -169,7 +169,9 @@ Fallow asks for explicit confirmation that names the process and the action befo
 only feature that changes another process, it carries the highest risk.
 
 **Independent Test**: Start a dummy LLM process, request "kill", cancel, and verify it is still
-running. Request again, confirm, and verify it has stopped.
+running. Request again, confirm, and verify it has stopped. On Linux and macOS, also start a dummy
+that ignores SIGTERM: after 5 seconds "Force kill" is offered, cancelling leaves it running, and
+confirming stops it.
 
 **Acceptance Scenarios**:
 
@@ -181,6 +183,14 @@ running. Request again, confirm, and verify it has stopped.
    confirmation states whether the children will also be stopped, and Fallow does exactly that.
 4. **Given** the user lacks permission to signal the process, **When** they confirm, **Then** Fallow
    reports the failure and does not ask for elevation.
+5. **Given** Linux or macOS and a confirmed "kill", **When** Fallow acts, **Then** it asks the
+   process to stop gracefully (SIGTERM) and waits up to 5 seconds. If the process exits, the kill
+   is reported as done. If it is still running after 5 seconds, Fallow offers "Force kill"
+   (SIGKILL) in a **second** confirmation, which lists the processes still running. Nothing more
+   happens unless the user confirms that too; cancelling leaves them running.
+6. **Given** Windows, **When** the user requests "kill", **Then** the confirmation states that the
+   kill is immediate and the process gets no chance to clean up or save state. Confirming
+   terminates it in one step, with no separate force kill.
 
 ---
 
@@ -341,6 +351,11 @@ running. Request again, confirm, and verify it has stopped.
 - **FR-032**: Kill, pause and resume MUST each require an explicit confirmation that names the
   process, PID, action and whether child processes are affected. There MUST be no "don't ask
   again" option.
+  - On Linux and macOS, "kill" MUST first request a graceful stop (SIGTERM) and wait up to 5
+    seconds. Forcing (SIGKILL) MUST only follow a second, separate confirmation for the
+    processes still running.
+  - On Windows, "kill" terminates immediately, and its confirmation MUST say that the process
+    cannot clean up.
 - **FR-033**: Before acting, Fallow MUST verify that the PID still refers to the same process that
   was confirmed.
 - **FR-034**: Fallow MUST NOT change any process, file or setting outside its own configuration and
