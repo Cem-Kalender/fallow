@@ -22,7 +22,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     env:
-      EXE: ${{ runner.os == 'Windows' && '.exe' || '' }}
+      EXE: ${{ startsWith(matrix.os, 'windows') && '.exe' || '' }}
     defaults:
       run:
         shell: bash
