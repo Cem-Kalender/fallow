@@ -1,0 +1,122 @@
+# Built-in LLM process signatures (contracts/config.md, FR-020, FR-023, FR-026).
+#
+# `match.name` is a glob on the process name (case-insensitive on Windows and macOS).
+# `match.cmdline` is a regex on the argv joined with spaces; it is what recognizes agents
+# hosted by an interpreter (`node .../cli.js`, `python -m aider`).
+
+# --- Agent CLIs ---------------------------------------------------------------------------
+
+[[signature]]
+id = "claude-code"
+kind = "agent_cli"
+provider = "anthropic"
+match.name = "claude"
+match.cmdline = '(^|[\\/ ])claude(\.exe)?( |$)|@anthropic-ai[\\/]claude-code[\\/]'
+
+[[signature]]
+id = "codex"
+kind = "agent_cli"
+provider = "openai"
+match.name = "codex"
+match.cmdline = '(^|[\\/ ])codex(\.exe)?( |$)|@openai[\\/]codex[\\/]'
+
+[[signature]]
+id = "aider"
+kind = "agent_cli"
+match.name = "aider"
+match.cmdline = '(^|[\\/ ])aider(\.exe)?( |$)|(^| )-m aider( |$)'
+
+[[signature]]
+id = "gemini-cli"
+kind = "agent_cli"
+provider = "google"
+match.name = "gemini"
+match.cmdline = '(^|[\\/ ])gemini(\.exe)?( |$)|@google[\\/]gemini-cli[\\/]'
+
+[[signature]]
+id = "opencode"
+kind = "agent_cli"
+match.name = "opencode"
+match.cmdline = '(^|[\\/ ])opencode(\.exe)?( |$)|opencode-ai[\\/]'
+
+[[signature]]
+id = "goose"
+kind = "agent_cli"
+# No name match: "goose" is also a common database migration tool. Only the agent's own
+# subcommands are matched.
+match.cmdline = '(^|[\\/ ])goose(\.exe)? (session|run|web)( |$)'
+
+# --- Local model servers -----------------------------------------------------------------
+
+[[signature]]
+id = "ollama"
+kind = "local_model_server"
+match.name = "ollama*"
+model_from_cmdline = 'run\s+(\S+)'
+local_server.default_ports = [11434]
+
+[[signature]]
+id = "llama-server"
+kind = "local_model_server"
+match.name = "llama-server*"
+model_from_cmdline = '(?:^| )(?:-m|--model)\s+(\S+)'
+local_server.default_ports = [8080]
+
+[[signature]]
+id = "lm-studio"
+kind = "local_model_server"
+match.name = "lm[ -]studio*"
+local_server.default_ports = [1234]
+
+[[signature]]
+id = "vllm"
+kind = "local_model_server"
+match.cmdline = '(^|[\\/ ])vllm serve( |$)|vllm\.entrypoints\.'
+model_from_cmdline = '(?:vllm serve|--model)\s+(\S+)'
+local_server.default_ports = [8000]
+
+[[signature]]
+id = "koboldcpp"
+kind = "local_model_server"
+match.name = "koboldcpp*"
+model_from_cmdline = '--model\s+(\S+)'
+local_server.default_ports = [5001]
+
+# --- AI-enabled editors --------------------------------------------------------------------
+
+[[signature]]
+id = "cursor"
+kind = "editor"
+match.name = "cursor*"
+
+[[signature]]
+id = "windsurf"
+kind = "editor"
+match.name = "windsurf*"
+
+# --- Browsers (ignored unless detection.browsers = true, FR-026) --------------------------
+
+[[signature]]
+id = "chrome"
+kind = "browser"
+match.name = "chrome*"
+
+[[signature]]
+id = "msedge"
+kind = "browser"
+match.name = "msedge*"
+
+[[signature]]
+id = "firefox"
+kind = "browser"
+match.name = "firefox*"
+
+[[signature]]
+id = "safari"
+kind = "browser"
+match.name = "safari*"
+
+[[signature]]
+id = "brave"
+kind = "browser"
+match.name = "brave*"
