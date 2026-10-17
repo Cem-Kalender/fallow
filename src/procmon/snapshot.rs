@@ -44,6 +44,7 @@ pub struct ProcessRecord {
 }
 
 impl ProcessRecord {
+    /// Mean of the CPU samples (unfilled slots count as 0 for a new process).
     pub fn mean_cpu(&self) -> f32 {
         self.cpu_samples.iter().sum::<f32>() / self.cpu_samples.len() as f32
     }
@@ -60,13 +61,14 @@ pub enum FootprintMetric {
 }
 
 impl FootprintMetric {
+    /// The label shown in the UI (contracts/ui-commands.md "Displayed semantics").
     pub fn label(self) -> &'static str {
         match self {
-            FootprintMetric::PhysFootprint => "phys_footprint",
-            FootprintMetric::PrivateWorkingSet => "private working set",
+            FootprintMetric::PhysFootprint => "footprint",
+            FootprintMetric::PrivateWorkingSet => "private WS",
             FootprintMetric::Pss => "PSS",
             FootprintMetric::Rss => "RSS",
-            FootprintMetric::WorkingSet => "working set",
+            FootprintMetric::WorkingSet => "WS",
         }
     }
 }

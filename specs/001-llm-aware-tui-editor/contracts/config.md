@@ -96,7 +96,8 @@ Matching:
   line could not be read.
 - **Across signatures, any match counts (OR).** A process is detected if at least one enabled
   signature matches it.
-- `match.name` is case-insensitive on Windows and macOS, case-sensitive on Linux.
+- `match.name` is case-insensitive on Windows and macOS, case-sensitive on Linux. On Windows a
+  trailing `.exe` is ignored, so `match.name = "claude"` matches `claude.exe`.
 
 Validation:
 - `id` and `kind` are required, plus at least one of `match.name` and `match.cmdline`.

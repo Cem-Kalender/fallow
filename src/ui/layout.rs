@@ -1,5 +1,6 @@
 //! Pane layout (contracts/ui-commands.md "Layout"): three panes plus the hint bar, collapsing to
-//! tabs below 100×24 and to a "terminal too small" notice below 40×10.
+//! tabs below 100×24 and to a "terminal too small" notice below 40×10. The same geometry is
+//! used to draw and to hit-test the mouse (FR-063).
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Flex, Layout, Rect};
@@ -7,8 +8,8 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Paragraph, Wrap};
 
-use super::hints;
-use crate::app::state::{AppState, Pane};
+use super::{help, hints, palette, processes, summary};
+use crate::app::state::{AppState, Overlay, Pane, PaneSizes};
 
 pub const FULL_MIN: (u16, u16) = (100, 24);
 pub const TOO_SMALL: (u16, u16) = (40, 10);
@@ -30,44 +31,156 @@ pub fn mode(area: Rect) -> Mode {
     }
 }
 
-pub fn draw(f: &mut Frame<'_>, state: &AppState) {
-    let area = f.area();
+/// Where everything is. Panes not shown (in tab mode) have empty rects.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Geometry {
+    pub tabs: Rect,
+    pub files: Rect,
+    pub editor: Rect,
+    pub list: Rect,
+    pub system: Rect,
+    pub hints: Rect,
+    pub full: bool,
+}
+
+impl Geometry {
+    pub fn pane_at(&self, x: u16, y: u16) -> Option<Pane> {
+        let inside = |r: Rect| x >= r.x && x < r.right() && y >= r.y && y < r.bottom();
+        if inside(self.files) {
+            Some(Pane::Files)
+        } else if inside(self.editor) {
+            Some(Pane::Editor)
+        } else if inside(self.list) || inside(self.system) {
+            Some(Pane::Processes)
+        } else {
+            None
+        }
+    }
+}
+
+/// A draggable border (full layout only).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Border {
+    FilesEditor,
+    EditorProcesses,
+    ListSystem,
+}
+
+pub fn geometry(area: Rect, s: PaneSizes, focus: Pane) -> Geometry {
     match mode(area) {
-        Mode::TooSmall => draw_too_small(f, area),
+        Mode::TooSmall => Geometry::default(),
         Mode::Tabs => {
-            let [tabs, body, bar] = Layout::vertical([
+            let [tabs, body, hints] = Layout::vertical([
                 Constraint::Length(1),
                 Constraint::Min(1),
                 Constraint::Length(1),
             ])
             .areas(area);
-            f.render_widget(tab_line(state.focus), tabs);
-            draw_pane(f, state, state.focus, body);
-            draw_hints(f, state, bar);
+            let mut g = Geometry {
+                tabs,
+                hints,
+                ..Default::default()
+            };
+            match focus {
+                Pane::Files => g.files = body,
+                Pane::Editor => g.editor = body,
+                Pane::Processes => {
+                    let rows = s.system_rows.min(body.height.saturating_sub(3));
+                    [g.list, g.system] =
+                        Layout::vertical([Constraint::Min(3), Constraint::Length(rows)])
+                            .areas(body);
+                }
+            }
+            g
         }
         Mode::Full => {
-            let [main, bar] =
+            let [main, hints] =
                 Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(area);
-            let s = state.sizes;
             let [files, editor, procs] = Layout::horizontal([
                 Constraint::Percentage(s.files_pct),
                 Constraint::Fill(1),
                 Constraint::Percentage(s.processes_pct),
             ])
             .areas(main);
-            draw_pane(f, state, Pane::Files, files);
-            draw_pane(f, state, Pane::Editor, editor);
             let [list, system] =
                 Layout::vertical([Constraint::Min(3), Constraint::Length(s.system_rows)])
                     .areas(procs);
-            draw_pane(f, state, Pane::Processes, list);
-            f.render_widget(
-                Paragraph::new("(system summary not implemented yet)")
-                    .block(Block::bordered().title(" System ")),
+            Geometry {
+                files,
+                editor,
+                list,
                 system,
-            );
-            draw_hints(f, state, bar);
+                hints,
+                full: true,
+                ..Default::default()
+            }
         }
+    }
+}
+
+/// The border under the pointer, if any.
+pub fn border_at(g: &Geometry, x: u16, y: u16) -> Option<Border> {
+    if !g.full {
+        return None;
+    }
+    let main_bottom = g.files.bottom();
+    if y < main_bottom && (x + 1 == g.files.right() || x == g.editor.x) {
+        return Some(Border::FilesEditor);
+    }
+    if y < main_bottom && (x + 1 == g.editor.right() || x == g.list.x) {
+        return Some(Border::EditorProcesses);
+    }
+    if y == g.system.y && x > g.system.x && x + 1 < g.system.right() {
+        return Some(Border::ListSystem);
+    }
+    None
+}
+
+/// Applies a border drag to the pane sizes, keeping every pane usable.
+pub fn drag(s: &mut PaneSizes, b: Border, area: Rect, x: u16, y: u16) {
+    let w = area.width.max(1) as u32;
+    let pct = |col: u32| (col * 100 / w) as u16;
+    match b {
+        Border::FilesEditor => {
+            s.files_pct = pct(x as u32 + 1).clamp(10, 50).min(80 - s.processes_pct);
+        }
+        Border::EditorProcesses => {
+            s.processes_pct = pct(w.saturating_sub(x as u32))
+                .clamp(20, 60)
+                .min(80 - s.files_pct);
+        }
+        Border::ListSystem => {
+            let main_bottom = area.height.saturating_sub(1);
+            let max = main_bottom.saturating_sub(6).max(4);
+            s.system_rows = main_bottom.saturating_sub(y).clamp(4, max);
+        }
+    }
+}
+
+pub fn draw(f: &mut Frame<'_>, state: &AppState) {
+    let area = f.area();
+    if mode(area) == Mode::TooSmall {
+        return draw_too_small(f, area);
+    }
+    let g = geometry(area, state.sizes, state.focus);
+    if !g.full {
+        f.render_widget(tab_line(state.focus), g.tabs);
+    }
+    if g.files.width > 0 {
+        draw_files(f, state, g.files);
+    }
+    if g.editor.width > 0 {
+        draw_editor(f, state, g.editor);
+    }
+    if g.list.width > 0 {
+        processes::draw(f, state, g.list);
+        summary::draw(f, state, g.system);
+    }
+    hints::draw(f, state, g.hints);
+    match &state.overlay {
+        Overlay::None => {}
+        Overlay::Help { scroll } => help::draw(f, area, *scroll),
+        Overlay::Palette { query, selected } => palette::draw(f, area, query, *selected),
     }
 }
 
@@ -99,67 +212,53 @@ fn tab_line(focus: Pane) -> Line<'static> {
     Line::from(spans)
 }
 
-fn draw_pane(f: &mut Frame<'_>, state: &AppState, pane: Pane, area: Rect) {
-    let focused = state.focus == pane;
-    let border = if focused {
+/// A pane's block, highlighted when focused.
+pub fn pane_block(state: &AppState, pane: Pane, title: Line<'static>) -> Block<'static> {
+    let border = if state.focus == pane {
         Style::default()
             .fg(Color::Cyan)
             .add_modifier(Modifier::BOLD)
     } else {
         Style::default()
     };
-    let block = Block::bordered()
-        .title(format!(" {} ", pane.title()))
-        .border_style(border);
-    let body: Vec<Line<'_>> = match pane {
-        Pane::Files => vec![Line::raw(match &state.project {
-            Some(p) => p.display().to_string(),
-            None => "No project open".to_string(),
-        })],
-        Pane::Editor => {
-            let mut lines = vec![Line::raw("No file open")];
-            if !state.notices.is_empty() {
-                lines.push(Line::raw(""));
-                lines.push(Line::styled(
-                    "Configuration:",
-                    Style::default().fg(Color::Yellow),
-                ));
-                lines.extend(state.notices.iter().map(|n| Line::raw(n.clone())));
-            }
-            lines
-        }
-        Pane::Processes => {
-            let mut note = "Not covered: containers, remote machines".to_string();
-            if cfg!(windows) {
-                note.push_str(", WSL2");
-            }
-            vec![
-                Line::raw("(process monitoring not implemented yet)"),
-                Line::raw(""),
-                Line::styled(note, Style::default().add_modifier(Modifier::DIM)),
-            ]
-        }
+    Block::bordered().title(title).border_style(border)
+}
+
+fn draw_files(f: &mut Frame<'_>, state: &AppState, area: Rect) {
+    let text = match &state.project {
+        Some(p) => p.display().to_string(),
+        None => "No project open".to_string(),
     };
+    let block = pane_block(state, Pane::Files, Line::raw(" Files "));
     f.render_widget(
-        Paragraph::new(body).wrap(Wrap { trim: false }).block(block),
+        Paragraph::new(text).wrap(Wrap { trim: false }).block(block),
         area,
     );
 }
 
-fn draw_hints(f: &mut Frame<'_>, state: &AppState, area: Rect) {
+fn draw_editor(f: &mut Frame<'_>, state: &AppState, area: Rect) {
+    let mut lines = vec![Line::raw("No file open")];
+    if !state.notices.is_empty() {
+        lines.push(Line::raw(""));
+        lines.push(Line::styled("Notices:", Style::default().fg(Color::Yellow)));
+        lines.extend(state.notices.iter().map(|n| Line::raw(n.clone())));
+    }
+    let block = pane_block(state, Pane::Editor, Line::raw(" Editor "));
     f.render_widget(
-        Paragraph::new(hints::line(state.focus, false, area.width)),
+        Paragraph::new(lines)
+            .wrap(Wrap { trim: false })
+            .block(block),
         area,
     );
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
 
-    fn render(w: u16, h: u16, state: &AppState) -> String {
+    pub fn render(w: u16, h: u16, state: &AppState) -> String {
         let mut t = Terminal::new(TestBackend::new(w, h)).unwrap();
         t.draw(|f| draw(f, state)).unwrap();
         let buf = t.backend().buffer().clone();
@@ -192,6 +291,10 @@ mod tests {
             assert!(screen.contains(title), "missing {title}\n{screen}");
         }
         assert!(screen.contains("Ctrl-P Commands"));
+        assert!(
+            screen.contains("scanning…"),
+            "before the first snapshot\n{screen}"
+        );
         // Wide enough that the coverage note (longer on Windows) doesn't wrap.
         let wide = render(200, 40, &s);
         let note = if cfg!(windows) {
@@ -207,7 +310,7 @@ mod tests {
         let mut s = AppState::new(None, Vec::new());
         s.focus = Pane::Processes;
         let screen = render(80, 20, &s);
-        assert!(screen.contains("(process monitoring not implemented yet)"));
+        assert!(screen.contains("scanning…"));
         assert!(!screen.contains("No project open"));
         assert!(screen.contains("Ctrl-P Commands"));
     }
@@ -224,8 +327,31 @@ mod tests {
     }
 
     #[test]
-    fn config_notices_are_shown() {
+    fn notices_are_shown() {
         let s = AppState::new(None, vec!["settings.toml:3: bad value".into()]);
         assert!(render(120, 40, &s).contains("settings.toml:3: bad value"));
+    }
+
+    #[test]
+    fn borders_drag_within_limits() {
+        let area = Rect::new(0, 0, 120, 40);
+        let mut sizes = PaneSizes::default();
+        let g = geometry(area, sizes, Pane::Files);
+        assert_eq!(
+            border_at(&g, g.files.right() - 1, 5),
+            Some(Border::FilesEditor)
+        );
+        assert_eq!(border_at(&g, g.list.x, 5), Some(Border::EditorProcesses));
+        assert_eq!(
+            border_at(&g, g.system.x + 3, g.system.y),
+            Some(Border::ListSystem)
+        );
+        assert_eq!(border_at(&g, 50, 5), None);
+        drag(&mut sizes, Border::FilesEditor, area, 0, 5);
+        assert_eq!(sizes.files_pct, 10);
+        drag(&mut sizes, Border::EditorProcesses, area, 40, 5);
+        assert_eq!(sizes.processes_pct, 60);
+        drag(&mut sizes, Border::ListSystem, area, 100, 2);
+        assert!((4..=33).contains(&sizes.system_rows));
     }
 }
