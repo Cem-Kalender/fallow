@@ -28,7 +28,9 @@ fn parse(args: &[String]) -> Result<Args, String> {
     let mut a = Args {
         bin: pty::default_binary(),
         csv: PathBuf::from(format!("bench-memory-idle-{}.csv", std::env::consts::OS)),
-        require: Require::Ticks,
+        require: Require::Cycles {
+            refresh: std::time::Duration::from_millis(2000),
+        },
         settle: SETTLE,
         samples: SAMPLES,
     };

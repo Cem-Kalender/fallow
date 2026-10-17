@@ -174,15 +174,15 @@ summary adds up.
 
 ### Tests for User Story 1
 
-- [ ] T027 [P] [US1] Write `tests/status_rules.rs`: table tests for FR-012 with "first match wins" in the order serving → LLM connected → busy → idle. Cover:
+- [X] T027 [P] [US1] Write `tests/status_rules.rs`: table tests for FR-012 with "first match wins" in the order serving → LLM connected → busy → idle. Cover:
   - "serving" only for `LocalModelServer` with ≥ 1 established incoming connection, regardless of CPU;
   - incoming connections never make a server "LLM connected";
   - an idle keep-alive connection stays "LLM connected";
   - "busy" is `mean(cpu_samples) > 2.0`.
 
   Satisfies: FR-012.
-- [ ] T028 [P] [US1] Write `tests/grouping.rs`: descendants grouped under the nearest LLM ancestor, nested LLM processes listed in `nested`, a group total "Each member counted once", and `llm_ram` counting members unique across groups. Satisfies: FR-013, FR-016.
-- [ ] T029 [P] [US1] Write `tests/detect.rs`:
+- [X] T028 [P] [US1] Write `tests/grouping.rs`: descendants grouped under the nearest LLM ancestor, nested LLM processes listed in `nested`, a group total "Each member counted once", and `llm_ram` counting members unique across groups. Satisfies: FR-013, FR-016.
+- [X] T029 [P] [US1] Write `tests/detect.rs`:
   - a signature match gives `Certain`;
   - a provider match requires "`Established` and remote port 443" plus an address in the provider set, and gives `Likely`; listen, other states and other ports never match;
   - a client of a local model server is `Likely`, with that server's model;
@@ -190,14 +190,14 @@ summary adds up.
   - PID reuse: a new `(pid, start_time)` never inherits the old process's record.
 
   Satisfies: FR-020, FR-022, FR-023, FR-025, FR-026, spec PID-reuse edge case.
-- [ ] T030 [P] [US1] Write parser tests for the platform readers, with fixtures in `tests/fixtures/`:
+- [X] T030 [P] [US1] Write parser tests for the platform readers, with fixtures in `tests/fixtures/`:
   - `tests/platform_linux.rs`: `/proc/net/tcp`/`tcp6` fixtures, `smaps_rollup` `Pss:` parsing, `cmdline` NUL splitting, and proptest round-trips;
   - `tests/platform_macos.rs`: KERN_PROCARGS2 parser property tests, including leading empty arguments and truncated buffers, plus a test hook asserting that the reader's buffer is all zeros after every call, including error paths;
   - `tests/platform_windows.rs`: TCP table row parsing for IPv4/IPv6 and `CommandLineToArgvW` splitting.
 
   Satisfies: R-2, R-3, R-4, FR-024.
 
-- [ ] T121 [P] [US1] Write `tests/platform_fallbacks.rs`, forcing every fallback path through injectable readers in each platform module:
+- [X] T121 [P] [US1] Write `tests/platform_fallbacks.rs`, forcing every fallback path through injectable readers in each platform module:
   - Linux: `smaps_rollup` missing (kernel < 4.14) or unreadable → footprint from `statm` with metric `Rss`, marked per process;
   - Windows: `GetProcessMemoryInfo` with `PROCESS_MEMORY_COUNTERS_EX2` failing (builds before 1809) → `WorkingSetSize` with metric `WorkingSet`; a failed or disabled PEB read → `CwdState::Unavailable(reason)`;
   - macOS: `proc_pid_rusage` failing → footprint `None` with a reason, never a wrong metric;
@@ -207,21 +207,21 @@ summary adds up.
 
 ### Platform implementations
 
-- [ ] T031 [P] [US1] Implement Linux in `src/procmon/platform/linux.rs`:
+- [X] T031 [P] [US1] Implement Linux in `src/procmon/platform/linux.rs`:
   - `cmdline` from `/proc/<pid>/cmdline`;
   - `cwd` by `readlink /proc/<pid>/cwd`;
   - `footprint` from `/proc/<pid>/smaps_rollup` `Pss:`, falling back to `/proc/<pid>/statm` resident pages × page size with metric `Rss`;
   - `tcp_table` from `/proc/net/tcp` and `tcp6` into one reused buffer, keeping only Established-to-:443, Listen on local model ports, and loopback or local connections to them, then mapping the inodes of interesting sockets to PIDs through `/proc/<pid>/fd` (stop when all are found, cache PID→inode).
 
   Never open `/proc/<pid>/environ`. Satisfies: R-1, R-3, R-4, FR-019, FR-024.
-- [ ] T032 [P] [US1] Implement macOS in `src/procmon/platform/macos.rs`:
+- [X] T032 [P] [US1] Implement macOS in `src/procmon/platform/macos.rs`:
   - `cmdline` with a KERN_PROCARGS2 reader: one reusable buffer sized to `kern.argmax`; parse exactly `argc` strings after the exec path; allocate nothing for envp; **zero the entire buffer with `zeroize` before returning, on every path**;
   - `cwd` from `proc_pidinfo(PROC_PIDVNODEPATHINFO)` → `pvi_cdir`;
   - `footprint` from `proc_pid_rusage(RUSAGE_INFO_V4)` → `ri_phys_footprint`, with metric `PhysFootprint`;
   - `tcp_table` from `proc_pidinfo(PROC_PIDLISTFDS)` + `proc_pidfdinfo(PROC_PIDFDSOCKETINFO)`, reading `soi_kind`, `insi_fport`/`insi_lport` and `tcpsi_state` at the xnu `proc_info.h` offsets validated in the spike.
 
   **Not done until the macOS canary (T120) passes in CI.** Satisfies: R-2, R-3, R-4, FR-019, FR-024, Constitution VII.
-- [ ] T033 [P] [US1] Implement Windows in `src/procmon/platform/windows.rs`:
+- [X] T033 [P] [US1] Implement Windows in `src/procmon/platform/windows.rs`:
   - `cmdline` from `NtQueryInformationProcess(ProcessCommandLineInformation)` with `PROCESS_QUERY_LIMITED_INFORMATION`, split with `CommandLineToArgvW`;
   - `footprint` from `GetProcessMemoryInfo` with `PROCESS_MEMORY_COUNTERS_EX2` → `PrivateWorkingSetSize`, falling back to `WorkingSetSize` with metric `WorkingSet` on builds before 1809;
   - `tcp_table` from `GetExtendedTcpTable(TCP_TABLE_OWNER_PID_ALL)` for AF_INET and AF_INET6 into a reused buffer;
@@ -231,7 +231,7 @@ summary adds up.
 
 ### Process monitoring
 
-- [ ] T034 [US1] Implement the procmon worker in `src/procmon/worker.rs`:
+- [X] T034 [US1] Implement the procmon worker in `src/procmon/worker.rs`:
   - a thread named `procmon` with a 256 KiB stack, looping every `refresh_interval_ms`;
   - sysinfo with `ProcessRefreshKind::nothing().with_cpu().with_user(UpdateKind::OnlyIfNotSet)`, so `cmd`, `cwd`, `environ`, `exe` and `memory` are never requested;
   - "Records without a start time are dropped";
@@ -243,7 +243,7 @@ summary adds up.
   - switch the default liveness requirement in `xtask/src/bench_memory.rs` from `ticks` to `cycles` (≥ 90% of expected procmon cycles) once this lands.
 
   Satisfies: R-1, R-6, FR-010, FR-015, FR-030, R-12.
-- [ ] T035 [US1] Implement detection in `src/procmon/detect.rs`:
+- [X] T035 [US1] Implement detection in `src/procmon/detect.rs`:
   - signatures: `match.name` glob (case-insensitive on Windows and macOS) and `match.cmdline` regex on argv joined with spaces, compiled once at config load;
   - provider connections against the `ResolvedProviderSet` (Established, port 443);
   - local model servers found by signature, with their listening ports;
@@ -254,9 +254,9 @@ summary adds up.
   - browsers filtered out unless enabled.
 
   Satisfies: FR-020, FR-022, FR-023, FR-025, FR-026, FR-027.
-- [ ] T036 [US1] Implement grouping in `src/procmon/group.rs`. The root is "An LLM process that has no LLM ancestor", members are all descendants, `nested` holds the LLM descendants, and the totals for footprint and CPU count each member once. Satisfies: FR-013.
-- [ ] T037 [US1] Implement status evaluation in `src/procmon/status.rs` per data-model.md (first match wins), recomputed every snapshot ("Status is not sticky"). Satisfies: FR-012.
-- [ ] T038 [US1] Implement the system summary in `src/procmon/summary.rs`:
+- [X] T036 [US1] Implement grouping in `src/procmon/group.rs`. The root is "An LLM process that has no LLM ancestor", members are all descendants, `nested` holds the LLM descendants, and the totals for footprint and CPU count each member once. Satisfies: FR-013.
+- [X] T037 [US1] Implement status evaluation in `src/procmon/status.rs` per data-model.md (first match wins), recomputed every snapshot ("Status is not sticky"). Satisfies: FR-012.
+- [X] T038 [US1] Implement the system summary in `src/procmon/summary.rs`:
   - `total_ram` and `available_ram` from the OS;
   - `llm_ram` as the sum of group totals with members unique across groups;
   - `local_model_ram` from groups whose root is a `LocalModelServer`;
@@ -264,7 +264,7 @@ summary adds up.
   - `low_memory` = "`available_ram < 10% of total_ram`".
 
   Satisfies: FR-016, FR-019.
-- [ ] T039 [US1] Implement provider resolution in `src/dns.rs`:
+- [X] T039 [US1] Implement provider resolution in `src/dns.rs`:
   - a thread named `dns`, started only **after the first frame**;
   - resolves only the configured provider hostnames with `ToSocketAddrs`, forward only, one at a time; never calls a reverse lookup;
   - repeats every `dns.refresh_minutes` (default 15) and swaps the `ResolvedProviderSet` atomically after each pass;
@@ -272,11 +272,11 @@ summary adds up.
   - the thread is not started when `dns.enabled = false` or with `--no-dns`.
 
   Satisfies: FR-022a, FR-022b, FR-022c, FR-035, R-5.
-- [ ] T040 [US1] Implement all-users mode in `src/procmon/worker.rs` and `src/app/state.rs`: `--all-users` takes effect only when Fallow is already elevated (root or Administrator); otherwise Fallow shows a notice and continues in default mode, and it never prompts for elevation. When active, rows show their owner and a persistent "elevated: all users" indicator appears. Satisfies: FR-030, FR-031.
+- [X] T040 [US1] Implement all-users mode in `src/procmon/worker.rs` and `src/app/state.rs`: `--all-users` takes effect only when Fallow is already elevated (root or Administrator); otherwise Fallow shows a notice and continues in default mode, and it never prompts for elevation. When active, rows show their owner and a persistent "elevated: all users" indicator appears. Satisfies: FR-030, FR-031.
 
 ### UI for the panel
 
-- [ ] T041 [US1] Implement the process panel in `src/ui/processes.rs`:
+- [X] T041 [US1] Implement the process panel in `src/ui/processes.rs`:
   - columns: name, type, PID, working directory, memory with its metric label, CPU, uptime, status, provider/model, confidence;
   - groups expand and collapse with `→` / `←` / `Space`;
   - selection moves with `↑` / `↓`, `PgUp` / `PgDn`, `Home` / `End`;
@@ -285,16 +285,16 @@ summary adds up.
   - Linux processes that fell back to RSS are marked per process.
 
   Satisfies: FR-010, FR-011, FR-013, FR-018, FR-019, FR-051.
-- [ ] T042 [US1] Implement the system summary area in `src/ui/summary.rs`: total, LLM, local model, Fallow and remaining RAM; the metric in use; and "GPU memory (VRAM) not included" where that applies. Satisfies: FR-016, FR-019.
-- [ ] T043 [US1] Implement the command registry in `src/app/commands.rs`: id, title, context and default key for every command in contracts/ui-commands.md. It is the single source for the palette, help and hints, so no command is defined anywhere else. Satisfies: FR-062, FR-060, FR-061.
-- [ ] T044 [US1] Implement global and process-panel default bindings in `src/app/keymap.rs`:
+- [X] T042 [US1] Implement the system summary area in `src/ui/summary.rs`: total, LLM, local model, Fallow and remaining RAM; the metric in use; and "GPU memory (VRAM) not included" where that applies. Satisfies: FR-016, FR-019.
+- [X] T043 [US1] Implement the command registry in `src/app/commands.rs`: id, title, context and default key for every command in contracts/ui-commands.md. It is the single source for the palette, help and hints, so no command is defined anywhere else. Satisfies: FR-062, FR-060, FR-061.
+- [X] T044 [US1] Implement global and process-panel default bindings in `src/app/keymap.rs`:
   - `Tab` / `Shift-Tab`; `Alt-1` / `Alt-2` / `Alt-3`;
   - `F1`, and `?` only when focus isn't in a text input;
   - `Ctrl-P`, `Ctrl-Q`;
   - the panel's movement and expand keys.
 
   Satisfies: FR-065, FR-066.
-- [ ] T045 [P] [US1] Implement the help overlay in `src/ui/help.rs`:
+- [X] T045 [P] [US1] Implement the help overlay in `src/ui/help.rs`:
   - every binding, grouped by pane, generated from the T043 registry;
   - the status legend and the confidence and recent-changes wording, verbatim from contracts/ui-commands.md "Displayed semantics", including that "LLM connected … does not mean a request is in progress";
   - the notes: terminal text selection needs `Shift`-drag (iTerm2 `Option`, Terminal.app `Fn`); `Alt-1/2/3` on macOS needs Option-as-Meta; F-keys on Mac keyboards need `Fn`; "Esc, then Tab" leaves the editor;
@@ -302,12 +302,12 @@ summary adds up.
   - opens with `F1`, `?` (outside text input) or the palette entry "Help"; closes with `Esc`.
 
   Satisfies: FR-061, FR-066, FR-012 (UI explanation).
-- [ ] T046 [P] [US1] Implement the command palette in `src/ui/palette.rs`: `Ctrl-P` opens it, typing filters, and each command shows its key binding. It includes "Help" and "Reload configuration" (stub until US4). In text inputs the hint bar shows `Ctrl-P › Help`. Satisfies: FR-062, FR-066.
-- [ ] T047 [US1] Implement mouse support for the panel and layout in `src/ui/processes.rs` and `src/ui/layout.rs`: click selects a row, the wheel scrolls the pane under the pointer, and dragging a pane border resizes panes. Satisfies: FR-063.
+- [X] T046 [P] [US1] Implement the command palette in `src/ui/palette.rs`: `Ctrl-P` opens it, typing filters, and each command shows its key binding. It includes "Help" and "Reload configuration" (stub until US4). In text inputs the hint bar shows `Ctrl-P › Help`. Satisfies: FR-062, FR-066.
+- [X] T047 [US1] Implement mouse support for the panel and layout in `src/ui/processes.rs` and `src/ui/layout.rs`: click selects a row, the wheel scrolls the pane under the pointer, and dragging a pane border resizes panes. Satisfies: FR-063.
 
 ### Test-only interface
 
-- [ ] T048 [US1] Implement `--snapshot-json` and `--snapshot-hold <SECS>` in `src/cli.rs` and `src/procmon/json.rs`:
+- [X] T048 [US1] Implement `--snapshot-json` and `--snapshot-hold <SECS>` in `src/cli.rs` and `src/procmon/json.rs`:
   - run two refresh cycles, print the Snapshot as JSON (records limited to LLM group members) and exit;
   - `--snapshot-hold` then keeps all state in memory for `SECS` seconds;
   - `--snapshot-stream <SECS>` prints one JSON line per refresh cycle (timestamp, cycle number, the `ProcessKey`s of detected LLM processes) for `SECS` seconds, so latency tests can watch processes appear and disappear;

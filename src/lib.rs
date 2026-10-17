@@ -6,5 +6,6 @@
 pub mod app;
 pub mod cli;
 pub mod config;
+pub mod dns;
 pub mod procmon;
 pub mod ui;

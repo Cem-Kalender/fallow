@@ -180,15 +180,55 @@ fn every_run_option_is_accepted() {
 }
 
 #[test]
-fn snapshot_options_are_parsed_but_not_implemented_yet() {
-    // T048 implements them; until then they fail cleanly without starting the TUI.
-    for args in [
-        &["--snapshot-json"][..],
-        &["--snapshot-hold", "1"],
-        &["--snapshot-stream", "1"],
-    ] {
-        let o = fallow(args);
-        assert_eq!(code(&o), 1, "{args:?}");
-        assert!(stderr(&o).contains("not implemented yet"));
+fn snapshot_json_prints_one_snapshot_without_a_terminal() {
+    let o = fallow(&["--snapshot-json", "--no-dns"]);
+    assert_eq!(code(&o), 0, "{}", stderr(&o));
+    let v: serde_json::Value = serde_json::from_str(stdout(&o).trim()).expect("valid JSON");
+    for field in ["taken_at", "groups", "llm", "records", "summary", "notes"] {
+        assert!(v.get(field).is_some(), "missing {field}");
     }
+    assert!(v["summary"]["total_ram"].as_u64().unwrap() > 0);
+    let notes = v["notes"].as_array().unwrap();
+    assert!(notes.iter().any(|n| {
+        n["text"]
+            .as_str()
+            .unwrap()
+            .starts_with("Not covered: containers")
+    }));
+    // Records are LLM group members only.
+    let llm = v["llm"].as_array().unwrap().len();
+    assert!(v["records"].as_array().unwrap().len() >= llm);
+}
+
+#[test]
+fn snapshot_stream_prints_one_line_per_cycle() {
+    let dir = temp_dir("stream");
+    std::fs::write(dir.join("settings.toml"), "refresh_interval_ms = 500\n").unwrap();
+    let o = fallow(&[
+        "--snapshot-stream",
+        "2",
+        "--no-dns",
+        "--config-dir",
+        dir.to_str().unwrap(),
+    ]);
+    assert_eq!(code(&o), 0, "{}", stderr(&o));
+    let lines: Vec<serde_json::Value> = stdout(&o)
+        .lines()
+        .map(|l| serde_json::from_str(l).expect("JSON line"))
+        .collect();
+    assert!((3..=5).contains(&lines.len()), "{} lines", lines.len());
+    for (i, l) in lines.iter().enumerate() {
+        assert_eq!(l["cycle"].as_u64(), Some(i as u64 + 1));
+        assert!(l["llm"].is_array());
+    }
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn snapshot_hold_stays_alive() {
+    let started = std::time::Instant::now();
+    let o = fallow(&["--snapshot-hold", "1", "--no-dns"]);
+    assert_eq!(code(&o), 0, "{}", stderr(&o));
+    assert!(started.elapsed() >= std::time::Duration::from_secs(1));
+    assert!(serde_json::from_str::<serde_json::Value>(stdout(&o).trim()).is_ok());
 }
