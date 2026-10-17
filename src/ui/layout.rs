@@ -192,7 +192,14 @@ mod tests {
             assert!(screen.contains(title), "missing {title}\n{screen}");
         }
         assert!(screen.contains("Ctrl-P Commands"));
-        assert!(screen.contains("Not covered: containers, remote machines"));
+        // Wide enough that the coverage note (longer on Windows) doesn't wrap.
+        let wide = render(200, 40, &s);
+        let note = if cfg!(windows) {
+            "Not covered: containers, remote machines, WSL2"
+        } else {
+            "Not covered: containers, remote machines"
+        };
+        assert!(wide.contains(note), "{wide}");
     }
 
     #[test]
