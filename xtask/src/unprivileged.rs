@@ -31,8 +31,17 @@ pub fn run(args: &[String]) -> i32 {
     while let Some(a) = it.next() {
         match (a.as_str(), it.next()) {
             ("--bin", Some(v)) => bin = PathBuf::from(v),
+            // A started-as-another-user process may inherit a TEMP it can't write to.
+            ("--work-dir", Some(v)) => {
+                // SAFETY: set before any other thread exists.
+                unsafe {
+                    std::env::set_var("TMP", v);
+                    std::env::set_var("TEMP", v);
+                    std::env::set_var("TMPDIR", v);
+                }
+            }
             _ => {
-                eprintln!("usage: xtask unprivileged [--bin <path>]");
+                eprintln!("usage: xtask unprivileged [--bin <path>] [--work-dir <dir>]");
                 return 2;
             }
         }
