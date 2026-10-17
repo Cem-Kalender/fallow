@@ -201,7 +201,7 @@ process to be placed in a job, which modifies it).
 
 - **Format**: TOML through `toml` + `serde`. Three logical files, each with built-in defaults
   embedded in the binary through `include_str!` and an optional user file of the same name in
-  the platform config dir (`dirs::config_dir()/fallow/`): `settings.toml`, `signatures.toml`,
+  the platform config dir (`<config_dir>/fallow/`, resolved per contracts/config.md "Location"): `settings.toml`, `signatures.toml`,
   `providers.toml`.
 - **Merging**: user entries override built-in entries with the same `id`, and `enabled = false`
   disables a built-in entry. A parse error in a user file keeps the defaults and shows the file,

@@ -138,6 +138,9 @@ degraded-mode warnings. The procmon thread sends snapshots to the UI as `Arc<Sna
 **Validation**: at least one of `match.name` or `match.cmdline`. Regexes compile at load time,
 and invalid ones are reported with file and line.
 
+**Matching**: every specified matcher of one signature must match (AND); a process is detected
+when any enabled signature matches (OR). See contracts/config.md.
+
 ### Provider
 | Field | Type | Notes |
 |---|---|---|

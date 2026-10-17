@@ -5,6 +5,7 @@
 pub mod merge;
 pub mod schema;
 
+use std::ffi::OsString;
 use std::fmt;
 use std::path::{Path, PathBuf};
 
@@ -80,17 +81,43 @@ impl ConfigPaths {
 /// `$XDG_CONFIG_HOME` or `~/.config` on Linux, `~/Library/Application Support` on macOS,
 /// `%APPDATA%` on Windows. Reads only Fallow's own environment.
 fn platform_config_dir() -> Option<PathBuf> {
-    let abs = |v: std::ffi::OsString| Some(PathBuf::from(v)).filter(|p| p.is_absolute());
-    if cfg!(windows) {
-        return std::env::var_os("APPDATA").and_then(abs);
+    let os = if cfg!(windows) {
+        Os::Windows
+    } else if cfg!(target_os = "macos") {
+        Os::MacOs
+    } else {
+        Os::Linux
+    };
+    let var = std::env::var_os;
+    config_dir_for(os, var("HOME"), var("XDG_CONFIG_HOME"), var("APPDATA"))
+}
+
+/// Platform families for config-directory resolution.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Os {
+    Linux,
+    MacOs,
+    Windows,
+}
+
+/// The platform config directory (without the `fallow` component) from the given environment
+/// values, per contracts/config.md "Location". Empty values count as unset. A relative
+/// `XDG_CONFIG_HOME` is ignored, as the XDG Base Directory spec requires.
+pub fn config_dir_for(
+    os: Os,
+    home: Option<OsString>,
+    xdg_config_home: Option<OsString>,
+    appdata: Option<OsString>,
+) -> Option<PathBuf> {
+    let set = |v: Option<OsString>| v.filter(|v| !v.is_empty()).map(PathBuf::from);
+    match os {
+        Os::Windows => set(appdata),
+        Os::MacOs => set(home).map(|h| h.join("Library").join("Application Support")),
+        // Unix rules, checked by bytes so the result doesn't depend on the host OS.
+        Os::Linux => set(xdg_config_home)
+            .filter(|p| p.as_os_str().as_encoded_bytes().first() == Some(&b'/'))
+            .or_else(|| set(home).map(|h| h.join(".config"))),
     }
-    let home = std::env::var_os("HOME").and_then(abs);
-    if cfg!(target_os = "macos") {
-        return home.map(|h| h.join("Library").join("Application Support"));
-    }
-    std::env::var_os("XDG_CONFIG_HOME")
-        .and_then(abs)
-        .or_else(|| home.map(|h| h.join(".config")))
 }
 
 /// The merged configuration plus every problem found while loading it.
