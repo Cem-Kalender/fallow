@@ -22,6 +22,7 @@ struct World {
     cmdlines: HashMap<u32, Vec<&'static str>>,
     conns: Vec<(u32, TcpRow)>,
     cmdline_reads: Vec<ProcessKey>,
+    footprint_reads: Vec<ProcessKey>,
 }
 
 #[derive(Clone, Default)]
@@ -38,6 +39,7 @@ impl Platform for Fake {
         Ok(PathBuf::from("/work"))
     }
     fn footprint(&mut self, key: ProcessKey) -> Result<Footprint> {
+        self.0.borrow_mut().footprint_reads.push(key);
         Ok(Footprint {
             bytes: key.pid as u64 * 1024,
             metric: FootprintMetric::Pss,
@@ -268,4 +270,39 @@ fn records_without_a_start_time_are_dropped() {
     fake.0.borrow_mut().cmdlines.insert(60, vec!["claude"]);
     let s = monitor(&fake, false).cycle(&[p(1, 1, "init"), p(60, 0, "claude")], 100, 50);
     assert!(s.llm.is_empty());
+}
+
+#[test]
+fn footprints_are_read_at_most_every_footprint_interval() {
+    let fake = Fake::default();
+    fake.0.borrow_mut().cmdlines.insert(70, vec!["claude"]);
+    let mut m = monitor(&fake, false); // default footprint_interval_ms = 10 000
+    let t0 = std::time::Instant::now();
+    let mut cpus = Vec::new();
+    for i in 0..8u64 {
+        let mut agent = p(70, 5, "claude");
+        agent.cpu = i as f32;
+        let s = m.cycle_at(
+            &[p(1, 1, "init"), agent],
+            100,
+            50,
+            t0 + std::time::Duration::from_secs(2 * i),
+        );
+        let rec = s.records.values().find(|r| r.key.pid == 70).unwrap();
+        assert!(
+            rec.footprint.is_some(),
+            "the last figure is kept between reads"
+        );
+        cpus.push(rec.cpu_samples);
+    }
+    let reads = fake
+        .0
+        .borrow()
+        .footprint_reads
+        .iter()
+        .filter(|k| k.pid == 70)
+        .count();
+    // Refreshes at 0, 2, …, 14 s: reads at 0 and 10 s only.
+    assert_eq!(reads, 2);
+    assert_ne!(cpus[0], cpus[7], "CPU still updates on every refresh");
 }

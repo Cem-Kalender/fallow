@@ -18,6 +18,8 @@ use toml::Spanned;
 #[derive(Debug, Clone, PartialEq)]
 pub struct Settings {
     pub refresh_interval_ms: u64,
+    /// How often each process's footprint is re-read (R-3).
+    pub footprint_interval_ms: u64,
     pub recent_window_minutes: u64,
     pub detection: Detection,
     pub dns: Dns,
@@ -65,6 +67,7 @@ impl Default for Settings {
     fn default() -> Self {
         Settings {
             refresh_interval_ms: 2000,
+            footprint_interval_ms: 10_000,
             recent_window_minutes: 30,
             detection: Detection { browsers: false },
             dns: Dns {
@@ -186,6 +189,7 @@ impl Invalid {
 #[derive(Debug, Default, Deserialize)]
 pub(crate) struct RawSettings {
     refresh_interval_ms: Option<Spanned<i64>>,
+    footprint_interval_ms: Option<Spanned<i64>>,
     recent_window_minutes: Option<Spanned<i64>>,
     detection: Option<RawDetection>,
     dns: Option<RawDns>,
@@ -278,6 +282,7 @@ pub(crate) enum Shape {
 
 pub(crate) const SETTINGS_SHAPE: Shape = Shape::Table(&[
     ("refresh_interval_ms", Shape::Leaf),
+    ("footprint_interval_ms", Shape::Leaf),
     ("recent_window_minutes", Shape::Leaf),
     ("detection", Shape::Table(&[("browsers", Shape::Leaf)])),
     (
@@ -353,6 +358,13 @@ pub(crate) fn apply_settings(base: &mut Settings, raw: RawSettings) -> Vec<Inval
         i64::MAX,
         "minimum 500",
         &mut base.refresh_interval_ms,
+    );
+    int(
+        raw.footprint_interval_ms,
+        500,
+        3_600_000,
+        "500..=3600000",
+        &mut base.footprint_interval_ms,
     );
     int(
         raw.recent_window_minutes,

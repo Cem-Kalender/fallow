@@ -59,6 +59,8 @@ struct Cached {
     /// Windows working directory, read once under the R-10 policy.
     cwd_once: Option<CwdState>,
     cwd_requested: bool,
+    /// The last footprint read and when (R-3: read at most every `footprint_interval_ms`).
+    footprint: Option<(Footprint, Instant)>,
 }
 
 impl Cached {
@@ -99,6 +101,7 @@ pub struct Monitor<P: Platform> {
     detector: Detector,
     providers: SharedProviders,
     cwd_policy: CwdPolicy,
+    footprint_every: Duration,
     all_users: bool,
     own_pid: u32,
     notes: Vec<Note>,
@@ -129,6 +132,7 @@ impl<P: Platform> Monitor<P> {
             detector: Detector::new(signatures, settings.detection.browsers),
             providers,
             cwd_policy: settings.windows.read_working_directory,
+            footprint_every: Duration::from_millis(settings.footprint_interval_ms),
             all_users,
             own_pid: std::process::id(),
             notes,
@@ -149,6 +153,17 @@ impl<P: Platform> Monitor<P> {
 
     /// One refresh: detection, grouping, status and summary from this sample of processes.
     pub fn cycle(&mut self, procs: &[ProcSample], total_ram: u64, available_ram: u64) -> Snapshot {
+        self.cycle_at(procs, total_ram, available_ram, Instant::now())
+    }
+
+    /// `cycle` with an explicit clock, for tests of the footprint interval.
+    pub fn cycle_at(
+        &mut self,
+        procs: &[ProcSample],
+        total_ram: u64,
+        available_ram: u64,
+        now: Instant,
+    ) -> Snapshot {
         // "Records without a start time are dropped."
         let procs: Vec<&ProcSample> = procs.iter().filter(|p| p.key.start_time != 0).collect();
         let own_owner = procs
@@ -253,7 +268,22 @@ impl<P: Platform> Monitor<P> {
             if records.contains_key(&key) {
                 continue;
             }
-            let footprint = self.platform.footprint(key).ok();
+            // Footprints cost far more than the process list (smaps_rollup walks the page
+            // tables, ~1 ms per GB mapped), so each process's figure is re-read at most every
+            // `footprint_interval_ms`; CPU and status still update every refresh (R-3).
+            let cached = self.cache.get(&key).and_then(|c| c.footprint);
+            let footprint = match cached {
+                Some((f, at)) if now.saturating_duration_since(at) < self.footprint_every => {
+                    Some(f)
+                }
+                _ => {
+                    let f = self.platform.footprint(key).ok();
+                    if let (Some(c), Some(f)) = (self.cache.get_mut(&key), f) {
+                        c.footprint = Some((f, now));
+                    }
+                    f
+                }
+            };
             if let Some(f) = footprint {
                 footprints.insert(key, f);
             }

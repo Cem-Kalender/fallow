@@ -14,6 +14,9 @@ use std::time::Duration;
 use crate::fixtures;
 use crate::pty;
 
+/// Fresh Fallow processes per CI run.
+const ROUNDS: usize = 5;
+
 pub fn run(args: &[String]) -> i32 {
     let mut bin = pty::default_binary();
     let mut it = args.iter();
@@ -49,7 +52,44 @@ pub fn run(args: &[String]) -> i32 {
         }
     };
     std::thread::sleep(Duration::from_secs(1));
-    let verdict = inspect(&bin, &dir, &agent_bin, agent.id(), &canary);
+    // Several rounds, each with a fresh Fallow: a freed-but-unwiped buffer only shows up in a
+    // dump when the memory hasn't been reused yet, so one clean dump proves little.
+    let mut valid = 0;
+    let mut failed = 0;
+    for round in 1..=ROUNDS {
+        match inspect(&bin, &dir, &agent_bin, agent.id(), &canary) {
+            0 => valid += 1,
+            1 => {
+                valid += 1;
+                failed += 1;
+            }
+            _ => {}
+        }
+        println!(
+            "canary: round {round}/{ROUNDS} done (valid so far {valid}, with canary {failed})"
+        );
+        fixtures::flush();
+    }
+    let result = if failed > 0 {
+        "FAIL"
+    } else if valid == 0 {
+        "INVALID"
+    } else {
+        "PASS"
+    };
+    println!(
+        "os={} rounds={ROUNDS} valid_dumps={valid} dumps_with_canary={failed} result={result}",
+        std::env::consts::OS
+    );
+    fixtures::summary(&format!(
+        "### Canary (SC-007, {})\n\n| rounds | valid dumps | dumps with the canary | result |\n|---|---|---|---|\n| {ROUNDS} | {valid} | {failed} | **{result}** |\n",
+        std::env::consts::OS
+    ));
+    let verdict = match result {
+        "PASS" => 0,
+        "FAIL" => 1,
+        _ => 2,
+    };
     let _ = agent.kill();
     let _ = agent.wait();
     let _ = Command::new("sudo").args(["rm", "-rf"]).arg(&dir).status();
@@ -184,15 +224,9 @@ fn inspect(bin: &Path, dir: &Path, agent_bin: &Path, agent_pid: u32, canary: &st
         println!("canary found in: {h}");
     }
     println!(
-        "os={} fixture_detected={detected} core_dumped={dumped} hits={} result={result}",
-        std::env::consts::OS,
+        "round: fixture_detected={detected} core_dumped={dumped} hits={} result={result}",
         hits.len()
     );
-    fixtures::summary(&format!(
-        "### Canary (SC-007, {})\n\n| fixture detected | core dumped | canary hits | result |\n|---|---|---|---|\n| {detected} | {dumped} | {} | **{result}** |\n",
-        std::env::consts::OS,
-        hits.len()
-    ));
     if !invalid.is_empty() {
         2
     } else if hits.is_empty() {

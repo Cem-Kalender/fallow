@@ -22,6 +22,7 @@ pub fn persona() {
     match stem.as_str() {
         "ollama" => serve(),
         "claude" => idle(),
+        "llama-server" => big(),
         _ => {}
     }
 }
@@ -67,6 +68,32 @@ fn hold(mut s: TcpStream) -> ! {
             Ok(0) | Err(_) => idle(),
             Ok(_) => {}
         }
+    }
+}
+
+/// A large local model stand-in: maps `FALLOW_FIXTURE_ALLOC_MB` MB (default 1024), writes
+/// pseudo-random data to every byte so no page is shared or compressible, writes the file named
+/// by `FALLOW_FIXTURE_READY_FILE`, then idles holding the memory.
+fn big() -> ! {
+    let mb: usize = std::env::var("FALLOW_FIXTURE_ALLOC_MB")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(1024);
+    let mut mem: Vec<u64> = Vec::with_capacity(mb * 1024 * 1024 / 8);
+    let mut x: u64 = 0x9E37_79B9_7F4A_7C15 ^ std::process::id() as u64;
+    for _ in 0..mem.capacity() {
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        mem.push(x);
+    }
+    std::hint::black_box(&mem);
+    if let Ok(path) = std::env::var("FALLOW_FIXTURE_READY_FILE") {
+        let _ = std::fs::write(path, mem.len().to_string());
+    }
+    loop {
+        std::thread::sleep(Duration::from_secs(3600));
+        std::hint::black_box(&mem);
     }
 }
 

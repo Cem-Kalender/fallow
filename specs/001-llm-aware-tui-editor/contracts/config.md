@@ -29,6 +29,7 @@ Rules:
 
 ```toml
 refresh_interval_ms = 2000          # FR-015; minimum 500
+footprint_interval_ms = 10000       # research R-3; per-process memory re-read interval; 500..=3600000
 recent_window_minutes = 30          # FR-017
 
 [detection]
@@ -54,6 +55,7 @@ Validation (settings):
 | Key | Rule |
 |---|---|
 | `refresh_interval_ms` | integer, minimum 500 |
+| `footprint_interval_ms` | integer, `500..=3600000` |
 | `recent_window_minutes` | integer, minimum 1 |
 | `dns.refresh_minutes` | integer, `1..=60` |
 | `windows.read_working_directory` | one of `"on_detect"`, `"on_select"`, `"never"` |

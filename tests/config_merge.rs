@@ -65,6 +65,7 @@ fn built_in_defaults_are_valid_and_match_the_contract() {
     );
     assert_eq!(c.settings, Settings::default());
     assert_eq!(c.settings.refresh_interval_ms, 2000);
+    assert_eq!(c.settings.footprint_interval_ms, 10_000);
     assert_eq!(c.settings.recent_window_minutes, 30);
     assert!(!c.settings.detection.browsers);
     assert!(c.settings.dns.enabled);
