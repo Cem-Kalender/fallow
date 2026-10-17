@@ -1,0 +1,76 @@
+# CI for Fallow (tasks.md T025): format, lint, dependency policy, build, tests, and the
+# constitution's benchmark gates on all three platforms (Principle VI, research R-13).
+# The build fails if the startup (p95 < 100 ms) or idle memory (< 50 MB RSS) budget is exceeded.
+name: ci
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    name: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15, windows-2025]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust toolchain (from rust-toolchain.toml)
+        run: |
+          rustup toolchain install
+          rustc --version
+          cargo --version
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny
+
+      - name: Format
+        run: cargo fmt --all --check
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Dependency policy (licenses, bans)
+        run: cargo deny check
+
+      - name: Build (release)
+        run: cargo build --release --locked
+
+      - name: Tests
+        run: cargo test --workspace --locked
+
+      - name: Startup benchmark (p95 of 30 runs < 100 ms)
+        run: cargo xtask bench-startup
+
+      - name: Idle memory benchmark (peak RSS < 50 MB)
+        run: cargo xtask bench-memory --idle --csv bench-memory-idle-${{ matrix.os }}.csv
+
+      - name: Upload idle RSS series
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-memory-idle-${{ matrix.os }}
+          path: bench-memory-idle-${{ matrix.os }}.csv
+          if-no-files-found: warn
