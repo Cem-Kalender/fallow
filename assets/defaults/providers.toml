@@ -1,0 +1,64 @@
+# Built-in LLM API providers (contracts/config.md, FR-022a/b).
+#
+# `hostnames` are the ONLY names Fallow may resolve (Constitution VII). `ranges` are listed
+# only where the provider publishes the addresses its API receives connections on; every
+# range carries its source. Most providers serve their API from shared CDN or cloud front ends
+# and publish no dedicated range, so they are detected through resolved hostnames only.
+
+[[provider]]
+id = "anthropic"
+display_name = "Anthropic"
+hostnames = ["api.anthropic.com"]
+# Source: https://platform.claude.com/docs/en/api/ip-addresses ("Inbound IP addresses"),
+# checked 2026-10-17.
+ranges = ["160.79.104.0/23", "2607:6bc0::/48"]
+
+[[provider]]
+id = "openai"
+display_name = "OpenAI"
+hostnames = ["api.openai.com"]
+ranges = [] # no published inbound range for the API
+
+[[provider]]
+id = "google"
+display_name = "Google"
+# These names resolve to Google's shared API front ends, so a match means "a Google API",
+# which is why provider matches are only "likely" (FR-022).
+hostnames = ["generativelanguage.googleapis.com", "aiplatform.googleapis.com"]
+ranges = [] # Google publishes only ranges shared by all its services (goog.json); too broad
+
+[[provider]]
+id = "mistral"
+display_name = "Mistral AI"
+hostnames = ["api.mistral.ai"]
+ranges = [] # none published
+
+[[provider]]
+id = "cohere"
+display_name = "Cohere"
+hostnames = ["api.cohere.com", "api.cohere.ai"]
+ranges = [] # none published
+
+[[provider]]
+id = "groq"
+display_name = "Groq"
+hostnames = ["api.groq.com"]
+ranges = [] # none published
+
+[[provider]]
+id = "deepseek"
+display_name = "DeepSeek"
+hostnames = ["api.deepseek.com"]
+ranges = [] # none published
+
+[[provider]]
+id = "openrouter"
+display_name = "OpenRouter"
+hostnames = ["openrouter.ai"]
+ranges = [] # none published
+
+[[provider]]
+id = "xai"
+display_name = "xAI"
+hostnames = ["api.x.ai"]
+ranges = [] # none published

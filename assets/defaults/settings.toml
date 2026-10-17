@@ -1,0 +1,21 @@
+# Built-in settings (contracts/config.md). A user settings.toml overrides any of these keys.
+
+refresh_interval_ms = 2000          # FR-015; minimum 500
+recent_window_minutes = 30          # FR-017
+
+[detection]
+browsers = false                    # FR-026
+
+[dns]
+enabled = true                      # FR-022b
+refresh_minutes = 15                # research R-5; 1..=60
+
+[windows]
+read_working_directory = "on_detect" # "on_detect" | "on_select" | "never" (research R-10)
+
+[editor]
+read_only_threshold_mb = 10
+tab_width = 4
+
+[ui]
+mouse = true                        # FR-063

@@ -97,7 +97,7 @@ crate, as in plan.md, Project Structure. Spikes stay in `spikes/` outside the wo
 
 ### Configuration
 
-- [ ] T014 [P] Define config types in `src/config/schema.rs` per contracts/config.md:
+- [X] T014 [P] Define config types in `src/config/schema.rs` per contracts/config.md:
   - `Settings` with defaults `refresh_interval_ms = 2000`, `recent_window_minutes = 30`, `detection.browsers = false`, `dns.enabled = true`, `dns.refresh_minutes = 15`, `windows.read_working_directory = "on_detect"`, `editor.read_only_threshold_mb = 10`, `editor.tab_width = 4`, `ui.mouse = true`;
   - `Signature` and `Provider`.
 
@@ -107,7 +107,7 @@ crate, as in plan.md, Project Structure. Spikes stay in `spikes/` outside the wo
   - providers: "`hostnames` entries must be plain DNS names, with no wildcards and no IP literals"; "`ranges` entries must be valid CIDR"; "A provider with neither hostnames nor ranges is rejected".
 
   Satisfies: FR-015, FR-021, FR-022a, R-9.
-- [ ] T015 [P] Create the built-in defaults: `assets/defaults/settings.toml`, `assets/defaults/signatures.toml` and `assets/defaults/providers.toml`.
+- [X] T015 [P] Create the built-in defaults: `assets/defaults/settings.toml`, `assets/defaults/signatures.toml` and `assets/defaults/providers.toml`.
   - Signatures: agent CLIs (claude-code, codex, aider, gemini-cli, opencode, goose), local model servers (ollama, llama-server, lm-studio, vllm, koboldcpp) with `local_server.default_ports`, AI-enabled editors (cursor, windsurf), and browsers (chrome, msedge, firefox, safari, brave) with `kind = "browser"`.
   - Providers: anthropic, openai, google, mistral, cohere, groq, deepseek, openrouter, xai, with hostnames, and `ranges` only where the provider publishes them, each with a source comment.
 
@@ -120,7 +120,7 @@ crate, as in plan.md, Project Structure. Spikes stay in `spikes/` outside the wo
   - `--print-config-paths` prints the resolved paths and exits.
 
   Satisfies: FR-021, R-9, spec edge case "config syntax error".
-- [ ] T017 [P] Write `tests/config_merge.rs`: override by id, disable a built-in entry, each validation rule from T014, a syntax error at a known line reported as `file:line`, unknown-key warnings. Satisfies: FR-021, R-9.
+- [X] T017 [P] Write `tests/config_merge.rs`: override by id, disable a built-in entry, each validation rule from T014, a syntax error at a known line reported as `file:line`, unknown-key warnings. Satisfies: FR-021, R-9.
 
 ### Platform trait and snapshot model
 
