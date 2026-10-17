@@ -94,10 +94,12 @@ jobs:
           New-Item -ItemType Directory -Force C:\fallowci | Out-Null
           Copy-Item target\release\fallow.exe, target\release\xtask.exe C:\fallowci\
           icacls C:\fallowci /grant 'fallowci:(OI)(CI)RX' | Out-Null
+          New-Item -ItemType Directory -Force C:\fallowci\work | Out-Null
+          icacls C:\fallowci\work /grant 'fallowci:(OI)(CI)M' | Out-Null
           $cred = New-Object System.Management.Automation.PSCredential('fallowci', (ConvertTo-SecureString $pw -AsPlainText -Force))
           $out = "$env:RUNNER_TEMP\unpriv-out.txt"
           $err = "$env:RUNNER_TEMP\unpriv-err.txt"
-          $p = Start-Process -FilePath C:\fallowci\xtask.exe -ArgumentList 'unprivileged','--bin','C:\fallowci\fallow.exe' `
+          $p = Start-Process -FilePath C:\fallowci\xtask.exe -ArgumentList 'unprivileged','--bin','C:\fallowci\fallow.exe','--work-dir','C:\fallowci\work' `
             -Credential $cred -LoadUserProfile -WorkingDirectory C:\fallowci `
             -RedirectStandardOutput $out -RedirectStandardError $err -Wait -PassThru
           Get-Content $out, $err
