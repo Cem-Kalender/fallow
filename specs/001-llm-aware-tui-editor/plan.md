@@ -30,7 +30,7 @@ enforces the constitution's memory and startup budgets.
 **Language/Version**: Rust stable, edition 2024, MSRV 1.85, pinned in `rust-toolchain.toml`.
 
 **Primary Dependencies**: ratatui, crossterm (with bracketed paste, mouse capture and kitty
-keyboard enhancement flags), arboard, sysinfo, ropey, tree-sitter, tree-sitter-highlight,
+keyboard enhancement flags), arboard, ropey, tree-sitter, tree-sitter-highlight,
 15 tree-sitter grammar crates, notify, grep-searcher, grep-regex, ignore, toml, serde, regex,
 globset, ipnet, compact_str, smallvec, zeroize. Platform: `libc` (Linux, macOS),
 `windows-sys` (Windows). Dev only: portable-pty, serde_json, proptest, trybuild. Each dependency is
@@ -99,7 +99,7 @@ Constitution v3.0.0. Evaluated before Phase 0 and after Phase 1 against v2.0.0. 
 | Crate | Why | Memory and startup note |
 |---|---|---|
 | ratatui, crossterm | TUI and terminal I/O, including mouse (user-specified) | Diff-based rendering. Buffers are about 1.5 MB at 250×70. |
-| sysinfo | Cross-platform enumeration, parent, owner, CPU | Restricted `ProcessRefreshKind`, with cmd, cwd, environ, exe and memory all `Never` (R-1). |
+| ~~sysinfo~~ | *Removed 2026-10-17* (R-1 amendment). On macOS it reads KERN_PROCARGS2 (argv and environment) for every new process regardless of the refresh kind and frees the buffer unwiped: the SC-007 canary found a canary in Fallow's heap (CI run 39046160733). On Windows it reads every process's PEB through `PROCESS_VM_READ` handles to find parents (against R-10). On Linux it reads `/proc/<pid>/status` and every thread on each refresh, which broke the 2% refresh-CPU budget at 600 processes. Replaced by `src/procmon/sampler.rs`. | One dependency fewer. |
 | ropey | Text buffers | About 1.1× the file size. |
 | tree-sitter, tree-sitter-highlight, 15 grammars | Highlighting | Adds about 20–30 MB on disk. Untouched grammars cost no RSS (R-8). |
 | notify | File change detection | Watches only open files and expanded directories. |
