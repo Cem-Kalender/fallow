@@ -21,6 +21,8 @@ struct Args {
     require: Require,
     settle: Duration,
     samples: u64,
+    /// CT-1 (T054): the run counts only if at least this many LLM groups are detected.
+    min_llm_groups: usize,
 }
 
 fn parse(args: &[String]) -> Result<Args, String> {
@@ -33,6 +35,7 @@ fn parse(args: &[String]) -> Result<Args, String> {
         },
         settle: SETTLE,
         samples: SAMPLES,
+        min_llm_groups: 0,
     };
     let mut it = args.iter();
     while let Some(arg) = it.next() {
@@ -49,6 +52,11 @@ fn parse(args: &[String]) -> Result<Args, String> {
                         .parse()
                         .map_err(|_| "--settle-secs needs a number")?,
                 )
+            }
+            "--require-llm-groups" => {
+                a.min_llm_groups = value("--require-llm-groups")?
+                    .parse()
+                    .map_err(|_| "--require-llm-groups needs a number")?
             }
             "--samples" => {
                 a.samples = value("--samples")?
@@ -134,7 +142,18 @@ pub fn run(args: &[String]) -> i32 {
         .max_by_key(|(_, b)| *b)
         .unwrap_or((0, 0));
     let last = samples.last().map_or(0, |(_, b)| *b);
-    let problems = outcome.problems(Some(a.require));
+    let mut problems = outcome.problems(Some(a.require));
+    if a.min_llm_groups > 0 {
+        // What Fallow saw on this machine right after sampling (CT-1 validity and record).
+        let (groups, llm, procs) = llm_groups(&a.bin);
+        println!("llm_groups={groups} llm_processes={llm} processes={procs}");
+        if groups < a.min_llm_groups {
+            problems.push(format!(
+                "{groups} LLM groups detected, need at least {}",
+                a.min_llm_groups
+            ));
+        }
+    }
     let valid = problems.is_empty();
     let pass = valid && mb(peak) < BUDGET_MB;
     let result = if !valid {
@@ -173,4 +192,17 @@ pub fn run(args: &[String]) -> i32 {
     } else {
         1
     }
+}
+
+/// Groups and LLM processes in `fallow --snapshot-json`, plus the system's process count.
+fn llm_groups(bin: &std::path::Path) -> (usize, usize, usize) {
+    let out = std::process::Command::new(bin)
+        .arg("--snapshot-json")
+        .output();
+    let v: serde_json::Value = out
+        .ok()
+        .and_then(|o| serde_json::from_slice(&o.stdout).ok())
+        .unwrap_or_default();
+    let n = |k: &str| v[k].as_array().map_or(0, Vec::len);
+    (n("groups"), n("llm"), crate::fixtures::process_count())
 }
