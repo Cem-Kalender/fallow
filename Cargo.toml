@@ -20,6 +20,8 @@ toml = { version = "1", default-features = false, features = ["parse", "serde"] 
 regex = "1"
 globset = { version = "0.4", default-features = false }
 ipnet = "2"
+compact_str = "0.9"
+smallvec = "1"
 
 [profile.release]
 lto = "thin"

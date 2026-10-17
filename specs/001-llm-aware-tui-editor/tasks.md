@@ -64,14 +64,14 @@ crate, as in plan.md, Project Structure. Spikes stay in `spikes/` outside the wo
 
 ### Command line and terminal shell
 
-- [ ] T007 Implement argument parsing in `src/cli.rs` per contracts/cli.md:
+- [X] T007 Implement argument parsing in `src/cli.rs` per contracts/cli.md:
   - `PATH`, `--all-users`, `--no-dns`, `--config-dir <DIR>`, `--print-config-paths`, `--version`/`-V`, `--help`/`-h`;
   - exit codes `0` quit, `1` startup failure, `2` invalid arguments;
   - hidden `--snapshot-json`, `--snapshot-hold <SECS>` and `--bench-stats <PATH>`, parsed but not shown in `--help`.
 
   Write the parser by hand, with no argument-parsing crate, to keep startup cost down (FR-041). Satisfies: contracts/cli.md.
-- [ ] T008 Add the hidden `--bench-stats <PATH>` option to `specs/001-llm-aware-tui-editor/contracts/cli.md`. On exit it writes `pid=<own pid> ticks=<event-loop ticks> cycles=<procmon refresh cycles>`, so benchmarks can prove they measured a live Fallow (R-12 lessons). Also add the hidden `--snapshot-stream <SECS>` option (T048). Satisfies: R-12, R-13.
-- [ ] T009 Implement terminal lifecycle in `src/ui/terminal.rs`:
+- [X] T008 Add the hidden `--bench-stats <PATH>` option to `specs/001-llm-aware-tui-editor/contracts/cli.md`. On exit it writes `pid=<own pid> ticks=<event-loop ticks> cycles=<procmon refresh cycles>`, so benchmarks can prove they measured a live Fallow (R-12 lessons). Also add the hidden `--snapshot-stream <SECS>` option (T048). Satisfies: R-12, R-13.
+- [X] T009 Implement terminal lifecycle in `src/ui/terminal.rs`:
   - enter raw mode and the alternate screen;
   - enable bracketed paste;
   - enable mouse capture unless `ui.mouse = false`;
@@ -80,20 +80,20 @@ crate, as in plan.md, Project Structure. Spikes stay in `spikes/` outside the wo
   - restore everything (pop flags, disable mouse and paste, leave the alternate screen, leave raw mode) on normal exit **and** from a panic hook.
 
   Satisfies: FR-001, FR-067, FR-063, FR-008 (paste), FR-041.
-- [ ] T010 Implement the main event loop in `src/app/event_loop.rs` and `src/app/state.rs`:
+- [X] T010 Implement the main event loop in `src/app/event_loop.rs` and `src/app/state.rs`:
   - block on `crossterm::event::poll` with a **250 ms** timeout, drain the worker channels on every wake, and render only when state changed;
   - count every loop iteration in a `ticks` counter (the Phase 2 liveness counter for `--bench-stats`);
   - draw the **first frame before** any background thread does work.
 
   Satisfies: R-6, FR-041, Constitution II.
-- [ ] T011 [P] Implement the pane layout in `src/ui/layout.rs`:
+- [X] T011 [P] Implement the pane layout in `src/ui/layout.rs`:
   - three panes (Files, Editor, LLM Processes with a System area below it), with placeholder content for now;
   - pane sizes stored in state;
   - below **100×24**, collapse the panes to tabs switched with `Tab`; below **40×10**, show only "terminal too small" and keep processing input. Never draw garbled output.
 
   Satisfies: spec edge case "very small terminal", contracts/ui-commands.md Layout.
-- [ ] T012 [P] Implement the hint bar in `src/ui/hints.rs`. It always shows context-sensitive hints for the focused pane and mode, and it **must contain `Ctrl-P Commands` whenever no text input has focus** (the benchmark frame marker in contracts/cli.md). Satisfies: FR-060, contracts/cli.md.
-- [ ] T013 Wire `Ctrl-Q` quit and `Tab` / `Shift-Tab` pane focus cycling into `src/app/event_loop.rs`, so the shell is usable. Satisfies: FR-065.
+- [X] T012 [P] Implement the hint bar in `src/ui/hints.rs`. It always shows context-sensitive hints for the focused pane and mode, and it **must contain `Ctrl-P Commands` whenever no text input has focus** (the benchmark frame marker in contracts/cli.md). Satisfies: FR-060, contracts/cli.md.
+- [X] T013 Wire `Ctrl-Q` quit and `Tab` / `Shift-Tab` pane focus cycling into `src/app/event_loop.rs`, so the shell is usable. Satisfies: FR-065.
 
 ### Configuration
 
@@ -112,7 +112,7 @@ crate, as in plan.md, Project Structure. Spikes stay in `spikes/` outside the wo
   - Providers: anthropic, openai, google, mistral, cohere, groq, deepseek, openrouter, xai, with hostnames, and `ranges` only where the provider publishes them, each with a source comment.
 
   Satisfies: FR-020, FR-022a/b, FR-023, FR-026.
-- [ ] T016 Implement config loading and merging in `src/config/mod.rs` and `src/config/merge.rs`:
+- [X] T016 Implement config loading and merging in `src/config/mod.rs` and `src/config/merge.rs`:
   - defaults embedded with `include_str!`; user files from `dirs::config_dir()/fallow/` or `--config-dir`;
   - "a user entry with the same `id` replaces the built-in entry completely. `enabled = false` disables it";
   - unknown keys produce warnings;
@@ -124,8 +124,8 @@ crate, as in plan.md, Project Structure. Spikes stay in `spikes/` outside the wo
 
 ### Platform trait and snapshot model
 
-- [ ] T018 [P] Define the snapshot model in `src/procmon/snapshot.rs` per data-model.md: `ProcessKey { pid, start_time }`, `ProcessRecord`, `Footprint { bytes, metric: PhysFootprint | PrivateWorkingSet | Pss | Rss | WorkingSet }`, `CwdState { Unknown, Pending, Known(PathBuf), Unavailable(reason) }`, `Connection { owner, local, remote, state: Established | Listen | Other }`, `DetectionSignal` (kinds `Signature{id}`, `ProviderConnection{provider_id, via: Resolved | Range}`, `LocalModelConnection{server}`; "No environment-based kind exists (FR-024)"), `LlmProcess`, `ProcessGroup`, `Status { Serving, LlmConnected, Busy, Idle }`, `SystemSummary`, `Snapshot`, and `Note`. Satisfies: FR-011, FR-012, FR-013, FR-016, FR-019, FR-024.
-- [ ] T019 Define the platform trait in `src/procmon/platform/mod.rs`: `cmdline`, `cwd`, `footprint`, `tcp_table`, `suspend`, `resume`, `kill`, returning the T018 types. Add stub files `src/procmon/platform/linux.rs`, `macos.rs` and `windows.rs`, selected with `cfg`, that return `Unsupported`. The trait doc comment states: "No method may request or read a process environment (FR-024, Constitution VII)". Satisfies: plan Structure, R-1.
+- [X] T018 [P] Define the snapshot model in `src/procmon/snapshot.rs` per data-model.md: `ProcessKey { pid, start_time }`, `ProcessRecord`, `Footprint { bytes, metric: PhysFootprint | PrivateWorkingSet | Pss | Rss | WorkingSet }`, `CwdState { Unknown, Pending, Known(PathBuf), Unavailable(reason) }`, `Connection { owner, local, remote, state: Established | Listen | Other }`, `DetectionSignal` (kinds `Signature{id}`, `ProviderConnection{provider_id, via: Resolved | Range}`, `LocalModelConnection{server}`; "No environment-based kind exists (FR-024)"), `LlmProcess`, `ProcessGroup`, `Status { Serving, LlmConnected, Busy, Idle }`, `SystemSummary`, `Snapshot`, and `Note`. Satisfies: FR-011, FR-012, FR-013, FR-016, FR-019, FR-024.
+- [X] T019 Define the platform trait in `src/procmon/platform/mod.rs`: `cmdline`, `cwd`, `footprint`, `tcp_table`, `suspend`, `resume`, `kill`, returning the T018 types. Add stub files `src/procmon/platform/linux.rs`, `macos.rs` and `windows.rs`, selected with `cfg`, that return `Unsupported`. The trait doc comment states: "No method may request or read a process environment (FR-024, Constitution VII)". Satisfies: plan Structure, R-1.
 
 ### Benchmarks wired into CI
 
@@ -154,7 +154,7 @@ crate, as in plan.md, Project Structure. Spikes stay in `spikes/` outside the wo
   - `cargo xtask bench-startup` and `cargo xtask bench-memory --idle`.
 
   The build fails if either budget is exceeded. Satisfies: FR-050, FR-053, Constitution VI.
-- [ ] T026 [P] Write `tests/cli_args.rs`: every option in contracts/cli.md, exit code 2 on bad arguments, hidden options absent from `--help`. Satisfies: contracts/cli.md.
+- [X] T026 [P] Write `tests/cli_args.rs`: every option in contracts/cli.md, exit code 2 on bad arguments, hidden options absent from `--help`. Satisfies: contracts/cli.md.
 
 **Checkpoint**: `fallow` opens a full-screen shell with three empty panes and the hint bar, `Tab`
 cycles focus and `Ctrl-Q` quits. CI is green on all three OSes with the startup and idle-memory

@@ -21,12 +21,16 @@ arguments.
 
 These exist so CI can verify SC-002, SC-003, SC-007, SC-009 and the benchmarks without driving the
 TUI. They are compiled into release builds because the benchmarks must measure the shipped binary,
-but they never start the TUI.
+but the snapshot options never start the TUI.
 
 | Option | Behavior |
 |---|---|
 | `--snapshot-json` | Run two refresh cycles (needed for CPU deltas), print one JSON `Snapshot` (shape in data-model.md, `records` limited to LLM group members) to stdout, then exit. Respects `--no-dns`. |
 | `--snapshot-hold <SECS>` | Same as `--snapshot-json`, then stay alive with all state in memory for `SECS` seconds so the harness can dump its memory (SC-007 canary test). |
+| `--snapshot-stream <SECS>` | Run the refresh loop for `SECS` seconds and print one JSON line per refresh cycle: the timestamp, the cycle number and the `ProcessKey`s of the detected LLM processes. Lets latency tests (SC-004) watch processes appear and disappear. Respects `--no-dns`. |
+| `--bench-stats <PATH>` | Starts the TUI normally. On exit, writes one line `pid=<own pid> ticks=<event-loop ticks> cycles=<procmon refresh cycles>` to `PATH`, so benchmarks can prove they measured a live Fallow (research R-12): the PID must equal the measured PID, and ticks or cycles must reach 90% of the expected count. `cycles` is 0 until the procmon worker exists. |
+
+The three snapshot options are mutually exclusive.
 
 ## Startup frame marker (benchmark contract)
 
