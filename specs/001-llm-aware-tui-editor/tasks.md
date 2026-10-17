@@ -326,7 +326,7 @@ summary adds up.
 
 ### Phase 3a CI checks (performance claims, privileges, macOS canary)
 
-- [ ] T117 [US1] Implement `cargo xtask bench-refresh` in `xtask/src/bench_refresh.rs`:
+- [X] T117 [US1] Implement `cargo xtask bench-refresh` in `xtask/src/bench_refresh.rs`:
   - a process-spawning fixture raises the total process count to **about 600** (idle child processes, released afterwards);
   - run Fallow in the PTY harness with the default 2 s refresh;
   - after a 30 s warm-up, sample Fallow's CPU time for 120 s from the OS (Linux `/proc/<pid>/stat` utime+stime, macOS `proc_pid_rusage` user+system time, Windows `GetProcessTimes`);
@@ -334,7 +334,7 @@ summary adds up.
   - add the step to `.github/workflows/ci.yml` on all three OSes.
 
   Satisfies: plan Performance Goals (refresh CPU), Constitution VI.
-- [ ] T118 [US1] Implement `cargo xtask bench-new-process` in `xtask/src/bench_new_process.rs`:
+- [X] T118 [US1] Implement `cargo xtask bench-new-process` in `xtask/src/bench_new_process.rs`:
   - run `fallow --snapshot-stream 60`;
   - start a stand-in process matching a built-in signature at a random offset within a refresh interval, and record the time until its `ProcessKey` first appears;
   - stop it and record the time until it disappears;
@@ -342,13 +342,13 @@ summary adds up.
   - add the step to `.github/workflows/ci.yml` on all three OSes.
 
   Satisfies: SC-004, Constitution VI.
-- [ ] T119 [US1] Run Fallow **unprivileged** in CI, in `.github/workflows/ci.yml` and `xtask/src/unprivileged.rs`:
+- [X] T119 [US1] Run Fallow **unprivileged** in CI, in `.github/workflows/ci.yml` and `xtask/src/unprivileged.rs`:
   - **Windows**: create a standard local user (`net user fallowci <random> /add`, not in Administrators), then run `fallow --snapshot-json` and the core detection checks (a signature process, a provider connection, a local model server and client) as that user with a non-elevated token, through a scheduled task or `CreateProcessWithLogonW`;
   - **Linux and macOS**: run the same checks as a non-root user (`sudo -u nobody` or a created user), with the fixtures owned by that user;
   - fail if Fallow requests elevation or exits non-zero, or if any **core field** for the user's own processes (name, PID, cwd, footprint, CPU, uptime, status, provider/model, confidence) is missing or `Unavailable` because of privileges. Windows cwd may be `Unavailable` only when `windows.read_working_directory = "never"`.
 
   Satisfies: FR-030, Constitution V.
-- [ ] T120 [US1] Implement the **macOS canary** in `xtask/src/canary.rs` and add it to the `macos-15` job in `.github/workflows/ci.yml`:
+- [X] T120 [US1] Implement the **macOS canary** in `xtask/src/canary.rs` and add it to the `macos-15` job in `.github/workflows/ci.yml`:
   - start a monitored child with an environment variable holding a random 32-byte canary and a command line matching an LLM signature, so Fallow reads it through KERN_PROCARGS2;
   - run `fallow --snapshot-hold 20` and dump its memory with `sudo lldb -p <pid> --batch -o "process save-core <file>"`;
   - search the core file, Fallow's stdout and screen output, logs, the config dir and the cache dir for the canary in UTF-8 and UTF-16LE;

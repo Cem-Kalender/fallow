@@ -67,6 +67,46 @@ jobs:
       - name: Idle memory benchmark (peak RSS < 50 MB)
         run: cargo xtask bench-memory --idle --csv bench-memory-idle-${{ matrix.os }}.csv
 
+      - name: Refresh CPU benchmark (~600 processes, <= 2% of one core)
+        run: cargo xtask bench-refresh
+
+      - name: New/exited process latency (<= two refresh intervals)
+        run: cargo xtask bench-new-process
+
+      - name: Unprivileged run (Linux, macOS)
+        if: runner.os != 'Windows'
+        run: |
+          rm -rf /tmp/fallowci && mkdir -p /tmp/fallowci
+          cp target/release/fallow target/release/xtask /tmp/fallowci/
+          chmod 755 /tmp/fallowci /tmp/fallowci/*
+          cd /tmp && sudo -u nobody /tmp/fallowci/xtask unprivileged --bin /tmp/fallowci/fallow
+
+      - name: Unprivileged run (Windows, standard user)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $chars = [char[]]'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789'
+          $pw = -join (1..20 | ForEach-Object { $chars | Get-Random }) + 'aA1!'
+          net user fallowci $pw /add | Out-Null
+          if ((net localgroup Administrators) -match 'fallowci') { throw 'fallowci must not be an administrator' }
+          New-Item -ItemType Directory -Force C:\fallowci | Out-Null
+          Copy-Item target\release\fallow.exe, target\release\xtask.exe C:\fallowci\
+          icacls C:\fallowci /grant 'fallowci:(OI)(CI)RX' | Out-Null
+          $cred = New-Object System.Management.Automation.PSCredential('fallowci', (ConvertTo-SecureString $pw -AsPlainText -Force))
+          $out = "$env:RUNNER_TEMP\unpriv-out.txt"
+          $err = "$env:RUNNER_TEMP\unpriv-err.txt"
+          $p = Start-Process -FilePath C:\fallowci\xtask.exe -ArgumentList 'unprivileged','--bin','C:\fallowci\fallow.exe' `
+            -Credential $cred -LoadUserProfile -WorkingDirectory C:\fallowci `
+            -RedirectStandardOutput $out -RedirectStandardError $err -Wait -PassThru
+          Get-Content $out, $err
+          Add-Content $env:GITHUB_STEP_SUMMARY "### Unprivileged run (windows)"
+          Get-Content $out | Add-Content $env:GITHUB_STEP_SUMMARY
+          exit $p.ExitCode
+
+      - name: Canary (SC-007, macOS)
+        if: runner.os == 'macOS'
+        run: cargo xtask canary
+
       - name: Upload idle RSS series
         if: always()
         uses: actions/upload-artifact@v4

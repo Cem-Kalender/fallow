@@ -1,9 +1,9 @@
 //! The procmon worker (R-1, R-6, FR-010, FR-015, FR-030): a thread that refreshes every
 //! `refresh_interval_ms` and sends an `Arc<Snapshot>` to the UI.
 //!
-//! sysinfo provides enumeration, names, parents, owners, start times and CPU only; command
-//! lines, working directories, footprints and connections come from the Fallow-owned platform
-//! layer (R-1).
+//! Enumeration, names, parents, owners, start times and CPU come from `sampler.rs`; command
+//! lines, working directories, footprints and connections from the Fallow-owned platform layer
+//! (R-1).
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -14,11 +14,11 @@ use std::time::{Duration, Instant, SystemTime};
 
 use compact_str::CompactString;
 use smallvec::SmallVec;
-use sysinfo::{MemoryRefreshKind, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
 
 use super::detect::{Detector, ProcView, ProviderSet};
 use super::group;
 use super::platform::{OsPlatform, Platform, PlatformError, RawConn, TcpQuery};
+use super::sampler::{Sample, Sampler};
 use super::snapshot::{
     Connection, CwdState, Footprint, FootprintMetric, Kind, Note, NoteKind, ProcessKey,
     ProcessRecord, Snapshot, Uid,
@@ -93,7 +93,7 @@ const WINDOWS_PROTECTED: &[&str] = &[
     "secure system",
 ];
 
-/// The refresh logic, independent of the thread and of sysinfo so it can be driven directly.
+/// The refresh logic, independent of the thread and of enumeration so it can be driven directly.
 pub struct Monitor<P: Platform> {
     platform: P,
     detector: Detector,
@@ -366,36 +366,6 @@ fn default_metric() -> FootprintMetric {
     }
 }
 
-/// sysinfo with only the fields R-1 allows: `cmd`, `cwd`, `environ`, `exe` and `memory` are
-/// never requested.
-pub fn refresh_kind() -> ProcessRefreshKind {
-    ProcessRefreshKind::nothing()
-        .with_cpu()
-        .with_user(UpdateKind::OnlyIfNotSet)
-}
-
-/// Refreshes `sys` and returns the processes (threads excluded) plus total and available RAM.
-pub fn sample(sys: &mut System) -> (Vec<ProcSample>, u64, u64) {
-    sys.refresh_processes_specifics(ProcessesToUpdate::All, true, refresh_kind());
-    sys.refresh_memory_specifics(MemoryRefreshKind::nothing().with_ram());
-    let procs = sys
-        .processes()
-        .iter()
-        .filter(|(_, p)| p.thread_kind().is_none())
-        .map(|(pid, p)| ProcSample {
-            key: ProcessKey {
-                pid: pid.as_u32(),
-                start_time: p.start_time(),
-            },
-            parent_pid: p.parent().map(|pp| pp.as_u32()),
-            name: CompactString::from(p.name().to_string_lossy().as_ref()),
-            owner: p.user_id().map(|u| Uid(CompactString::from(u.to_string()))),
-            cpu: p.cpu_usage(),
-        })
-        .collect();
-    (procs, sys.total_memory(), sys.available_memory())
-}
-
 /// The UI side of a running worker.
 pub struct WorkerHandle {
     pub snapshots: Receiver<Arc<Snapshot>>,
@@ -423,7 +393,7 @@ pub fn spawn(cfg: WorkerConfig) -> std::io::Result<WorkerHandle> {
         .name("procmon".into())
         .stack_size(256 * 1024)
         .spawn(move || {
-            let mut sys = System::new();
+            let mut sampler = Sampler::default();
             let mut monitor = Monitor::new(
                 OsPlatform::default(),
                 &cfg.signatures,
@@ -441,7 +411,7 @@ pub fn spawn(cfg: WorkerConfig) -> std::io::Result<WorkerHandle> {
                         Err(TryRecvError::Disconnected) => return,
                     }
                 }
-                let (procs, total, avail) = sample(&mut sys);
+                let (procs, total, avail) = sampler.sample();
                 let snap = monitor.cycle(&procs, total, avail);
                 counter.fetch_add(1, Ordering::Relaxed);
                 if tx.send(Arc::new(snap)).is_err() {

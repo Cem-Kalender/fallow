@@ -201,7 +201,9 @@ pub fn parse_procargs2(buf: &[u8]) -> Option<Vec<Box<str>>> {
     while i < aligned.min(strings.len()) && strings[i] == 0 {
         i += 1;
     }
-    let mut args = Vec::with_capacity(argc as usize);
+    // argc comes from the buffer itself: never trust it for an allocation size. Each argument
+    // takes at least one byte, so the buffer bounds the count.
+    let mut args = Vec::with_capacity((argc as usize).min(strings.len()).min(256));
     for _ in 0..argc {
         if i >= strings.len() {
             break; // truncated buffer

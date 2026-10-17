@@ -22,6 +22,9 @@ globset = { version = "0.4", default-features = false }
 ipnet = "2"
 compact_str = "0.9"
 smallvec = "1"
+
+# Process enumeration on macOS and Windows; Linux reads /proc directly (src/procmon/sampler.rs).
+[target.'cfg(not(target_os = "linux"))'.dependencies]
 sysinfo = { version = "0.39", default-features = false, features = ["system"] }
 
 [target.'cfg(unix)'.dependencies]

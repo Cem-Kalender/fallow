@@ -1347,6 +1347,7 @@ version = "0.0.0"
 dependencies = [
  "libc",
  "portable-pty",
+ "serde_json",
  "windows-sys",
 ]
 
