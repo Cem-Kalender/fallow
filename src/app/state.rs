@@ -521,9 +521,6 @@ mod tests {
         let mut s = AppState::new(None, Vec::new());
         s.focus = Pane::Processes;
         s.handle_key(press(KeyCode::Char('p'), KeyModifiers::NONE));
-        assert_eq!(
-            s.message.as_ref().unwrap().0,
-            "Pause: not available yet"
-        );
+        assert_eq!(s.message.as_ref().unwrap().0, "Pause: not available yet");
     }
 }
