@@ -86,8 +86,10 @@ jobs:
         shell: pwsh
         run: |
           $chars = [char[]]'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789'
-          $pw = -join (1..20 | ForEach-Object { $chars | Get-Random }) + 'aA1!'
-          net user fallowci $pw /add | Out-Null
+          # 14 characters at most: longer passwords make `net user` prompt for confirmation.
+          $pw = -join (1..10 | ForEach-Object { $chars | Get-Random }) + 'aA1!'
+          net user fallowci $pw /add
+          if ($LASTEXITCODE -ne 0) { throw 'could not create the fallowci user' }
           if ((net localgroup Administrators) -match 'fallowci') { throw 'fallowci must not be an administrator' }
           New-Item -ItemType Directory -Force C:\fallowci | Out-Null
           Copy-Item target\release\fallow.exe, target\release\xtask.exe C:\fallowci\
