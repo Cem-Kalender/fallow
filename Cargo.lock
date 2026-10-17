@@ -241,12 +241,14 @@ dependencies = [
 name = "fallow"
 version = "0.1.0"
 dependencies = [
+ "compact_str",
  "crossterm",
  "globset",
  "ipnet",
  "ratatui",
  "regex",
  "serde",
+ "smallvec",
  "toml",
 ]
 
