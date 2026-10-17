@@ -99,6 +99,7 @@ pub struct PanelState {
     pub selected: usize,
     pub offset: usize,
     pub expanded: HashSet<ProcessKey>,
+    pub sort: processes::Sort,
 }
 
 const MESSAGE_FOR: Duration = Duration::from_secs(3);
@@ -284,12 +285,30 @@ impl AppState {
             "proc.expand" => self.set_expanded(Some(true)),
             "proc.collapse" => self.set_expanded(Some(false)),
             "proc.toggle" => self.set_expanded(None),
+            "proc.sort.mem" => self.sort_by(processes::Col::Mem),
+            "proc.sort.cpu" => self.sort_by(processes::Col::Cpu),
+            "proc.sort.uptime" => self.sort_by(processes::Col::Up),
+            "proc.sort.name" => self.sort_by(processes::Col::Name),
+            "proc.sort.status" => self.sort_by(processes::Col::Status),
+            "proc.sort.confidence" => self.sort_by(processes::Col::Conf),
             other => {
                 let title = commands::find(other).map_or(other, |c| c.title);
                 self.say(format!("{title}: not available yet"));
                 true
             }
         }
+    }
+
+    /// Sorts by `column` (again: reverse), keeping the same process selected.
+    pub fn sort_by(&mut self, column: processes::Col) -> bool {
+        let selected = self.rows().get(self.panel.selected).map(|r| r.key);
+        self.panel.sort = self.panel.sort.select(column);
+        if let Some(key) = selected {
+            if let Some(i) = self.rows().iter().position(|r| r.key == key) {
+                self.panel.selected = i;
+            }
+        }
+        true
     }
 
     fn focus(&mut self, pane: Pane) -> bool {
@@ -299,9 +318,9 @@ impl AppState {
     }
 
     fn rows(&self) -> Vec<processes::Row> {
-        self.snapshot
-            .as_deref()
-            .map_or_else(Vec::new, |s| processes::rows(s, &self.panel.expanded))
+        self.snapshot.as_deref().map_or_else(Vec::new, |s| {
+            processes::rows(s, &self.panel.expanded, self.panel.sort)
+        })
     }
 
     fn page(&self) -> usize {
@@ -386,6 +405,9 @@ impl AppState {
                 };
                 let mut changed = self.focus(pane);
                 if pane == Pane::Processes {
+                    if let Some(col) = processes::header_at(&g.list, self.all_users, x, y) {
+                        return self.sort_by(col) || changed;
+                    }
                     if let Some(i) = processes::row_at(&g.list, self.panel.selected, y) {
                         changed |= self.select(i) || true;
                     }
@@ -498,10 +520,10 @@ mod tests {
     fn unavailable_commands_say_so() {
         let mut s = AppState::new(None, Vec::new());
         s.focus = Pane::Processes;
-        s.handle_key(press(KeyCode::Char('m'), KeyModifiers::NONE));
+        s.handle_key(press(KeyCode::Char('p'), KeyModifiers::NONE));
         assert_eq!(
             s.message.as_ref().unwrap().0,
-            "Sort by memory: not available yet"
+            "Pause: not available yet"
         );
     }
 }

@@ -4,6 +4,7 @@
 //! priority order; the selected row's full details (every FR-011 field) are always shown
 //! under the list, so narrow panes lose no information.
 
+use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::time::UNIX_EPOCH;
 
@@ -16,7 +17,8 @@ use ratatui::widgets::{Cell, Paragraph, Row as TableRow, Table, TableState};
 use super::layout::pane_block;
 use crate::app::state::{AppState, Pane};
 use crate::procmon::snapshot::{
-    Confidence, CwdState, FootprintMetric, Kind, NoteKind, ProcessKey, SignalKind, Snapshot, Status,
+    Confidence, CwdState, FootprintMetric, Kind, NoteKind, ProcessGroup, ProcessKey, SignalKind,
+    Snapshot, Status,
 };
 
 /// One visible line of the list.
@@ -29,14 +31,138 @@ pub struct Row {
     pub expandable: bool,
 }
 
-/// The rows: each group (largest total first) and, when expanded, its members in tree order.
-pub fn rows(s: &Snapshot, expanded: &HashSet<ProcessKey>) -> Vec<Row> {
+/// The panel's sort: a column and whether its natural order is reversed (FR-014).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Sort {
+    pub column: Col,
+    pub reversed: bool,
+}
+
+impl Default for Sort {
+    /// Largest memory first, so the heaviest group is on top (US2).
+    fn default() -> Self {
+        Sort {
+            column: Col::Mem,
+            reversed: false,
+        }
+    }
+}
+
+impl Sort {
+    /// Sorting by the same column again reverses it; a new column starts in its natural order.
+    pub fn select(self, column: Col) -> Sort {
+        if self.column == column {
+            Sort {
+                column,
+                reversed: !self.reversed,
+            }
+        } else {
+            Sort {
+                column,
+                reversed: false,
+            }
+        }
+    }
+
+    /// `▾` while the shown order is descending, `▴` while ascending.
+    pub fn arrow(self) -> &'static str {
+        if self.column.natural_descending() != self.reversed {
+            "▾"
+        } else {
+            "▴"
+        }
+    }
+}
+
+impl Col {
+    /// Memory, CPU and uptime list the largest first, status the most active first,
+    /// confidence `certain` first; text columns are alphabetical.
+    fn natural_descending(self) -> bool {
+        matches!(
+            self,
+            Col::Mem | Col::Cpu | Col::Up | Col::Status | Col::Conf
+        )
+    }
+}
+
+fn status_rank(s: Status) -> u8 {
+    match s {
+        Status::Serving => 0,
+        Status::LlmConnected => 1,
+        Status::Busy => 2,
+        Status::Idle => 3,
+    }
+}
+
+/// The groups' order for a sort. Memory and CPU use group totals; ties keep a stable order by
+/// (PID, start time) in either direction.
+fn compare_groups(s: &Snapshot, sort: Sort, a: &ProcessGroup, b: &ProcessGroup) -> Ordering {
+    let rec = |g: &ProcessGroup| s.records.get(&g.root);
+    let llm = |g: &ProcessGroup| s.llm.get(&g.root);
+    let text = |v: Option<String>| v.unwrap_or_default().to_lowercase();
+    // Natural order, ascending meaning "comes first".
+    let natural = match sort.column {
+        Col::Mem => b.total_footprint.cmp(&a.total_footprint),
+        Col::Cpu => b.total_cpu.total_cmp(&a.total_cpu),
+        Col::Up => a.root.start_time.cmp(&b.root.start_time),
+        Col::Status => {
+            let r = |g| llm(g).map_or(u8::MAX, |l| status_rank(l.status));
+            r(a).cmp(&r(b))
+        }
+        Col::Conf => {
+            let r = |g| llm(g).map(|l| l.confidence);
+            r(b).cmp(&r(a))
+        }
+        Col::Name => {
+            text(rec(a).map(|r| r.name.to_string())).cmp(&text(rec(b).map(|r| r.name.to_string())))
+        }
+        Col::Pid => a.root.pid.cmp(&b.root.pid),
+        Col::User => text(
+            rec(a)
+                .and_then(|r| r.owner.as_ref())
+                .map(|u| u.0.to_string()),
+        )
+        .cmp(&text(
+            rec(b)
+                .and_then(|r| r.owner.as_ref())
+                .map(|u| u.0.to_string()),
+        )),
+        Col::Type => text(llm(a).map(|l| kind(l.kind).to_string()))
+            .cmp(&text(llm(b).map(|l| kind(l.kind).to_string()))),
+        Col::ProviderModel => {
+            let pm = |g| {
+                llm(g)
+                    .map(|l| provider_model(l.provider.as_deref(), l.model.as_deref()))
+                    .filter(|v| !v.is_empty())
+            };
+            // Unknown provider/model last.
+            match (pm(a), pm(b)) {
+                (Some(x), Some(y)) => x.to_lowercase().cmp(&y.to_lowercase()),
+                (Some(_), None) => Ordering::Less,
+                (None, Some(_)) => Ordering::Greater,
+                (None, None) => Ordering::Equal,
+            }
+        }
+        Col::Dir => {
+            let d = |g| match rec(g).map(|r| &r.cwd) {
+                Some(CwdState::Known(p)) => p.to_string_lossy().to_lowercase(),
+                _ => String::from("\u{10ffff}"),
+            };
+            d(a).cmp(&d(b))
+        }
+    };
+    let primary = if sort.reversed {
+        natural.reverse()
+    } else {
+        natural
+    };
+    primary.then(a.root.cmp(&b.root))
+}
+
+/// The rows: each group in sort order and, when expanded, its members in tree order.
+pub fn rows(s: &Snapshot, expanded: &HashSet<ProcessKey>, sort: Sort) -> Vec<Row> {
     let mut groups: Vec<_> = s.groups.iter().collect();
-    groups.sort_by(|a, b| {
-        b.total_footprint
-            .cmp(&a.total_footprint)
-            .then(a.root.cmp(&b.root))
-    });
+    groups.sort_by(|a, b| compare_groups(s, sort, a, b));
     let mut out = Vec::new();
     for g in groups {
         out.push(Row {
@@ -117,7 +243,7 @@ pub fn draw(f: &mut Frame<'_>, state: &AppState, area: Rect) {
         f.render_widget(Paragraph::new(lines), inner);
         return;
     };
-    let rows = rows(snap, &state.panel.expanded);
+    let rows = rows(snap, &state.panel.expanded, state.panel.sort);
     if rows.is_empty() {
         let lines = vec![
             Line::raw("No LLM processes found."),
@@ -152,8 +278,11 @@ pub fn draw(f: &mut Frame<'_>, state: &AppState, area: Rect) {
     let selected = state.panel.selected.min(rows.len() - 1);
     let ctx = Ctx::new(snap, state.all_users);
     let cols = choose_columns(table_area.width, state.all_users);
-    let header = TableRow::new(cols.iter().map(|c| Cell::from(c.title(&ctx))))
-        .style(Style::default().add_modifier(Modifier::BOLD));
+    let header = TableRow::new(
+        cols.iter()
+            .map(|c| Cell::from(c.title(&ctx, state.panel.sort))),
+    )
+    .style(Style::default().add_modifier(Modifier::BOLD));
     let body = rows.iter().map(|r| {
         let cells = cols
             .iter()
@@ -206,8 +335,9 @@ fn coverage_line(state: &AppState) -> Line<'static> {
     Line::styled(text, Style::default().add_modifier(Modifier::DIM))
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Col {
+/// A panel column; every column can be the sort column (FR-014).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Col {
     Name,
     Mem,
     Cpu,
@@ -245,21 +375,55 @@ impl Col {
         }
     }
 
-    fn title(self, ctx: &Ctx<'_>) -> String {
+    fn title(self, ctx: &Ctx<'_>, sort: Sort) -> String {
+        let arrow = if sort.column == self {
+            sort.arrow()
+        } else {
+            ""
+        };
         match self {
-            Col::Name => "Name".into(),
-            Col::Mem => format!("Mem▾{}", ctx.metric_suffix()),
-            Col::Cpu => "CPU%".into(),
-            Col::Status => "Status".into(),
-            Col::Conf => "Conf".into(),
-            Col::Up => "Up".into(),
-            Col::Pid => "PID".into(),
-            Col::User => "User".into(),
-            Col::Type => "Type".into(),
-            Col::ProviderModel => "Provider/model".into(),
-            Col::Dir => "Directory".into(),
+            Col::Name => format!("Name{arrow}"),
+            Col::Mem => format!("Mem{arrow}{}", ctx.metric_suffix()),
+            Col::Cpu => format!("CPU%{arrow}"),
+            Col::Status => format!("Status{arrow}"),
+            Col::Conf => format!("Conf{arrow}"),
+            Col::Up => format!("Up{arrow}"),
+            Col::Pid => format!("PID{arrow}"),
+            Col::User => format!("User{arrow}"),
+            Col::Type => format!("Type{arrow}"),
+            Col::ProviderModel => format!("Provider/model{arrow}"),
+            Col::Dir => format!("Directory{arrow}"),
         }
     }
+}
+
+/// The column whose header is at screen column `x` in the process list `list` (FR-063 header
+/// click), or `None` if `y` is not the header row.
+pub fn header_at(list: &Rect, all_users: bool, x: u16, y: u16) -> Option<Col> {
+    if y != list.y + 1 || x <= list.x || x + 1 >= list.right() {
+        return None;
+    }
+    let width = list.width.saturating_sub(2);
+    let cols = choose_columns(width, all_users);
+    let fixed: u16 = cols
+        .iter()
+        .filter(|c| **c != Col::Name)
+        .map(|c| c.width())
+        .sum::<u16>()
+        + cols.len().saturating_sub(1) as u16;
+    let mut left = list.x + 1;
+    for c in cols {
+        let w = if c == Col::Name {
+            width.saturating_sub(fixed)
+        } else {
+            c.width()
+        };
+        if x >= left && x < left + w {
+            return Some(c);
+        }
+        left += w + 1;
+    }
+    None
 }
 
 /// The columns that fit, in priority order (Name always; the rest while there is room).

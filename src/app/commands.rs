@@ -102,27 +102,27 @@ pub const COMMANDS: &[Command] = &[
     cmd("config.reload", "Reload configuration", Global, ""),
     on(cmd("quit", "Quit", Global, "Ctrl-Q")),
     // Process panel
-    hint(
+    on(hint(
         cmd("proc.sort.mem", "Sort by memory", Processes, "m"),
         2,
         "m",
         "Sort mem",
-    ),
-    cmd("proc.sort.cpu", "Sort by CPU", Processes, "c"),
-    cmd("proc.sort.uptime", "Sort by uptime", Processes, "u"),
-    cmd("proc.sort.name", "Sort by name", Processes, "n"),
-    cmd(
+    )),
+    on(cmd("proc.sort.cpu", "Sort by CPU", Processes, "c")),
+    on(cmd("proc.sort.uptime", "Sort by uptime", Processes, "u")),
+    on(cmd("proc.sort.name", "Sort by name", Processes, "n")),
+    on(cmd(
         "proc.sort.status",
         "Sort by status",
         Processes,
         "click header",
-    ),
-    cmd(
+    )),
+    on(cmd(
         "proc.sort.confidence",
         "Sort by confidence",
         Processes,
         "click header",
-    ),
+    )),
     on(cmd("proc.up", "Move selection up", Processes, "↑")),
     on(cmd("proc.down", "Move selection down", Processes, "↓")),
     on(cmd("proc.page_up", "Page up", Processes, "PgUp")),
