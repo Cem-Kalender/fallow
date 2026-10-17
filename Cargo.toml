@@ -1,0 +1,28 @@
+[package]
+name = "fallow"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT OR Apache-2.0"
+publish = false
+description = "A terminal editor that shows the LLM processes on your machine"
+
+[workspace]
+resolver = "3"
+members = [".", "xtask"]
+exclude = ["spikes"]
+
+[dependencies]
+crossterm = "0.29"
+ratatui = { version = "0.30", default-features = false, features = ["crossterm"] }
+serde = { version = "1", features = ["derive"] }
+toml = { version = "1", default-features = false, features = ["parse", "serde"] }
+regex = "1"
+globset = { version = "0.4", default-features = false }
+ipnet = "2"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+strip = "symbols"

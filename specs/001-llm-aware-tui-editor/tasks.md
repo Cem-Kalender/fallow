@@ -40,19 +40,19 @@ crate, as in plan.md, Project Structure. Spikes stay in `spikes/` outside the wo
 
 **Purpose**: Workspace, toolchain and policy files
 
-- [ ] T001 Create the root workspace manifest `Cargo.toml`:
+- [X] T001 Create the root workspace manifest `Cargo.toml`:
   - package `fallow`: edition 2024, `rust-version = "1.85"`, `license = "MIT OR Apache-2.0"`, `publish = false`;
   - workspace members `[".", "xtask"]`, `exclude = ["spikes"]`;
   - `[profile.release]` with `lto = "thin"`, `codegen-units = 1`, `panic = "abort"`, `strip = "symbols"`.
   - Satisfies: plan Technical Context, Constitution I/II.
-- [ ] T002 [P] Pin the toolchain in `rust-toolchain.toml`: channel `1.99`, components `rustfmt` and `clippy`, and targets for x86_64/aarch64 Linux, macOS and Windows. Satisfies: plan Technical Context.
-- [ ] T003 [P] Create `deny.toml` for cargo-deny.
+- [X] T002 [P] Pin the toolchain in `rust-toolchain.toml`: channel `1.99`, components `rustfmt` and `clippy`, and targets for x86_64/aarch64 Linux, macOS and Windows. Satisfies: plan Technical Context.
+- [X] T003 [P] Create `deny.toml` for cargo-deny.
   - Licenses allowed: MIT, Apache-2.0, BSD-2/3, ISC, Unicode-3.0, Zlib.
   - `[bans]` deny `tokio`, `async-std`, `smol`, `hickory-resolver`, `wry`, `tao`, `winit`, `gtk`, `webkit2gtk`, `netstat2`.
   - Satisfies: Constitution III and the plan's Dependency budget ("Rejected").
-- [ ] T004 [P] Add `rustfmt.toml` (`max_width = 100`) and `clippy.toml`, and add `.cargo/config.toml` with `[alias] xtask = "run --package xtask --release --"`. Satisfies: plan Testing.
-- [ ] T005 Create `src/main.rs` and empty module roots: `src/app/mod.rs`, `src/ui/mod.rs`, `src/procmon/mod.rs`, `src/procmon/platform/mod.rs`, `src/config/mod.rs`, `src/cli.rs`. `main` returns exit code 0, 1 or 2 per contracts/cli.md. Satisfies: plan Project Structure.
-- [ ] T006 [P] Create the `xtask/` crate: `xtask/Cargo.toml` (portable-pty 0.9, plus libc / windows-sys for the platform), and `xtask/src/main.rs` with a subcommand dispatcher (`bench-startup`, `bench-memory`, `detect-fixtures`, `canary`, `egress`, `defender-check`, `gen-fixture`, `bench-search`) where each stub exits 2 with "not implemented". Satisfies: plan Project Structure, R-13.
+- [X] T004 [P] Add `rustfmt.toml` (`max_width = 100`) and `clippy.toml`, and add `.cargo/config.toml` with `[alias] xtask = "run --package xtask --release --"`. Satisfies: plan Testing.
+- [X] T005 Create `src/main.rs` and empty module roots: `src/app/mod.rs`, `src/ui/mod.rs`, `src/procmon/mod.rs`, `src/procmon/platform/mod.rs`, `src/config/mod.rs`, `src/cli.rs`. `main` returns exit code 0, 1 or 2 per contracts/cli.md. Satisfies: plan Project Structure.
+- [X] T006 [P] Create the `xtask/` crate: `xtask/Cargo.toml` (portable-pty 0.9, plus libc / windows-sys for the platform), and `xtask/src/main.rs` with a subcommand dispatcher (`bench-startup`, `bench-memory`, `detect-fixtures`, `canary`, `egress`, `defender-check`, `gen-fixture`, `bench-search`) where each stub exits 2 with "not implemented". Satisfies: plan Project Structure, R-13.
 
 ---
 
