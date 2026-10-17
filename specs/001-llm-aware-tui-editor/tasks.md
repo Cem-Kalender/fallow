@@ -129,7 +129,7 @@ crate, as in plan.md, Project Structure. Spikes stay in `spikes/` outside the wo
 
 ### Benchmarks wired into CI
 
-- [ ] T020 [P] Port the PTY harness from `spikes/idle-budget/measure/src/main.rs` into `xtask/src/pty.rs`, with all R-12 lessons:
+- [X] T020 [P] Port the PTY harness from `spikes/idle-budget/measure/src/main.rs` into `xtask/src/pty.rs`, with all R-12 lessons:
   - 120×40 PTY, absolute binary path and cwd;
   - drain the output and answer `ESC[6n` once per query;
   - detect the frame marker `Commands`;
@@ -139,16 +139,16 @@ crate, as in plan.md, Project Structure. Spikes stay in `spikes/` outside the wo
   - liveness, selected by `--require ticks|cycles`: `ticks` requires ≥ 90% of the expected loop ticks (duration ÷ 250 ms). This is the default in Phase 2, before procmon exists. `cycles` requires procmon cycles ≥ 90% of expected (duration ÷ `refresh_interval_ms`) and becomes the default once T034 lands.
 
   A run that fails any check is INVALID (exit 2). Satisfies: R-12, R-13, Constitution VI.
-- [ ] T021 [P] Port the RSS readers and the executable-path readers into `xtask/src/rss.rs`: Linux `/proc/<pid>/status` VmRSS, macOS `proc_pidinfo(PROC_PIDTASKINFO)`, Windows `WorkingSetSize`. Satisfies: R-13 (RSS per constitution).
-- [ ] T022 Implement `--bench-stats` in `src/main.rs`: on exit write `pid`, the event-loop `ticks` (T010) and the procmon `cycles` (0 until T034). Satisfies: T008, R-12.
-- [ ] T023 Implement `cargo xtask bench-startup` in `xtask/src/bench_startup.rs`:
+- [X] T021 [P] Port the RSS readers and the executable-path readers into `xtask/src/rss.rs`: Linux `/proc/<pid>/status` VmRSS, macOS `proc_pidinfo(PROC_PIDTASKINFO)`, Windows `WorkingSetSize`. Satisfies: R-13 (RSS per constitution).
+- [X] T022 Implement `--bench-stats` in `src/main.rs`: on exit write `pid`, the event-loop `ticks` (T010) and the procmon `cycles` (0 until T034). Satisfies: T008, R-12.
+- [X] T023 Implement `cargo xtask bench-startup` in `xtask/src/bench_startup.rs`:
   - 3 warm-ups, then 30 runs, timing from spawn to the frame marker;
   - fail if **p95 ≥ 100 ms** (constitution v3.0.1: p95 of 30 runs after 3 warm-ups). On failure, re-run the whole benchmark (warm-ups and 30 runs) once automatically; the second result is final;
   - print the p50, p95 and max, and append them to `GITHUB_STEP_SUMMARY`.
 
   Satisfies: FR-041, SC-006, R-13.
-- [ ] T024 Implement `cargo xtask bench-memory --idle` in `xtask/src/bench_memory.rs`: start Fallow with no project, wait 30 s, sample RSS every 1 s for 60 s, and fail if the max is **≥ 50 MB** or the run is INVALID. Liveness uses `--require ticks` in Phase 2 (switched to `cycles` by T034). Upload the series as CSV. Satisfies: FR-040, SC-005, R-13.
-- [ ] T025 Create `.github/workflows/ci.yml` with the matrix `ubuntu-24.04`, `macos-15`, `windows-2025`. Steps:
+- [X] T024 Implement `cargo xtask bench-memory --idle` in `xtask/src/bench_memory.rs`: start Fallow with no project, wait 30 s, sample RSS every 1 s for 60 s, and fail if the max is **≥ 50 MB** or the run is INVALID. Liveness uses `--require ticks` in Phase 2 (switched to `cycles` by T034). Upload the series as CSV. Satisfies: FR-040, SC-005, R-13.
+- [X] T025 Create `.github/workflows/ci.yml` with the matrix `ubuntu-24.04`, `macos-15`, `windows-2025`. Steps:
   - `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo deny check`;
   - `cargo build --release`, `cargo test --workspace`;
   - `cargo xtask bench-startup` and `cargo xtask bench-memory --idle`.

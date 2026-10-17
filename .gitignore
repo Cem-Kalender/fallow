@@ -19,3 +19,6 @@ Thumbs.db
 *.swp
 .idea/
 .vscode/
+
+# Benchmark output
+bench-memory-*.csv
