@@ -434,10 +434,10 @@ The Defender job reports on every run and becomes blocking after 5 consecutive p
 the largest group comes first. Click the Status header to sort by status; click again to reverse.
 Fill RAM until less than 10% is available: "RAM remaining" is highlighted.
 
-- [ ] T055 [P] [US2] Write `tests/sorting.rs`: groups sort by **group totals** for memory and CPU, highest first; uptime, name, confidence and status order are stable; pressing the same key or clicking the same header again reverses. Satisfies: FR-014, US2 AS1–AS2.
-- [ ] T056 [US2] Implement the sort state and comparators in `src/ui/processes.rs`: keys `m` / `c` / `u` / `n` (repeat to reverse), and **no** single key for confidence; palette commands "Sort by memory / CPU / uptime / name / status / confidence" registered in `src/app/commands.rs`; and a `▾` / `▴` indicator in the active header. Satisfies: FR-014, contracts/ui-commands.md (Process panel).
-- [ ] T057 [US2] Implement column-header click sorting in `src/ui/processes.rs`: clicking any header, including status and confidence, sorts by it, and clicking again reverses. Satisfies: FR-063, FR-014.
-- [ ] T058 [US2] Highlight "RAM remaining" in `src/ui/summary.rs` when `low_memory` is true. Satisfies: FR-016, US2 AS3.
+- [X] T055 [P] [US2] Write `tests/sorting.rs`: groups sort by **group totals** for memory and CPU, highest first; uptime, name, confidence and status order are stable; pressing the same key or clicking the same header again reverses. Satisfies: FR-014, US2 AS1–AS2.
+- [X] T056 [US2] Implement the sort state and comparators in `src/ui/processes.rs`: keys `m` / `c` / `u` / `n` (repeat to reverse), and **no** single key for confidence; palette commands "Sort by memory / CPU / uptime / name / status / confidence" registered in `src/app/commands.rs`; and a `▾` / `▴` indicator in the active header. Satisfies: FR-014, contracts/ui-commands.md (Process panel).
+- [X] T057 [US2] Implement column-header click sorting in `src/ui/processes.rs`: clicking any header, including status and confidence, sorts by it, and clicking again reverses. Satisfies: FR-063, FR-014.
+- [X] T058 [US2] Highlight "RAM remaining" in `src/ui/summary.rs` when `low_memory` is true. Satisfies: FR-016, US2 AS3.
 
 **Checkpoint**: The P1 panel plus sorting. A tester can find the heaviest group within 10 s
 (SC-001, validated in T109).
