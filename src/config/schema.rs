@@ -121,6 +121,28 @@ pub struct Signature {
     pub local_server: Option<LocalServer>,
 }
 
+impl Signature {
+    /// True when every specified matcher matches (AND within one signature): `match.name`
+    /// against the process name, and `match.cmdline` against the argv joined with spaces.
+    /// A signature with a `match.cmdline` never matches a process whose command line is
+    /// unknown. Across signatures, any matching signature counts (OR); see
+    /// contracts/config.md.
+    pub fn matches(&self, name: &str, cmdline: Option<&str>) -> bool {
+        if let Some(glob) = &self.match_name {
+            if !glob.matcher.is_match(name) {
+                return false;
+            }
+        }
+        if let Some(re) = &self.match_cmdline {
+            match cmdline {
+                Some(c) if re.is_match(c) => {}
+                _ => return false,
+            }
+        }
+        true
+    }
+}
+
 /// A compiled `match.name` glob, keeping its source text for display.
 #[derive(Debug, Clone)]
 pub struct NameGlob {

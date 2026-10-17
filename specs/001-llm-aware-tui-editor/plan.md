@@ -32,7 +32,7 @@ enforces the constitution's memory and startup budgets.
 **Primary Dependencies**: ratatui, crossterm (with bracketed paste, mouse capture and kitty
 keyboard enhancement flags), arboard, sysinfo, ropey, tree-sitter, tree-sitter-highlight,
 15 tree-sitter grammar crates, notify, grep-searcher, grep-regex, ignore, toml, serde, regex,
-globset, ipnet, compact_str, smallvec, zeroize, dirs. Platform: `libc` (Linux, macOS),
+globset, ipnet, compact_str, smallvec, zeroize. Platform: `libc` (Linux, macOS),
 `windows-sys` (Windows). Dev only: portable-pty, serde_json, proptest, trybuild. Each dependency is
 justified in the Dependency budget section below.
 
@@ -109,7 +109,7 @@ Constitution v3.0.0. Evaluated before Phase 0 and after Phase 1 against v2.0.0. 
 | ipnet | Provider ranges | |
 | compact_str, smallvec | Avoid heap allocations for small strings and vectors in snapshots | |
 | zeroize | Wipe the macOS KERN_PROCARGS2 buffer (R-2) | |
-| dirs | Platform config dir | |
+| ~~dirs~~ | *Removed 2026-10-17.* Its dependency option-ext is MPL-2.0, which deny.toml doesn't allow. The config dir is resolved by Fallow's own code (contracts/config.md "Location"). | One dependency fewer. |
 | arboard | Platform clipboard fallback for copy, cut and `Ctrl-V` (FR-008). OSC 52 is written directly, with no crate. | Opened lazily on the first clipboard use, never at startup. On X11 it keeps a helper thread alive after a copy, so the selection stays available. That costs about 1 MB and only after the first copy. `bench-memory --loaded` performs one copy so that this cost is measured. |
 | libc / windows-sys | Platform layer | `windows-sys` is raw bindings with no runtime cost. |
 | *Dev only*: portable-pty, serde_json, proptest | Benchmark harness, test JSON, parser property tests | Not linked into the shipped binary. |
@@ -154,7 +154,7 @@ a **personal machine or GitHub Codespaces**.
 
 | Decision | Status |
 |---|---|
-| Development environment: personal machine or GitHub Codespaces | **OPEN**: record the choice here once decided |
+| Development environment | **DECIDED 2026-10-17**: a Linux server (Ubuntu 26.04, x86_64, 2 vCPU, 3.7 GiB RAM + 4 GB swap), working as root, with `CARGO_BUILD_JOBS=2`. macOS and Windows are verified in CI only. |
 
 Until then, all builds, tests and measurements run in CI. Code signing for Windows and macOS
 releases is a follow-up for tasks (R-12, product implication).
@@ -218,7 +218,8 @@ assets/defaults/
 ├── signatures.toml
 └── providers.toml
 src/
-├── main.rs                   # arg parsing, terminal setup, first frame, thread start
+├── main.rs                   # thin wrapper: arg parsing, exit code, --bench-stats
+├── lib.rs                    # the modules, so tests/ can reach them (a bin-only crate can't be imported)
 ├── app/
 │   ├── state.rs              # AppState, focus, panes, modes
 │   ├── commands.rs           # command registry (palette + keymap source)

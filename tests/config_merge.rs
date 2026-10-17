@@ -479,3 +479,60 @@ fn files_are_read_from_the_config_dir() {
     assert!(c.notices.is_empty(), "{:?}", c.notices);
     assert_eq!(c.settings.refresh_interval_ms, 750);
 }
+
+#[test]
+fn every_field_of_one_signature_must_match() {
+    // AND within a signature: a name match alone is not enough when a cmdline is also given.
+    let c = signatures(
+        r#"
+[[signature]]
+id = "claude-via-node"
+kind = "agent_cli"
+match.name = "node"
+match.cmdline = '@anthropic-ai[\\/]claude-code[\\/]'
+"#,
+    );
+    assert!(c.notices.is_empty(), "{:?}", c.notices);
+    let s = c
+        .signatures
+        .iter()
+        .find(|s| s.id == "claude-via-node")
+        .unwrap();
+    assert!(
+        !s.matches("node", Some("node /srv/app/server.js")),
+        "plain node must not match"
+    );
+    assert!(
+        !s.matches("node", None),
+        "unknown cmdline cannot satisfy a cmdline matcher"
+    );
+    assert!(!s.matches(
+        "python3",
+        Some("python3 /x/@anthropic-ai/claude-code/cli.js")
+    ));
+    assert!(s.matches(
+        "node",
+        Some("node /usr/lib/node_modules/@anthropic-ai/claude-code/cli.js")
+    ));
+}
+
+#[test]
+fn any_signature_may_match() {
+    // OR across signatures: a process is detected when at least one signature matches.
+    let c = config::load_from(None, None, None);
+    let hits = |name: &str, cmd: &str| -> Vec<String> {
+        c.signatures
+            .iter()
+            .filter(|s| s.matches(name, Some(cmd)))
+            .map(|s| s.id.clone())
+            .collect()
+    };
+    assert_eq!(hits("ollama", "ollama serve"), ["ollama"]);
+    assert!(hits("node", "node /srv/app/server.js").is_empty());
+    // Only-name and only-cmdline signatures need just their one field.
+    assert_eq!(hits("cursor", ""), ["cursor"]);
+    assert_eq!(
+        hits("python3", "python3 -m vllm.entrypoints.openai.api_server"),
+        ["vllm"]
+    );
+}
