@@ -1,0 +1,40 @@
+# cargo-deny policy (Constitution III, plan.md Dependency budget).
+
+[graph]
+all-features = true
+
+[licenses]
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "Zlib",
+]
+confidence-threshold = 0.9
+unused-allowed-license = "allow"
+
+[bans]
+multiple-versions = "allow"
+wildcards = "deny"
+allow-wildcard-paths = true
+# Async runtimes (R-6), resolver crates (R-5), GUI/webview toolkits (Constitution III) and
+# netstat2 (R-4) are rejected in the plan's Dependency budget.
+deny = [
+    { crate = "tokio" },
+    { crate = "async-std" },
+    { crate = "smol" },
+    { crate = "hickory-resolver" },
+    { crate = "wry" },
+    { crate = "tao" },
+    { crate = "winit" },
+    { crate = "gtk" },
+    { crate = "webkit2gtk" },
+    { crate = "netstat2" },
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
