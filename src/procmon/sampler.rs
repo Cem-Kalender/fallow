@@ -3,8 +3,12 @@
 //! - Linux reads `/proc` directly: one `/proc/<pid>/stat` read per process per refresh and the
 //!   owner once per process. sysinfo 0.39 also reads `/proc/<pid>/status` for every process on
 //!   every refresh, which put the refresh over its 2% CPU budget at 600 processes (T117).
-//! - macOS and Windows use sysinfo with only the fields R-1 allows: `cmd`, `cwd`, `environ`,
-//!   `exe` and `memory` are never requested.
+//! - macOS uses `proc_listallpids` and `proc_pidinfo` (BSD and task info). sysinfo was dropped
+//!   here: it reads KERN_PROCARGS2 (argv *and environment*) for every new process to get its
+//!   name, into a buffer it frees without wiping. The SC-007 canary caught it (T120).
+//! - Windows uses a Toolhelp snapshot plus limited-information handles. sysinfo was dropped
+//!   here too: it reads every process's PEB through `PROCESS_VM_READ` handles to find parents,
+//!   which R-10 allows only on demand for detected LLM processes.
 
 use compact_str::CompactString;
 
@@ -195,51 +199,371 @@ mod linux {
     }
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(target_os = "macos")]
 mod other {
-    use sysinfo::{MemoryRefreshKind, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
+    use std::collections::HashMap;
+    use std::ffi::CStr;
+    use std::mem::{size_of, zeroed};
+    use std::time::Instant;
 
     use super::*;
 
+    #[repr(C)]
+    struct Timebase {
+        numer: u32,
+        denom: u32,
+    }
+
+    unsafe extern "C" {
+        fn mach_timebase_info(info: *mut Timebase) -> libc::c_int;
+        fn mach_host_self() -> libc::mach_port_t;
+    }
+
     pub struct Sampler {
-        sys: System,
+        pids: Vec<libc::c_int>,
+        /// Mach absolute time units → nanoseconds.
+        numer: u64,
+        denom: u64,
+        page: u64,
+        total_ram: u64,
+        last: Option<Instant>,
+        /// (pid, start) → cpu time (ns) at the last sample.
+        known: HashMap<(u32, u64), u64>,
     }
 
     impl Default for Sampler {
         fn default() -> Self {
-            Sampler { sys: System::new() }
+            let mut tb = Timebase { numer: 1, denom: 1 };
+            // SAFETY: writes the timebase into `tb`.
+            unsafe { mach_timebase_info(&mut tb) };
+            let mut total: u64 = 0;
+            let mut len = size_of::<u64>();
+            // SAFETY: hw.memsize is a u64; its size is passed.
+            unsafe {
+                libc::sysctlbyname(
+                    c"hw.memsize".as_ptr(),
+                    (&mut total as *mut u64).cast(),
+                    &mut len,
+                    std::ptr::null_mut(),
+                    0,
+                )
+            };
+            // SAFETY: sysconf has no preconditions.
+            let page = unsafe { libc::sysconf(libc::_SC_PAGESIZE) }.max(4096) as u64;
+            Sampler {
+                pids: Vec::new(),
+                numer: tb.numer.max(1) as u64,
+                denom: tb.denom.max(1) as u64,
+                page,
+                total_ram: total,
+                last: None,
+                known: HashMap::new(),
+            }
         }
     }
 
-    /// Only the fields R-1 allows.
-    fn refresh_kind() -> ProcessRefreshKind {
-        ProcessRefreshKind::nothing()
-            .with_cpu()
-            .with_user(UpdateKind::OnlyIfNotSet)
-            .without_tasks()
+    impl Sampler {
+        fn list_pids(&mut self) {
+            // SAFETY: a null buffer returns the count.
+            let n = unsafe { libc::proc_listallpids(std::ptr::null_mut(), 0) }.max(0) as usize;
+            self.pids.clear();
+            self.pids.resize(n + 64, 0);
+            let bytes = (self.pids.len() * size_of::<libc::c_int>()) as libc::c_int;
+            // SAFETY: `pids` is writable for `bytes`.
+            let got = unsafe { libc::proc_listallpids(self.pids.as_mut_ptr().cast(), bytes) };
+            self.pids.truncate(got.max(0) as usize);
+        }
+
+        fn available(&self) -> u64 {
+            let mut stat: libc::vm_statistics64 = unsafe { zeroed() };
+            let mut count = libc::HOST_VM_INFO64_COUNT;
+            // SAFETY: `stat` is a vm_statistics64 and `count` its size in natural_t units.
+            let r = unsafe {
+                libc::host_statistics64(
+                    mach_host_self(),
+                    libc::HOST_VM_INFO64,
+                    (&mut stat as *mut libc::vm_statistics64).cast(),
+                    &mut count,
+                )
+            };
+            if r != libc::KERN_SUCCESS {
+                return 0;
+            }
+            // XNU's available memory: active + inactive + free (as sysinfo computed it).
+            (stat.active_count as u64 + stat.inactive_count as u64 + stat.free_count as u64)
+                * self.page
+        }
     }
 
     impl Sample for Sampler {
         fn sample(&mut self) -> (Vec<ProcSample>, u64, u64) {
-            let sys = &mut self.sys;
-            sys.refresh_processes_specifics(ProcessesToUpdate::All, true, refresh_kind());
-            sys.refresh_memory_specifics(MemoryRefreshKind::nothing().with_ram());
-            let procs = sys
-                .processes()
-                .iter()
-                .filter(|(_, p)| p.thread_kind().is_none())
-                .map(|(pid, p)| ProcSample {
+            let now = Instant::now();
+            let elapsed = self.last.map(|t| now.duration_since(t).as_secs_f64());
+            self.last = Some(now);
+            self.list_pids();
+            let mut out = Vec::with_capacity(self.pids.len());
+            let mut seen = HashMap::with_capacity(self.pids.len());
+            for &pid in &self.pids {
+                if pid <= 0 {
+                    continue;
+                }
+                let mut bsd: libc::proc_bsdinfo = unsafe { zeroed() };
+                let size = size_of::<libc::proc_bsdinfo>() as libc::c_int;
+                // SAFETY: `bsd` is a proc_bsdinfo of `size` bytes.
+                let r = unsafe {
+                    libc::proc_pidinfo(
+                        pid,
+                        libc::PROC_PIDTBSDINFO,
+                        0,
+                        (&mut bsd as *mut libc::proc_bsdinfo).cast(),
+                        size,
+                    )
+                };
+                if r != size {
+                    continue;
+                }
+                let name_ptr = if bsd.pbi_name[0] != 0 {
+                    bsd.pbi_name.as_ptr()
+                } else {
+                    bsd.pbi_comm.as_ptr()
+                };
+                // SAFETY: both fields are NUL-terminated within their arrays.
+                let name = unsafe { CStr::from_ptr(name_ptr) }.to_string_lossy();
+                let start = bsd.pbi_start_tvsec;
+                let mut task: libc::proc_taskinfo = unsafe { zeroed() };
+                let tsize = size_of::<libc::proc_taskinfo>() as libc::c_int;
+                // SAFETY: `task` is a proc_taskinfo of `tsize` bytes. Fails for other users'
+                // processes without privileges; their CPU then reads 0.
+                let tr = unsafe {
+                    libc::proc_pidinfo(
+                        pid,
+                        libc::PROC_PIDTASKINFO,
+                        0,
+                        (&mut task as *mut libc::proc_taskinfo).cast(),
+                        tsize,
+                    )
+                };
+                let cpu_ns = if tr == tsize {
+                    (task.pti_total_user + task.pti_total_system) * self.numer / self.denom
+                } else {
+                    0
+                };
+                let id = (pid as u32, start);
+                let cpu = match (self.known.get(&id), elapsed) {
+                    (Some(&p), Some(dt)) if dt > 0.0 => {
+                        cpu_ns.saturating_sub(p) as f64 / 1e9 / dt * 100.0
+                    }
+                    _ => 0.0,
+                } as f32;
+                seen.insert(id, cpu_ns);
+                out.push(ProcSample {
                     key: ProcessKey {
-                        pid: pid.as_u32(),
-                        start_time: p.start_time(),
+                        pid: pid as u32,
+                        start_time: start,
                     },
-                    parent_pid: p.parent().map(|pp| pp.as_u32()),
-                    name: CompactString::from(p.name().to_string_lossy().as_ref()),
-                    owner: p.user_id().map(|u| Uid(CompactString::from(u.to_string()))),
-                    cpu: p.cpu_usage(),
-                })
-                .collect();
-            (procs, sys.total_memory(), sys.available_memory())
+                    parent_pid: (bsd.pbi_ppid != 0).then_some(bsd.pbi_ppid),
+                    name: CompactString::from(name.as_ref()),
+                    owner: Some(Uid(CompactString::from(bsd.pbi_uid.to_string()))),
+                    cpu,
+                });
+            }
+            self.known = seen;
+            (out, self.total_ram, self.available())
+        }
+    }
+}
+
+#[cfg(windows)]
+mod other {
+    use std::collections::HashMap;
+    use std::mem::size_of;
+    use std::time::Instant;
+
+    use windows_sys::Win32::Foundation::{
+        CloseHandle, FILETIME, HANDLE, INVALID_HANDLE_VALUE, LocalFree,
+    };
+    use windows_sys::Win32::Security::Authorization::ConvertSidToStringSidW;
+    use windows_sys::Win32::Security::{GetTokenInformation, TOKEN_QUERY, TOKEN_USER, TokenUser};
+    use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW,
+        TH32CS_SNAPPROCESS,
+    };
+    use windows_sys::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
+    use windows_sys::Win32::System::Threading::{
+        GetExitCodeProcess, GetProcessTimes, OpenProcess, OpenProcessToken,
+        PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+
+    use super::*;
+
+    const STILL_ACTIVE: u32 = 259;
+    /// Seconds between 1601-01-01 (FILETIME) and 1970-01-01.
+    const EPOCH_DIFF: u64 = 11_644_473_600;
+
+    /// An open limited-information handle, kept across refreshes (a fresh OpenProcess per
+    /// process per refresh would cost more).
+    struct Tracked {
+        handle: HANDLE,
+        start: u64,
+        owner: Option<Uid>,
+        cpu_100ns: u64,
+    }
+
+    impl Drop for Tracked {
+        fn drop(&mut self) {
+            // SAFETY: opened by OpenProcess, closed once.
+            unsafe { CloseHandle(self.handle) };
+        }
+    }
+
+    #[derive(Default)]
+    pub struct Sampler {
+        tracked: HashMap<u32, Tracked>,
+        last: Option<Instant>,
+    }
+
+    fn ft(f: FILETIME) -> u64 {
+        ((f.dwHighDateTime as u64) << 32) | f.dwLowDateTime as u64
+    }
+
+    /// Creation time (seconds since the Unix epoch) and CPU time (100 ns units).
+    fn times(h: HANDLE) -> Option<(u64, u64)> {
+        let z = || FILETIME {
+            dwLowDateTime: 0,
+            dwHighDateTime: 0,
+        };
+        let (mut c, mut e, mut k, mut u) = (z(), z(), z(), z());
+        // SAFETY: plain call on a valid handle.
+        if unsafe { GetProcessTimes(h, &mut c, &mut e, &mut k, &mut u) } == 0 {
+            return None;
+        }
+        Some((
+            (ft(c) / 10_000_000).saturating_sub(EPOCH_DIFF),
+            ft(k) + ft(u),
+        ))
+    }
+
+    fn alive(h: HANDLE) -> bool {
+        let mut code = 0u32;
+        // SAFETY: plain call on a valid handle.
+        unsafe { GetExitCodeProcess(h, &mut code) != 0 && code == STILL_ACTIVE }
+    }
+
+    /// The owner's SID as a string (S-1-5-…), read once per process.
+    fn owner(h: HANDLE) -> Option<Uid> {
+        // SAFETY: our token query on a valid process handle; buffers sized by the first call;
+        // the string is freed with LocalFree.
+        unsafe {
+            let mut token: HANDLE = std::ptr::null_mut();
+            if OpenProcessToken(h, TOKEN_QUERY, &mut token) == 0 {
+                return None;
+            }
+            let mut len = 0u32;
+            GetTokenInformation(token, TokenUser, std::ptr::null_mut(), 0, &mut len);
+            let mut buf = vec![0u64; (len as usize).div_ceil(8).max(1)];
+            let ok = GetTokenInformation(token, TokenUser, buf.as_mut_ptr().cast(), len, &mut len);
+            CloseHandle(token);
+            if ok == 0 {
+                return None;
+            }
+            let user = &*(buf.as_ptr() as *const TOKEN_USER);
+            let mut s: *mut u16 = std::ptr::null_mut();
+            if ConvertSidToStringSidW(user.User.Sid, &mut s) == 0 || s.is_null() {
+                return None;
+            }
+            let n = (0..).take_while(|&i| *s.add(i) != 0).count();
+            let text = String::from_utf16_lossy(std::slice::from_raw_parts(s, n));
+            LocalFree(s.cast());
+            Some(Uid(CompactString::from(text)))
+        }
+    }
+
+    fn memory() -> (u64, u64) {
+        let mut m: MEMORYSTATUSEX = unsafe { std::mem::zeroed() };
+        m.dwLength = size_of::<MEMORYSTATUSEX>() as u32;
+        // SAFETY: `m` is a MEMORYSTATUSEX with its length set.
+        if unsafe { GlobalMemoryStatusEx(&mut m) } == 0 {
+            return (0, 0);
+        }
+        (m.ullTotalPhys, m.ullAvailPhys)
+    }
+
+    impl Sample for Sampler {
+        fn sample(&mut self) -> (Vec<ProcSample>, u64, u64) {
+            let now = Instant::now();
+            let elapsed = self.last.map(|t| now.duration_since(t).as_secs_f64());
+            self.last = Some(now);
+            let mut out = Vec::with_capacity(self.tracked.len() + 16);
+            let mut next: HashMap<u32, Tracked> = HashMap::with_capacity(self.tracked.len() + 16);
+            // SAFETY: Toolhelp snapshot, iterated with a correctly sized entry, then closed.
+            unsafe {
+                let snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+                if snap == INVALID_HANDLE_VALUE {
+                    let (t, a) = memory();
+                    return (out, t, a);
+                }
+                let mut e: PROCESSENTRY32W = std::mem::zeroed();
+                e.dwSize = size_of::<PROCESSENTRY32W>() as u32;
+                let mut more = Process32FirstW(snap, &mut e) != 0;
+                while more {
+                    let pid = e.th32ProcessID;
+                    let ppid = e.th32ParentProcessID;
+                    let n = e
+                        .szExeFile
+                        .iter()
+                        .position(|c| *c == 0)
+                        .unwrap_or(e.szExeFile.len());
+                    let name = String::from_utf16_lossy(&e.szExeFile[..n]);
+                    more = Process32NextW(snap, &mut e) != 0;
+                    if pid == 0 {
+                        continue;
+                    }
+                    // Reuse the handle if it still refers to a live process.
+                    let mut t = match self.tracked.remove(&pid) {
+                        Some(t) if alive(t.handle) => t,
+                        _ => {
+                            let h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+                            if h.is_null() {
+                                continue; // protected or another session: no start time, dropped
+                            }
+                            let Some((start, cpu)) = times(h) else {
+                                CloseHandle(h);
+                                continue;
+                            };
+                            Tracked {
+                                handle: h,
+                                start,
+                                owner: owner(h),
+                                cpu_100ns: cpu,
+                            }
+                        }
+                    };
+                    let (_, cpu_now) = times(t.handle).unwrap_or((t.start, t.cpu_100ns));
+                    let cpu = match elapsed {
+                        Some(dt) if dt > 0.0 => {
+                            cpu_now.saturating_sub(t.cpu_100ns) as f64 / 1e7 / dt * 100.0
+                        }
+                        _ => 0.0,
+                    } as f32;
+                    t.cpu_100ns = cpu_now;
+                    out.push(ProcSample {
+                        key: ProcessKey {
+                            pid,
+                            start_time: t.start,
+                        },
+                        parent_pid: (ppid != 0).then_some(ppid),
+                        name: CompactString::from(name),
+                        owner: t.owner.clone(),
+                        cpu,
+                    });
+                    next.insert(pid, t);
+                }
+                CloseHandle(snap);
+            }
+            // Handles of exited processes close when the old map drops.
+            self.tracked = next;
+            let (total, avail) = memory();
+            (out, total, avail)
         }
     }
 }

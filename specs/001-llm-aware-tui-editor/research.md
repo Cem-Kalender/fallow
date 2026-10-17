@@ -37,6 +37,21 @@ worth having).
 implemented by Fallow's own cache keyed on PID plus start time). The footprint metric and working
 directory are read only for members of detected LLM process groups, not for every process.
 
+**Amendment (2026-10-17, Phase 3a)**: sysinfo is no longer used. Enumeration (PID, start time,
+parent, name, owner, CPU) is Fallow's own code in `src/procmon/sampler.rs`:
+- Linux: `/proc/<pid>/stat` once per refresh, owner from `/proc/<pid>` once per process.
+- macOS: `proc_listallpids` + `proc_pidinfo(PROC_PIDTBSDINFO / PROC_PIDTASKINFO)`.
+- Windows: a Toolhelp snapshot + `GetProcessTimes` and the token owner through
+  `PROCESS_QUERY_LIMITED_INFORMATION` handles.
+
+Reasons: on macOS sysinfo reads KERN_PROCARGS2 for every new process even with `cmd` and `environ`
+set to `Never`, and frees the buffer without wiping it, so other processes' environments stayed in
+Fallow's heap. The SC-007 canary caught this in CI (run 39046160733); two earlier runs passed only
+because the freed memory had been reused. On Windows, sysinfo reads each process's PEB with
+`PROCESS_VM_READ` to find parents, which R-10 rules out. On Linux, it reads `/proc/<pid>/status` and
+lists every thread on each refresh (T117 measured 4.4% of a core at 600 processes; the replacement
+measures 0.4–0.9% in CI). "We own the reads" in the rationale above now covers enumeration too.
+
 ## R-2: macOS command line and the process environment (Principle VII, FR-024, SC-007)
 
 **Finding**: macOS has no API that returns another process's argv without its environment.
