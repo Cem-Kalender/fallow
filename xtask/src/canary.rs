@@ -78,7 +78,15 @@ fn inspect(bin: &Path, dir: &Path, agent_bin: &Path, agent_pid: u32, canary: &st
 
     let core = dir.join("fallow.core");
     let mut dumped = false;
-    for style in [Some("modified-memory"), None] {
+    // A modified-memory core sometimes comes out partial; retry, then fall back to a full one.
+    // A dump counts only if it holds the fixture's argv, i.e. Fallow's heap.
+    for style in [
+        Some("modified-memory"),
+        Some("modified-memory"),
+        Some("modified-memory"),
+        Some("full"),
+    ] {
+        let _ = Command::new("sudo").args(["rm", "-f"]).arg(&core).status();
         let mut cmd = format!("process save-core {}", core.display());
         if let Some(s) = style {
             cmd = format!("process save-core -s {s} {}", core.display());
@@ -100,7 +108,10 @@ fn inspect(bin: &Path, dir: &Path, agent_bin: &Path, agent_pid: u32, canary: &st
             .args(["chmod", "a+r"])
             .arg(&core)
             .status();
-        if st.is_ok_and(|s| s.success()) && core.metadata().is_ok_and(|m| m.len() > 0) {
+        if st.is_ok_and(|s| s.success())
+            && core.metadata().is_ok_and(|m| m.len() > 0)
+            && fixtures::file_contains(&core, agent_path.as_bytes()).unwrap_or(false)
+        {
             println!(
                 "canary: core dump with {} style: {} bytes",
                 style.unwrap_or("default"),
