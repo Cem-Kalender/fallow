@@ -4,7 +4,6 @@
 
 use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::io::Read;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -24,6 +23,9 @@ pub struct OsPlatform {
     /// Interesting inodes no visible process owns (another user's sockets): not searched again
     /// while they exist.
     unowned: HashSet<u64>,
+    /// PIDs that owned interesting sockets before; searched first, since agents open new
+    /// connections often.
+    owners: Vec<u32>,
 }
 
 impl Default for OsPlatform {
@@ -36,16 +38,14 @@ impl Default for OsPlatform {
             rows: Vec::with_capacity(256),
             inode_owner: HashMap::new(),
             unowned: HashSet::new(),
+            owners: Vec::new(),
         }
     }
 }
 
 impl OsPlatform {
     fn read_text(&mut self, path: &str) -> std::io::Result<()> {
-        self.text.clear();
-        fs::File::open(path)?
-            .read_to_string(&mut self.text)
-            .map(|_| ())
+        read_proc(path, &mut self.text)
     }
 
     /// Records every socket inode held by `pid`, returning them.
@@ -150,7 +150,20 @@ impl Platform for OsPlatform {
             .filter(|i| !self.inode_owner.contains_key(i) && !self.unowned.contains(i))
             .collect();
         if !pending.is_empty() {
-            for &pid in q.candidates {
+            let previous: Vec<u32> = self
+                .owners
+                .iter()
+                .copied()
+                .filter(|p| q.candidates.contains(p))
+                .collect();
+            let owners = std::mem::take(&mut self.owners);
+            let rest: Vec<u32> = q
+                .candidates
+                .iter()
+                .copied()
+                .filter(|p| !owners.contains(p))
+                .collect();
+            for pid in previous.into_iter().chain(rest) {
                 scratch.clear();
                 self.scan_fds(pid, &mut scratch);
                 for i in &scratch {
@@ -169,6 +182,8 @@ impl Platform for OsPlatform {
             .filter(|r| wanted(r))
             .filter_map(|r| self.inode_owner.get(&r.owner).map(|&pid| (pid, *r)))
             .collect();
+        self.owners = with_pid.iter().map(|(p, _)| *p).collect();
+        self.owners.dedup();
         parse::select(&with_pid, q, out);
         Ok(())
     }
@@ -184,4 +199,24 @@ impl Platform for OsPlatform {
     fn kill(&mut self, _key: ProcessKey, _force: bool) -> Result<()> {
         Err(PlatformError::Unsupported)
     }
+}
+
+/// Reads a small `/proc` file with plain reads. `read_to_string` would first stat the file
+/// for a size hint, which `/proc` files can't give anyway; at 600 processes per refresh the
+/// extra call matters (T117).
+pub(crate) fn read_proc(path: &str, out: &mut String) -> std::io::Result<()> {
+    use std::io::Read;
+    out.clear();
+    let mut f = fs::File::open(path)?;
+    let mut buf = [0u8; 4096];
+    let mut bytes = Vec::new();
+    loop {
+        let n = f.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        bytes.extend_from_slice(&buf[..n]);
+    }
+    out.push_str(&String::from_utf8_lossy(&bytes));
+    Ok(())
 }

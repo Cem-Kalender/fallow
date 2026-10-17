@@ -16,6 +16,7 @@ use crate::config::{self, Config, ConfigPaths};
 use crate::dns;
 use crate::procmon::json;
 use crate::procmon::platform::{self, OsPlatform};
+use crate::procmon::sampler::{Sample, Sampler};
 use crate::procmon::snapshot::{Note, NoteKind};
 use crate::procmon::worker::{self, Monitor, WorkerConfig};
 use crate::ui::terminal;
@@ -142,7 +143,7 @@ fn run_snapshot(opts: &Options, cfg: &Config, all_users: bool, notes: Vec<Note>)
             *s = Arc::new(dns::resolve(&cfg.providers));
         }
     }
-    let mut sys = sysinfo::System::new();
+    let mut sampler = Sampler::default();
     let mut monitor = Monitor::new(
         OsPlatform::default(),
         &cfg.signatures,
@@ -159,7 +160,7 @@ fn run_snapshot(opts: &Options, cfg: &Config, all_users: bool, notes: Vec<Note>)
         let mut cycle = 0u64;
         while Instant::now() < until {
             let started = Instant::now();
-            let (procs, total, avail) = worker::sample(&mut sys);
+            let (procs, total, avail) = sampler.sample();
             let snap = monitor.cycle(&procs, total, avail);
             cycle += 1;
             if writeln!(out, "{}", json::stream_line(&snap, cycle))
@@ -176,10 +177,10 @@ fn run_snapshot(opts: &Options, cfg: &Config, all_users: bool, notes: Vec<Note>)
     }
 
     // Two cycles, so CPU figures have a delta.
-    let (procs, total, avail) = worker::sample(&mut sys);
+    let (procs, total, avail) = sampler.sample();
     let _ = monitor.cycle(&procs, total, avail);
-    std::thread::sleep(sysinfo::MINIMUM_CPU_UPDATE_INTERVAL.max(Duration::from_millis(500)));
-    let (procs, total, avail) = worker::sample(&mut sys);
+    std::thread::sleep(Duration::from_millis(500));
+    let (procs, total, avail) = sampler.sample();
     let snap = monitor.cycle(&procs, total, avail);
     if writeln!(out, "{}", json::snapshot(&snap))
         .and_then(|_| out.flush())
@@ -190,7 +191,7 @@ fn run_snapshot(opts: &Options, cfg: &Config, all_users: bool, notes: Vec<Note>)
     if let Some(secs) = opts.snapshot_hold {
         // Keep every piece of state alive for the memory dump (SC-007 canary).
         std::thread::sleep(Duration::from_secs(secs));
-        drop((snap, monitor, sys));
+        drop((snap, monitor, sampler));
     }
     ExitCode::SUCCESS
 }

@@ -19,6 +19,8 @@ pub use parse::{RawConn, TcpQuery};
 mod linux;
 #[cfg(target_os = "linux")]
 pub use linux::OsPlatform;
+#[cfg(target_os = "linux")]
+pub(crate) use linux::read_proc;
 
 #[cfg(target_os = "macos")]
 mod macos;
