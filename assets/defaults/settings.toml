@@ -1,6 +1,7 @@
 # Built-in settings (contracts/config.md). A user settings.toml overrides any of these keys.
 
 refresh_interval_ms = 2000          # FR-015; minimum 500
+footprint_interval_ms = 10000       # research R-3; how often each process's memory is re-read; 500..=3600000
 recent_window_minutes = 30          # FR-017
 
 [detection]

@@ -50,8 +50,10 @@ RSS), macOS 13+ (arm64, x86_64), Windows 10 1809+ (x86_64; `PrivateWorkingSetSiz
 **Performance Goals**:
 - First frame in under 100 ms: p95 of 30 runs after 3 warm-ups (constitution v3.0.1). CI
   benchmark T023.
-- Process refresh every 2 s, using under 2% of one core on average with about 600 processes. CI
-  benchmark T117.
+- Process refresh every 2 s, using under 2% of one core on average with about 600 processes,
+  **including at least five LLM processes of ≥ 1 GB each**. CI benchmark T117, which also reports
+  the figure without them. Per-process footprints are re-read at most every 10 s
+  (`footprint_interval_ms`, research R-3); CPU and status follow the 2 s refresh.
 - A new or exited LLM process shows in the panel within two refresh intervals (SC-004). CI
   benchmark T118.
 - Search returns its first results in under 1 s on the reference fixture (SC-010). CI

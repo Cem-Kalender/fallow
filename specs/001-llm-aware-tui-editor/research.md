@@ -102,6 +102,13 @@ sysinfo's reader (rejected: same exposure, and Fallow can't zero it).
   resident pages × page size, and that process is marked "RSS".
 - **Not covered**: Discrete-GPU VRAM (CUDA, ROCm, DirectML). The UI notes this per the spec
   assumption.
+- **Read frequency (decision 2026-10-17)**: footprints are read less often than the process list:
+  at most once every `footprint_interval_ms` per process (**default 10 s**, configurable
+  500 ms–1 h), while enumeration, CPU and status keep the `refresh_interval_ms` cadence (2 s).
+  A newly detected group member is read immediately. Reason: on Linux, `smaps_rollup` for one real
+  agent (a Claude Code process with 5.5 GB mapped) cost 13.7 ms per read, more than the whole
+  600-process list. The figure shown between reads is the last one read. T117 measures refresh CPU
+  with and without five ≥1 GB LLM fixtures; the 2% budget applies to the run with them.
 
 ## R-4: Network connections per process (FR-022, FR-023, FR-012)
 
