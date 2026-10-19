@@ -88,6 +88,7 @@ jobs:
       # Two full sessions (with DNS, and with --no-dns): the only traffic allowed is DNS
       # queries for provider hostnames, and none at all with --no-dns.
       - name: Egress (001 SC-009, 002 T050)
+        timeout-minutes: 5
         run: cargo xtask egress
 
       # The reference large project (T082, R-13): ~50,000 files, ~1 GB, generated from fixed
