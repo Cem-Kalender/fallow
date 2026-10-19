@@ -143,6 +143,8 @@ pub struct AppState {
     pub last_click: Option<(u16, u16, Instant)>,
     /// A drag that started in the editor text selects.
     pub drag_select: bool,
+    /// More input is queued behind the event being handled (a paste delivered as keys).
+    pub burst: bool,
     /// Configuration problems and startup notices, shown as `file:line: message`.
     pub notices: Vec<String>,
     pub quit: bool,
@@ -185,6 +187,7 @@ impl AppState {
             searches: 0,
             last_click: None,
             drag_select: false,
+            burst: false,
             notices,
             quit: false,
             ticks: 0,

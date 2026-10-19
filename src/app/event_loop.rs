@@ -47,13 +47,18 @@ pub fn run(
             POLL_TIMEOUT
         };
         if event::poll(timeout)? {
-            // Take everything already queued before drawing again.
+            // Take everything already queued before drawing again. `burst` says whether more
+            // input is already waiting behind this event: a paste that arrives as key events
+            // (Windows consoles have no bracketed paste) is inserted without auto-indent.
             loop {
-                dirty |= handle(state, event::read()?);
-                if state.quit || !event::poll(Duration::ZERO)? {
+                let ev = event::read()?;
+                state.burst = event::poll(Duration::ZERO)?;
+                dirty |= handle(state, ev);
+                if state.quit || !state.burst {
                     break;
                 }
             }
+            state.burst = false;
         }
         if let Some(w) = &worker {
             loop {

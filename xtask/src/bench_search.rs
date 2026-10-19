@@ -71,8 +71,10 @@ fn once(a: &Args) -> Result<Duration, String> {
             None => Err("no result row within 30 s".to_string()),
         }
     })();
-    // Esc cancels a search that is still running, so Ctrl-Q quits promptly.
+    // Esc cancels a search that is still running, so Ctrl-Q quits promptly. Esc directly
+    // followed by Ctrl-Q would read as Alt+Ctrl-Q on Unix terminals, hence the pause.
     s.send(b"\x1b");
+    std::thread::sleep(Duration::from_millis(300));
     let outcome = s.finish();
     let problems = outcome.problems(None);
     if !problems.is_empty() {
