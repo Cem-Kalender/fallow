@@ -105,6 +105,8 @@ pub struct StartMenu {
 pub struct MenuItem {
     pub id: String,
     pub label: String,
+    /// Command, arguments and environment names (FR-024, FR-027).
+    pub details: Vec<String>,
     /// `Err(reason)` when the command can't be started.
     pub available: Result<(), String>,
 }
@@ -314,6 +316,7 @@ impl AppState {
             "session.stop" => self.ask_stop(),
             "session.process" => self.jump_to_process(),
             "proc.jump_session" => self.jump_to_session(),
+            "config.reload" => self.reload_profiles(),
             "session.leave" => {
                 self.set_session_focus(false);
                 true
@@ -719,6 +722,39 @@ impl AppState {
 
     /// Opens the start menu for the selected project: agents (availability resolved now, never
     /// at startup, FR-023) and, for git projects, where the agent runs (FR-031, FR-032).
+    /// "Reload configuration": reads `profiles.toml` again (FR-024). Running sessions keep the
+    /// profile they started with; the other settings apply at the next start.
+    fn reload_profiles(&mut self) -> bool {
+        let Some(dir) = self.store.dir.clone() else {
+            self.say("No configuration directory");
+            return true;
+        };
+        let path = dir.join(profiles::PROFILES_FILE);
+        let text = match std::fs::read_to_string(&path) {
+            Ok(t) => Some(t),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+            Err(e) => {
+                self.say(format!("{}: cannot read: {e}", path.display()));
+                return true;
+            }
+        };
+        let name = profiles::PROFILES_FILE.to_string();
+        let (list, notices) = profiles::load(text.as_deref().map(|t| (name.as_str(), t)));
+        self.profiles = list;
+        let shown: Vec<String> = notices.iter().map(ToString::to_string).collect();
+        self.notices.retain(|n| !n.starts_with(&name));
+        self.notices.extend(shown.iter().cloned());
+        match shown.first() {
+            Some(first) => self.say(first.clone()),
+            None => self.say(format!(
+                "Reloaded {} ({} profiles); other settings apply at the next start",
+                profiles::PROFILES_FILE,
+                self.profiles.len()
+            )),
+        }
+        true
+    }
+
     fn open_profile_menu(&mut self) -> bool {
         let Some(p) = self.projects.selected() else {
             self.say("Add a project first: Ctrl-O");
@@ -731,6 +767,7 @@ impl AppState {
             .map(|p| MenuItem {
                 id: p.id.clone(),
                 label: p.name.clone(),
+                details: p.details(),
                 available: profiles::resolve(&p.command).map(|_| ()),
             })
             .collect();

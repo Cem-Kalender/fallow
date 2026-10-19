@@ -330,15 +330,15 @@ folder; a dirty worktree can't be removed.
 
 ### Tests for User Story 5
 
-- [ ] T047 [P] [US5] Extend `tests/profiles.rs`:
+- [X] T047 [P] [US5] Extend `tests/profiles.rs`:
   - built-in profiles carry the per-run notification flags of research R-4 (Claude Code `--settings '{"preferredNotifChannel":"terminal_bell"}'`; Codex `-c tui.notifications=true -c tui.notification_method="bel"`), and overriding the profile removes them;
   - no built-in edits any agent settings file;
   - a failing command shows its error in the session only.
 
 ### Implementation for User Story 5
 
-- [ ] T048 [US5] Add the per-run notification flags to the built-in profiles in `src/session/profiles.rs`, and Aider's `--notifications-command` if verified (research R-4). List each flag in the profile view.
-- [ ] T049 [US5] Add the profile menu details (name, command, args, env names only) and "Reload configuration" support for `profiles.toml` in `src/ui/sessions.rs` and `src/app/state.rs` (FR-024, FR-027).
+- [X] T048 [US5] Add the per-run notification flags to the built-in profiles in `src/session/profiles.rs`, and Aider's `--notifications-command` if verified (research R-4). List each flag in the profile view.
+- [X] T049 [US5] Add the profile menu details (name, command, args, env names only) and "Reload configuration" support for `profiles.toml` in `src/ui/sessions.rs` and `src/app/state.rs` (FR-024, FR-027).
 
 **Checkpoint**: all user stories work independently.
 

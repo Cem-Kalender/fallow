@@ -342,8 +342,10 @@ fn draw_sessions(f: &mut Frame<'_>, state: &AppState, area: Rect) {
 
 /// The start menu overlay (contracts/ui-commands.md "Start menu").
 pub fn draw_menu(f: &mut Frame<'_>, area: Rect, m: &StartMenu) {
-    let width = 64.min(area.width.saturating_sub(2)).max(24);
+    let width = 76.min(area.width.saturating_sub(2)).max(24);
+    let details = m.agents.get(m.agent).map_or(0, |a| a.details.len());
     let rows = m.agents.len()
+        + details
         + if m.wheres.is_empty() {
             0
         } else {
@@ -385,6 +387,12 @@ pub fn draw_menu(f: &mut Frame<'_>, area: Rect, m: &StartMenu) {
             Err(e) => format!("  {}  ({e})", a.label),
         };
         lines.push(Line::styled(text, style));
+        if i == m.agent {
+            // The highlighted profile's command, arguments and environment names (FR-024).
+            for d in &a.details {
+                lines.push(Line::styled(format!("      {d}"), dim));
+            }
+        }
     }
     if !m.wheres.is_empty() {
         lines.push(Line::raw(""));

@@ -46,16 +46,29 @@ impl AgentProfile {
     }
 }
 
-fn builtin(id: &str, name: &str, command: &str) -> AgentProfile {
+fn builtin(id: &str, name: &str, command: &str, args: &[&str]) -> AgentProfile {
     AgentProfile {
         id: id.into(),
         name: name.into(),
         command: command.into(),
-        args: Vec::new(),
+        args: args.iter().map(|a| (*a).to_string()).collect(),
         env: Vec::new(),
         builtin: true,
     }
 }
+
+/// Claude Code: ring the terminal bell when it needs the user, for this run only (research R-4;
+/// its `auto` channel only notifies in iTerm2, Ghostty and Kitty).
+pub const CLAUDE_NOTIFY_ARGS: [&str; 2] =
+    ["--settings", r#"{"preferredNotifChannel":"terminal_bell"}"#];
+
+/// Codex CLI: notifications on, delivered as BEL, for this run only (research R-4).
+pub const CODEX_NOTIFY_ARGS: [&str; 4] = [
+    "-c",
+    "tui.notifications=true",
+    "-c",
+    r#"tui.notification_method="bel""#,
+];
 
 /// The command of the built-in "shell" profile.
 pub fn shell_command() -> String {
@@ -69,15 +82,42 @@ pub fn shell_command() -> String {
     }
 }
 
-/// The built-in profiles (contracts/config.md table).
+/// The built-in profiles (contracts/config.md table). Claude Code and Codex get the per-run
+/// notification flags of research R-4; no agent settings file is ever edited. Gemini CLI has no
+/// such flag (its window titles carry the status), and Aider's `--notifications-command` is not
+/// verified, so they rely on the bell, titles and the quiet fallback. Overriding a profile by
+/// `id` removes its flags.
 pub fn builtins() -> Vec<AgentProfile> {
     vec![
-        builtin("claude", "Claude Code", "claude"),
-        builtin("codex", "Codex CLI", "codex"),
-        builtin("gemini", "Gemini CLI", "gemini"),
-        builtin("aider", "Aider", "aider"),
-        builtin("shell", "Shell", &shell_command()),
+        builtin("claude", "Claude Code", "claude", &CLAUDE_NOTIFY_ARGS),
+        builtin("codex", "Codex CLI", "codex", &CODEX_NOTIFY_ARGS),
+        builtin("gemini", "Gemini CLI", "gemini", &[]),
+        builtin("aider", "Aider", "aider", &[]),
+        builtin("shell", "Shell", &shell_command(), &[]),
     ]
+}
+
+impl AgentProfile {
+    /// What the start menu shows about a profile: the command, its arguments and the names of
+    /// its environment additions, never their values (FR-024, FR-027).
+    pub fn details(&self) -> Vec<String> {
+        let mut out = vec![format!("command: {}", self.command.replace('|', " or "))];
+        if !self.args.is_empty() {
+            out.push(format!("args: {}", self.args.join(" ")));
+        }
+        if !self.env.is_empty() {
+            out.push(format!(
+                "env: {} (values hidden)",
+                self.env_names().join(", ")
+            ));
+        }
+        out.push(if self.builtin {
+            "built-in; override by id in profiles.toml".into()
+        } else {
+            "from profiles.toml".into()
+        });
+        out
+    }
 }
 
 #[derive(Debug, Default, Deserialize)]

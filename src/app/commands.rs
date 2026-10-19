@@ -111,7 +111,12 @@ pub const COMMANDS: &[Command] = &[
     on(cmd("pane.editor", "Focus Editor", Global, "Alt-2")),
     on(cmd("pane.processes", "Focus Processes", Global, "Alt-3")),
     on(cmd("project.open", "Open project", Global, "Ctrl-O")),
-    cmd("config.reload", "Reload configuration", Global, ""),
+    on(cmd(
+        "config.reload",
+        "Reload configuration (agent profiles)",
+        Global,
+        "",
+    )),
     on(cmd("quit", "Quit", Global, "Ctrl-Q")),
     // Process panel
     on(hint(
