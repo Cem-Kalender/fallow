@@ -309,7 +309,7 @@ pub const COMMANDS: &[Command] = &[
             Global,
             "Ctrl-E",
         ),
-        9,
+        4,
         "Ctrl-E",
         "Editor",
     )),
@@ -322,7 +322,7 @@ pub const COMMANDS: &[Command] = &[
             Projects,
             "Enter",
         ),
-        3,
+        5,
         "Enter",
         "Sessions",
     )),
@@ -347,7 +347,7 @@ pub const COMMANDS: &[Command] = &[
     )),
     on(hint(
         cmd("session.focus", "Focus session", Sessions, "Enter"),
-        2,
+        5,
         "Enter",
         "Open",
     )),
@@ -358,13 +358,13 @@ pub const COMMANDS: &[Command] = &[
             Sessions,
             "n",
         ),
-        3,
+        2,
         "n",
         "New session",
     )),
     on(hint(
         cmd("session.restart", "Restart session", Sessions, "R"),
-        4,
+        6,
         "R",
         "Restart",
     )),
@@ -405,7 +405,12 @@ pub const COMMANDS: &[Command] = &[
         Global,
         "Ctrl-T",
     )),
-    on(cmd("session.next", "Next session", Global, "Ctrl-N")),
+    on(hint(
+        cmd("session.next", "Next session", Global, "Ctrl-N"),
+        3,
+        "Ctrl-N/B",
+        "Switch session",
+    )),
     on(cmd("session.prev", "Previous session", Global, "Ctrl-B")),
     on(cmd(
         "session.split",
@@ -415,7 +420,7 @@ pub const COMMANDS: &[Command] = &[
     )),
     on(hint(
         cmd("session.stop", "Stop session", Sessions, "Shift-K"),
-        5,
+        7,
         "Shift-K",
         "Stop",
     )),
@@ -457,7 +462,8 @@ pub fn find(id: &str) -> Option<&'static Command> {
 }
 
 /// The hint bar for a context: the global help and palette hints, then the context's primary
-/// commands in order.
+/// commands in order. The agent workspace's lists also show the global workspace hints
+/// (switch session, editor view; 002 FR-021).
 pub fn hints(context: Context, text_input: bool) -> Vec<(&'static str, &'static str)> {
     let mut out = vec![
         if text_input {
@@ -469,7 +475,11 @@ pub fn hints(context: Context, text_input: bool) -> Vec<(&'static str, &'static 
     ];
     let mut own: Vec<Hint> = COMMANDS
         .iter()
-        .filter(|c| c.context == context && context != Global)
+        .filter(|c| {
+            (c.context == context && context != Global)
+                || (matches!(c.id, "session.next" | "view.toggle")
+                    && matches!(context, Projects | Sessions))
+        })
         .filter_map(|c| c.hint)
         .collect();
     own.sort_by_key(|h| h.0);
@@ -514,6 +524,26 @@ mod tests {
         assert_eq!(
             text(Dialog),
             "? Help · Ctrl-P Commands · y Confirm · Esc Cancel"
+        );
+    }
+
+    #[test]
+    fn workspace_hints_show_start_switch_editor_and_help() {
+        // 002 FR-021.
+        let text = |c| {
+            hints(c, false)
+                .iter()
+                .map(|(k, l)| format!("{k} {l}"))
+                .collect::<Vec<_>>()
+                .join(" · ")
+        };
+        assert_eq!(
+            text(Projects),
+            "? Help · Ctrl-P Commands · n New session · Ctrl-N/B Switch session · Ctrl-E Editor · Enter Sessions"
+        );
+        assert_eq!(
+            text(Sessions),
+            "? Help · Ctrl-P Commands · n New session · Ctrl-N/B Switch session · Ctrl-E Editor · Enter Open · R Restart · Shift-K Stop"
         );
     }
 }

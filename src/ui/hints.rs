@@ -58,6 +58,13 @@ pub fn draw(f: &mut Frame<'_>, state: &AppState, area: Rect) {
         _ => (state.context(), state.text_input()),
     };
     let mut hints = commands::hints(context, text_input);
+    // The editor view: the way back to the agent workspace (002 FR-020).
+    if state.workspace.view == crate::app::workspace::View::Editor
+        && !text_input
+        && matches!(state.overlay, Overlay::None)
+    {
+        hints.push(("Ctrl-E", "Agents"));
+    }
     match state.overlay {
         Overlay::Help { .. } => {
             hints.truncate(2);

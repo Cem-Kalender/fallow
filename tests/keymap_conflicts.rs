@@ -8,7 +8,8 @@ use std::collections::HashMap;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use fallow::app::commands::{COMMANDS, Context, find};
 use fallow::app::keymap::lookup;
-use fallow::ui::help::CONFLICTS;
+use fallow::session::keys::LeaveKey;
+use fallow::ui::help::{CONFLICTS, CONFLICTS_002};
 use fallow::ui::palette;
 
 fn parse_key(s: &str) -> KeyEvent {
@@ -163,6 +164,35 @@ const CONTRACT: &[(Context, &str, &str)] = &[
     (Context::Dialog, "Esc", "dialog.cancel"),
     (Context::Dialog, "n", "dialog.cancel"),
     (Context::Dialog, "q", "dialog.cancel"),
+    // 002: global (both views)
+    (Context::Projects, "Ctrl-E", "view.toggle"),
+    (Context::Files, "Ctrl-E", "view.toggle"),
+    (Context::Sessions, "Ctrl-T", "sessions.overview"),
+    (Context::Projects, "Ctrl-N", "session.next"),
+    (Context::Files, "Ctrl-B", "session.prev"),
+    // 002: projects list
+    (Context::Projects, "↑", "projects.up"),
+    (Context::Projects, "↓", "projects.down"),
+    (Context::Projects, "Enter", "projects.open"),
+    (Context::Projects, "n", "session.new"),
+    (Context::Projects, "a", "project.add"),
+    (Context::Projects, "Ctrl-O", "project.open"),
+    // 002: sessions list
+    (Context::Sessions, "↑", "sessions.up"),
+    (Context::Sessions, "↓", "sessions.down"),
+    (Context::Sessions, "Enter", "session.focus"),
+    (Context::Sessions, "n", "session.new_here"),
+    (Context::Sessions, "s", "session.split"),
+    (Context::Sessions, "Shift-R", "session.restart"),
+    (Context::Sessions, "Shift-K", "session.stop"),
+    (Context::Sessions, "w", "session.close"),
+    (Context::Sessions, "p", "session.process"),
+    (Context::Sessions, "Shift-PgUp", "session.scroll_up"),
+    (Context::Sessions, "Shift-PgDn", "session.scroll_down"),
+    (Context::Sessions, "Ctrl-F", "session.search"),
+    (Context::Sessions, "Ctrl-C", "session.copy"),
+    // 002: process panel
+    (Context::Processes, "j", "proc.jump_session"),
 ];
 
 /// Contexts that are text inputs (FR-066: `?` is text there).
@@ -211,6 +241,8 @@ fn every_key_in_the_known_conflicts_table_maps_to_a_registered_command() {
         Context::FindBar,
         Context::Processes,
         Context::Dialog,
+        Context::Projects,
+        Context::Sessions,
     ];
     let mut checked = 0;
     for row in CONFLICTS {
@@ -228,6 +260,27 @@ fn every_key_in_the_known_conflicts_table_maps_to_a_registered_command() {
         }
     }
     assert!(checked >= 40, "only {checked} keys checked");
+}
+
+#[test]
+fn every_002_key_in_the_conflicts_table_is_bound() {
+    // The leave key is matched by the focused session itself, not the keymap.
+    let leave = LeaveKey::default();
+    assert_eq!(leave.label(), "Ctrl-]");
+    let contexts = [Context::Global, Context::Projects, Context::Sessions];
+    for row in CONFLICTS_002 {
+        for key in expand(row[0]) {
+            if key == "Ctrl-]" {
+                assert!(leave.matches(&parse_key(&key)));
+                continue;
+            }
+            let ev = parse_key(&key);
+            let hit = contexts
+                .iter()
+                .find_map(|c| lookup(&ev, *c, false).filter(|id| find(id).is_some()));
+            assert!(hit.is_some(), "{key:?} maps to no command");
+        }
+    }
 }
 
 #[test]
