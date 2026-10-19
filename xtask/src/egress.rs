@@ -371,42 +371,101 @@ impl Capture {
 
 // ----- Linux: strace -----
 
-/// Judges `strace -f -e trace=network -xx` output: internet connects and sends must go to port
-/// 53, and every sent DNS question is recorded.
+/// Judges `strace -f -e trace=network -xx` output. Internet traffic may only go to port 53, and
+/// every sent DNS question is recorded.
+///
+/// glibc's `getaddrinfo` "connects" a UDP socket to each address it found, with port 0, to pick
+/// a source address for sorting (RFC 6724); no packet is sent. Such a connect is allowed, but
+/// only on a UDP socket and only if nothing is ever sent on it.
 fn judge_strace(text: &str, seen: &mut Seen) {
+    #[derive(Clone, Copy)]
+    struct Sock {
+        dgram: bool,
+        port: Option<u16>,
+    }
+    let mut socks: std::collections::HashMap<(String, String), Sock> = Default::default();
     let mut local = BTreeSet::new();
+    let mut probes = 0usize;
     for line in text.lines() {
-        let call = line
-            .split_whitespace()
-            .nth(1)
-            .and_then(|c| c.split('(').next())
-            .unwrap_or("");
+        let mut words = line.split_whitespace();
+        let tid = words.next().unwrap_or("").to_string();
+        let rest = words.collect::<Vec<_>>().join(" ");
+        let call = rest.split('(').next().unwrap_or("");
+        let fd = rest
+            .split_once('(')
+            .and_then(|(_, a)| a.split([',', ')']).next())
+            .unwrap_or("")
+            .trim()
+            .to_string();
         let inet = line.contains("sa_family=AF_INET");
         match call {
-            "connect" | "sendto" | "sendmsg" | "sendmmsg" if inet => match port_of(line) {
-                Some(53) => {}
-                Some(p) => seen
-                    .violations
-                    .push(format!("{call} to port {p}: {}", short(line))),
-                None => seen
-                    .violations
-                    .push(format!("{call} without a port: {}", short(line))),
-            },
+            "socket" if line.contains("(AF_INET") => {
+                if let Some(ret) = line.rsplit("= ").next().map(str::trim) {
+                    socks.insert(
+                        (tid.clone(), ret.to_string()),
+                        Sock {
+                            dgram: line.contains("SOCK_DGRAM"),
+                            port: None,
+                        },
+                    );
+                }
+            }
+            "connect" if inet => {
+                let port = port_of(line);
+                let sock = socks.get(&(tid.clone(), fd.clone())).copied();
+                match port {
+                    Some(53) => {}
+                    Some(0) if sock.is_some_and(|s| s.dgram) => probes += 1,
+                    Some(p) => seen
+                        .violations
+                        .push(format!("connect to port {p}: {}", short(line))),
+                    None => seen
+                        .violations
+                        .push(format!("connect without a port: {}", short(line))),
+                }
+                if let Some(s) = socks.get_mut(&(tid.clone(), fd.clone())) {
+                    s.port = port;
+                }
+            }
             "connect" if line.contains("sa_family=AF_UNIX") => {
                 if let Some(path) = line.split("sun_path=\"").nth(1) {
                     local.insert(decode_hex(path.split('"').next().unwrap_or("")));
                 }
             }
-            _ => {}
-        }
-        if matches!(call, "sendto" | "sendmsg" | "sendmmsg" | "send") {
-            for chunk in line.split('"').skip(1).step_by(2) {
-                let bytes = decode_hex_bytes(chunk);
-                if let Some(q) = dns_question(&bytes) {
-                    seen.queries.insert(q);
+            "sendto" | "sendmsg" | "sendmmsg" | "send" => {
+                if inet {
+                    match port_of(line) {
+                        Some(53) => {}
+                        p => seen.violations.push(format!(
+                            "{call} to port {}: {}",
+                            p.map_or("?".into(), |p| p.to_string()),
+                            short(line)
+                        )),
+                    }
+                } else if let Some(s) = socks.get(&(tid.clone(), fd.clone())) {
+                    // A send on a connected internet socket: it goes where the socket points.
+                    if s.port != Some(53) {
+                        seen.violations.push(format!(
+                            "{call} on a socket connected to port {}: {}",
+                            s.port.map_or("?".into(), |p| p.to_string()),
+                            short(line)
+                        ));
+                    }
+                }
+                for chunk in line.split('"').skip(1).step_by(2) {
+                    let bytes = decode_hex_bytes(chunk);
+                    if let Some(q) = dns_question(&bytes) {
+                        seen.queries.insert(q);
+                    }
                 }
             }
+            _ => {}
         }
+    }
+    if probes > 0 {
+        seen.notes.push(format!(
+            "{probes} source-address probes by getaddrinfo (UDP connect to port 0, nothing sent)"
+        ));
     }
     for l in local {
         seen.notes
@@ -729,6 +788,35 @@ mod tests {
         assert_eq!(s.violations.len(), 1, "{:?}", s.violations);
         assert!(s.violations[0].contains("port 443"));
         assert_eq!(s.notes, vec!["local socket: /run".to_string()]);
+    }
+
+    #[test]
+    fn source_address_probes_are_allowed_only_without_sends() {
+        let probe = concat!(
+            "7 socket(AF_INET, SOCK_DGRAM|SOCK_CLOEXEC, IPPROTO_IP) = 6
+",
+            "7 connect(6, {sa_family=AF_INET, sin_port=htons(0), sin_addr=inet_addr(\"1.2.3.4\")}, 16) = 0
+",
+        );
+        let mut s = Seen::default();
+        judge_strace(probe, &mut s);
+        assert!(s.violations.is_empty(), "{:?}", s.violations);
+        assert!(s.notes[0].contains("source-address probes"));
+
+        let sent = format!(
+            "{probe}7 sendto(6, \"\x01\", 1, 0, NULL, 0) = 1
+"
+        );
+        let mut s = Seen::default();
+        judge_strace(&sent, &mut s);
+        assert_eq!(s.violations.len(), 1, "{:?}", s.violations);
+
+        let tcp = "7 socket(AF_INET, SOCK_STREAM, IPPROTO_TCP) = 6
+7 connect(6, {sa_family=AF_INET, sin_port=htons(0), sin_addr=inet_addr(\"1.2.3.4\")}, 16) = 0
+";
+        let mut s = Seen::default();
+        judge_strace(tcp, &mut s);
+        assert_eq!(s.violations.len(), 1, "a TCP connect is never a probe");
     }
 
     #[test]
