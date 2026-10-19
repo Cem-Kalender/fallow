@@ -427,12 +427,15 @@ fn banner_agent(c: &str) -> Option<i32> {
     }
 }
 
-/// `flood-agent <lines|forever>` (002 T036, T037): prints 200-column lines in changing colors,
-/// either a fixed number then waits for input, or forever.
+/// `flood-agent <lines|forever|rate:N>` (002 T036, T037): prints 200-column lines in changing
+/// colors: a fixed number as fast as possible then waits for input, forever as fast as
+/// possible, or forever at N lines per second (the SC-006 load, research R-9).
 fn flood_agent(arg: &str) -> Option<i32> {
     use std::io::{Read, Write};
     raw_stdin();
     let limit: Option<u64> = arg.parse().ok();
+    let rate: Option<u64> = arg.strip_prefix("rate:").and_then(|r| r.parse().ok());
+    let started = std::time::Instant::now();
     let mut out = std::io::BufWriter::with_capacity(64 * 1024, std::io::stdout());
     let body: String = "lorem ipsum dolor sit amet consectetur adipiscing elit "
         .chars()
@@ -452,6 +455,14 @@ fn flood_agent(arg: &str) -> Option<i32> {
         n += 1;
         if n % 64 == 0 && out.flush().is_err() {
             return Some(0);
+        }
+        if let Some(r) = rate {
+            // Keep to N lines per second: sleep until line n is due.
+            let due = std::time::Duration::from_secs_f64(n as f64 / r.max(1) as f64);
+            if let Some(wait) = due.checked_sub(started.elapsed()) {
+                let _ = out.flush();
+                std::thread::sleep(wait);
+            }
         }
     }
     let _ = out.flush();
