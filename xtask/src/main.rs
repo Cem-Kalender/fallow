@@ -7,6 +7,7 @@ mod bench_search;
 mod bench_sessions;
 mod bench_startup;
 mod canary;
+mod canary_sessions;
 mod diag;
 mod fixtures;
 mod gen_fixture;

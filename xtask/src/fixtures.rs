@@ -34,6 +34,7 @@ pub fn subcommand(task: &str, args: &[String]) -> Option<i32> {
         "echo-agent" => echo_agent(),
         "banner-agent" => banner_agent(args.first().map_or("A", String::as_str)),
         "flood-agent" => flood_agent(args.first().map_or("forever", String::as_str)),
+        "canary-agent" => crate::canary_sessions::agent(args.first()?),
         "client-fixture" => {
             let port: u16 = args.first()?.parse().ok()?;
             let s = TcpStream::connect(("127.0.0.1", port)).ok()?;
