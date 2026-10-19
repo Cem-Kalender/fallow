@@ -55,6 +55,14 @@ pub const NOTES: &[(&str, &str)] = &[
         "Hold `Fn` for `F1` / `F2`, or use `?` and the palette.",
     ),
     ("Leaving the editor", "`Esc`, then `Tab`."),
+    (
+        "Keys in a focused session",
+        "Every key goes to the agent unchanged, including `Esc`, `Tab`, `Ctrl-C`, `Ctrl-Q`, `Ctrl-P` and `F1`, except the leave key (`Ctrl-]` by default, `sessions.leave_key`). Press it twice to send it to the agent. `Ctrl-E`, `Ctrl-T`, `Ctrl-N` and `Ctrl-B` are Fallow's only while no session has focus.",
+    ),
+    (
+        "Ctrl-] on AltGr layouts",
+        "Where `]` needs AltGr (German, Nordic), many terminals also send `Ctrl-]` for `Ctrl-5`; Fallow accepts both. The key can be changed with `sessions.leave_key`.",
+    ),
 ];
 
 /// contracts/ui-commands.md "Known terminal conflicts": key, Windows Terminal, Terminal.app,
@@ -178,7 +186,7 @@ pub const CONFLICTS: &[[&str; 4]] = &[
         "free",
     ],
     [
-        "a, Shift-A, d, r, g, p, m, c, u, n, Shift-K, Space",
+        "a, Shift-A, d, r, g, p, m, c, u, n, s, w, j, Shift-R, Shift-K, Space",
         "free",
         "free",
         "free",
@@ -188,6 +196,41 @@ pub const CONFLICTS: &[[&str; 4]] = &[
         "captured by Fallow; the terminal's own selection needs Shift",
         "captured; own selection needs Fn (verify)",
         "captured; own selection needs Option",
+    ],
+];
+
+/// 002 contracts/ui-commands.md "Known terminal conflicts (002 keys)": key, Windows Terminal,
+/// Terminal.app, iTerm2, built-in agents.
+pub const CONFLICTS_002: &[[&str; 5]] = &[
+    [
+        "Ctrl-]",
+        "free (verify)",
+        "free (verify)",
+        "free (verify)",
+        "not bound by Claude Code, Codex, Gemini CLI; Aider (prompt_toolkit) uses it for character search, reachable by pressing it twice",
+    ],
+    ["Ctrl-E", "free", "free", "free", "n/a (outside sessions)"],
+    [
+        "Ctrl-T",
+        "free (WT new tab is Ctrl-Shift-T)",
+        "free",
+        "free",
+        "n/a (outside sessions)",
+    ],
+    [
+        "Ctrl-N",
+        "free (WT new window is Ctrl-Shift-N)",
+        "free",
+        "free",
+        "n/a (outside sessions)",
+    ],
+    ["Ctrl-B", "free", "free", "free", "n/a (outside sessions)"],
+    [
+        "Shift-PgUp/PgDn",
+        "free (WT scroll is Ctrl-Shift-PgUp/PgDn)",
+        "verify: may scroll Terminal.app's own scrollback",
+        "verify",
+        "n/a (after leaving the session)",
     ],
 ];
 
@@ -239,6 +282,18 @@ pub fn lines() -> Vec<Line<'static>> {
     for [k, wt, ta, it] in CONFLICTS {
         out.push(Line::raw(format!("  {k:<15}{wt:<40}{ta:<52}{it}")));
     }
+    out.push(Line::raw(""));
+    out.push(Line::styled("Known terminal conflicts: agent sessions", h));
+    out.push(Line::styled(
+        format!(
+            "  {:<17}{:<40}{:<50}{:<16}{}",
+            "Key", "Windows Terminal", "Terminal.app", "iTerm2", "Built-in agents"
+        ),
+        b,
+    ));
+    for [k, wt, ta, it, ag] in CONFLICTS_002 {
+        out.push(Line::raw(format!("  {k:<17}{wt:<40}{ta:<50}{it:<16}{ag}")));
+    }
     out
 }
 
@@ -289,5 +344,8 @@ mod tests {
             assert!(t.contains(k));
         }
         assert!(t.contains("Known terminal conflicts"));
+        for [k, ..] in CONFLICTS_002 {
+            assert!(t.contains(k), "help is missing the {k} row");
+        }
     }
 }

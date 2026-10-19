@@ -271,21 +271,21 @@ folder; a dirty worktree can't be removed.
 
 ### Tests for User Story 3
 
-- [ ] T038 [P] [US3] Add render tests to `src/ui/workspace.rs`:
+- [X] T038 [P] [US3] Add render tests to `src/ui/workspace.rs`:
   - at start, the projects, sessions and LLM processes panes are shown with focus on Projects, and no editor or file tree;
   - `Ctrl-E` shows the 001 layout for the selected project and back, restoring selection and focus;
   - the hint bar on the workspace shows "n New session", the session switch key, "Ctrl-E Editor" and "? Help", and still contains `Ctrl-P Commands` (the startup marker, 001 contracts/cli.md).
 
 ### Implementation for User Story 3
 
-- [ ] T039 [US3] Implement the agent-workspace layout in `src/ui/workspace.rs` per contracts/ui-commands.md:
+- [X] T039 [US3] Implement the agent-workspace layout in `src/ui/workspace.rs` per contracts/ui-commands.md:
   - projects | sessions (list plus the active session pane) | processes and system;
   - a focused session takes the whole middle column;
   - small terminals collapse to tabs with a focused session at full width.
 
   Hook it into `src/ui/layout.rs` as the default view.
-- [ ] T040 [US3] Implement view switching (`Ctrl-E`) and per-view focus memory in `src/app/state.rs` and `src/app/workspace.rs`. The editor view uses the selected project's lazy tree (FR-019, FR-020).
-- [ ] T041 [US3] Add workspace hints and contexts (Projects, Sessions, Session) to `src/app/commands.rs` and `src/app/keymap.rs`. Add the help sections and the 002 rows of the known-conflicts table (contracts/ui-commands.md) to `src/ui/help.rs`, and extend `tests/keymap_conflicts.rs` with every new key (FR-021, FR-022).
+- [X] T040 [US3] Implement view switching (`Ctrl-E`) and per-view focus memory in `src/app/state.rs` and `src/app/workspace.rs`. The editor view uses the selected project's lazy tree (FR-019, FR-020).
+- [X] T041 [US3] Add workspace hints and contexts (Projects, Sessions, Session) to `src/app/commands.rs` and `src/app/keymap.rs`. Add the help sections and the 002 rows of the known-conflicts table (contracts/ui-commands.md) to `src/ui/help.rs`, and extend `tests/keymap_conflicts.rs` with every new key (FR-021, FR-022).
 
 **Checkpoint**: the default screen is agent-first; the editor is one key away.
 

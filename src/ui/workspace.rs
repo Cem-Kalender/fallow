@@ -462,3 +462,140 @@ fn btn(b: MouseButton) -> u16 {
 pub fn covered(state: &AppState) -> bool {
     !matches!(state.overlay, Overlay::None)
 }
+
+#[cfg(test)]
+mod tests {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    use crate::app::state::{AppState, Pane};
+    use crate::app::workspace::{AgentsFocus, View};
+    use crate::ui::layout::tests;
+
+    /// Renders at `w`×`h`, with the state's area set as the event loop does.
+    fn render(w: u16, h: u16, s: &mut AppState) -> String {
+        s.area = ratatui::layout::Rect::new(0, 0, w, h);
+        tests::render(w, h, s)
+    }
+
+    fn ctrl(c: char) -> KeyEvent {
+        KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL)
+    }
+
+    fn temp_project(tag: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("fallow-ws-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::write(d.join("notes.txt"), "hello\n").unwrap();
+        d
+    }
+
+    #[test]
+    fn starts_on_the_agent_workspace_with_focus_on_projects() {
+        // 002 FR-019: projects, sessions, LLM processes and system; no editor or file tree.
+        let mut s = AppState::new(None, Vec::new());
+        assert_eq!(s.workspace.view, View::Agents);
+        assert_eq!(s.workspace.focus, AgentsFocus::Projects);
+        let screen = render(120, 40, &mut s);
+        for title in [" Projects ", " Sessions", " LLM Processes ", " System "] {
+            assert!(screen.contains(title), "missing {title}\n{screen}");
+        }
+        for absent in ["┌ Files", "┌ Editor"] {
+            assert!(!screen.contains(absent), "unexpected {absent}\n{screen}");
+        }
+    }
+
+    #[test]
+    fn hint_bar_shows_start_switch_editor_help_and_the_startup_marker() {
+        // 002 FR-021; `Ctrl-P Commands` is the startup benchmark's marker (001 contracts/cli.md).
+        let mut s = AppState::new(None, Vec::new());
+        for focus in [AgentsFocus::Projects, AgentsFocus::Sessions] {
+            s.workspace.focus = focus;
+            let screen = render(120, 40, &mut s);
+            let bar = screen.lines().last().unwrap();
+            for hint in [
+                "? Help",
+                "Ctrl-P Commands",
+                "n New session",
+                "Ctrl-N/B Switch session",
+                "Ctrl-E Editor",
+            ] {
+                assert!(bar.contains(hint), "{focus:?}: missing {hint:?} in {bar:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn ctrl_e_shows_the_project_in_the_editor_layout_and_back() {
+        // 002 FR-020: each view keeps its own selection and focus.
+        let d = temp_project("toggle");
+        let mut s = AppState::new(Some(d.clone()), Vec::new());
+        s.workspace.focus = AgentsFocus::Sessions;
+        let selected = s.projects.selected;
+        assert!(selected.is_some());
+
+        s.handle_key(ctrl('e'));
+        assert_eq!(s.workspace.view, View::Editor);
+        let screen = render(120, 40, &mut s);
+        for title in [" Files", " Editor ", " LLM Processes "] {
+            assert!(screen.contains(title), "missing {title}\n{screen}");
+        }
+        assert!(screen.contains("notes.txt"), "{screen}");
+        assert!(!screen.contains(" Projects "), "{screen}");
+        assert!(
+            screen.lines().last().unwrap().contains("Ctrl-E Agents"),
+            "{screen}"
+        );
+        s.focus = Pane::Processes;
+
+        s.handle_key(ctrl('e'));
+        assert_eq!(s.workspace.view, View::Agents);
+        assert_eq!(s.workspace.focus, AgentsFocus::Sessions);
+        assert_eq!(s.projects.selected, selected);
+        assert!(render(120, 40, &mut s).contains(" Projects "));
+
+        s.handle_key(ctrl('e'));
+        assert_eq!(s.focus, Pane::Processes, "the editor view keeps its focus");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn workspace_keys_go_to_the_agent_while_a_session_has_focus() {
+        // contracts/ui-commands.md: Ctrl-E/T/N/B are Fallow's only while no session has focus.
+        use crate::session::profiles::builtins;
+        let mut s = AppState::new(None, Vec::new());
+        let sess = crate::session::Session::detached(1, 1, builtins().remove(0));
+        s.sessions.sessions.push(sess);
+        s.workspace.active = Some(1);
+        s.workspace.focus = AgentsFocus::Session;
+        for c in ['e', 't', 'n', 'b', 'p', 'q'] {
+            s.handle_key(ctrl(c));
+            assert_eq!(s.workspace.view, View::Agents, "Ctrl-{c}");
+            assert_eq!(s.workspace.focus, AgentsFocus::Session, "Ctrl-{c}");
+            assert!(!s.workspace.overview, "Ctrl-{c}");
+            assert!(!s.quit, "Ctrl-{c}");
+        }
+        let bar = render(120, 40, &mut s).lines().last().unwrap().to_string();
+        assert!(bar.starts_with("Ctrl-] Leave session"), "{bar:?}");
+    }
+
+    #[test]
+    fn small_terminals_use_tabs_and_a_focused_session_gets_the_full_width() {
+        use crate::session::profiles::builtins;
+        let mut s = AppState::new(None, Vec::new());
+        let screen = render(80, 20, &mut s);
+        assert!(screen.lines().next().unwrap().contains(" Projects "));
+        assert!(
+            !screen.contains(" LLM Processes ─"),
+            "one part at a time\n{screen}"
+        );
+
+        let sess = crate::session::Session::detached(1, 1, builtins().remove(0));
+        s.sessions.sessions.push(sess);
+        s.workspace.active = Some(1);
+        s.workspace.focus = AgentsFocus::Session;
+        let g = super::geometry(&s);
+        assert_eq!(g.session.width, 80);
+        assert_eq!(g.projects.width, 0);
+        assert_eq!(g.procs.width, 0);
+    }
+}
