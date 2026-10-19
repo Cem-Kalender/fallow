@@ -28,7 +28,7 @@ but the snapshot options never start the TUI.
 | `--snapshot-json` | Run two refresh cycles (needed for CPU deltas), print one JSON `Snapshot` (shape in data-model.md, `records` limited to LLM group members) to stdout, then exit. Respects `--no-dns`. |
 | `--snapshot-hold <SECS>` | Same as `--snapshot-json`, then stay alive with all state in memory for `SECS` seconds so the harness can dump its memory (SC-007 canary test). |
 | `--snapshot-stream <SECS>` | Run the refresh loop for `SECS` seconds and print one JSON line per refresh cycle: the timestamp, the cycle number and the `ProcessKey`s of the detected LLM processes. Lets latency tests (SC-004) watch processes appear and disappear. Respects `--no-dns`. |
-| `--bench-stats <PATH>` | Starts the TUI normally. On exit, writes one line `pid=<own pid> ticks=<event-loop ticks> cycles=<procmon refresh cycles>` to `PATH`, so benchmarks can prove they measured a live Fallow (research R-12): the PID must equal the measured PID, and ticks or cycles must reach 90% of the expected count. `cycles` is 0 until the procmon worker exists. |
+| `--bench-stats <PATH>` | Starts the TUI normally. On exit, writes one line `pid=<own pid> ticks=<event-loop ticks> cycles=<procmon refresh cycles>` to `PATH`, so benchmarks can prove they measured a live Fallow (research R-12): the PID must equal the measured PID, and ticks or cycles must reach 90% of the expected count. `cycles` is 0 until the procmon worker exists. Since Phase 5 the line also ends with `buffers=<files opened> searches=<project searches run> copies=<copies made>`, the evidence `bench-memory --loaded` and `bench-search` check (T083, T084). |
 
 The three snapshot options are mutually exclusive.
 
