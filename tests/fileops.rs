@@ -31,6 +31,7 @@ fn select(s: &mut AppState, path: &Path) {
     p.select_path(path);
     assert_eq!(p.selected_row().unwrap().path, path);
     s.focus = Pane::Files;
+    s.workspace.view = fallow::app::workspace::View::Editor;
 }
 
 #[test]

@@ -26,6 +26,7 @@ pub struct Settings {
     pub windows: WindowsSettings,
     pub editor: EditorSettings,
     pub ui: UiSettings,
+    pub sessions: SessionSettings,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -55,6 +56,16 @@ pub struct UiSettings {
     pub mouse: bool,
 }
 
+/// `[sessions]` (002 contracts/config.md).
+#[derive(Debug, Clone, PartialEq)]
+pub struct SessionSettings {
+    pub scrollback_lines: u64,
+    pub attention_delay_ms: u64,
+    pub max_sessions: u64,
+    /// The leave-session key as written (`ctrl-]`, `f12`, …); parsed by `session::keys`.
+    pub leave_key: String,
+}
+
 /// When Fallow reads a Windows process's working directory (research R-10).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CwdPolicy {
@@ -82,6 +93,12 @@ impl Default for Settings {
                 tab_width: 4,
             },
             ui: UiSettings { mouse: true },
+            sessions: SessionSettings {
+                scrollback_lines: 10_000,
+                attention_delay_ms: 5_000,
+                max_sessions: 8,
+                leave_key: "ctrl-]".into(),
+            },
         }
     }
 }
@@ -196,6 +213,15 @@ pub(crate) struct RawSettings {
     windows: Option<RawWindows>,
     editor: Option<RawEditor>,
     ui: Option<RawUi>,
+    sessions: Option<RawSessions>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct RawSessions {
+    scrollback_lines: Option<Spanned<i64>>,
+    attention_delay_ms: Option<Spanned<i64>>,
+    max_sessions: Option<Spanned<i64>>,
+    leave_key: Option<Spanned<String>>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -301,6 +327,15 @@ pub(crate) const SETTINGS_SHAPE: Shape = Shape::Table(&[
         ]),
     ),
     ("ui", Shape::Table(&[("mouse", Shape::Leaf)])),
+    (
+        "sessions",
+        Shape::Table(&[
+            ("scrollback_lines", Shape::Leaf),
+            ("attention_delay_ms", Shape::Leaf),
+            ("max_sessions", Shape::Leaf),
+            ("leave_key", Shape::Leaf),
+        ]),
+    ),
 ]);
 
 pub(crate) const SIGNATURES_SHAPE: Shape = Shape::Table(&[(
@@ -403,6 +438,42 @@ pub(crate) fn apply_settings(base: &mut Settings, raw: RawSettings) -> Vec<Inval
     if let Some(u) = raw.ui {
         if let Some(b) = u.mouse {
             base.ui.mouse = b;
+        }
+    }
+    if let Some(sx) = raw.sessions {
+        int(
+            sx.scrollback_lines,
+            1000,
+            100_000,
+            "1000..=100000",
+            &mut base.sessions.scrollback_lines,
+        );
+        int(
+            sx.attention_delay_ms,
+            1000,
+            600_000,
+            "1000..=600000",
+            &mut base.sessions.attention_delay_ms,
+        );
+        int(
+            sx.max_sessions,
+            1,
+            16,
+            "1..=16",
+            &mut base.sessions.max_sessions,
+        );
+        if let Some(k) = sx.leave_key {
+            if crate::session::keys::LeaveKey::parse(k.get_ref()).is_some() {
+                base.sessions.leave_key = k.get_ref().clone();
+            } else {
+                errors.push(Invalid::new(
+                    k.span(),
+                    format!(
+                        "leave_key = {:?}: expected one key such as \"ctrl-]\", \"ctrl-\\\" or \"f12\"",
+                        k.get_ref()
+                    ),
+                ));
+            }
         }
     }
     if let Some(w) = raw.windows {

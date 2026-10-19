@@ -87,6 +87,8 @@ pub struct Session {
 struct Watch {
     pattern: Vec<u8>,
     seen: Option<Instant>,
+    /// Forget the output tail before matching, so an earlier occurrence can't match.
+    reset: bool,
 }
 
 /// What a finished session proved.
@@ -189,6 +191,12 @@ impl Session {
                     if at >= warmup {
                         late_bytes.fetch_add(n as u64, Ordering::Relaxed);
                     }
+                    if let Ok(mut w) = watch.lock() {
+                        if w.reset {
+                            tail.clear();
+                            w.reset = false;
+                        }
+                    }
                     tail.extend_from_slice(&buf[..n]);
                     if !frame_seen && contains(&tail, FRAME_MARKER) {
                         frame_seen = true;
@@ -247,6 +255,7 @@ impl Session {
         if let Ok(mut w) = self.watch.lock() {
             w.pattern = pattern.to_vec();
             w.seen = None;
+            w.reset = true;
         }
     }
 

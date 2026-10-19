@@ -22,6 +22,7 @@ fn global(key: &KeyEvent, text_input: bool) -> Option<&'static str> {
         KeyCode::Char('q' | 'Q') if ctrl && !alt => Some("quit"),
         KeyCode::Char('p' | 'P') if ctrl && !alt => Some("palette"),
         KeyCode::Char('o' | 'O') if ctrl && !alt => Some("project.open"),
+        KeyCode::Char('e' | 'E') if ctrl && !alt => Some("view.toggle"),
         KeyCode::F(1) => Some("help"),
         KeyCode::Char('?') if !text_input && !ctrl && !alt => Some("help"),
         KeyCode::BackTab => Some("pane.prev"),
@@ -124,6 +125,30 @@ fn own(key: &KeyEvent, context: Context) -> Option<&'static str> {
             KeyCode::Char('n' | 'N' | 'q' | 'Q') if plain => Some("dialog.cancel"),
             _ => None,
         },
+        Context::Projects => match key.code {
+            KeyCode::Up if plain => Some("projects.up"),
+            KeyCode::Down if plain => Some("projects.down"),
+            KeyCode::Enter | KeyCode::Right => Some("projects.open"),
+            KeyCode::Char('n') if plain => Some("session.new"),
+            KeyCode::Char('a') if plain => Some("project.add"),
+            _ => None,
+        },
+        Context::Sessions => match key.code {
+            KeyCode::Up if plain => Some("sessions.up"),
+            KeyCode::Down if plain => Some("sessions.down"),
+            KeyCode::Enter => Some("session.focus"),
+            KeyCode::Char('n') if plain => Some("session.new_here"),
+            KeyCode::Char('R') if !ctrl && !alt => Some("session.restart"),
+            KeyCode::Char('w') if plain => Some("session.close"),
+            KeyCode::PageUp if shift => Some("session.scroll_up"),
+            KeyCode::PageDown if shift => Some("session.scroll_down"),
+            KeyCode::Char('f' | 'F') if ctrl && !alt => Some("session.search"),
+            KeyCode::Char('c' | 'C') if ctrl && !alt => Some("session.copy"),
+            KeyCode::Esc | KeyCode::Left => Some("sessions.back"),
+            _ => None,
+        },
+        // A focused session handles its own keys (only the leave key is Fallow's).
+        Context::Session => None,
         Context::Global => None,
     }
 }

@@ -31,6 +31,7 @@ pub fn persona() {
 pub fn subcommand(task: &str, args: &[String]) -> Option<i32> {
     match task {
         "idle-child" => idle(),
+        "echo-agent" => echo_agent(),
         "client-fixture" => {
             let port: u16 = args.first()?.parse().ok()?;
             let s = TcpStream::connect(("127.0.0.1", port)).ok()?;
@@ -338,4 +339,64 @@ pub fn summary(markdown: &str) {
 /// Flushes stdout so CI logs interleave correctly.
 pub fn flush() {
     let _ = std::io::stdout().flush();
+}
+
+/// A stand-in agent for `bench-sessions` (002 T026): prints `echo-ready`, then answers every
+/// byte it reads by redrawing row 5 with `OOOOOOOO` and `XXXXXXXX` in turn. Every cell of that
+/// row changes on each key, so the redraw reaches the outer terminal as one run of bytes the
+/// harness can match.
+fn echo_agent() -> Option<i32> {
+    use std::io::{Read, Write};
+    raw_stdin();
+    let mut out = std::io::stdout();
+    let _ = out.write_all(b"\x1b[2J\x1b[Hecho-ready\r\n");
+    let _ = out.flush();
+    let mut stdin = std::io::stdin();
+    let mut b = [0u8; 64];
+    let mut n = 0u64;
+    loop {
+        let got = match stdin.read(&mut b) {
+            Ok(0) | Err(_) => return Some(0),
+            Ok(k) => k,
+        };
+        for _ in 0..got {
+            let row: &[u8] = if n % 2 == 0 { b"OOOOOOOO" } else { b"XXXXXXXX" };
+            n += 1;
+            let _ = out.write_all(b"\x1b[5;1H");
+            let _ = out.write_all(row);
+            let _ = out.flush();
+        }
+    }
+}
+
+/// Byte-at-a-time input without echo, like an agent's TUI.
+#[cfg(unix)]
+fn raw_stdin() {
+    // SAFETY: tcgetattr/tcsetattr on stdin with a zero-initialised termios that tcgetattr fills.
+    unsafe {
+        let mut t: libc::termios = std::mem::zeroed();
+        if libc::tcgetattr(0, &mut t) == 0 {
+            libc::cfmakeraw(&mut t);
+            libc::tcsetattr(0, libc::TCSANOW, &t);
+        }
+    }
+}
+
+#[cfg(windows)]
+fn raw_stdin() {
+    use windows_sys::Win32::System::Console::{
+        ENABLE_ECHO_INPUT, ENABLE_LINE_INPUT, ENABLE_PROCESSED_INPUT, GetConsoleMode, GetStdHandle,
+        STD_INPUT_HANDLE, SetConsoleMode,
+    };
+    // SAFETY: console mode calls on this process's standard input handle.
+    unsafe {
+        let h = GetStdHandle(STD_INPUT_HANDLE);
+        let mut mode = 0;
+        if GetConsoleMode(h, &mut mode) != 0 {
+            SetConsoleMode(
+                h,
+                mode & !(ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT | ENABLE_PROCESSED_INPUT),
+            );
+        }
+    }
 }

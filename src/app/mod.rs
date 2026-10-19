@@ -3,8 +3,10 @@
 pub mod commands;
 pub mod editing;
 pub mod event_loop;
+pub mod events;
 pub mod keymap;
 pub mod state;
+pub mod workspace;
 
 use std::io::{IsTerminal, Write};
 use std::process::ExitCode;
@@ -100,6 +102,24 @@ pub fn run(opts: &Options) -> (ExitCode, RunStats) {
     notices.extend(all_note);
     let mut state = state::AppState::new(opts.path.clone(), notices);
     state.all_users = all;
+    state.sessions.limits = crate::session::Limits {
+        scrollback_lines: cfg.settings.sessions.scrollback_lines as usize,
+        max_sessions: cfg.settings.sessions.max_sessions as usize,
+        leave_key: crate::session::keys::LeaveKey::parse(&cfg.settings.sessions.leave_key)
+            .unwrap_or_default(),
+    };
+    let profiles_text = paths.dir.as_ref().and_then(|d| {
+        std::fs::read_to_string(d.join(crate::session::profiles::PROFILES_FILE)).ok()
+    });
+    let (profiles, profile_notices) = crate::session::profiles::load(
+        profiles_text
+            .as_deref()
+            .map(|t| (crate::session::profiles::PROFILES_FILE, t)),
+    );
+    state.profiles = profiles;
+    state
+        .notices
+        .extend(profile_notices.iter().map(ToString::to_string));
     state.prefs = editing::EditorPrefs {
         tab_width: cfg.settings.editor.tab_width as usize,
         read_only_bytes: cfg.settings.editor.read_only_threshold_mb * 1024 * 1024,

@@ -13,6 +13,8 @@ pub mod processes;
 pub mod prompt;
 pub mod summary;
 pub mod terminal;
+pub mod terminal_pane;
+pub mod workspace;
 
 use crate::app::state::AppState;
 
