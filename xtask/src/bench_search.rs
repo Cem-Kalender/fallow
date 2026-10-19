@@ -55,8 +55,11 @@ fn once(a: &Args) -> Result<Duration, String> {
         if s.wait_frame(Duration::from_secs(10)).is_none() {
             return Err("no first frame".to_string());
         }
-        // Fallow starts in the Files pane; Tab moves to the editor, where Ctrl-F opens the find
+        // Fallow starts on the agent workspace (002); Ctrl-E switches to the editor view of the
+        // project, with focus in Files. Tab moves to the editor, where Ctrl-F opens the find
         // bar. No file is open, so it opens in "whole project".
+        s.send(b"\x05");
+        std::thread::sleep(Duration::from_millis(300));
         s.send(b"\t");
         std::thread::sleep(Duration::from_millis(200));
         s.send(b"\x06");
