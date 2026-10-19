@@ -9,6 +9,7 @@ mod bench_startup;
 mod canary;
 mod canary_sessions;
 mod diag;
+mod egress;
 mod fixtures;
 mod gen_fixture;
 mod projects;
@@ -55,6 +56,7 @@ fn main() -> ExitCode {
         "bench-new-process" => ExitCode::from(bench_new_process::run(rest) as u8),
         "unprivileged" => ExitCode::from(unprivileged::run(rest) as u8),
         "canary" => ExitCode::from(canary::run(rest) as u8),
+        "egress" => ExitCode::from(egress::run(rest) as u8),
         "gen-fixture" => ExitCode::from(gen_fixture::run(rest) as u8),
         "bench-search" => ExitCode::from(bench_search::run(rest) as u8),
         "bench-sessions" => ExitCode::from(bench_sessions::run(rest) as u8),

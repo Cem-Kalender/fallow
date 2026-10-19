@@ -81,6 +81,15 @@ jobs:
       - name: Session canary (002 FR-026, output never leaves memory)
         run: cargo xtask canary --sessions
 
+      - name: strace for the egress test (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get install -y --no-install-recommends strace
+
+      # Two full sessions (with DNS, and with --no-dns): the only traffic allowed is DNS
+      # queries for provider hostnames, and none at all with --no-dns.
+      - name: Egress (001 SC-009, 002 T050)
+        run: cargo xtask egress
+
       # The reference large project (T082, R-13): ~50,000 files, ~1 GB, generated from fixed
       # seeds and cached by a hash of the generator.
       - name: Reference fixture cache
