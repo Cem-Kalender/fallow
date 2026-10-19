@@ -257,3 +257,42 @@ every change, read once after the first frame. It holds paths and names only.
 
 **Alternatives**: a separate state directory (XDG state, `%LOCALAPPDATA%`): more paths to resolve,
 document and test for no benefit at this size. Possible later move if state grows.
+
+## R-11: Worktrees (US6, decided 2026-10-19)
+
+**Decision**: Fallow drives the user's own `git` command line for worktrees. No git library is
+added.
+
+| Step | Command (run in the project folder unless noted) | When |
+|---|---|---|
+| Is it a git project? | `.git` directory or file found by walking up from the project folder (no process started) | Start menu opens |
+| Existing worktrees | `git worktree list --porcelain`, keeping entries whose branch starts with `fallow/` | Start menu opens (FR-037) |
+| Base commit | `git rev-parse HEAD` | Start |
+| Free branch name | `git show-ref --verify --quiet refs/heads/fallow/<profile>-<n>` until one is free | Start |
+| Create | `git worktree add -b fallow/<profile>-<n> <path> <base>` | Start |
+| Clean? | `git -C <worktree> status --porcelain --untracked-files=normal` is empty | Close, before offering Remove |
+| Remove | `git worktree remove <path>` (never `--force`: git itself refuses a dirty worktree, a second safety net) | Close, after the user chooses Remove |
+
+**Rationale**:
+- **The user's git does what the user expects:** their config, hooks, and `core.longpaths` on
+  Windows.
+- **No new dependency:** `gix` or `git2` would add binary size and a large dependency tree for a
+  handful of commands (constitution I, III).
+- **Each command is a short child process** started as part of a user action, never in the
+  background (constitution II, V).
+- **Git's own refusal as a backstop:** git refuses to remove a dirty worktree without `--force`,
+  and Fallow never passes it.
+
+**Location**: `<parent>/<project>.worktrees/<profile>-<n>`. The folder sits next to the
+repository, not inside it, so worktrees don't show up in the project's tree, its search or its
+`git status`. `sessions.worktree_root` overrides the parent folder.
+
+**Failure handling**: if `worktree add` fails, the error is shown and the menu offers the project
+folder. If git registered a worktree before failing, Fallow removes that registration only when
+the folder holds nothing but the fresh checkout (FR-031, scenario 7).
+
+**Alternatives**:
+- **Clones per session:** full copies cost disk space and need fetching between them.
+- **Switching branches in one folder:** agents would still share files.
+- **Worktrees inside the repository** (`.fallow/worktrees`): they would appear in the project's
+  tree and need ignore rules.

@@ -17,6 +17,8 @@ scrollback_lines = 10000      # FR-004; 1000..=100000
 attention_delay_ms = 5000     # FR-009; 1000..=600000
 max_sessions = 8              # FR-007; 1..=16
 leave_key = "ctrl-]"          # FR-003; one key: "ctrl-]", "ctrl-\\", "ctrl-5", "f12" …
+worktrees = "auto"            # FR-031; "auto": a new worktree by default for git projects; or "never"
+worktree_root = ""            # FR-034; empty: <parent of the project>/<project>.worktrees
 ```
 
 ## profiles.toml

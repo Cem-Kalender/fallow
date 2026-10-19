@@ -74,6 +74,7 @@ nothing else. Session output stays in memory (FR-026).
 | IV. Observability over control (v4.0.0) | Sessions are "Fallow sessions". The user's own typing is not an action by Fallow. Stop and force stop go through 001's ControlRequest with per-action confirmations (FR-012); quitting asks once, listing all sessions. No standing permissions exist in 002 (they arrive with 003). Processes Fallow did not start are untouched. | PASS |
 | V. Least privilege | A process starts only on an explicit start or restart (FR-025), with Fallow's own privileges and environment plus profile additions. Writes: `projects.toml` only. On Windows a Job Object ensures nothing outlives Fallow. | PASS |
 | VI. Benchmarked claims | SC-003/005/006 latency (`bench-sessions`), SC-007 memory and startup, and SC-004 attention timing are CI benchmarks on three OSes (R-9). | PASS |
+| US6 worktrees (FR-031..FR-037) | Fallow runs the user's `git` only during explicit actions: start menu, start, restart, close (FR-037, R-11). Creating a worktree and branch is part of the user's "start session" action (constitution V: a write capability scoped to an explicit user action). Worktrees live next to the repository, never inside it. Removal happens only on the user's choice, never with uncommitted work, never with `--force`. No new dependency. | PASS |
 | VII. Privacy | Output and scrollback memory-only; no logging of output; the environment is passed to the agent without being read (only configured addition names are shown); no network code; canary test extended to sessions (R-9). The local orchestration channel is 003's, not 002's. | PASS |
 | Workflow: dependency justification | Dependency budget below. | PASS |
 | Workflow: control paths tested | Stop and force stop reuse 001's ControlRequest and its SC-008 test; a new test asserts no child is spawned without a start command (R-9). | PASS |
@@ -131,6 +132,7 @@ src/
 │   ├── attention.rs         # NEW: R-4 signals and the quiet fallback
 │   ├── keys.rs              # NEW: KeyEvent → bytes for the agent (legacy encoding, app cursor mode, paste)
 │   ├── profiles.rs          # NEW: built-ins, profiles.toml merge, PATH/PATHEXT and .cmd shim resolution
+│   ├── worktree.rs          # NEW (US6): git detection, worktree list/add/status/remove via the git CLI (R-11)
 │   └── platform/{unix.rs, windows.rs}   # NEW: process group signals; Job Object
 ├── procmon/worker.rs        # CHANGED: Request::Track / Untrack (R-8)
 ├── config/schema.rs         # CHANGED: [sessions] settings; profiles.toml
@@ -166,6 +168,8 @@ module per OS, like 001's `procmon::platform`.
    - exit and restart;
    - transcript, key and reply tests;
    - `bench-sessions` (echo latency).
+2b. **US6 worktrees**: git detection, the "Where" choice in the start menu, create, list,
+    restart in place, keep/remove on close, branch in titles; tests with a real repository.
 3. **US3 default screen**: the agent workspace and view switching (it needs sessions to show).
 4. **US2 several sessions**:
    - overview, attention (R-4) and notices;

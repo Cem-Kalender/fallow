@@ -62,6 +62,7 @@ One agent in a terminal pane (FR-001 to FR-013).
 | bell | bool | Set by BEL from the agent; cleared when the session is shown with focus. |
 | scroll | usize | Lines scrolled back from the bottom; 0 = following output. |
 | selection | Option<range> | For copy (FR-005). |
+| workdir | ProjectFolder or Worktree { path, branch } | Where the agent runs (US6). Fixed for the session's life; restart reuses it. |
 
 ### SessionState
 
@@ -84,6 +85,25 @@ Failed(reason)           ▼                                          │
 - Entering `NeedsAttention` while the session is not visible with focus raises a notice (FR-009).
 - `Stopping` follows 001's ControlRequest lifecycle (confirmation, revalidation, graceful stop, and a
   separately confirmed force stop on Linux and macOS).
+
+## Worktree (US6)
+
+A git worktree Fallow created for a project (research R-11).
+
+| Field | Type | Rules |
+|---|---|---|
+| path | PathBuf | `<parent>/<project>.worktrees/<profile>-<n>` unless `sessions.worktree_root` is set. |
+| branch | String | `fallow/<profile id>-<n>`, first free `n`; never an existing branch. |
+| project | ProjectId | |
+| present | bool | The folder exists. |
+
+Lifecycle:
+1. Created at session start (the default for git projects).
+2. Used by the session and its restarts.
+3. On close: kept (the default), or removed, only when `git status --porcelain` is empty. The
+   branch is always kept.
+
+While it exists, it is listed in the start menu.
 
 ## Workspace
 

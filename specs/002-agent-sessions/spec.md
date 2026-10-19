@@ -169,6 +169,50 @@ sessions and processes, and that removing a project from the list leaves its fol
 
 ---
 
+### User Story 6 - Each agent works in its own git worktree (Priority: P1)
+
+The engineer starts several agents in the same repository. By default, each session of a git
+project gets its own git worktree on a new branch, so agents never edit the same working copy and
+each agent's changes stay on their own branch until the engineer merges them. Projects that are not
+git repositories run sessions in the project folder. The engineer can always choose the project
+folder or an existing worktree instead.
+
+**Why this priority**: Without isolation, two agents in one repository overwrite each other's
+edits and mix their changes in one branch. It changes how every US1 session starts, so it ranks
+with US1 (decided by the project owner on 2026-10-19).
+
+**Independent Test**: In a git project, start two sessions with the default choice. Verify each
+runs in its own worktree on its own new branch, that a file changed in one does not change in the
+other or in the project folder, and that closing a session offers to remove its worktree, refusing
+while it has uncommitted changes.
+
+**Acceptance Scenarios**:
+
+1. **Given** a project that is a git repository, **When** the user starts a session with the
+   default choice, **Then** Fallow creates a new worktree on a new branch from the project's
+   current commit, starts the agent in it, and shows the branch in the session list and the
+   session pane title.
+2. **Given** the start menu is open for a git project, **When** the user looks at where the agent
+   will run, **Then** "new worktree" is preselected, and "project folder" and each existing
+   worktree that Fallow created for this project can be chosen instead.
+3. **Given** a project that is not a git repository, **When** the user starts a session, **Then**
+   it runs in the project folder and the menu offers no worktree choice.
+4. **Given** two sessions run in separate worktrees, **When** one agent changes a file, **Then** the
+   other worktree and the project folder are unchanged.
+5. **Given** a session in a worktree has exited, **When** the user closes it, **Then** Fallow asks
+   whether to keep or remove the worktree, with Keep as the default. Remove deletes the worktree
+   folder and keeps its branch. A worktree with uncommitted changes or untracked files is never
+   removed; the dialog says why.
+6. **Given** a session in a worktree is restarted, **When** it starts again, **Then** it uses the
+   same worktree and branch.
+7. **Given** creating the worktree fails (no git, a locked repository, a full disk), **When** the
+   user starts a session, **Then** the error is shown and the user can start in the project folder
+   instead; nothing half-created is left behind.
+8. **Given** a session runs in a worktree, **When** the user opens the editor view from that
+   session, **Then** the Files pane shows the worktree, not the project folder.
+
+---
+
 ### User Story 5 - Choose which agents can be started (Priority: P5)
 
 The engineer chooses which agents appear as profiles: built-in profiles for common agent CLIs, a
@@ -191,6 +235,17 @@ session with it, and verify the command and arguments used.
    **Then** the session shows the error and no other session is affected.
 
 ### Edge Cases
+
+- **Worktree folder deleted or moved outside Fallow**: a session whose worktree is missing shows
+  "worktree missing" and can only be closed; Fallow runs `git worktree prune` only when the user
+  closes it.
+- **Branch name already taken**: Fallow picks the next free name (`fallow/claude-3`, then
+  `fallow/claude-4`, …); it never reuses or resets an existing branch.
+- **Worktrees after Fallow quits**: sessions stop, worktrees and branches stay on disk; the next
+  start lists them as existing worktrees of the project.
+- **Submodules and very large repositories**: creating a worktree checks out the full tree, which
+  takes time and disk space; the start menu shows "creating worktree…" and the session starts when
+  it is ready. Submodules are not initialized in the new worktree.
 
 - **Fallow quits while sessions run**: `Ctrl-Q` shows a confirmation that lists the running
   sessions (project, profile, process count). Confirming stops every agent with the graceful stop
@@ -305,6 +360,27 @@ session with it, and verify the command and arguments used.
   full default scrollback. Agent processes themselves are not counted.
 - **FR-030**: Sessions MUST work on Linux, macOS and Windows.
 
+**Worktrees**
+
+- **FR-031**: When a session starts in a project that is a git repository, Fallow MUST by default
+  create a new git worktree on a new branch from the project's current commit and start the agent
+  in it. Setting `sessions.worktrees = "never"` turns the default off.
+- **FR-032**: The start menu MUST let the user choose, per session, between a new worktree, the
+  project folder, and any existing worktree Fallow created for this project. For a non-git project
+  only the project folder is offered.
+- **FR-033**: New branches MUST be named `fallow/<profile id>-<n>` with the first free `n`. Fallow
+  MUST never overwrite, reset or delete an existing branch.
+- **FR-034**: New worktrees MUST be created in
+  `<parent of the project>/<project folder name>.worktrees/<branch name without "fallow/">` unless `sessions.worktree_root` names another folder.
+- **FR-035**: Closing an exited session that runs in a worktree MUST ask whether to keep or remove
+  the worktree, defaulting to Keep. Removal MUST be refused while the worktree has uncommitted
+  changes or untracked files. Removal deletes the worktree folder only; the branch is kept.
+- **FR-036**: The session list, the session overview and the session pane title MUST show the
+  session's branch when it runs in a worktree.
+- **FR-037**: Fallow MUST run git only as part of an explicit user action: starting, restarting
+  or closing a session, or opening the start menu (to list existing worktrees). It never runs git
+  in the background.
+
 ### Key Entities
 
 - **Project**: a folder the user works in. Name (folder name unless renamed), path, position in the
@@ -314,6 +390,8 @@ session with it, and verify the command and arguments used.
 - **Session**: one running (or exited) agent in a terminal pane. Project, profile, state (working,
   needs attention, exited with status), time in state, size, scrollback, and its link to the
   agent's process group in the LLM process panel.
+- **Worktree**: a git worktree Fallow created for a project. Path, branch, project, whether it has
+  uncommitted changes (checked when closing), whether it still exists.
 - **Workspace view**: which view is shown (agent workspace or editor view), the selected project
   and session, and the layout (single session or split).
 
@@ -340,8 +418,16 @@ session with it, and verify the command and arguments used.
   Fallow writes or in anything it sends over the network.
 - **SC-009**: After a restart, 100% of listed projects are restored in order with the last
   selection.
+- **SC-010**: Two agents started in the same git project with the default choice never share a
+  working copy: in a CI test, a change made in one session's worktree is absent from the other's
+  and from the project folder in 100% of runs, and no worktree with uncommitted changes is ever
+  removed.
 
 ## Assumptions
+
+- Worktrees by default for git projects was decided by the project owner on 2026-10-19. Fallow
+  uses the user's own `git` (2.17 or newer, for `git worktree remove`); without git, sessions run
+  in the project folder and the menu says why.
 
 - This feature is specified on branch `001-llm-aware-tui-editor`, because all work for now happens
   on that branch (user instruction). It can move to its own branch when planning starts.
