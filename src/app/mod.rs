@@ -107,6 +107,8 @@ pub fn run(opts: &Options) -> (ExitCode, RunStats) {
         max_sessions: cfg.settings.sessions.max_sessions as usize,
         leave_key: crate::session::keys::LeaveKey::parse(&cfg.settings.sessions.leave_key)
             .unwrap_or_default(),
+        worktrees: cfg.settings.sessions.worktrees,
+        worktree_root: cfg.settings.sessions.worktree_root.clone(),
     };
     let profiles_text = paths.dir.as_ref().and_then(|d| {
         std::fs::read_to_string(d.join(crate::session::profiles::PROFILES_FILE)).ok()

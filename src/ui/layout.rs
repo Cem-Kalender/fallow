@@ -195,7 +195,7 @@ fn overlays(f: &mut Frame<'_>, state: &AppState, area: Rect) {
         Overlay::Prompt { kind, input, error } => {
             prompt::draw(f, area, kind, input, error.as_deref())
         }
-        Overlay::Menu { items, selected } => super::workspace::draw_menu(f, area, items, *selected),
+        Overlay::Menu(m) => super::workspace::draw_menu(f, area, m),
     }
 }
 

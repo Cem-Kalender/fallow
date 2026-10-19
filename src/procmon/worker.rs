@@ -248,10 +248,7 @@ impl<P: Platform> Monitor<P> {
             .collect();
         let mut llm = self.detector.detect(&views, &hits, &conns, &providers);
 
-        let parents: group::Parents = visible
-            .iter()
-            .map(|p| (p.key, p.parent_pid.and_then(|pp| by_pid.get(&pp).copied())))
-            .collect();
+        let parents = group::link_parents(visible.iter().map(|p| (p.key, p.parent_pid)), &by_pid);
         let llm_keys: HashSet<ProcessKey> = llm.keys().copied().collect();
         let mut groups = group::build(&parents, &llm_keys);
 

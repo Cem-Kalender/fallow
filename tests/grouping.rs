@@ -109,3 +109,53 @@ fn parent_loops_do_not_hang() {
     let groups = group::build(&parents, &[k(1)].into());
     assert!(groups.len() <= 1);
 }
+
+#[test]
+fn a_reused_pid_does_not_adopt_older_processes() {
+    // Seen on Windows: OneDrive (started at t=100) still reports parent PID 27, which exited;
+    // PID 27 now belongs to fallow.exe, started at t=500 under an agent. OneDrive must not
+    // join the agent's group.
+    let agent = ProcessKey {
+        pid: 20,
+        start_time: 50,
+    };
+    let fallow = ProcessKey {
+        pid: 27,
+        start_time: 500,
+    };
+    let onedrive = ProcessKey {
+        pid: 84,
+        start_time: 100,
+    };
+    let child = ProcessKey {
+        pid: 90,
+        start_time: 600,
+    };
+    let by_pid: HashMap<u32, ProcessKey> = [agent, fallow, onedrive, child]
+        .iter()
+        .map(|k| (k.pid, *k))
+        .collect();
+    let parents = group::link_parents(
+        [
+            (agent, None),
+            (fallow, Some(20)),
+            (onedrive, Some(27)),
+            (child, Some(27)),
+        ],
+        &by_pid,
+    );
+    assert_eq!(parents[&fallow], Some(agent));
+    assert_eq!(
+        parents[&onedrive], None,
+        "the PID-27 parent is younger than OneDrive"
+    );
+    assert_eq!(
+        parents[&child],
+        Some(fallow),
+        "a real child keeps its parent"
+    );
+    let groups = group::build(&parents, &[agent].into_iter().collect());
+    let members: HashSet<ProcessKey> = groups[0].members.iter().copied().collect();
+    assert!(members.contains(&fallow) && members.contains(&child));
+    assert!(!members.contains(&onedrive));
+}

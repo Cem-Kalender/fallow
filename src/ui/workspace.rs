@@ -11,7 +11,7 @@ use ratatui::widgets::{Block, Clear, List, ListItem, ListState, Paragraph};
 use super::layout::{self, Mode};
 use super::{processes, summary, terminal_pane};
 use crate::app::state::{AppState, Overlay};
-use crate::app::workspace::{AgentsFocus, MenuItem};
+use crate::app::workspace::{AgentsFocus, StartMenu};
 
 /// Where the workspace's parts are.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -250,6 +250,12 @@ fn draw_sessions(f: &mut Frame<'_>, state: &AppState, area: Rect) {
             };
             ListItem::new(Line::from(vec![
                 Span::raw(format!("#{} {}  ", s.id, s.profile.name)),
+                Span::styled(
+                    s.workdir
+                        .branch()
+                        .map_or(String::new(), |b| format!("{b}  ")),
+                    Style::default().fg(Color::Magenta),
+                ),
                 Span::styled(s.state.label(), state_style),
                 Span::styled(
                     format!("  {}:{:02}", since / 60, since % 60),
@@ -272,12 +278,17 @@ fn draw_sessions(f: &mut Frame<'_>, state: &AppState, area: Rect) {
     f.render_stateful_widget(List::new(items).block(b).highlight_style(hl), area, &mut st);
 }
 
-/// The profile menu overlay.
-pub fn draw_menu(f: &mut Frame<'_>, area: Rect, items: &[MenuItem], selected: usize) {
-    let width = 60.min(area.width.saturating_sub(2)).max(20);
-    let height = (items.len() as u16 + 4)
-        .min(area.height.saturating_sub(2))
-        .max(5);
+/// The start menu overlay (contracts/ui-commands.md "Start menu").
+pub fn draw_menu(f: &mut Frame<'_>, area: Rect, m: &StartMenu) {
+    let width = 64.min(area.width.saturating_sub(2)).max(24);
+    let rows = m.agents.len()
+        + if m.wheres.is_empty() {
+            0
+        } else {
+            m.wheres.len() + 2
+        }
+        + usize::from(m.error.is_some()) * 2;
+    let height = (rows as u16 + 4).min(area.height.saturating_sub(2)).max(5);
     let [v] = Layout::vertical([Constraint::Length(height)])
         .flex(Flex::Center)
         .areas(area);
@@ -285,27 +296,58 @@ pub fn draw_menu(f: &mut Frame<'_>, area: Rect, items: &[MenuItem], selected: us
         .flex(Flex::Center)
         .areas(v);
     f.render_widget(Clear, r);
-    let rows: Vec<ListItem<'_>> = items
-        .iter()
-        .map(|i| match &i.available {
-            Ok(()) => ListItem::new(i.label.clone()),
-            Err(e) => ListItem::new(Line::styled(
-                format!("{}  ({e})", i.label),
-                Style::default().add_modifier(Modifier::DIM),
-            )),
-        })
-        .collect();
-    let mut st = ListState::default().with_selected(Some(selected));
-    f.render_stateful_widget(
-        List::new(rows)
-            .block(
-                Block::bordered()
-                    .title(" New session: choose an agent ")
-                    .title_bottom(" Enter start · Esc cancel "),
-            )
-            .highlight_style(Style::default().add_modifier(Modifier::REVERSED)),
-        r,
-        &mut st,
+    let block = Block::bordered()
+        .title(" New session ")
+        .title_bottom(" ↑↓ choose · Tab agent/where · Enter start · Esc cancel ");
+    let inner = block.inner(r);
+    f.render_widget(block, r);
+    let sel = Style::default().add_modifier(Modifier::REVERSED);
+    let dim = Style::default().add_modifier(Modifier::DIM);
+    let bold = Style::default().add_modifier(Modifier::BOLD);
+    let mut lines: Vec<Line<'_>> = vec![Line::styled("Agent:", bold)];
+    for (i, a) in m.agents.iter().enumerate() {
+        let mut style = if a.available.is_ok() {
+            Style::default()
+        } else {
+            dim
+        };
+        if i == m.agent {
+            style = if m.on_where {
+                style.add_modifier(Modifier::BOLD)
+            } else {
+                sel
+            };
+        }
+        let text = match &a.available {
+            Ok(()) => format!("  {}", a.label),
+            Err(e) => format!("  {}  ({e})", a.label),
+        };
+        lines.push(Line::styled(text, style));
+    }
+    if !m.wheres.is_empty() {
+        lines.push(Line::raw(""));
+        lines.push(Line::styled("Where:", bold));
+        let profile = m.agents.get(m.agent).map_or("agent", |a| a.id.as_str());
+        for (i, w) in m.wheres.iter().enumerate() {
+            let mark = if i == m.where_sel { "●" } else { "○" };
+            let style = if i == m.where_sel && m.on_where {
+                sel
+            } else {
+                Style::default()
+            };
+            lines.push(Line::styled(
+                format!("  {mark} {}", w.label(profile)),
+                style,
+            ));
+        }
+    }
+    if let Some(e) = &m.error {
+        lines.push(Line::raw(""));
+        lines.push(Line::styled(e.clone(), Style::default().fg(Color::Red)));
+    }
+    f.render_widget(
+        Paragraph::new(lines).wrap(ratatui::widgets::Wrap { trim: false }),
+        inner,
     );
 }
 

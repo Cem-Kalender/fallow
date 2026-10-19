@@ -519,6 +519,11 @@ impl<'a> Ctx<'a> {
         match c {
             Col::Name => {
                 let name = rec.map_or("?", |x| x.name.as_str());
+                // `.exe` carries no information on Windows and costs a narrow column 4 cells.
+                let name = name
+                    .strip_suffix(".exe")
+                    .or_else(|| name.strip_suffix(".EXE"))
+                    .unwrap_or(name);
                 if r.depth == 0 {
                     let mark = match (r.expandable, expanded) {
                         (false, _) => "  ",

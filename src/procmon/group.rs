@@ -8,6 +8,25 @@ use super::snapshot::{ProcessGroup, ProcessKey};
 /// Parent links between visible processes.
 pub type Parents = HashMap<ProcessKey, Option<ProcessKey>>;
 
+/// Links each process to its parent's key. The operating system reports only the parent's PID,
+/// and PIDs are reused: a process whose real parent exited may point at an unrelated, newer
+/// process that got the same PID. A parent must have started no later than its child, so a link
+/// to a younger process is dropped (the child is then an orphan, as it really is).
+pub fn link_parents(
+    samples: impl IntoIterator<Item = (ProcessKey, Option<u32>)>,
+    by_pid: &HashMap<u32, ProcessKey>,
+) -> Parents {
+    samples
+        .into_iter()
+        .map(|(key, ppid)| {
+            let parent = ppid
+                .and_then(|pp| by_pid.get(&pp).copied())
+                .filter(|p| p.start_time <= key.start_time && *p != key);
+            (key, parent)
+        })
+        .collect()
+}
+
 /// Ancestor chains longer than this are treated as broken (guards against loops).
 const MAX_DEPTH: usize = 512;
 

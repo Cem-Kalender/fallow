@@ -64,6 +64,10 @@ pub struct SessionSettings {
     pub max_sessions: u64,
     /// The leave-session key as written (`ctrl-]`, `f12`, …); parsed by `session::keys`.
     pub leave_key: String,
+    /// A new git worktree by default for git projects (FR-031).
+    pub worktrees: bool,
+    /// Where new worktrees go; `None`: next to the project (FR-034).
+    pub worktree_root: Option<std::path::PathBuf>,
 }
 
 /// When Fallow reads a Windows process's working directory (research R-10).
@@ -98,6 +102,8 @@ impl Default for Settings {
                 attention_delay_ms: 5_000,
                 max_sessions: 8,
                 leave_key: "ctrl-]".into(),
+                worktrees: true,
+                worktree_root: None,
             },
         }
     }
@@ -222,6 +228,8 @@ struct RawSessions {
     attention_delay_ms: Option<Spanned<i64>>,
     max_sessions: Option<Spanned<i64>>,
     leave_key: Option<Spanned<String>>,
+    worktrees: Option<Spanned<String>>,
+    worktree_root: Option<Spanned<String>>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -334,6 +342,8 @@ pub(crate) const SETTINGS_SHAPE: Shape = Shape::Table(&[
             ("attention_delay_ms", Shape::Leaf),
             ("max_sessions", Shape::Leaf),
             ("leave_key", Shape::Leaf),
+            ("worktrees", Shape::Leaf),
+            ("worktree_root", Shape::Leaf),
         ]),
     ),
 ]);
@@ -462,6 +472,29 @@ pub(crate) fn apply_settings(base: &mut Settings, raw: RawSettings) -> Vec<Inval
             "1..=16",
             &mut base.sessions.max_sessions,
         );
+        if let Some(w) = sx.worktrees {
+            match w.get_ref().as_str() {
+                "auto" => base.sessions.worktrees = true,
+                "never" => base.sessions.worktrees = false,
+                other => errors.push(Invalid::new(
+                    w.span(),
+                    format!("worktrees = {other:?}: expected \"auto\" or \"never\""),
+                )),
+            }
+        }
+        if let Some(r) = sx.worktree_root {
+            let v = r.get_ref().trim();
+            if v.is_empty() {
+                base.sessions.worktree_root = None;
+            } else if std::path::Path::new(v).is_absolute() {
+                base.sessions.worktree_root = Some(v.into());
+            } else {
+                errors.push(Invalid::new(
+                    r.span(),
+                    format!("worktree_root = {v:?}: expected an absolute folder path or \"\""),
+                ));
+            }
+        }
         if let Some(k) = sx.leave_key {
             if crate::session::keys::LeaveKey::parse(k.get_ref()).is_some() {
                 base.sessions.leave_key = k.get_ref().clone();

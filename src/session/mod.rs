@@ -7,6 +7,7 @@ pub mod profiles;
 pub mod pty;
 pub mod scrollback;
 pub mod term;
+pub mod worktree;
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -57,6 +58,22 @@ impl SessionState {
     }
 }
 
+/// Where a session's agent runs (US6).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Workdir {
+    ProjectFolder,
+    Worktree(worktree::Worktree),
+}
+
+impl Workdir {
+    pub fn branch(&self) -> Option<&str> {
+        match self {
+            Workdir::Worktree(w) => Some(&w.branch),
+            Workdir::ProjectFolder => None,
+        }
+    }
+}
+
 /// One agent in a terminal pane.
 #[derive(Debug)]
 pub struct Session {
@@ -64,6 +81,7 @@ pub struct Session {
     pub project: ProjectId,
     pub project_name: String,
     pub cwd: PathBuf,
+    pub workdir: Workdir,
     pub profile: AgentProfile,
     pub term: Arc<Mutex<Term>>,
     pub pty: Option<Pty>,
@@ -83,7 +101,13 @@ pub struct Session {
 
 impl Session {
     pub fn label(&self) -> String {
-        format!("#{} {} · {}", self.id, self.profile.name, self.project_name)
+        match self.workdir.branch() {
+            Some(b) => format!(
+                "#{} {} · {} · {b}",
+                self.id, self.profile.name, self.project_name
+            ),
+            None => format!("#{} {} · {}", self.id, self.profile.name, self.project_name),
+        }
     }
 
     fn set_state(&mut self, s: SessionState) {
@@ -136,6 +160,9 @@ pub struct Limits {
     pub scrollback_lines: usize,
     pub max_sessions: usize,
     pub leave_key: LeaveKey,
+    /// A new worktree by default for git projects (FR-031).
+    pub worktrees: bool,
+    pub worktree_root: Option<PathBuf>,
 }
 
 impl Default for Limits {
@@ -144,6 +171,8 @@ impl Default for Limits {
             scrollback_lines: 10_000,
             max_sessions: 8,
             leave_key: LeaveKey::default(),
+            worktrees: true,
+            worktree_root: None,
         }
     }
 }
@@ -163,7 +192,9 @@ pub struct SessionManager {
 pub struct StartRequest {
     pub project: ProjectId,
     pub project_name: String,
+    /// The project folder, or the worktree's folder.
     pub cwd: PathBuf,
+    pub workdir: Workdir,
     pub profile: AgentProfile,
     pub rows: u16,
     pub cols: u16,
@@ -209,6 +240,7 @@ impl SessionManager {
             project: req.project,
             project_name: req.project_name.clone(),
             cwd: req.cwd.clone(),
+            workdir: req.workdir.clone(),
             profile: req.profile.clone(),
             term,
             pty: None,
