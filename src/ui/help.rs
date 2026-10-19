@@ -114,6 +114,81 @@ pub const CONFLICTS: &[[&str; 4]] = &[
     ],
     ["Ctrl-F", "free (WT find is Ctrl-Shift-F)", "free", "free"],
     ["Ctrl-G", "free", "free", "free"],
+    [
+        "Ctrl-W",
+        "free (WT close pane is Ctrl-Shift-W)",
+        "free",
+        "free",
+    ],
+    [
+        "Ctrl-A",
+        "free (WT select-all is Ctrl-Shift-A)",
+        "free",
+        "free",
+    ],
+    [
+        "Ctrl-C",
+        "conditional: WT's generated settings bind Ctrl-C to copy only while WT has its own selection; otherwise it passes through. Fallow's mouse capture means WT rarely has a selection.",
+        "free (raw mode disables SIGINT)",
+        "free (same)",
+    ],
+    ["Ctrl-X", "free", "free", "free"],
+    [
+        "Ctrl-V",
+        "intercepted, same result: WT's generated settings bind Ctrl-V to paste. The text arrives as a bracketed paste, which Fallow handles as a paste.",
+        "free (raw mode disables the tty \"literal next\" char)",
+        "free (same)",
+    ],
+    [
+        "Ctrl-PgUp/PgDn",
+        "free (WT scroll is Ctrl-Shift-PgUp/PgDn)",
+        "verify: Terminal.app's PgUp/PgDn handling may consume the combination",
+        "verify",
+    ],
+    ["Shift-←/→", "free", "free", "free"],
+    ["Shift-↑/↓", "free", "verify", "free"],
+    [
+        "Shift-Home/End",
+        "free",
+        "verify: Terminal.app maps Home/End to scrollback by default and may send unmodified Home/End when Shift is held",
+        "verify",
+    ],
+    [
+        "Home/End/PgUp/PgDn",
+        "free",
+        "intercepted by default: they scroll the scrollback. Fallow uses the alternate screen, where Terminal.app passes them to the app. verify",
+        "free in alternate screen; verify",
+    ],
+    [
+        "Delete",
+        "free",
+        "free (Fn-Delete on Mac keyboards)",
+        "free (Fn-Delete)",
+    ],
+    [
+        "Enter",
+        "free (WT's Enter = copy applies only while WT has a selection)",
+        "free",
+        "free",
+    ],
+    [
+        "↑↓←→",
+        "free (WT uses Alt-arrows for its panes)",
+        "free (macOS uses Ctrl-arrows for Spaces; Fallow doesn't use them)",
+        "free",
+    ],
+    [
+        "a, Shift-A, d, r, g, p, m, c, u, n, Shift-K, Space",
+        "free",
+        "free",
+        "free",
+    ],
+    [
+        "Mouse drag, click, wheel",
+        "captured by Fallow; the terminal's own selection needs Shift",
+        "captured; own selection needs Fn (verify)",
+        "captured; own selection needs Option",
+    ],
 ];
 
 pub const CONFLICTS_STATUS: &str = "Windows Terminal: verified against its published defaults.json. Terminal.app and iTerm2: checked against documented defaults; to be confirmed in the macOS hardware run-through.";

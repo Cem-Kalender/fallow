@@ -1,10 +1,16 @@
 //! Rendering: layout, panes, the hint bar and the overlays.
 
+pub mod confirm;
+pub mod editor;
+pub mod files;
+pub mod find;
+pub mod goto;
 pub mod help;
 pub mod hints;
 pub mod layout;
 pub mod palette;
 pub mod processes;
+pub mod prompt;
 pub mod summary;
 pub mod terminal;
 

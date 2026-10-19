@@ -98,7 +98,7 @@ pub const COMMANDS: &[Command] = &[
     on(cmd("pane.files", "Focus Files", Global, "Alt-1")),
     on(cmd("pane.editor", "Focus Editor", Global, "Alt-2")),
     on(cmd("pane.processes", "Focus Processes", Global, "Alt-3")),
-    cmd("project.open", "Open project", Global, "Ctrl-O"),
+    on(cmd("project.open", "Open project", Global, "Ctrl-O")),
     cmd("config.reload", "Reload configuration", Global, ""),
     on(cmd("quit", "Quit", Global, "Ctrl-Q")),
     // Process panel
@@ -159,13 +159,13 @@ pub const COMMANDS: &[Command] = &[
     ),
     cmd("proc.browsers", "Toggle browser category", Processes, ""),
     // Files pane
-    cmd(
-        "files.move",
-        "Move selection",
-        Files,
-        "↑ / ↓, PgUp / PgDn, Home / End",
-    ),
-    hint(
+    on(cmd("files.up", "Move selection up", Files, "↑")),
+    on(cmd("files.down", "Move selection down", Files, "↓")),
+    on(cmd("files.page_up", "Page up in Files", Files, "PgUp")),
+    on(cmd("files.page_down", "Page down in Files", Files, "PgDn")),
+    on(cmd("files.home", "First file", Files, "Home")),
+    on(cmd("files.end", "Last file", Files, "End")),
+    on(hint(
         cmd(
             "files.open",
             "Open file / expand folder",
@@ -175,81 +175,87 @@ pub const COMMANDS: &[Command] = &[
         2,
         "Enter",
         "Open",
-    ),
-    cmd(
+    )),
+    on(cmd(
         "files.collapse",
         "Collapse folder / go to parent",
         Files,
         "←",
-    ),
-    cmd("files.expand", "Expand folder", Files, "→"),
-    hint(
+    )),
+    on(cmd("files.expand", "Expand folder", Files, "→")),
+    on(hint(
         cmd("files.new_file", "New file", Files, "a"),
         3,
         "a",
         "New file",
-    ),
-    cmd("files.new_folder", "New folder", Files, "Shift-A"),
-    hint(
+    )),
+    on(cmd("files.new_folder", "New folder", Files, "Shift-A")),
+    on(hint(
         cmd("files.rename", "Rename", Files, "F2, r"),
         4,
         "F2",
         "Rename",
-    ),
-    hint(
+    )),
+    on(hint(
         cmd("files.delete", "Delete", Files, "Delete, d"),
         5,
         "d",
         "Delete",
-    ),
+    )),
     // Editor
-    hint(
+    on(hint(
         cmd("editor.save", "Save", Editor, "Ctrl-S"),
         2,
         "Ctrl-S",
         "Save",
-    ),
-    cmd("editor.undo", "Undo", Editor, "Ctrl-Z"),
-    cmd("editor.redo", "Redo", Editor, "Ctrl-Y"),
-    hint(
+    )),
+    on(cmd("editor.undo", "Undo", Editor, "Ctrl-Z")),
+    on(cmd("editor.redo", "Redo", Editor, "Ctrl-Y")),
+    on(hint(
         cmd("editor.find", "Find", Editor, "Ctrl-F"),
         3,
         "Ctrl-F",
         "Find",
-    ),
-    hint(
+    )),
+    on(hint(
         cmd("editor.goto_line", "Go to line", Editor, "Ctrl-G"),
         4,
         "Ctrl-G",
         "Go to line",
-    ),
-    cmd("editor.close", "Close buffer", Editor, "Ctrl-W"),
-    cmd("editor.next_buffer", "Next buffer", Editor, "Ctrl-PgDn"),
-    cmd("editor.prev_buffer", "Previous buffer", Editor, "Ctrl-PgUp"),
-    cmd(
-        "editor.indent",
-        "Indent / outdent",
+    )),
+    on(cmd("editor.close", "Close buffer", Editor, "Ctrl-W")),
+    on(cmd(
+        "editor.next_buffer",
+        "Next buffer",
         Editor,
-        "Tab / Shift-Tab",
-    ),
-    hint(
+        "Ctrl-PgDn",
+    )),
+    on(cmd(
+        "editor.prev_buffer",
+        "Previous buffer",
+        Editor,
+        "Ctrl-PgUp",
+    )),
+    on(cmd("editor.indent", "Indent", Editor, "Tab")),
+    on(cmd("editor.outdent", "Outdent", Editor, "Shift-Tab")),
+    on(hint(
         cmd("editor.release", "Release editor focus", Editor, "Esc"),
         5,
         "Esc Tab",
         "Next pane",
-    ),
-    cmd(
+    )),
+    on(cmd(
         "editor.select",
         "Extend selection",
         Editor,
         "Shift-←/→/↑/↓, Shift-Home / Shift-End",
-    ),
-    cmd("editor.select_all", "Select all", Editor, "Ctrl-A"),
-    cmd("editor.copy", "Copy", Editor, "Ctrl-C"),
-    cmd("editor.cut", "Cut", Editor, "Ctrl-X"),
-    cmd("editor.paste", "Paste", Editor, "Ctrl-V"),
+    )),
+    on(cmd("editor.select_all", "Select all", Editor, "Ctrl-A")),
+    on(cmd("editor.copy", "Copy", Editor, "Ctrl-C")),
+    on(cmd("editor.cut", "Cut", Editor, "Ctrl-X")),
+    on(cmd("editor.paste", "Paste", Editor, "Ctrl-V")),
     // Find bar
-    hint(
+    on(hint(
         cmd(
             "find.scope",
             "Toggle scope: this file / whole project",
@@ -259,8 +265,8 @@ pub const COMMANDS: &[Command] = &[
         2,
         "Tab",
         "Scope: this file/project",
-    ),
-    hint(
+    )),
+    on(hint(
         cmd(
             "find.next",
             "Next match / run project search",
@@ -270,9 +276,9 @@ pub const COMMANDS: &[Command] = &[
         3,
         "Enter",
         "Next/Search",
-    ),
-    cmd("find.prev", "Previous match", FindBar, "↑"),
-    hint(
+    )),
+    on(cmd("find.prev", "Previous match", FindBar, "↑")),
+    on(hint(
         cmd(
             "find.close",
             "Cancel search / close find bar",
@@ -282,20 +288,20 @@ pub const COMMANDS: &[Command] = &[
         4,
         "Esc",
         "Close",
-    ),
+    )),
     // Dialogs
-    hint(
+    on(hint(
         cmd("dialog.confirm", "Confirm", Dialog, "y, Enter on Confirm"),
         2,
         "y",
         "Confirm",
-    ),
-    hint(
+    )),
+    on(hint(
         cmd("dialog.cancel", "Cancel", Dialog, "Esc, n, q"),
         3,
         "Esc",
         "Cancel",
-    ),
+    )),
 ];
 
 pub fn find(id: &str) -> Option<&'static Command> {

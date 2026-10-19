@@ -12,6 +12,11 @@ allow = [
     "ISC",
     "Unicode-3.0",
     "Zlib",
+    # Phase 5 editor dependencies (T065): notify is CC0-1.0 (public domain dedication);
+    # clipboard-win and error-code (arboard on Windows) are BSL-1.0. Both are permissive,
+    # OSI-approved and impose no obligations beyond keeping the notice.
+    "CC0-1.0",
+    "BSL-1.0",
 ]
 confidence-threshold = 0.9
 unused-allowed-license = "allow"

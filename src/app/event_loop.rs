@@ -1,5 +1,6 @@
-//! The main event loop (research R-6): block on input with a 250 ms timeout, drain the worker
-//! channels on every wake, and redraw only when the state changed.
+//! The main event loop (research R-6): block on input with a 250 ms timeout, drain the worker,
+//! search and change-notification channels on every wake, and redraw only when the state
+//! changed.
 
 use std::io;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -13,6 +14,7 @@ use crate::procmon::worker::WorkerHandle;
 use crate::ui::{self, terminal::Tui};
 
 pub const POLL_TIMEOUT: Duration = Duration::from_millis(250);
+const BUSY_POLL: Duration = Duration::from_millis(15);
 
 /// Runs until the user quits. The first frame is drawn before `start` launches the background
 /// threads; `cycles` mirrors the worker's refresh counter for `--bench-stats`.
@@ -32,11 +34,19 @@ pub fn run(
     let mut dirty = false;
     while !state.quit {
         if dirty {
+            state.prepare_frame();
             term.draw(|f| ui::draw(f, state))?;
             dirty = false;
         }
         state.ticks += 1;
-        if event::poll(POLL_TIMEOUT)? {
+        // A running search streams results: wake often so the first row shows promptly
+        // (SC-010).
+        let timeout = if state.busy() {
+            BUSY_POLL
+        } else {
+            POLL_TIMEOUT
+        };
+        if event::poll(timeout)? {
             // Take everything already queued before drawing again.
             loop {
                 dirty |= handle(state, event::read()?);
@@ -58,6 +68,7 @@ pub fn run(
             }
             cycles.store(w.cycles.load(Ordering::Relaxed), Ordering::Relaxed);
         }
+        dirty |= state.poll_background();
         dirty |= state.tick();
     }
     Ok(())
@@ -67,6 +78,7 @@ fn handle(state: &mut AppState, ev: Event) -> bool {
     match ev {
         Event::Key(key) => state.handle_key(key),
         Event::Mouse(m) => state.handle_mouse(m),
+        Event::Paste(text) => state.paste(&text),
         Event::Resize(w, h) => {
             state.area = ratatui::layout::Rect::new(0, 0, w, h);
             true

@@ -460,23 +460,23 @@ memory benchmark.
 
 ### Tests for User Story 3
 
-- [ ] T059 [P] [US3] Write `tests/buffer.rs`:
+- [X] T059 [P] [US3] Write `tests/buffer.rs`:
   - edits and undo/redo;
   - "undo is an edit log capped at 10 MB per buffer; the oldest entries are dropped first";
   - files over `editor.read_only_threshold_mb` (10) open `read_only`;
   - binary files are not opened as text.
 
   Satisfies: FR-003, spec edge case "large or binary file".
-- [ ] T060 [P] [US3] Write `tests/disk_change.rs`, one case for each FR-006 transition, verbatim:
+- [X] T060 [P] [US3] Write `tests/disk_change.rs`, one case for each FR-006 transition, verbatim:
   - "`dirty = false` and the file changed: reload, show a notice, stay `InSync`";
   - "`dirty = true` and the file changed: go to `ChangedOnDisk` and prompt 'keep mine / load disk'. Nothing is written until the user chooses";
   - "The file was deleted or renamed: go to `DeletedOnDisk`, show a notice, keep the buffer, and set `dirty = true`".
 
   Satisfies: FR-006.
-- [ ] T061 [P] [US3] Write `tests/search.rs`: `.gitignore` respected, results capped at 10,000 with state `Capped`, cancellation, file scope next/previous, project scope runs only on submit. Satisfies: FR-005.
-- [ ] T062 [P] [US3] Write `tests/fileops.rs`: new file and new folder inside the selected folder or next to the selected file; rename updates the open buffer's path; delete requires a confirmation token; delete of an open file makes the buffer unsaved. Satisfies: FR-068, FR-034.
-- [ ] T063 [P] [US3] Write `tests/clipboard.rs`: OSC 52 encoding (base64, `ESC ] 52 ; c ; … BEL`); copy with no selection is a no-op that returns the "Quit: Ctrl-Q" hint; a bracketed paste is inserted literally with no auto-indent; cut removes the selection. Satisfies: FR-008.
-- [ ] T064 [P] [US3] Write `tests/keymap_conflicts.rs`:
+- [X] T061 [P] [US3] Write `tests/search.rs`: `.gitignore` respected, results capped at 10,000 with state `Capped`, cancellation, file scope next/previous, project scope runs only on submit. Satisfies: FR-005.
+- [X] T062 [P] [US3] Write `tests/fileops.rs`: new file and new folder inside the selected folder or next to the selected file; rename updates the open buffer's path; delete requires a confirmation token; delete of an open file makes the buffer unsaved. Satisfies: FR-068, FR-034.
+- [X] T063 [P] [US3] Write `tests/clipboard.rs`: OSC 52 encoding (base64, `ESC ] 52 ; c ; … BEL`); copy with no selection is a no-op that returns the "Quit: Ctrl-Q" hint; a bracketed paste is inserted literally with no auto-indent; cut removes the selection. Satisfies: FR-008.
+- [X] T064 [P] [US3] Write `tests/keymap_conflicts.rs`:
   - every default key in contracts/ui-commands.md is bound to exactly the listed command in its context;
   - no key is bound twice in one context;
   - every key listed in the Known terminal conflicts table maps to a registered command;
@@ -486,8 +486,14 @@ memory benchmark.
 
 ### Implementation for User Story 3
 
-- [ ] T065 [US3] Add the editor dependencies to `Cargo.toml`: `ropey`, `tree-sitter`, `tree-sitter-highlight`, the 15 grammar crates (Python, JavaScript, TypeScript/TSX, Rust, Go, C, C++, Java, C#, Bash, JSON, YAML, TOML, Markdown, HTML, CSS), `notify`, `grep-searcher`, `grep-regex`, `ignore`, `arboard`. Check them with `cargo deny`. Satisfies: plan Dependency budget, FR-004.
-- [ ] T066 [US3] Implement `Buffer` in `src/editor/buffer.rs` per data-model.md:
+- [X] T065 [US3] Add the editor dependencies to `Cargo.toml`: `ropey`, `tree-sitter`, `tree-sitter-highlight`, the 15 grammar crates (Python, JavaScript, TypeScript/TSX, Rust, Go, C, C++, Java, C#, Bash, JSON, YAML, TOML, Markdown, HTML, CSS), `notify`, `grep-searcher`, `grep-regex`, `ignore`, `arboard`. Check them with `cargo deny`. Satisfies: plan Dependency budget, FR-004.
+
+  *Done with two deviations (2026-10-19):* `tree-sitter-highlight` is not used, because it
+  re-parses the whole file on every call and can't keep a tree per buffer or limit work to the
+  visible range (R-8); `src/editor/syntax.rs` runs the grammars' highlight queries directly with
+  a byte-range-limited `QueryCursor`. `deny.toml` now also allows `CC0-1.0` (notify) and
+  `BSL-1.0` (clipboard-win and error-code, used by arboard on Windows).
+- [X] T066 [US3] Implement `Buffer` in `src/editor/buffer.rs` per data-model.md:
   - `ropey::Rope` text;
   - `read_only` for files over 10 MB, with a warning;
   - binary detection (a NUL byte in the first 8 KiB);
@@ -496,31 +502,31 @@ memory benchmark.
   - `dirty` and `disk_state`.
 
   Satisfies: FR-003, spec edge cases.
-- [ ] T067 [US3] Implement the lazy tree in `src/editor/tree.rs` (a node lists its children only when expanded) and the Files pane in `src/ui/files.rs`:
+- [X] T067 [US3] Implement the lazy tree in `src/editor/tree.rs` (a node lists its children only when expanded) and the Files pane in `src/ui/files.rs`:
   - `↑` / `↓`, `PgUp` / `PgDn`, `Home` / `End`;
   - `Enter` or double-click opens a file or toggles a folder;
   - `←` collapses or goes to the parent; `→` expands.
 
   Satisfies: FR-002, contracts/ui-commands.md Files pane.
-- [ ] T068 [US3] Implement opening a project: the `PATH` argument and `Ctrl-O` (a prompt with path input). Set `Project { root, tree, open_buffers }` in `src/app/state.rs`. Satisfies: FR-002.
-- [ ] T069 [US3] Implement the shared confirmation dialog in `src/ui/confirm.rs`: default focus **Cancel**; `y`, or `Enter` on Confirm, confirms; `Esc`, `n` and `q` cancel; there is no "don't ask again". Confirming returns a `ConfirmedToken` that only this module can construct. Satisfies: FR-032, FR-068.
-- [ ] T070 [US3] Implement Files pane operations in `src/editor/fileops.rs` and `src/ui/files.rs`:
+- [X] T068 [US3] Implement opening a project: the `PATH` argument and `Ctrl-O` (a prompt with path input). Set `Project { root, tree, open_buffers }` in `src/app/state.rs`. Satisfies: FR-002.
+- [X] T069 [US3] Implement the shared confirmation dialog in `src/ui/confirm.rs`: default focus **Cancel**; `y`, or `Enter` on Confirm, confirms; `Esc`, `n` and `q` cancel; there is no "don't ask again". Confirming returns a `ConfirmedToken` that only this module can construct. Satisfies: FR-032, FR-068.
+- [X] T070 [US3] Implement Files pane operations in `src/editor/fileops.rs` and `src/ui/files.rs`:
   - `a` new file, `Shift-A` new folder, `F2` or `r` rename, `Delete` or `d` delete, each also in the palette;
   - name prompts support selection, copy, cut and paste;
   - delete needs a T069 confirmation showing the full path, file and folder counts for folders, and "Deletion is permanent. v1 has no trash integration";
   - renaming or deleting an open file updates the buffer or makes it unsaved.
 
   Satisfies: FR-068, FR-034.
-- [ ] T071 [US3] Implement syntax highlighting in `src/editor/syntax.rs`: a static grammar registry whose highlight queries compile on first use of each language; highlight the visible range plus a margin; keep the parse tree per open buffer. Unused grammars must cost no RSS. Satisfies: FR-004, R-8.
-- [ ] T072 [US3] Implement the editor view and editing in `src/ui/editor.rs`:
+- [X] T071 [US3] Implement syntax highlighting in `src/editor/syntax.rs`: a static grammar registry whose highlight queries compile on first use of each language; highlight the visible range plus a margin; keep the parse tree per open buffer. Unused grammars must cost no RSS. Satisfies: FR-004, R-8.
+- [X] T072 [US3] Implement the editor view and editing in `src/ui/editor.rs`:
   - cursor movement, typing and line numbers;
   - `Tab` / `Shift-Tab` indent and outdent (`editor.tab_width`);
   - `Esc` releases focus when no find bar or selection is active, after which `Tab` switches panes, and the hint bar shows `Esc Tab: next pane`.
 
   Satisfies: FR-003, FR-065.
-- [ ] T073 [US3] Implement buffer commands in `src/app/keymap.rs` and `src/ui/editor.rs`: `Ctrl-S` save, `Ctrl-Z` / `Ctrl-Y` undo and redo, `Ctrl-W` close, `Ctrl-PgDn` / `Ctrl-PgUp` next and previous buffer, plus the palette entries "Next buffer" / "Previous buffer". Satisfies: FR-003.
-- [ ] T074 [US3] Implement selection in `src/editor/selection.rs` and `src/ui/editor.rs`: `Shift-←/→/↑/↓`, `Shift-Home` / `Shift-End`, `Ctrl-A` (and palette "Select all"), and mouse drag. Selection also works in the find box and name prompts. Satisfies: FR-008, FR-063.
-- [ ] T075 [US3] Implement the clipboard in `src/clipboard.rs`:
+- [X] T073 [US3] Implement buffer commands in `src/app/keymap.rs` and `src/ui/editor.rs`: `Ctrl-S` save, `Ctrl-Z` / `Ctrl-Y` undo and redo, `Ctrl-W` close, `Ctrl-PgDn` / `Ctrl-PgUp` next and previous buffer, plus the palette entries "Next buffer" / "Previous buffer". Satisfies: FR-003.
+- [X] T074 [US3] Implement selection in `src/editor/selection.rs` and `src/ui/editor.rs`: `Shift-←/→/↑/↓`, `Shift-Home` / `Shift-End`, `Ctrl-A` (and palette "Select all"), and mouse drag. Selection also works in the find box and name prompts. Satisfies: FR-008, FR-063.
+- [X] T075 [US3] Implement the clipboard in `src/clipboard.rs`:
   - copy and cut **always** emit OSC 52 **and** write the platform clipboard through `arboard`, opened lazily on first use and never at startup;
   - a failure on one side is silent; if both fail, show `Copy failed: clipboard unavailable`;
   - `Ctrl-C` with no selection does nothing and shows `Quit: Ctrl-Q` in the hint bar for 3 s;
@@ -529,24 +535,24 @@ memory benchmark.
   - a bracketed paste event is inserted literally, with no auto-indent and no key interpretation.
 
   Satisfies: FR-008.
-- [ ] T076 [US3] Implement project search in `src/editor/search.rs` with `grep-searcher`, `grep-regex` and `ignore`:
+- [X] T076 [US3] Implement project search in `src/editor/search.rs` with `grep-searcher`, `grep-regex` and `ignore`:
   - runs on a search thread spawned per search;
   - respects `.gitignore` and streams results to the UI;
   - can be cancelled;
   - "holds at most 10,000 results in memory", then sets the state to `Capped`.
 
   Satisfies: FR-005, R-8, FR-042.
-- [ ] T077 [US3] Implement the find bar in `src/ui/find.rs`:
+- [X] T077 [US3] Implement the find bar in `src/ui/find.rs`:
   - `Ctrl-F` opens it with scope "this file"; `Tab` inside the box toggles "this file" ⇄ "whole project", and the scope is always shown;
   - file scope: `Enter` / `↓` next, `↑` previous;
   - project scope: `Enter` runs the search (never while typing) and opens a results list where `Enter` or double-click opens a result at its line;
   - `Esc` cancels a running search or closes the bar.
 
   There is no `Ctrl-Shift-F` binding. Satisfies: FR-005, contracts/ui-commands.md Find bar.
-- [ ] T078 [US3] Implement go to line in `src/ui/goto.rs`: `Ctrl-G` prompts for `line` or `line:column`; invalid input shows an inline error and moves nothing. Satisfies: FR-009.
-- [ ] T079 [US3] Implement file watching in `src/editor/watch.rs` with `notify`: watch open files and expanded directories **non-recursively**, never a whole project tree; forward events over a channel; and apply the T060 transitions, including the "keep mine / load disk" prompt. Satisfies: FR-006, FR-042.
-- [ ] T080 [US3] Implement the unsaved-changes warning on `Ctrl-Q` in `src/app/event_loop.rs`, listing the dirty buffers. Satisfies: FR-007.
-- [ ] T081 [US3] Add the editor's mouse behavior in `src/ui/editor.rs` and `src/ui/files.rs`: click sets the cursor or selects a file, double-click opens, drag selects text, the wheel scrolls. Satisfies: FR-063.
+- [X] T078 [US3] Implement go to line in `src/ui/goto.rs`: `Ctrl-G` prompts for `line` or `line:column`; invalid input shows an inline error and moves nothing. Satisfies: FR-009.
+- [X] T079 [US3] Implement file watching in `src/editor/watch.rs` with `notify`: watch open files and expanded directories **non-recursively**, never a whole project tree; forward events over a channel; and apply the T060 transitions, including the "keep mine / load disk" prompt. Satisfies: FR-006, FR-042.
+- [X] T080 [US3] Implement the unsaved-changes warning on `Ctrl-Q` in `src/app/event_loop.rs`, listing the dirty buffers. Satisfies: FR-007.
+- [X] T081 [US3] Add the editor's mouse behavior in `src/ui/editor.rs` and `src/ui/files.rs`: click sets the cursor or selects a file, double-click opens, drag selects text, the wheel scrolls. Satisfies: FR-063.
 
 ### Loaded benchmark
 

@@ -6,9 +6,9 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Flex, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Paragraph, Wrap};
+use ratatui::widgets::{Block, Paragraph};
 
-use super::{help, hints, palette, processes, summary};
+use super::{confirm, editor, files, help, hints, palette, processes, prompt, summary};
 use crate::app::state::{AppState, Overlay, Pane, PaneSizes};
 
 pub const FULL_MIN: (u16, u16) = (100, 24);
@@ -167,10 +167,10 @@ pub fn draw(f: &mut Frame<'_>, state: &AppState) {
         f.render_widget(tab_line(state.focus), g.tabs);
     }
     if g.files.width > 0 {
-        draw_files(f, state, g.files);
+        files::draw(f, state, g.files);
     }
     if g.editor.width > 0 {
-        draw_editor(f, state, g.editor);
+        editor::draw(f, state, g.editor);
     }
     if g.list.width > 0 {
         processes::draw(f, state, g.list);
@@ -181,6 +181,10 @@ pub fn draw(f: &mut Frame<'_>, state: &AppState) {
         Overlay::None => {}
         Overlay::Help { scroll } => help::draw(f, area, *scroll),
         Overlay::Palette { query, selected } => palette::draw(f, area, query, *selected),
+        Overlay::Confirm { dialog, .. } => confirm::draw(f, area, dialog),
+        Overlay::Prompt { kind, input, error } => {
+            prompt::draw(f, area, kind, input, error.as_deref())
+        }
     }
 }
 
@@ -222,34 +226,6 @@ pub fn pane_block(state: &AppState, pane: Pane, title: Line<'static>) -> Block<'
         Style::default()
     };
     Block::bordered().title(title).border_style(border)
-}
-
-fn draw_files(f: &mut Frame<'_>, state: &AppState, area: Rect) {
-    let text = match &state.project {
-        Some(p) => p.display().to_string(),
-        None => "No project open".to_string(),
-    };
-    let block = pane_block(state, Pane::Files, Line::raw(" Files "));
-    f.render_widget(
-        Paragraph::new(text).wrap(Wrap { trim: false }).block(block),
-        area,
-    );
-}
-
-fn draw_editor(f: &mut Frame<'_>, state: &AppState, area: Rect) {
-    let mut lines = vec![Line::raw("No file open")];
-    if !state.notices.is_empty() {
-        lines.push(Line::raw(""));
-        lines.push(Line::styled("Notices:", Style::default().fg(Color::Yellow)));
-        lines.extend(state.notices.iter().map(|n| Line::raw(n.clone())));
-    }
-    let block = pane_block(state, Pane::Editor, Line::raw(" Editor "));
-    f.render_widget(
-        Paragraph::new(lines)
-            .wrap(Wrap { trim: false })
-            .block(block),
-        area,
-    );
 }
 
 #[cfg(test)]
