@@ -118,6 +118,17 @@ impl Session {
     /// Starts `bin` with `--bench-stats` and `args`. Output that arrives later than `warmup`
     /// after spawn is counted as evidence of activity.
     pub fn spawn(bin: &Path, args: &[&str], warmup: Duration) -> Result<Session, String> {
+        Self::spawn_wrapped(&[], bin, args, warmup)
+    }
+
+    /// Like `spawn`, but runs `wrapper... bin args` (the egress test runs Fallow under
+    /// `strace`). The session's `pid` is then the wrapper's; Fallow's own PID is in the stats.
+    pub fn spawn_wrapped(
+        wrapper: &[&str],
+        bin: &Path,
+        args: &[&str],
+        warmup: Duration,
+    ) -> Result<Session, String> {
         let bin = std::path::absolute(bin).map_err(|e| format!("binary {}: {e}", bin.display()))?;
         if !bin.is_file() {
             return Err(format!(
@@ -142,7 +153,17 @@ impl Session {
                 pixel_height: 0,
             })
             .map_err(|e| format!("openpty: {e}"))?;
-        let mut cmd = CommandBuilder::new(&bin);
+        let mut cmd = match wrapper.split_first() {
+            Some((w, rest)) => {
+                let mut c = CommandBuilder::new(w);
+                for a in rest {
+                    c.arg(a);
+                }
+                c.arg(&bin);
+                c
+            }
+            None => CommandBuilder::new(&bin),
+        };
         cmd.arg("--bench-stats");
         cmd.arg(&stats_path);
         for a in args {
