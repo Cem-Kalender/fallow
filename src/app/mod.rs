@@ -34,6 +34,8 @@ pub struct RunStats {
     pub buffers: u64,
     pub searches: u64,
     pub copies: u64,
+    /// Sessions started (002 loaded-memory evidence, T037).
+    pub sessions: u64,
 }
 
 /// `--all-users` takes effect only when Fallow already runs elevated (FR-031).
@@ -66,6 +68,7 @@ pub fn run(opts: &Options) -> (ExitCode, RunStats) {
         buffers: 0,
         searches: 0,
         copies: 0,
+        sessions: 0,
     };
     let paths = ConfigPaths::resolve(opts.config_dir.as_deref());
     if opts.print_config_paths {
@@ -108,6 +111,7 @@ pub fn run(opts: &Options) -> (ExitCode, RunStats) {
         leave_key: crate::session::keys::LeaveKey::parse(&cfg.settings.sessions.leave_key)
             .unwrap_or_default(),
         worktrees: cfg.settings.sessions.worktrees,
+        attention_delay: std::time::Duration::from_millis(cfg.settings.sessions.attention_delay_ms),
         worktree_root: cfg.settings.sessions.worktree_root.clone(),
     };
     let profiles_text = paths.dir.as_ref().and_then(|d| {
@@ -163,6 +167,7 @@ pub fn run(opts: &Options) -> (ExitCode, RunStats) {
     stats.buffers = state.editor.opened;
     stats.searches = state.searches;
     stats.copies = state.clipboard.copies;
+    stats.sessions = state.sessions.started;
     match result {
         Ok(()) => (ExitCode::SUCCESS, stats),
         Err(e) => {

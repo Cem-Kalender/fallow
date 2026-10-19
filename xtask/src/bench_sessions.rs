@@ -1,20 +1,46 @@
-//! `cargo xtask bench-sessions` (002 T026, SC-003, research R-9).
+//! `cargo xtask bench-sessions` (002 T026, T036; SC-003, SC-005, SC-006; research R-9).
 //!
-//! Fallow runs in the PTY harness with a project and one profile: the xtask `echo-agent`
-//! persona (other profiles disabled in a temporary config directory). The project is a git
-//! repository, so `n`, `Enter` takes the default choice and starts the agent in a new worktree
-//! (US6); the time from `Enter` to the agent's first output is reported (informational). The
-//! harness then types 100 keys. For each, the time from the key to the
-//! agent's redraw appearing on Fallow's screen is measured. Fails if the p95 is 50 ms or more.
-//! A run where the session never starts, or Fallow's identity checks fail, is INVALID.
+//! Fallow runs in the PTY harness with a project that is a git repository and xtask personas
+//! as its only profiles (built-ins disabled in a temporary config directory). New sessions take
+//! the default choice, so each starts in a new worktree (US6).
+//!
+//! Run 1:
+//! - **echo** (SC-003): an `echo-agent` session; for 100 keys, the time from the key to the
+//!   agent's redraw on Fallow's screen. p95 < 50 ms. The session start time in a new worktree
+//!   is reported (no budget).
+//! - **switch** (SC-005): two `banner-agent` sessions that fill their screens with `A` and `B`;
+//!   10 switches with `Ctrl-B`/`Ctrl-N`, each timed from the key to the other session's letters
+//!   on screen. p95 < 100 ms.
+//!
+//! Run 2:
+//! - **flood** (SC-006): one `echo-agent` session and seven `flood-agent` sessions printing
+//!   without pause (8 sessions); 50 keys into the echo session. p95 < 100 ms.
+//!
+//! A run where a session never starts, or Fallow's identity checks fail, is INVALID.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use crate::pty::{self, Session};
 
-const KEYS: usize = 100;
-const BUDGET: Duration = Duration::from_millis(50);
+const ECHO_KEYS: usize = 100;
+const ECHO_BUDGET: Duration = Duration::from_millis(50);
+const SWITCHES: usize = 10;
+const SWITCH_BUDGET: Duration = Duration::from_millis(100);
+const FLOOD_SESSIONS: usize = 7;
+const FLOOD_KEYS: usize = 50;
+const FLOOD_BUDGET: Duration = Duration::from_millis(100);
+
+const LEAVE: &[u8] = b"\x1d";
+const CTRL_B: &[u8] = b"\x02";
+const CTRL_N: &[u8] = b"\x0e";
+const DOWN: &[u8] = b"\x1b[B";
+
+fn p95(times: &[Duration]) -> Duration {
+    let mut v = times.to_vec();
+    v.sort();
+    v[((v.len() as f64 * 0.95).ceil() as usize).clamp(1, v.len()) - 1]
+}
 
 pub fn run(args: &[String]) -> i32 {
     let mut bin = pty::default_binary();
@@ -36,107 +62,236 @@ pub fn run(args: &[String]) -> i32 {
     }
     let base = std::env::temp_dir().join(format!("fallow-bench-sessions-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&base);
+    let result = run_all(&bin, &base);
+    let _ = std::fs::remove_dir_all(&base);
+    match result {
+        Ok(code) => code,
+        Err(e) => {
+            println!("invalid: {e}");
+            println!("os={} result=INVALID", std::env::consts::OS);
+            pty::step_summary(&format!(
+                "### Sessions ({})\n\nINVALID: {e}\n",
+                std::env::consts::OS
+            ));
+            2
+        }
+    }
+}
+
+fn run_all(bin: &Path, base: &Path) -> Result<i32, String> {
     let config = base.join("config");
     let project = base.join("project");
     for d in [&config, &project] {
-        if let Err(e) = std::fs::create_dir_all(d) {
-            eprintln!("bench-sessions: {}: {e}", d.display());
-            return 2;
-        }
+        std::fs::create_dir_all(d).map_err(|e| format!("{}: {e}", d.display()))?;
     }
-    let me = match std::env::current_exe() {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("bench-sessions: {e}");
-            return 2;
-        }
-    };
+    let me = std::env::current_exe().map_err(|e| e.to_string())?;
     let mut profiles = String::new();
     for id in ["claude", "codex", "gemini", "aider", "shell"] {
         profiles.push_str(&format!("[[profile]]\nid = \"{id}\"\nenabled = false\n\n"));
     }
-    profiles.push_str(&format!(
-        "[[profile]]\nid = \"echo\"\nname = \"Echo\"\ncommand = {:?}\nargs = [\"echo-agent\"]\n",
-        me.display().to_string()
-    ));
-    if let Err(e) = std::fs::write(config.join("profiles.toml"), profiles) {
-        eprintln!("bench-sessions: profiles.toml: {e}");
-        return 2;
+    // Menu order: echo (0), a (1), b (2), flood (3).
+    for (id, args) in [
+        ("echo", "\"echo-agent\""),
+        ("a", "\"banner-agent\", \"A\""),
+        ("b", "\"banner-agent\", \"B\""),
+        ("flood", "\"flood-agent\", \"forever\""),
+    ] {
+        profiles.push_str(&format!(
+            "[[profile]]\nid = \"{id}\"\nname = \"{id}\"\ncommand = {:?}\nargs = [{args}]\n\n",
+            me.display().to_string()
+        ));
     }
-    if let Err(e) = init_repo(&project) {
-        eprintln!("bench-sessions: INVALID: cannot create the test repository: {e}");
-        return 2;
-    }
+    std::fs::write(config.join("profiles.toml"), profiles).map_err(|e| e.to_string())?;
+    init_repo(&project).map_err(|e| format!("cannot create the test repository: {e}"))?;
     println!(
-        "bench-sessions: {} ({KEYS} keys, budget echo p95 < {} ms)",
+        "bench-sessions: {} (echo p95 < {} ms, switch p95 < {} ms, echo among {} flooding sessions p95 < {} ms)",
         bin.display(),
-        BUDGET.as_millis()
+        ECHO_BUDGET.as_millis(),
+        SWITCH_BUDGET.as_millis(),
+        FLOOD_SESSIONS,
+        FLOOD_BUDGET.as_millis()
     );
     let cfg = config.display().to_string();
     let proj = project.display().to_string();
-    let mut s = match Session::spawn(&bin, &["--config-dir", &cfg, &proj], Duration::from_secs(1)) {
-        Ok(s) => s,
-        Err(e) => {
-            eprintln!("bench-sessions: {e}");
-            return 2;
+
+    // Run 1: echo and switch.
+    let mut s = Session::spawn(bin, &["--config-dir", &cfg, &proj], Duration::from_secs(1))?;
+    let first = (|| {
+        if s.wait_frame(Duration::from_secs(10)).is_none() {
+            return Err("no first frame".to_string());
         }
-    };
-    let result = measure(&mut s);
-    // Leave the session (Ctrl-]) so Ctrl-Q reaches Fallow, then quit.
-    s.send(b"\x1d");
-    std::thread::sleep(Duration::from_millis(300));
+        let start = start_session(&mut s, 0, b"echo-ready")?;
+        let echo = echo_keys(&mut s, ECHO_KEYS)?;
+        s.send(LEAVE);
+        std::thread::sleep(Duration::from_millis(300));
+        start_session(&mut s, 1, b"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")?;
+        s.send(LEAVE);
+        std::thread::sleep(Duration::from_millis(300));
+        start_session(&mut s, 2, b"BBBBBBBBBBBBBBBBBBBBBBBBBBBBBB")?;
+        s.send(LEAVE);
+        std::thread::sleep(Duration::from_millis(500));
+        // Now on B: Ctrl-B goes to A, Ctrl-N back to B.
+        let mut switches = Vec::with_capacity(SWITCHES);
+        for i in 0..SWITCHES {
+            let (key, want): (&[u8], &[u8]) = if i % 2 == 0 {
+                (CTRL_B, b"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
+            } else {
+                (CTRL_N, b"BBBBBBBBBBBBBBBBBBBBBBBBBBBBBB")
+            };
+            s.expect(want);
+            let t0 = Instant::now();
+            s.send(key);
+            let t1 = s
+                .seen(Duration::from_secs(5))
+                .ok_or(format!("switch {i}: the other session never showed"))?;
+            switches.push(t1.saturating_duration_since(t0));
+            std::thread::sleep(Duration::from_millis(150));
+            s.send(LEAVE);
+            std::thread::sleep(Duration::from_millis(250));
+        }
+        Ok((start, echo, switches))
+    })();
+    s.quit_with_sessions();
     let outcome = s.finish();
-    let _ = std::fs::remove_dir_all(&base);
     let mut problems = outcome.problems(None);
-    let (start, times) = match result {
-        Ok(t) => t,
+    let (start, echo, switches) = match first {
+        Ok(v) => v,
         Err(e) => {
             problems.push(e);
-            (Duration::ZERO, Vec::new())
+            (Duration::ZERO, Vec::new(), Vec::new())
         }
     };
-    println!("evidence: {}", outcome.evidence());
+    println!("evidence (run 1): {}", outcome.evidence());
     if !problems.is_empty() {
-        for p in &problems {
-            println!("invalid: {p}");
-        }
-        println!("os={} result=INVALID", std::env::consts::OS);
-        pty::step_summary(&format!(
-            "### Session echo latency ({})\n\nINVALID: {}\n",
-            std::env::consts::OS,
-            problems.join("; ")
-        ));
-        return 2;
+        return Err(problems.join("; "));
     }
-    let mut sorted = times.clone();
-    sorted.sort();
-    let p95 = sorted[((sorted.len() as f64 * 0.95).ceil() as usize).clamp(1, sorted.len()) - 1];
-    let median = sorted[sorted.len() / 2];
-    let pass = p95 < BUDGET;
+
+    // Run 2: one echo session among seven flooding ones.
+    let mut s = Session::spawn(bin, &["--config-dir", &cfg, &proj], Duration::from_secs(1))?;
+    let second = (|| {
+        if s.wait_frame(Duration::from_secs(10)).is_none() {
+            return Err("no first frame".to_string());
+        }
+        start_session(&mut s, 0, b"echo-ready")?;
+        s.send(LEAVE);
+        std::thread::sleep(Duration::from_millis(300));
+        for _ in 0..FLOOD_SESSIONS {
+            s.send(b"n");
+            std::thread::sleep(Duration::from_millis(300));
+            for _ in 0..3 {
+                s.send(DOWN);
+            }
+            std::thread::sleep(Duration::from_millis(100));
+            s.send(b"\r");
+            std::thread::sleep(Duration::from_millis(2500));
+            s.send(LEAVE);
+            std::thread::sleep(Duration::from_millis(300));
+        }
+        // Sessions in start order: echo, flood ×7. From the last flood, Ctrl-N wraps to echo.
+        s.send(CTRL_N);
+        std::thread::sleep(Duration::from_millis(1000));
+        echo_keys(&mut s, FLOOD_KEYS)
+    })();
+    s.quit_with_sessions();
+    let outcome = s.finish();
+    let mut problems = outcome.problems(None);
+    let flood = match second {
+        Ok(v) => v,
+        Err(e) => {
+            problems.push(e);
+            Vec::new()
+        }
+    };
+    println!("evidence (run 2): {}", outcome.evidence());
+    let sessions = pty::stat_field(&outcome.stats_line, "sessions").unwrap_or(0);
+    if sessions < (FLOOD_SESSIONS + 1) as u64 {
+        problems.push(format!(
+            "{sessions} sessions started, need {}",
+            FLOOD_SESSIONS + 1
+        ));
+    }
+    if !problems.is_empty() {
+        return Err(problems.join("; "));
+    }
+
+    let (e95, s95, f95) = (p95(&echo), p95(&switches), p95(&flood));
+    let pass = e95 < ECHO_BUDGET && s95 < SWITCH_BUDGET && f95 < FLOOD_BUDGET;
     let result = if pass { "PASS" } else { "FAIL" };
     println!(
-        "os={} worktree_start_ms={:.1} keys={} median_ms={:.1} p95_ms={:.1} max_ms={:.1} budget_ms={} result={result}",
+        "os={} worktree_start_ms={:.1} keys={} median_ms={:.1} p95_ms={:.1} max_ms={:.1} budget_ms={} result={}",
         std::env::consts::OS,
         pty::ms(start),
-        sorted.len(),
-        pty::ms(median),
-        pty::ms(p95),
-        pty::ms(*sorted.last().unwrap_or(&Duration::ZERO)),
-        BUDGET.as_millis()
+        echo.len(),
+        pty::ms(echo[echo.len() / 2]),
+        pty::ms(e95),
+        pty::ms(*echo.iter().max().unwrap_or(&Duration::ZERO)),
+        ECHO_BUDGET.as_millis(),
+        if e95 < ECHO_BUDGET { "PASS" } else { "FAIL" }
+    );
+    println!(
+        "os={} switch_p95_ms={:.1} switch_max_ms={:.1} budget_ms={} flood_sessions={} flood_echo_p95_ms={:.1} flood_echo_max_ms={:.1} budget_ms={} result={result}",
+        std::env::consts::OS,
+        pty::ms(s95),
+        pty::ms(*switches.iter().max().unwrap_or(&Duration::ZERO)),
+        SWITCH_BUDGET.as_millis(),
+        FLOOD_SESSIONS,
+        pty::ms(f95),
+        pty::ms(*flood.iter().max().unwrap_or(&Duration::ZERO)),
+        FLOOD_BUDGET.as_millis()
     );
     pty::step_summary(&format!(
-        "### Session echo latency ({})\n\n| session start in a new worktree | median | p95 | budget | result |\n|---|---|---|---|---|\n| {:.0} ms | {:.1} ms | {:.1} ms | < {} ms | **{result}** |\n",
+        "### Sessions ({})\n\n| measure | p95 | budget |\n|---|---|---|\n| key echo | {:.1} ms | < {} ms |\n| switch session | {:.1} ms | < {} ms |\n| key echo with {} sessions flooding | {:.1} ms | < {} ms |\n| session start in a new worktree | {:.0} ms | (no budget) |\n\n**{result}**\n",
         std::env::consts::OS,
-        pty::ms(start),
-        pty::ms(median),
-        pty::ms(p95),
-        BUDGET.as_millis()
+        pty::ms(e95),
+        ECHO_BUDGET.as_millis(),
+        pty::ms(s95),
+        SWITCH_BUDGET.as_millis(),
+        FLOOD_SESSIONS,
+        pty::ms(f95),
+        FLOOD_BUDGET.as_millis(),
+        pty::ms(start)
     ));
-    if pass { 0 } else { 1 }
+    Ok(if pass { 0 } else { 1 })
 }
 
-/// A one-commit repository, so the session starts in a new worktree by default.
-fn init_repo(dir: &std::path::Path) -> Result<(), String> {
+/// Opens the start menu, picks profile `index` with Down, starts it, and waits for `ready`.
+/// Returns the time from Enter to `ready`.
+fn start_session(s: &mut Session, index: usize, ready: &[u8]) -> Result<Duration, String> {
+    s.expect(ready);
+    s.send(b"n");
+    std::thread::sleep(Duration::from_millis(300));
+    for _ in 0..index {
+        s.send(DOWN);
+    }
+    std::thread::sleep(Duration::from_millis(100));
+    let t0 = Instant::now();
+    s.send(b"\r");
+    let at = s
+        .seen(Duration::from_secs(30))
+        .ok_or(format!("session {index} never showed its first screen"))?;
+    std::thread::sleep(Duration::from_millis(300));
+    Ok(at.saturating_duration_since(t0))
+}
+
+/// Types `n` keys into the focused echo session and times each redraw.
+fn echo_keys(s: &mut Session, n: usize) -> Result<Vec<Duration>, String> {
+    let mut times = Vec::with_capacity(n);
+    for i in 0..n {
+        let want: &[u8] = if i % 2 == 0 { b"OOOOOOOO" } else { b"XXXXXXXX" };
+        s.expect(want);
+        let t0 = Instant::now();
+        s.send(b"k");
+        let t1 = s
+            .seen(Duration::from_secs(5))
+            .ok_or(format!("key {i}: no echo within 5 s"))?;
+        times.push(t1.saturating_duration_since(t0));
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    Ok(times)
+}
+
+/// A one-commit repository, so sessions start in a new worktree by default.
+fn init_repo(dir: &Path) -> Result<(), String> {
     let run = |args: &[&str]| -> Result<(), String> {
         let o = std::process::Command::new("git")
             .current_dir(dir)
@@ -164,35 +319,4 @@ fn init_repo(dir: &std::path::Path) -> Result<(), String> {
         "-m",
         "init",
     ])
-}
-
-fn measure(s: &mut Session) -> Result<(Duration, Vec<Duration>), String> {
-    if s.wait_frame(Duration::from_secs(10)).is_none() {
-        return Err("no first frame".into());
-    }
-    // Projects has focus with the project selected: `n` opens the profile menu, Enter starts
-    // the only profile.
-    s.expect(b"echo-ready");
-    s.send(b"n");
-    std::thread::sleep(Duration::from_millis(300));
-    let t0 = Instant::now();
-    s.send(b"\r");
-    let Some(ready) = s.seen(Duration::from_secs(30)) else {
-        return Err("the session never showed echo-ready".into());
-    };
-    let start = ready.saturating_duration_since(t0);
-    std::thread::sleep(Duration::from_millis(300));
-    let mut times = Vec::with_capacity(KEYS);
-    for i in 0..KEYS {
-        let want: &[u8] = if i % 2 == 0 { b"OOOOOOOO" } else { b"XXXXXXXX" };
-        s.expect(want);
-        let t0 = Instant::now();
-        s.send(b"k");
-        match s.seen(Duration::from_secs(5)) {
-            Some(t1) => times.push(t1.saturating_duration_since(t0)),
-            None => return Err(format!("key {i}: no echo within 5 s")),
-        }
-        std::thread::sleep(Duration::from_millis(20));
-    }
-    Ok((start, times))
 }

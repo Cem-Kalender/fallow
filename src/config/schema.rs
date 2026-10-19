@@ -118,6 +118,8 @@ pub enum Kind {
     LocalModelServer,
     Unknown,
     Browser,
+    /// Started by the user as a Fallow session (002 FR-013); never from a signature file.
+    Session,
 }
 
 impl Kind {

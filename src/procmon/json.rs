@@ -75,6 +75,7 @@ pub fn kind_name(k: Kind) -> &'static str {
         Kind::LocalModelServer => "local_model_server",
         Kind::Unknown => "unknown",
         Kind::Browser => "browser",
+        Kind::Session => "session",
     }
 }
 
@@ -139,6 +140,10 @@ fn llm(out: &mut String, l: &LlmProcess) {
             SignalKind::Signature { id } => {
                 o.push_str("{\"kind\":\"signature\",\"id\":");
                 string(o, id);
+            }
+            SignalKind::Session { id } => {
+                o.push_str("{\"kind\":\"session\",\"id\":");
+                number(o, *id as f64);
             }
             SignalKind::ProviderConnection { provider_id, via } => {
                 o.push_str("{\"kind\":\"provider_connection\",\"provider_id\":");

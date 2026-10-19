@@ -32,6 +32,8 @@ pub fn subcommand(task: &str, args: &[String]) -> Option<i32> {
     match task {
         "idle-child" => idle(),
         "echo-agent" => echo_agent(),
+        "banner-agent" => banner_agent(args.first().map_or("A", String::as_str)),
+        "flood-agent" => flood_agent(args.first().map_or("forever", String::as_str)),
         "client-fixture" => {
             let port: u16 = args.first()?.parse().ok()?;
             let s = TcpStream::connect(("127.0.0.1", port)).ok()?;
@@ -397,6 +399,68 @@ fn raw_stdin() {
                 h,
                 mode & !(ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT | ENABLE_PROCESSED_INPUT),
             );
+        }
+    }
+}
+
+/// `banner-agent <c>` (002 T036): fills its screen with the letter `c`, then waits for input.
+/// Switching between two banner sessions changes every cell of the pane, so the new letter
+/// reaches the outer terminal as long runs the harness can match.
+fn banner_agent(c: &str) -> Option<i32> {
+    use std::io::{Read, Write};
+    raw_stdin();
+    let ch = c.chars().next().unwrap_or('A');
+    let row: String = std::iter::repeat_n(ch, 300).collect();
+    let mut out = std::io::stdout();
+    let _ = out.write_all(b"\x1b[2J\x1b[H");
+    for _ in 0..80 {
+        let _ = out.write_all(row.as_bytes());
+        let _ = out.write_all(b"\r\n");
+    }
+    let _ = out.flush();
+    let mut b = [0u8; 64];
+    loop {
+        match std::io::stdin().read(&mut b) {
+            Ok(0) | Err(_) => return Some(0),
+            Ok(_) => {}
+        }
+    }
+}
+
+/// `flood-agent <lines|forever>` (002 T036, T037): prints 200-column lines in changing colors,
+/// either a fixed number then waits for input, or forever.
+fn flood_agent(arg: &str) -> Option<i32> {
+    use std::io::{Read, Write};
+    raw_stdin();
+    let limit: Option<u64> = arg.parse().ok();
+    let mut out = std::io::BufWriter::with_capacity(64 * 1024, std::io::stdout());
+    let body: String = "lorem ipsum dolor sit amet consectetur adipiscing elit "
+        .chars()
+        .cycle()
+        .take(190)
+        .collect();
+    let mut n = 0u64;
+    loop {
+        if limit.is_some_and(|l| n >= l) {
+            break;
+        }
+        let color = 31 + (n % 7);
+        let line = format!("\x1b[{color}m{n:>8} {body}\x1b[0m\r\n");
+        if out.write_all(line.as_bytes()).is_err() {
+            return Some(0);
+        }
+        n += 1;
+        if n % 64 == 0 && out.flush().is_err() {
+            return Some(0);
+        }
+    }
+    let _ = out.flush();
+    drop(out);
+    let mut b = [0u8; 64];
+    loop {
+        match std::io::stdin().read(&mut b) {
+            Ok(0) | Err(_) => return Some(0),
+            Ok(_) => {}
         }
     }
 }

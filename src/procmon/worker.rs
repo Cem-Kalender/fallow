@@ -20,8 +20,8 @@ use super::group;
 use super::platform::{OsPlatform, Platform, PlatformError, RawConn, TcpQuery};
 use super::sampler::{Sample, Sampler};
 use super::snapshot::{
-    Connection, CwdState, Footprint, FootprintMetric, Kind, Note, NoteKind, ProcessKey,
-    ProcessRecord, Snapshot, Uid,
+    Confidence, Connection, CwdState, DetectionSignal, Footprint, FootprintMetric, Kind,
+    LlmProcess, Note, NoteKind, ProcessKey, ProcessRecord, SignalKind, Snapshot, Status, Uid,
 };
 use super::status::ConnectionFacts;
 use super::summary;
@@ -44,6 +44,10 @@ pub struct ProcSample {
 pub enum Request {
     /// The user selected this process (Windows `on_select` working-directory policy).
     Selected(ProcessKey),
+    /// 002 R-8: this PID is the agent of a Fallow session. It is always a group root.
+    Track { pid: u32, session: u32 },
+    /// The session's agent exited or the session was closed.
+    Untrack { pid: u32 },
 }
 
 /// Per-process state carried between refreshes, keyed by (PID, start time) so a reused PID
@@ -107,6 +111,8 @@ pub struct Monitor<P: Platform> {
     notes: Vec<Note>,
     cache: HashMap<ProcessKey, Cached>,
     conns: Vec<RawConn>,
+    /// PIDs of session agents (002 R-8).
+    tracked: HashMap<u32, u32>,
 }
 
 impl<P: Platform> Monitor<P> {
@@ -138,6 +144,7 @@ impl<P: Platform> Monitor<P> {
             notes,
             cache: HashMap::new(),
             conns: Vec::new(),
+            tracked: HashMap::new(),
         }
     }
 
@@ -147,6 +154,12 @@ impl<P: Platform> Monitor<P> {
                 if let Some(c) = self.cache.get_mut(&key) {
                     c.cwd_requested = true;
                 }
+            }
+            Request::Track { pid, session } => {
+                self.tracked.insert(pid, session);
+            }
+            Request::Untrack { pid } => {
+                self.tracked.remove(&pid);
             }
         }
     }
@@ -248,7 +261,30 @@ impl<P: Platform> Monitor<P> {
             .collect();
         let mut llm = self.detector.detect(&views, &hits, &conns, &providers);
 
-        let parents = group::link_parents(visible.iter().map(|p| (p.key, p.parent_pid)), &by_pid);
+        let mut parents =
+            group::link_parents(visible.iter().map(|p| (p.key, p.parent_pid)), &by_pid);
+        // Session agents are always listed and always root their own group, even when Fallow
+        // itself runs under another agent (R-8).
+        let mut sessions = HashMap::new();
+        for (&pid, &id) in &self.tracked {
+            let Some(&key) = by_pid.get(&pid) else {
+                continue;
+            };
+            sessions.insert(key, id);
+            parents.insert(key, None);
+            let signal = DetectionSignal::new(SignalKind::Session { id });
+            llm.entry(key)
+                .and_modify(|l| l.signals.push(signal.clone()))
+                .or_insert_with(|| LlmProcess {
+                    key,
+                    kind: Kind::Session,
+                    signals: smallvec::smallvec![signal],
+                    confidence: Confidence::Certain,
+                    provider: None,
+                    model: None,
+                    status: Status::Idle,
+                });
+        }
         let llm_keys: HashSet<ProcessKey> = llm.keys().copied().collect();
         let mut groups = group::build(&parents, &llm_keys);
 
@@ -336,6 +372,7 @@ impl<P: Platform> Monitor<P> {
             records,
             summary,
             notes: self.notes.clone(),
+            sessions,
         }
     }
 

@@ -141,6 +141,8 @@ pub struct AppState {
     pub workspace: Workspace,
     /// The application event channel, for sessions' reader and waiter threads.
     pub events: Option<Sender<AppEvent>>,
+    /// Quit was confirmed with sessions running: waiting for them to stop (since then).
+    pub quitting: Option<Instant>,
     pub editor: Editor,
     pub find: Option<FindBar>,
     /// The last find query, offered again by the next `Ctrl-F`.
@@ -200,6 +202,7 @@ impl AppState {
             profiles: crate::session::profiles::builtins(),
             workspace: Workspace::default(),
             events: None,
+            quitting: None,
             editor: Editor::default(),
             find: None,
             last_query: String::new(),
@@ -230,8 +233,19 @@ impl AppState {
         self.clamp_selection();
     }
 
+    /// The row index of `key` in the LLM panel, if shown.
+    pub fn panel_index_of(&self, key: ProcessKey) -> Option<usize> {
+        self.rows().iter().position(|r| r.key == key)
+    }
+
+    /// The process selected in the LLM panel.
+    pub fn selected_process(&self) -> Option<ProcessKey> {
+        self.rows().get(self.panel.selected).map(|r| r.key)
+    }
+
     /// Drops an expired message. Returns true if the screen changed.
     pub fn tick(&mut self) -> bool {
+        let stops = self.tick_stops();
         if self
             .message
             .as_ref()
@@ -240,7 +254,7 @@ impl AppState {
             self.message = None;
             return true;
         }
-        false
+        stops
     }
 
     pub fn say(&mut self, text: impl Into<String>) {
@@ -264,6 +278,9 @@ impl AppState {
         if self.workspace.view == View::Agents {
             if self.workspace.focus == super::workspace::AgentsFocus::Session {
                 return self.workspace_key(key).unwrap_or(false);
+            }
+            if let Some(changed) = self.after_leave_key(&key) {
+                return changed;
             }
             match keymap::lookup(&key, self.agents_context(), false) {
                 Some(id) => return self.run(id),
@@ -609,6 +626,38 @@ mod tests {
             AgentsFocus::Sessions,
             "focus is kept per view"
         );
+    }
+
+    #[test]
+    fn the_leave_key_leaves_and_an_immediate_second_press_goes_back() {
+        use crate::app::workspace::AgentsFocus;
+        use crate::session::profiles::builtins;
+        let mut s = AppState::new(None, Vec::new());
+        let sess = crate::session::Session::detached(1, 1, builtins().remove(0));
+        s.sessions.sessions.push(sess);
+        s.workspace.active = Some(1);
+        s.workspace.focus = AgentsFocus::Session;
+        let leave = press(KeyCode::Char(']'), KeyModifiers::CONTROL);
+        s.handle_key(leave);
+        assert_eq!(s.workspace.focus, AgentsFocus::Sessions, "one press leaves");
+        s.handle_key(leave);
+        assert_eq!(
+            s.workspace.focus,
+            AgentsFocus::Session,
+            "a second press goes back"
+        );
+        // Leaving, another key, then the leave key again: no double press.
+        s.handle_key(leave);
+        s.handle_key(press(KeyCode::Down, KeyModifiers::NONE));
+        s.workspace.focus = AgentsFocus::Session;
+        s.handle_key(leave);
+        assert_eq!(s.workspace.focus, AgentsFocus::Sessions);
+        // Re-entering a session cancels a pending double press (fast switching).
+        s.workspace.focus = AgentsFocus::Session;
+        s.workspace.leave_armed = Some(std::time::Instant::now());
+        s.run("session.focus");
+        s.handle_key(leave);
+        assert_eq!(s.workspace.focus, AgentsFocus::Sessions);
     }
 
     #[test]

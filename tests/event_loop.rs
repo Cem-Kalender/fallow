@@ -21,6 +21,15 @@ fn session_output_wakes_the_loop_promptly() {
 }
 
 #[test]
+fn sessions_wake_the_loop_at_most_once_until_rearmed() {
+    use fallow::session::SessionManager;
+    // An empty manager has nothing waiting; rearm reports nothing.
+    let m = SessionManager::default();
+    assert!(!m.output_waiting());
+    assert!(!m.rearm());
+}
+
+#[test]
 fn output_events_are_coalesced_until_handled() {
     let (tx, rx) = channel();
     let waker = OutputWaker::new(1, tx);

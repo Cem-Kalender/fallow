@@ -5,7 +5,7 @@
 use std::io;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::channel;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crossterm::event::Event;
 
@@ -45,12 +45,17 @@ pub fn run(
     state.events = Some(tx);
     let mut frames = FrameCap::new(FRAME);
     let mut dirty = false;
+    let mut rearmed = Instant::now();
     while !state.quit {
         let mut wait = if state.busy() {
             BUSY_POLL
         } else {
             POLL_TIMEOUT
         };
+        // A session with output waiting is re-armed within a frame (R-5).
+        if state.sessions.output_waiting() {
+            wait = wait.min(FRAME.saturating_sub(rearmed.elapsed()));
+        }
         if dirty {
             let hold = frames.wait();
             if hold.is_zero() {
@@ -86,7 +91,14 @@ pub fn run(
         if let Some(c) = &worker {
             cycles.store(c.load(Ordering::Relaxed), Ordering::Relaxed);
         }
+        // Sessions may wake the loop again at most once per frame: a flooding agent costs one
+        // wake-up per frame, not one per read (R-5).
+        if rearmed.elapsed() >= FRAME {
+            state.sessions.rearm();
+            rearmed = Instant::now();
+        }
         dirty |= state.poll_background();
+        dirty |= state.tick_sessions();
         dirty |= state.tick();
     }
     Ok(())

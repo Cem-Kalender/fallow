@@ -399,6 +399,38 @@ pub const COMMANDS: &[Command] = &[
         Sessions,
         "Esc",
     )),
+    on(cmd(
+        "sessions.overview",
+        "Session overview (all projects)",
+        Global,
+        "Ctrl-T",
+    )),
+    on(cmd("session.next", "Next session", Global, "Ctrl-N")),
+    on(cmd("session.prev", "Previous session", Global, "Ctrl-B")),
+    on(cmd(
+        "session.split",
+        "Split with the selected session",
+        Sessions,
+        "s",
+    )),
+    on(hint(
+        cmd("session.stop", "Stop session", Sessions, "Shift-K"),
+        5,
+        "Shift-K",
+        "Stop",
+    )),
+    on(cmd(
+        "session.process",
+        "Show the session's process",
+        Sessions,
+        "p",
+    )),
+    on(cmd(
+        "proc.jump_session",
+        "Go to the process's session",
+        Processes,
+        "j",
+    )),
     on(hint(
         cmd("session.leave", "Leave the session", Session, "Ctrl-]"),
         0,

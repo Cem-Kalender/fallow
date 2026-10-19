@@ -61,6 +61,10 @@ pub struct Workspace {
     pub leave_armed: Option<Instant>,
     /// A drag that started in the session pane selects text.
     pub drag_from: Option<(usize, u16)>,
+    /// The session list shows every session of every project (`Ctrl-T`, FR-008).
+    pub overview: bool,
+    /// A second session shown beside the active one (FR-011).
+    pub split: Option<SessionId>,
 }
 
 /// Where a new session's agent runs (US6).
@@ -150,21 +154,10 @@ impl AppState {
         };
         let leave = self.sessions.limits.leave_key;
         if leave.matches(&key) {
-            let twice = self
-                .workspace
-                .leave_armed
-                .is_some_and(|at| at.elapsed() < std::time::Duration::from_millis(600));
-            if twice {
-                // The leave key pressed twice: send it to the agent and stay.
-                self.workspace.leave_armed = None;
-                self.workspace.focus = AgentsFocus::Session;
-                if let Some(s) = self.sessions.get(id) {
-                    s.write(&leave.bytes());
-                }
-                return true;
-            }
-            self.workspace.leave_armed = Some(Instant::now());
+            // The first press leaves at once; an immediate second press (handled in
+            // `after_leave_key`) goes back and sends the key to the agent.
             self.set_session_focus(false);
+            self.workspace.leave_armed = Some(Instant::now());
             return true;
         }
         let Some(s) = self.sessions.get_mut(id) else {
@@ -179,6 +172,7 @@ impl AppState {
         if let Some(bytes) = crate::session::keys::encode(&key, app_cursor) {
             s.scroll = 0;
             s.selection = None;
+            crate::session::attention::on_input(s, Instant::now());
             s.write(&bytes);
         }
         false
@@ -203,7 +197,25 @@ impl AppState {
     }
 
     /// Gives or takes the session focus and tells the agent if it asked (focus reporting).
+    /// A key right after leaving a session. The leave key again, with nothing in between and
+    /// within 600 ms, goes back into the session and sends the leave key to the agent (FR-003).
+    /// Returns `Some` if it handled the key.
+    pub(super) fn after_leave_key(&mut self, key: &KeyEvent) -> Option<bool> {
+        let armed = self.workspace.leave_armed.take()?;
+        let leave = self.sessions.limits.leave_key;
+        if !leave.matches(key) || armed.elapsed() >= std::time::Duration::from_millis(600) {
+            return None;
+        }
+        let id = self.workspace.active?;
+        self.set_session_focus(true);
+        if let Some(s) = self.sessions.get(id) {
+            s.write(&leave.bytes());
+        }
+        Some(true)
+    }
+
     fn set_session_focus(&mut self, on: bool) {
+        self.workspace.leave_armed = None;
         self.workspace.focus = if on {
             AgentsFocus::Session
         } else {
@@ -275,9 +287,31 @@ impl AppState {
             }
             "session.copy" => self.copy_session_selection(),
             "sessions.back" => {
-                self.workspace.focus = AgentsFocus::Projects;
+                if self.workspace.overview {
+                    self.workspace.overview = false;
+                    self.workspace.list_selected = 0;
+                } else {
+                    self.workspace.focus = AgentsFocus::Projects;
+                }
                 true
             }
+            "sessions.overview" => {
+                self.workspace.overview = !self.workspace.overview;
+                self.workspace.view = View::Agents;
+                self.workspace.focus = AgentsFocus::Sessions;
+                self.workspace.list_selected = self
+                    .workspace
+                    .active
+                    .and_then(|a| self.listed_sessions().iter().position(|s| *s == a))
+                    .unwrap_or(0);
+                true
+            }
+            "session.next" => self.cycle_session(1),
+            "session.prev" => self.cycle_session(-1),
+            "session.split" => self.toggle_split(),
+            "session.stop" => self.ask_stop(),
+            "session.process" => self.jump_to_process(),
+            "proc.jump_session" => self.jump_to_session(),
             "session.leave" => {
                 self.set_session_focus(false);
                 true
@@ -366,8 +400,17 @@ impl AppState {
         changed
     }
 
+    /// The sessions in the list: the selected project's, or all of them in the overview.
+    pub fn listed_sessions(&self) -> Vec<SessionId> {
+        if self.workspace.overview {
+            self.sessions.sessions.iter().map(|s| s.id).collect()
+        } else {
+            self.project_sessions()
+        }
+    }
+
     fn move_session(&mut self, by: isize) -> bool {
-        let n = self.project_sessions().len();
+        let n = self.listed_sessions().len();
         if n == 0 {
             return false;
         }
@@ -379,7 +422,7 @@ impl AppState {
 
     /// Shows the selected list entry in the pane (without focusing it).
     fn show_listed_session(&mut self) {
-        let list = self.project_sessions();
+        let list = self.listed_sessions();
         self.workspace.active = list
             .get(
                 self.workspace
@@ -391,8 +434,189 @@ impl AppState {
 
     fn focus_listed_session(&mut self) -> bool {
         self.show_listed_session();
-        if self.workspace.active.is_some() {
-            self.set_session_focus(true);
+        if let Some(id) = self.workspace.active {
+            self.focus_session(id);
+        }
+        true
+    }
+
+    /// Shows and focuses session `id`, selecting its project (FR-010).
+    pub fn focus_session(&mut self, id: SessionId) {
+        let Some(project) = self.sessions.get(id).map(|s| s.project) else {
+            return;
+        };
+        if let Some(i) = self.projects.projects.iter().position(|p| p.id == project) {
+            self.projects.selected = Some(i);
+        }
+        if self.workspace.split == Some(id) {
+            self.workspace.split = self.workspace.active;
+        }
+        self.workspace.active = Some(id);
+        self.workspace.view = View::Agents;
+        self.workspace.list_selected = self
+            .listed_sessions()
+            .iter()
+            .position(|s| *s == id)
+            .unwrap_or(0);
+        self.set_session_focus(true);
+    }
+
+    /// Next or previous session across all projects (FR-010).
+    fn cycle_session(&mut self, by: isize) -> bool {
+        let all: Vec<SessionId> = self.sessions.sessions.iter().map(|s| s.id).collect();
+        if all.is_empty() {
+            self.say("No sessions: n starts one");
+            return true;
+        }
+        let cur = self
+            .workspace
+            .active
+            .and_then(|a| all.iter().position(|s| *s == a))
+            .unwrap_or(0) as isize;
+        let next = all[(cur + by).rem_euclid(all.len() as isize) as usize];
+        self.focus_session(next);
+        true
+    }
+
+    /// `s`: shows the selected session beside the active one, or ends the split.
+    fn toggle_split(&mut self) -> bool {
+        if self.workspace.split.take().is_some() {
+            return true;
+        }
+        let list = self.listed_sessions();
+        let pick = list.get(self.workspace.list_selected).copied();
+        let other = match (pick, self.workspace.active) {
+            (Some(p), Some(a)) if p != a => Some(p),
+            (_, Some(a)) => list.iter().copied().find(|s| *s != a),
+            _ => None,
+        };
+        match other {
+            Some(o) => self.workspace.split = Some(o),
+            None => self.say("Split needs two sessions"),
+        }
+        true
+    }
+
+    /// `Shift-K`: asks before stopping the selected session (FR-012, 001 FR-032).
+    fn ask_stop(&mut self) -> bool {
+        let Some(id) = self.workspace.active else {
+            return false;
+        };
+        let Some(s) = self.sessions.get(id) else {
+            return false;
+        };
+        if !s.state.running() {
+            self.say("The session is not running");
+            return true;
+        }
+        let procs = self.session_metrics(id).map_or(1, |m| m.2);
+        let how = if cfg!(windows) {
+            "The agent's console is closed so it can clean up."
+        } else {
+            "The agent's process group gets SIGTERM so it can clean up."
+        };
+        let d = crate::ui::confirm::Dialog::new(
+            "Stop session",
+            &crate::session::stop_subject(id),
+            vec![
+                format!(
+                    "{}  ({} process{})",
+                    s.label(),
+                    procs,
+                    if procs == 1 { "" } else { "es" }
+                ),
+                how.into(),
+                "If it is still running after 5 s, you will be asked whether to force it.".into(),
+            ],
+            "Stop",
+        );
+        self.overlay = Overlay::Confirm {
+            dialog: d,
+            action: super::editing::Pending::StopSession(id),
+        };
+        true
+    }
+
+    /// Sessions that were asked to stop 5 s ago and still run get the force dialog (FR-012),
+    /// and a pending quit completes once every agent is gone.
+    pub(super) fn tick_stops(&mut self) -> bool {
+        let mut changed = false;
+        if let Some(at) = self.quitting {
+            let all_gone = self.sessions.running() == 0;
+            if all_gone || at.elapsed() >= std::time::Duration::from_secs(5) {
+                self.sessions.kill_all();
+                self.quit = true;
+                return true;
+            }
+        }
+        if !matches!(self.overlay, Overlay::None) {
+            return false;
+        }
+        let late = self.sessions.sessions.iter().find(|s| {
+            s.state == SessionState::Stopping
+                && s.stop_requested
+                    .is_some_and(|at| at.elapsed() >= std::time::Duration::from_secs(5))
+        });
+        if let Some(s) = late {
+            let id = s.id;
+            let label = s.label();
+            let d = crate::ui::confirm::Dialog::new(
+                "Force stop",
+                &crate::session::force_subject(id),
+                vec![
+                    format!("{label} is still running 5 s after the stop request."),
+                    "Force stop ends it and everything it started immediately. It cannot clean up."
+                        .into(),
+                ],
+                "Force stop",
+            );
+            if let Some(s) = self.sessions.get_mut(id) {
+                s.stop_requested = None;
+            }
+            self.overlay = Overlay::Confirm {
+                dialog: d,
+                action: super::editing::Pending::ForceStopSession(id),
+            };
+            changed = true;
+        }
+        changed
+    }
+
+    /// `p`: shows the session's agent in the LLM panel (FR-013).
+    fn jump_to_process(&mut self) -> bool {
+        let Some(id) = self.workspace.active else {
+            return false;
+        };
+        let key = self
+            .snapshot
+            .as_deref()
+            .and_then(|s| s.sessions.iter().find(|(_, v)| **v == id).map(|(k, _)| *k));
+        let Some(key) = key else {
+            self.say("The session's agent is not in the process list yet");
+            return true;
+        };
+        self.workspace.focus = AgentsFocus::Processes;
+        if let Some(i) = self.panel_index_of(key) {
+            self.select(i);
+        }
+        true
+    }
+
+    /// `j` in the LLM panel: from a session's agent to its session (FR-013).
+    fn jump_to_session(&mut self) -> bool {
+        let Some(key) = self.selected_process() else {
+            return false;
+        };
+        let id = self
+            .snapshot
+            .as_deref()
+            .and_then(|s| s.sessions.get(&key).copied());
+        match id {
+            Some(id) => {
+                self.focus_session(id);
+                self.set_session_focus(false);
+            }
+            None => self.say("This process was not started as a Fallow session"),
         }
         true
     }
@@ -407,6 +631,7 @@ impl AppState {
         if let Err(e) = self.sessions.restart(id, &tx) {
             self.say(e);
         } else {
+            self.track(id);
             self.set_session_focus(true);
         }
         true
@@ -629,6 +854,7 @@ impl AppState {
             cols: area.width.max(1),
         };
         let sid = self.sessions.start(req, &tx)?;
+        self.track(sid);
         self.overlay = Overlay::None;
         self.workspace.active = Some(sid);
         self.workspace.list_selected = self
@@ -646,13 +872,78 @@ impl AppState {
 
     /// New output from a session. Returns true if it is on screen.
     pub fn session_output(&mut self, id: SessionId) -> bool {
-        let _signals = self.sessions.output(id);
-        self.workspace.view == View::Agents && self.workspace.active == Some(id)
-            || self.workspace.view == View::Agents
+        let (_signals, entered) = self.sessions.output(id);
+        if entered {
+            self.attention_notice(id);
+        }
+        self.workspace.view == View::Agents
+    }
+
+    /// FR-009: tell the user when a session they are not looking at needs them.
+    fn attention_notice(&mut self, id: SessionId) {
+        let watching = self.workspace.view == View::Agents
+            && self.workspace.focus == AgentsFocus::Session
+            && self.workspace.active == Some(id);
+        if watching {
+            return;
+        }
+        if let Some(s) = self.sessions.get(id) {
+            let label = s.label();
+            self.say(format!("{label} needs attention (Ctrl-T: all sessions)"));
+        }
+    }
+
+    /// The agent group's memory (bytes), CPU (% of one core) and process count from the latest
+    /// snapshot (R-8).
+    pub fn session_metrics(&self, id: SessionId) -> Option<(u64, f32, usize)> {
+        let snap = self.snapshot.as_deref()?;
+        let key = snap
+            .sessions
+            .iter()
+            .find(|(_, s)| **s == id)
+            .map(|(k, _)| *k)?;
+        let g = snap.groups.iter().find(|g| g.root == key)?;
+        Some((g.total_footprint, g.total_cpu, g.members.len() + 1))
+    }
+
+    /// The quiet-fallback check for every running session (R-4). Returns true if a session
+    /// changed state.
+    pub fn tick_sessions(&mut self) -> bool {
+        let delay = self.sessions.limits.attention_delay;
+        let now = Instant::now();
+        let cpus: Vec<(SessionId, Option<f32>)> = self
+            .sessions
+            .sessions
+            .iter()
+            .map(|s| (s.id, self.session_metrics(s.id).map(|m| m.1)))
+            .collect();
+        let mut changed = Vec::new();
+        for (id, cpu) in cpus {
+            if let Some(s) = self.sessions.get_mut(id) {
+                if crate::session::attention::on_tick(s, cpu, delay, now) {
+                    changed.push(id);
+                }
+            }
+        }
+        for id in &changed {
+            self.attention_notice(*id);
+        }
+        !changed.is_empty()
+    }
+
+    /// Asks procmon to track a session's agent (R-8).
+    fn track(&self, id: SessionId) {
+        if let (Some(tx), Some(pid)) = (&self.requests, self.sessions.get(id).and_then(|s| s.pid)) {
+            let _ = tx.send(crate::procmon::worker::Request::Track { pid, session: id });
+        }
     }
 
     pub fn session_exited(&mut self, id: SessionId, code: Option<u32>) -> bool {
-        self.sessions.exited(id, code);
+        if let Some(pid) = self.sessions.exited(id, code) {
+            if let Some(tx) = &self.requests {
+                let _ = tx.send(crate::procmon::worker::Request::Untrack { pid });
+            }
+        }
         if self.workspace.active == Some(id) && self.workspace.focus == AgentsFocus::Session {
             self.workspace.focus = AgentsFocus::Sessions;
         }
@@ -825,6 +1116,11 @@ impl AppState {
             .and_then(|id| self.sessions.get_mut(id))
         {
             s.resize(r.height.max(1), r.width.max(1));
+        }
+        if let (Some(r), Some(id)) = (ws_ui::split_rect(self), self.workspace.split) {
+            if let Some(s) = self.sessions.get_mut(id) {
+                s.resize(r.height.max(1), r.width.max(1));
+            }
         }
     }
 

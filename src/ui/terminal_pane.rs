@@ -14,9 +14,10 @@ use crate::session::{Session, SessionState};
 /// Synchronized output holds redraws for at most this long (research R-5).
 const SYNC_LIMIT: std::time::Duration = std::time::Duration::from_millis(150);
 
-pub fn draw(f: &mut Frame<'_>, state: &AppState, area: Rect) {
-    let focused = state.workspace.focus == AgentsFocus::Session;
-    let Some(s) = state.workspace.active.and_then(|id| state.sessions.get(id)) else {
+/// Draws session `id` in `area`. `primary`: the active pane (the one keys go to when focused).
+pub fn draw(f: &mut Frame<'_>, state: &AppState, area: Rect, id: Option<u32>, primary: bool) {
+    let focused = primary && state.workspace.focus == AgentsFocus::Session;
+    let Some(s) = id.and_then(|id| state.sessions.get(id)) else {
         let b = Block::bordered().title(" Session ");
         let leave = state.sessions.limits.leave_key.label();
         let mut text = vec![

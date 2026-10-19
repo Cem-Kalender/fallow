@@ -121,6 +121,7 @@ fn snapshot() -> Snapshot {
             low_memory: false,
         },
         notes: Vec::new(),
+        sessions: HashMap::new(),
     }
 }
 
