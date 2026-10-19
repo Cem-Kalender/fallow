@@ -22,6 +22,32 @@ globset = { version = "0.4", default-features = false }
 ipnet = "2"
 compact_str = "0.9"
 smallvec = "1"
+# Editor (US3, plan.md Dependency budget, research R-8).
+ropey = { version = "1", default-features = false, features = ["simd", "cr_lines"] }
+tree-sitter = "0.27"
+unicode-width = "0.2"
+tree-sitter-python = "0.25"
+tree-sitter-javascript = "0.25"
+tree-sitter-typescript = "0.23"
+tree-sitter-rust = "0.24"
+tree-sitter-go = "0.25"
+tree-sitter-c = "0.24"
+tree-sitter-cpp = "0.23"
+tree-sitter-java = "0.23"
+tree-sitter-c-sharp = "0.23"
+tree-sitter-bash = "0.25"
+tree-sitter-json = "0.24"
+tree-sitter-yaml = "0.7"
+tree-sitter-toml-ng = "0.7"
+tree-sitter-md = "0.5"
+tree-sitter-html = "0.23"
+tree-sitter-css = "0.25"
+notify = "8"
+grep-searcher = "0.1"
+grep-regex = "0.1"
+grep-matcher = "0.1"
+ignore = "0.4"
+arboard = { version = "3", default-features = false }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

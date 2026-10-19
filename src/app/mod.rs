@@ -1,6 +1,7 @@
 //! Application state, commands, key bindings and the main event loop.
 
 pub mod commands;
+pub mod editing;
 pub mod event_loop;
 pub mod keymap;
 pub mod state;
@@ -27,6 +28,10 @@ pub struct RunStats {
     pub ticks: u64,
     /// Procmon refresh cycles.
     pub cycles: u64,
+    /// Files opened, project searches run and copies made (loaded benchmark evidence, T083).
+    pub buffers: u64,
+    pub searches: u64,
+    pub copies: u64,
 }
 
 /// `--all-users` takes effect only when Fallow already runs elevated (FR-031).
@@ -56,6 +61,9 @@ pub fn run(opts: &Options) -> (ExitCode, RunStats) {
     let mut stats = RunStats {
         ticks: 0,
         cycles: 0,
+        buffers: 0,
+        searches: 0,
+        copies: 0,
     };
     let paths = ConfigPaths::resolve(opts.config_dir.as_deref());
     if opts.print_config_paths {
@@ -92,6 +100,10 @@ pub fn run(opts: &Options) -> (ExitCode, RunStats) {
     notices.extend(all_note);
     let mut state = state::AppState::new(opts.path.clone(), notices);
     state.all_users = all;
+    state.prefs = editing::EditorPrefs {
+        tab_width: cfg.settings.editor.tab_width as usize,
+        read_only_bytes: cfg.settings.editor.read_only_threshold_mb * 1024 * 1024,
+    };
 
     let mut term = match terminal::enter(cfg.settings.ui.mouse) {
         Ok(t) => t,
@@ -126,6 +138,9 @@ pub fn run(opts: &Options) -> (ExitCode, RunStats) {
     terminal::restore();
     stats.ticks = state.ticks;
     stats.cycles = cycles.load(Ordering::Relaxed);
+    stats.buffers = state.editor.opened;
+    stats.searches = state.searches;
+    stats.copies = state.clipboard.copies;
     match result {
         Ok(()) => (ExitCode::SUCCESS, stats),
         Err(e) => {

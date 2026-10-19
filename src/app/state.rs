@@ -12,9 +12,15 @@ use crossterm::event::{
 use ratatui::layout::Rect;
 
 use super::commands::{self, Context};
+use super::editing::{EditorPrefs, FindBar, Pending, PromptKind};
 use super::keymap;
+use crate::clipboard::Clipboard;
+use crate::editor::selection::LineInput;
+use crate::editor::watch::FileWatcher;
+use crate::editor::{Editor, Project};
 use crate::procmon::snapshot::{ProcessKey, Snapshot};
 use crate::procmon::worker::Request;
+use crate::ui::confirm::Dialog;
 use crate::ui::layout::{self, Border};
 use crate::ui::processes;
 
@@ -91,6 +97,17 @@ pub enum Overlay {
         query: String,
         selected: usize,
     },
+    /// A confirmation dialog (T069) and what confirming does.
+    Confirm {
+        dialog: Dialog,
+        action: Pending,
+    },
+    /// A one-line text prompt (open project, go to line, file names).
+    Prompt {
+        kind: PromptKind,
+        input: LineInput,
+        error: Option<String>,
+    },
 }
 
 /// Selection and expansion in the process panel.
@@ -104,12 +121,28 @@ pub struct PanelState {
 
 const MESSAGE_FOR: Duration = Duration::from_secs(3);
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct AppState {
     pub focus: Pane,
     pub sizes: PaneSizes,
-    /// The project opened with `PATH`, if any.
-    pub project: Option<PathBuf>,
+    /// The open project (`PATH` or `Ctrl-O`), if any.
+    pub project: Option<Project>,
+    pub editor: Editor,
+    pub find: Option<FindBar>,
+    /// The last find query, offered again by the next `Ctrl-F`.
+    pub last_query: String,
+    pub clipboard: Clipboard,
+    pub watcher: FileWatcher,
+    /// The watched set must be recomputed (something was opened, closed or expanded).
+    pub watch_dirty: bool,
+    /// Files that changed on disk under unsaved edits, waiting for their dialog.
+    pub conflicts: Vec<PathBuf>,
+    pub prefs: EditorPrefs,
+    /// Project searches run (for `--bench-stats`).
+    pub searches: u64,
+    pub last_click: Option<(u16, u16, Instant)>,
+    /// A drag that started in the editor text selects.
+    pub drag_select: bool,
     /// Configuration problems and startup notices, shown as `file:line: message`.
     pub notices: Vec<String>,
     pub quit: bool,
@@ -129,11 +162,29 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub fn new(project: Option<PathBuf>, notices: Vec<String>) -> Self {
+    pub fn new(project: Option<PathBuf>, mut notices: Vec<String>) -> Self {
+        let project = project.and_then(|p| match Project::open(&p) {
+            Ok(p) => Some(p),
+            Err(e) => {
+                notices.push(format!("{}: {e}", p.display()));
+                None
+            }
+        });
         AppState {
             focus: Pane::Files,
             sizes: PaneSizes::default(),
+            watch_dirty: project.is_some(),
             project,
+            editor: Editor::default(),
+            find: None,
+            last_query: String::new(),
+            clipboard: Clipboard::default(),
+            watcher: FileWatcher::default(),
+            conflicts: Vec::new(),
+            prefs: EditorPrefs::default(),
+            searches: 0,
+            last_click: None,
+            drag_select: false,
             notices,
             quit: false,
             ticks: 0,
@@ -146,11 +197,6 @@ impl AppState {
             drag: None,
             requests: None,
         }
-    }
-
-    /// True while a text input has focus (the palette filter, for now).
-    pub fn text_input(&self) -> bool {
-        matches!(self.overlay, Overlay::Palette { .. })
     }
 
     pub fn set_snapshot(&mut self, s: Arc<Snapshot>) {
@@ -181,12 +227,24 @@ impl AppState {
         if key.kind == KeyEventKind::Release {
             return false;
         }
-        match self.overlay.clone() {
-            Overlay::Help { scroll } => return self.help_key(key, scroll),
+        match &self.overlay {
+            Overlay::Help { scroll } => return self.help_key(key, *scroll),
             Overlay::Palette { .. } => return self.palette_key(key),
+            Overlay::Confirm { .. } => return self.confirm_key(key),
+            Overlay::Prompt { .. } => return self.prompt_key(key),
             Overlay::None => {}
         }
-        match keymap::lookup(&key, self.focus.context(), self.text_input()) {
+        let mut context = self.focus.context();
+        if self.focus == Pane::Editor {
+            if let Some(changed) = self.editor_key(key) {
+                return changed;
+            }
+            // No buffer, or focus released with Esc: Tab switches panes (FR-065).
+            if matches!(key.code, KeyCode::Tab | KeyCode::BackTab) {
+                context = Context::Global;
+            }
+        }
+        match keymap::lookup(&key, context, self.text_input()) {
             Some(id) => self.run(id),
             None => false,
         }
@@ -196,8 +254,8 @@ impl AppState {
         let page = self.area.height.saturating_sub(6).max(1);
         let scroll = match key.code {
             KeyCode::Char('q' | 'Q') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                self.quit = true;
-                return false;
+                self.overlay = Overlay::None;
+                return self.run("quit");
             }
             KeyCode::Esc | KeyCode::F(1) | KeyCode::Char('?') | KeyCode::Char('q') => {
                 self.overlay = Overlay::None;
@@ -223,7 +281,10 @@ impl AppState {
         match key.code {
             KeyCode::Esc => self.overlay = Overlay::None,
             KeyCode::Char('p' | 'P') if ctrl => self.overlay = Overlay::None,
-            KeyCode::Char('q' | 'Q') if ctrl => self.quit = true,
+            KeyCode::Char('q' | 'Q') if ctrl => {
+                self.overlay = Overlay::None;
+                return self.run("quit");
+            }
             KeyCode::Up => *selected = selected.saturating_sub(1),
             KeyCode::Down => *selected += 1,
             KeyCode::Backspace => {
@@ -256,10 +317,7 @@ impl AppState {
     /// Runs a command from the registry. Returns true when something visible changed.
     pub fn run(&mut self, id: &str) -> bool {
         match id {
-            "quit" => {
-                self.quit = true;
-                false
-            }
+            "quit" => self.request_quit(),
             "help" => {
                 self.overlay = Overlay::Help { scroll: 0 };
                 true
@@ -292,6 +350,9 @@ impl AppState {
             "proc.sort.status" => self.sort_by(processes::Col::Status),
             "proc.sort.confidence" => self.sort_by(processes::Col::Conf),
             other => {
+                if let Some(changed) = self.run_editing(other) {
+                    return changed;
+                }
                 let title = commands::find(other).map_or(other, |c| c.title);
                 self.say(format!("{title}: not available yet"));
                 true
@@ -391,13 +452,22 @@ impl AppState {
     pub fn handle_mouse(&mut self, m: MouseEvent) -> bool {
         let g = layout::geometry(self.area, self.sizes, self.focus);
         let (x, y) = (m.column, m.row);
+        // Border drags (pane resizing) stay here; everything else goes to the editing panes
+        // first.
+        let border_press = matches!(m.kind, MouseEventKind::Down(MouseButton::Left))
+            && layout::border_at(&g, x, y).is_some();
+        if !border_press && self.drag.is_none() {
+            if let Some(changed) = self.editing_mouse(m, g.pane_at(x, y)) {
+                return changed;
+            }
+        }
         match m.kind {
             MouseEventKind::Down(MouseButton::Left) => {
                 if let Some(b) = layout::border_at(&g, x, y) {
                     self.drag = Some(b);
                     return false;
                 }
-                if let Overlay::Palette { .. } | Overlay::Help { .. } = self.overlay {
+                if !matches!(self.overlay, Overlay::None) {
                     return false;
                 }
                 let Some(pane) = g.pane_at(x, y) else {

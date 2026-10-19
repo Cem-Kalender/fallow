@@ -54,8 +54,8 @@ pub fn draw(f: &mut Frame<'_>, state: &AppState, area: Rect) {
         return;
     }
     let (context, text_input) = match state.overlay {
-        Overlay::Palette { .. } => (Context::Global, true),
-        _ => (state.focus.context(), false),
+        Overlay::Palette { .. } | Overlay::Prompt { .. } => (Context::Global, true),
+        _ => (state.context(), state.text_input()),
     };
     let mut hints = commands::hints(context, text_input);
     match state.overlay {
@@ -64,7 +64,8 @@ pub fn draw(f: &mut Frame<'_>, state: &AppState, area: Rect) {
             hints.extend([("Esc", "Close"), ("↑↓", "Scroll")]);
         }
         Overlay::Palette { .. } => hints.extend([("Enter", "Run"), ("Esc", "Close")]),
-        Overlay::None => {}
+        Overlay::Prompt { .. } => hints.extend([("Enter", "OK"), ("Esc", "Cancel")]),
+        Overlay::Confirm { .. } | Overlay::None => {}
     }
     let msg = state.message.as_ref().map(|(m, _)| m.as_str());
     f.render_widget(Paragraph::new(line(&hints, msg, area.width)), area);

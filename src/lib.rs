@@ -5,7 +5,9 @@
 
 pub mod app;
 pub mod cli;
+pub mod clipboard;
 pub mod config;
 pub mod dns;
+pub mod editor;
 pub mod procmon;
 pub mod ui;
