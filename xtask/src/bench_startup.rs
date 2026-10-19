@@ -3,10 +3,14 @@
 //! Time from spawn to the first frame, 3 warm-ups then 30 measured runs. The budget is met when
 //! the p95 is under 100 ms (constitution v3.0.1). Shared CI runners are noisy, so a failing
 //! benchmark is re-run once, warm-ups included; the second result is final.
+//!
+//! Fallow runs with a temporary config directory that remembers 50 projects (002 FR-028): the
+//! list is read after the first frame, so it must not delay it.
 
 use std::path::PathBuf;
 use std::time::Duration;
 
+use crate::projects;
 use crate::pty::{self, Session, ms};
 
 const WARMUPS: usize = 3;
@@ -39,16 +43,31 @@ pub fn run(args: &[String]) -> i32 {
         }
     };
     println!(
-        "bench-startup: {} ({WARMUPS} warm-ups, {RUNS} runs, budget p95 < {BUDGET_MS} ms)",
-        args.bin.display()
+        "bench-startup: {} ({WARMUPS} warm-ups, {RUNS} runs, {} remembered projects, budget p95 < {BUDGET_MS} ms)",
+        args.bin.display(),
+        projects::COUNT
     );
-    let first = attempt(&args, 1);
+    let dir = std::env::temp_dir().join(format!("fallow-bench-startup-{}", std::process::id()));
+    let config = match projects::write(&dir, projects::COUNT) {
+        Ok(d) => d.display().to_string(),
+        Err(e) => {
+            eprintln!("bench-startup: INVALID: {e}");
+            return 2;
+        }
+    };
+    let result = run_attempts(&args, &config);
+    let _ = std::fs::remove_dir_all(&dir);
+    result
+}
+
+fn run_attempts(args: &Args, config: &str) -> i32 {
+    let first = attempt(args, 1, config);
     let result = match first {
         Verdict::Fail => {
             println!(
                 "bench-startup: over budget; re-running the whole benchmark once (the second result is final)"
             );
-            attempt(&args, 2)
+            attempt(args, 2, config)
         }
         v => v,
     };
@@ -65,11 +84,15 @@ enum Verdict {
     Invalid,
 }
 
-fn attempt(args: &Args, n: usize) -> Verdict {
+fn attempt(args: &Args, n: usize, config: &str) -> Verdict {
     let mut times = Vec::with_capacity(RUNS);
     for i in 0..WARMUPS + RUNS {
         let warmup = i < WARMUPS;
-        let mut s = match Session::spawn(&args.bin, &[], Duration::from_secs(3600)) {
+        let mut s = match Session::spawn(
+            &args.bin,
+            &["--config-dir", config],
+            Duration::from_secs(3600),
+        ) {
             Ok(s) => s,
             Err(e) => {
                 eprintln!("bench-startup: {e}");

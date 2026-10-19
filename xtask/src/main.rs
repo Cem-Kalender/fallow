@@ -10,6 +10,7 @@ mod canary;
 mod diag;
 mod fixtures;
 mod gen_fixture;
+mod projects;
 mod pty;
 mod record;
 mod rss;

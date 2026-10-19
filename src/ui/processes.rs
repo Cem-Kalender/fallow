@@ -159,9 +159,58 @@ fn compare_groups(s: &Snapshot, sort: Sort, a: &ProcessGroup, b: &ProcessGroup) 
     primary.then(a.root.cmp(&b.root))
 }
 
+/// The panel limited to one project (002 FR-016): processes whose working directory is inside
+/// the project folder or one of its sessions' worktrees, and the project's session agents.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectFilter {
+    pub name: String,
+    pub dirs: Vec<std::path::PathBuf>,
+    pub sessions: Vec<u32>,
+}
+
+impl ProjectFilter {
+    fn inside(&self, p: &std::path::Path) -> bool {
+        self.dirs.iter().any(|d| {
+            if cfg!(any(windows, target_os = "macos")) {
+                // Case-insensitive file systems: compare lowercased components.
+                let lower = |x: &std::path::Path| x.to_string_lossy().to_lowercase();
+                std::path::Path::new(&lower(p)).starts_with(lower(d))
+            } else {
+                p.starts_with(d)
+            }
+        })
+    }
+
+    /// True if any process of the group belongs to the project.
+    pub fn keeps(&self, s: &Snapshot, g: &ProcessGroup) -> bool {
+        std::iter::once(&g.root).chain(&g.members).any(|k| {
+            s.sessions
+                .get(k)
+                .is_some_and(|id| self.sessions.contains(id))
+                || s.records
+                    .get(k)
+                    .is_some_and(|r| matches!(&r.cwd, CwdState::Known(p) if self.inside(p)))
+        })
+    }
+}
+
 /// The rows: each group in sort order and, when expanded, its members in tree order.
 pub fn rows(s: &Snapshot, expanded: &HashSet<ProcessKey>, sort: Sort) -> Vec<Row> {
-    let mut groups: Vec<_> = s.groups.iter().collect();
+    rows_for(s, expanded, sort, None)
+}
+
+/// The rows, limited to a project when `filter` is set.
+pub fn rows_for(
+    s: &Snapshot,
+    expanded: &HashSet<ProcessKey>,
+    sort: Sort,
+    filter: Option<&ProjectFilter>,
+) -> Vec<Row> {
+    let mut groups: Vec<_> = s
+        .groups
+        .iter()
+        .filter(|g| filter.is_none_or(|f| f.keeps(s, g)))
+        .collect();
     groups.sort_by(|a, b| compare_groups(s, sort, a, b));
     let mut out = Vec::new();
     for g in groups {
@@ -223,7 +272,17 @@ pub fn row_at(list: &Rect, selected: usize, y: u16) -> Option<usize> {
 }
 
 pub fn draw(f: &mut Frame<'_>, state: &AppState, area: Rect) {
+    let filter = state.process_filter();
     let mut title = vec![Span::raw(" LLM Processes ")];
+    if let Some(pf) = &filter {
+        title.push(Span::styled(
+            format!(" only {} (f: all) ", pf.name),
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ));
+    }
     if state.all_users {
         title.push(Span::styled(
             " elevated: all users ",
@@ -243,8 +302,29 @@ pub fn draw(f: &mut Frame<'_>, state: &AppState, area: Rect) {
         f.render_widget(Paragraph::new(lines), inner);
         return;
     };
-    let rows = rows(snap, &state.panel.expanded, state.panel.sort);
+    let rows = rows_for(
+        snap,
+        &state.panel.expanded,
+        state.panel.sort,
+        filter.as_ref(),
+    );
     if rows.is_empty() {
+        if let Some(pf) = &filter {
+            let lines = vec![
+                Line::raw(format!("No LLM processes in {}.", pf.name)),
+                Line::styled(
+                    "Press f in the project list to show all.",
+                    Style::default().add_modifier(Modifier::DIM),
+                ),
+                Line::raw(""),
+                coverage,
+            ];
+            f.render_widget(
+                Paragraph::new(lines).wrap(ratatui::widgets::Wrap { trim: true }),
+                inner,
+            );
+            return;
+        }
         let lines = vec![
             Line::raw("No LLM processes found."),
             Line::styled(

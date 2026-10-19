@@ -30,6 +30,9 @@ pub fn run(
     let size = term.size()?;
     state.area = ratatui::layout::Rect::new(0, 0, size.width, size.height);
     term.draw(|f| ui::draw(f, state))?;
+    // The remembered project list is read after the first frame (002 FR-028).
+    state.load_projects();
+    let mut dirty = true;
     let (tx, rx) = channel();
     events::spawn_input(tx.clone())?;
     let worker = start().map(|w| {
@@ -44,7 +47,6 @@ pub fn run(
     });
     state.events = Some(tx);
     let mut frames = FrameCap::new(FRAME);
-    let mut dirty = false;
     let mut rearmed = Instant::now();
     while !state.quit {
         let mut wait = if state.busy() {
