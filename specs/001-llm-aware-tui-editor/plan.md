@@ -183,8 +183,17 @@ It covers:
    - key hints bar, help overlay and command palette;
    - colors;
    - small-window collapse.
+5. **002 agent sessions** (added by 002 T053), in Terminal.app and iTerm2, with a real agent
+   signed in: quickstart S1–S18 of `specs/002-agent-sessions/quickstart.md`, in particular
+   - S4 (every key but `Ctrl-]` reaches the agent), S5 (`Ctrl-]` on the Mac keyboard, and twice
+     to send it),
+   - S6 (scroll, select, copy to the macOS clipboard) and S7 (paste),
+   - S8 (Claude Code's bell with the per-run `--settings` flag marks "needs attention"),
+   - S10 (graceful stop, then force stop) and S13 (quit stops every agent).
 
-The "beta" label is removed only when all four pass **and** the results are recorded in
+   Linux gets the same run-through once, in a desktop terminal (GNOME Terminal or Konsole).
+
+The "beta" label is removed only when all five pass **and** the results are recorded in
 research.md (R-11 for item 1, R-2 for item 2, a new "macOS hardware verification" entry for items
 3 and 4).
 

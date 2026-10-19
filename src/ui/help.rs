@@ -60,6 +60,14 @@ pub const NOTES: &[(&str, &str)] = &[
         "Every key goes to the agent unchanged, including `Esc`, `Tab`, `Ctrl-C`, `Ctrl-Q`, `Ctrl-P` and `F1`, except the leave key (`Ctrl-]` by default, `sessions.leave_key`). Press it twice to send it to the agent. `Ctrl-E`, `Ctrl-T`, `Ctrl-N` and `Ctrl-B` are Fallow's only while no session has focus.",
     ),
     (
+        "Known gaps in sessions",
+        "No kitty keyboard protocol: agents use their legacy keys (in Claude Code, `Shift-Enter` does not insert a newline; use `Ctrl-J` or `\\` then `Enter`). No reflow on resize: the agent redraws at the new size, and older scrollback keeps its line breaks.",
+    ),
+    (
+        "Windows: agents installed with npm",
+        "npm installs agents as `.cmd` shims. Fallow runs the program the shim points to (`node` with its script, or the agent's `.exe`), never `cmd.exe`. A shim it cannot read is refused with the reason; point a profile in profiles.toml at the real executable.",
+    ),
+    (
         "Ctrl-] on AltGr layouts",
         "Where `]` needs AltGr (German, Nordic), many terminals also send `Ctrl-]` for `Ctrl-5`; Fallow accepts both. The key can be changed with `sessions.leave_key`.",
     ),
