@@ -387,12 +387,21 @@ and the Defender job reports PASS with protection verified.
   - search the dump, Fallow's stdout and screen output, logs, the config dir and the cache dir for the canary in UTF-8 and UTF-16LE.
 
   Any hit fails. After this task the canary runs on all three platforms. Satisfies: SC-007, FR-024, Constitution VII.
-- [ ] T051 [US1] Implement the **SC-009 egress test** in `xtask/src/egress.rs`:
+- [X] T051 [US1] Implement the **SC-009 egress test** in `xtask/src/egress.rs`:
   - Linux: `strace -f -e trace=network` on Fallow plus `tcpdump` on port 53;
   - macOS: `sudo tcpdump -i pktap,all -k` filtered to Fallow's PID;
   - Windows: poll `GetExtendedTcpTable` and UDP owner tables for Fallow's PID every 100 ms, and read `Microsoft-Windows-DNS-Client/Operational` events for its PID.
 
   It asserts that the only traffic is DNS queries for names in `providers.toml` (no reverse PTR lookups), and that a second run with `--no-dns` produces **zero** outbound traffic and no DNS queries. Satisfies: SC-009, FR-035, FR-022a, Constitution VII.
+  - Done 2026-10-19 (with 002 T050), blocking in CI on all three OSes; the run is a full TUI session
+    with an agent session open. First passing run: 39328037857. Notes:
+    - Linux: glibc's `getaddrinfo` UDP-"connects" to each result with port 0 to sort addresses
+      (no packet); allowed only on UDP sockets with nothing sent.
+    - Windows: Fallow owns no internet socket at all (the DNS Client service resolves); names come
+      from the DNS-Client log, which needs an administrator (a local non-admin run is INVALID).
+    - macOS: Fallow owns no internet socket; tcpdump attributes queries via `eproc fallow`.
+      mDNSResponder answers most names from its cache, so few queries reach the wire, and
+      queries it sends without an effective process are counted but not judged.
 - [ ] T052 [US1] Implement the **Windows Defender check** in `xtask/src/defender_check.rs` per research.md R-10:
   1. Enable: `Set-MpPreference -DisableRealtimeMonitoring $false -DisableBehaviorMonitoring $false -DisableIOAVProtection $false -DisableScriptScanning $false`, then `Remove-MpPreference -ExclusionPath C:\, D:\`, then try `Update-MpSignature` (on failure, warn and continue).
   2. Verify with `Get-MpComputerStatus`: `AMRunningMode = "Normal"`, and `RealTimeProtectionEnabled`, `BehaviorMonitorEnabled` and `IoavProtectionEnabled` all `True`. `Get-MpPreference` must show no exclusion covering the binary or workspace. **Any failure fails the check**, and a run with protection off never passes.
