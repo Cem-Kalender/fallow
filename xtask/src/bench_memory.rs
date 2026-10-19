@@ -312,9 +312,12 @@ fn script(s: &mut Session, start: Instant, samples: &mut Vec<(u64, u64)>) -> Res
     wait(s, Duration::from_millis(300), start, samples);
     search(s, crate::gen_fixture::NEEDLE, false, start, samples)?;
     wait(s, Duration::from_secs(30), start, samples);
+    // Esc directly followed by another key reads as Alt+key on Unix terminals, so every Esc is
+    // followed by a pause.
     s.send(ESC);
     wait(s, Duration::from_millis(500), start, samples);
     s.send(ESC);
+    wait(s, Duration::from_millis(500), start, samples);
     // Five files of different languages, each found by its unique token and opened with Enter
     // on its result. From the second one on, a file is open, so Ctrl-F starts in "this file"
     // and Tab switches to "whole project".

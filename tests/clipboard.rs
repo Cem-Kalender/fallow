@@ -82,6 +82,35 @@ fn a_bracketed_paste_is_inserted_literally_with_no_auto_indent() {
 }
 
 #[test]
+fn a_paste_delivered_as_keys_is_not_auto_indented() {
+    // Windows consoles deliver a terminal paste as key events in one burst.
+    let (mut s, d) = with_file("    fn x() {\n");
+    s.handle_key(KeyEvent::new(KeyCode::End, KeyModifiers::NONE));
+    s.burst = true;
+    for c in "\n  a\nb".chars() {
+        let code = if c == '\n' {
+            KeyCode::Enter
+        } else {
+            KeyCode::Char(c)
+        };
+        s.handle_key(KeyEvent::new(code, KeyModifiers::NONE));
+    }
+    s.burst = false;
+    assert_eq!(
+        s.editor.active().unwrap().text().to_string(),
+        "    fn x() {\n  a\nb\n"
+    );
+    // A single Enter typed by hand keeps the indentation of its line.
+    s.editor.active_mut().unwrap().set_cursor(1, 3, false);
+    s.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert_eq!(
+        s.editor.active().unwrap().text().to_string(),
+        "    fn x() {\n  a\n  \nb\n"
+    );
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
 fn cut_removes_the_selection() {
     let (mut s, d) = with_file("one two\n");
     for _ in 0..4 {

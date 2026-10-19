@@ -303,6 +303,39 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn editor_shows_text_line_numbers_status_and_the_find_scope() {
+        let d = std::env::temp_dir().join(format!("fallow-render-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::write(d.join("main.rs"), "fn main() {\n    println!(\"hi\");\n}\n").unwrap();
+        let mut s = AppState::new(Some(d.clone()), Vec::new());
+        s.open_file(&d.join("main.rs"));
+        s.prepare_frame();
+        let screen = render(120, 40, &s);
+        assert!(screen.contains("1 fn main() {"), "{screen}");
+        assert!(screen.contains("2     println!(\"hi\");"), "{screen}");
+        assert!(screen.contains(" main.rs "), "title\n{screen}");
+        assert!(screen.contains("Ln 1, Col 1 · Rust"), "status\n{screen}");
+        assert!(screen.contains("main.rs"), "Files pane\n{screen}");
+        assert!(screen.contains("Ctrl-S Save"), "editor hints\n{screen}");
+        s.run("editor.find");
+        let screen = render(120, 40, &s);
+        assert!(screen.contains("Find:"), "{screen}");
+        assert!(
+            screen.contains("[this file] Tab: whole project"),
+            "{screen}"
+        );
+        s.run("find.scope");
+        let screen = render(120, 40, &s);
+        assert!(
+            screen.contains("[whole project] Tab: this file"),
+            "{screen}"
+        );
+        assert!(!screen.contains("Results:"), "no results before a search");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
     fn notices_are_shown() {
         let s = AppState::new(None, vec!["settings.toml:3: bad value".into()]);
         assert!(render(120, 40, &s).contains("settings.toml:3: bad value"));

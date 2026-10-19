@@ -400,6 +400,12 @@ impl Buffer {
         self.undo.seal();
     }
 
+    /// A line break in the file's style with no indentation (pasted text).
+    pub fn newline_plain(&mut self) {
+        let eol = self.eol;
+        self.insert(eol);
+    }
+
     pub fn backspace(&mut self) {
         if let Some(r) = self.selection() {
             return self.change(

@@ -186,6 +186,9 @@ impl AppState {
             KeyCode::End if ctrl => b.doc_end(shift),
             KeyCode::Home => b.home(shift),
             KeyCode::End => b.end(shift),
+            // Inside a burst of queued keys (a paste delivered as key events), Enter is a
+            // literal line break: no auto-indent (FR-008).
+            KeyCode::Enter if self.burst => b.newline_plain(),
             KeyCode::Enter => b.newline(),
             KeyCode::Backspace => b.backspace(),
             KeyCode::Delete => b.delete_forward(),
