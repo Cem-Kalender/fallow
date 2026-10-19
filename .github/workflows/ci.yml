@@ -1,6 +1,7 @@
 # CI for Fallow (tasks.md T025): format, lint, dependency policy, build, tests, and the
 # constitution's benchmark gates on all three platforms (Principle VI, research R-13).
-# The build fails if the startup (p95 < 100 ms) or idle memory (< 50 MB RSS) budget is exceeded.
+# The build fails if the startup (p95 < 100 ms), idle memory (< 50 MB RSS), loaded memory
+# (< 150 MB RSS) or search time (first result, p95 < 1 s) budget is exceeded.
 name: ci
 
 on:
@@ -26,7 +27,7 @@ jobs:
       matrix:
         os: [ubuntu-24.04, macos-15, windows-2025]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 40
+    timeout-minutes: 60
     defaults:
       run:
         shell: bash
@@ -73,6 +74,23 @@ jobs:
       - name: New/exited process latency (<= two refresh intervals)
         run: cargo xtask bench-new-process
 
+      # The reference large project (T082, R-13): ~50,000 files, ~1 GB, generated from fixed
+      # seeds and cached by a hash of the generator.
+      - name: Reference fixture cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/fallow-fixture
+          key: fallow-fixture-${{ runner.os }}-${{ hashFiles('xtask/src/gen_fixture.rs') }}
+
+      - name: Reference fixture (generated unless cached)
+        run: cargo xtask gen-fixture --out "$RUNNER_TEMP/fallow-fixture"
+
+      - name: Loaded memory benchmark (peak RSS < 150 MB)
+        run: cargo xtask bench-memory --loaded --fixture "$RUNNER_TEMP/fallow-fixture" --csv bench-memory-loaded-${{ matrix.os }}.csv
+
+      - name: Search time (first result row, p95 of 10 < 1 s)
+        run: cargo xtask bench-search --fixture "$RUNNER_TEMP/fallow-fixture"
+
       - name: Unprivileged run (Linux, macOS)
         if: runner.os != 'Windows'
         run: |
@@ -111,10 +129,12 @@ jobs:
         if: runner.os == 'macOS'
         run: cargo xtask canary
 
-      - name: Upload idle RSS series
+      - name: Upload RSS series
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: bench-memory-idle-${{ matrix.os }}
-          path: bench-memory-idle-${{ matrix.os }}.csv
+          name: bench-memory-${{ matrix.os }}
+          path: |
+            bench-memory-idle-${{ matrix.os }}.csv
+            bench-memory-loaded-${{ matrix.os }}.csv
           if-no-files-found: warn

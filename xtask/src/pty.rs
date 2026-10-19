@@ -79,6 +79,14 @@ pub struct Session {
     frame_after: Arc<Mutex<Option<Duration>>>,
     late_bytes: Arc<AtomicU64>,
     stats_path: PathBuf,
+    watch: Arc<Mutex<Watch>>,
+}
+
+/// A byte pattern the reader looks for in the output, and when it first appeared.
+#[derive(Default)]
+struct Watch {
+    pattern: Vec<u8>,
+    seen: Option<Instant>,
 }
 
 /// What a finished session proved.
@@ -91,6 +99,15 @@ pub struct Outcome {
     pub exe: String,
     pub clean_exit: bool,
     pub stats: Option<BenchStats>,
+    /// The whole `--bench-stats` line, for counters beyond `BenchStats`.
+    pub stats_line: String,
+}
+
+/// The extra counters Fallow writes to `--bench-stats` (loaded benchmark evidence).
+pub fn stat_field(stats_line: &str, key: &str) -> Option<u64> {
+    stats_line
+        .split_whitespace()
+        .find_map(|kv| kv.strip_prefix(key)?.strip_prefix('=')?.parse().ok())
 }
 
 impl Session {
@@ -152,9 +169,14 @@ impl Session {
 
         let frame_after = Arc::new(Mutex::new(None));
         let late_bytes = Arc::new(AtomicU64::new(0));
+        let watch = Arc::new(Mutex::new(Watch::default()));
         {
-            let (writer, frame_after, late_bytes) =
-                (writer.clone(), frame_after.clone(), late_bytes.clone());
+            let (writer, frame_after, late_bytes, watch) = (
+                writer.clone(),
+                frame_after.clone(),
+                late_bytes.clone(),
+                watch.clone(),
+            );
             std::thread::spawn(move || {
                 let mut buf = [0u8; 8192];
                 let mut tail: Vec<u8> = Vec::with_capacity(8192 + 64);
@@ -172,6 +194,12 @@ impl Session {
                         frame_seen = true;
                         if let Ok(mut f) = frame_after.lock() {
                             *f = Some(at);
+                        }
+                    }
+                    if let Ok(mut w) = watch.lock() {
+                        if w.seen.is_none() && !w.pattern.is_empty() && contains(&tail, &w.pattern)
+                        {
+                            w.seen = Some(Instant::now());
                         }
                     }
                     let queries = count(&tail, CURSOR_QUERY);
@@ -201,7 +229,39 @@ impl Session {
             frame_after,
             late_bytes,
             stats_path,
+            watch,
         })
+    }
+
+    /// Types `bytes` into the terminal.
+    pub fn send(&self, bytes: &[u8]) {
+        if let Ok(mut w) = self.writer.lock() {
+            let _ = w.write_all(bytes);
+            let _ = w.flush();
+        }
+    }
+
+    /// Starts watching the output for `pattern` (at most 32 bytes), forgetting earlier sightings.
+    pub fn expect(&self, pattern: &[u8]) {
+        assert!(pattern.len() <= 32, "the reader keeps a 32-byte tail");
+        if let Ok(mut w) = self.watch.lock() {
+            w.pattern = pattern.to_vec();
+            w.seen = None;
+        }
+    }
+
+    /// When the expected pattern appeared, waiting up to `timeout`.
+    pub fn seen(&mut self, timeout: Duration) -> Option<Instant> {
+        let until = Instant::now() + timeout;
+        loop {
+            if let Some(at) = self.watch.lock().ok().and_then(|w| w.seen) {
+                return Some(at);
+            }
+            if Instant::now() >= until || self.exited() {
+                return None;
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
     }
 
     /// Time from spawn to the first frame, waiting up to `timeout`.
@@ -243,9 +303,8 @@ impl Session {
         if !clean_exit {
             let _ = self.child.kill();
         }
-        let stats = std::fs::read_to_string(&self.stats_path)
-            .ok()
-            .and_then(|t| BenchStats::parse(&t));
+        let stats_line = std::fs::read_to_string(&self.stats_path).unwrap_or_default();
+        let stats = BenchStats::parse(&stats_line);
         let _ = std::fs::remove_file(&self.stats_path);
         Outcome {
             pid: self.pid,
@@ -255,6 +314,7 @@ impl Session {
             exe,
             clean_exit,
             stats,
+            stats_line,
         }
     }
 }
@@ -390,6 +450,7 @@ mod tests {
                 ticks,
                 cycles: 0,
             }),
+            stats_line: String::new(),
         }
     }
 

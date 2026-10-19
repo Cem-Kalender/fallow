@@ -556,10 +556,10 @@ memory benchmark.
 
 ### Loaded benchmark
 
-- [ ] T082 [US3] Implement `cargo xtask gen-fixture` in `xtask/src/gen_fixture.rs`: a synthetic project of about 50,000 files and about 1 GB across the 15 highlighted languages, generated from fixed seeds and cached in CI by a hash of the generator. Satisfies: R-13 (resolves constitution TODO(LARGE_PROJECT_FIXTURE)).
-- [ ] T083 [US3] Implement `cargo xtask bench-memory --loaded` in `xtask/src/bench_memory.rs`: open the fixture, run one project search, open five files of different languages through scripted keys, perform one copy (to exercise `arboard`), then sample for 60 s. Fail at **≥ 150 MB** or if the run is INVALID. Satisfies: FR-040, SC-005.
-- [ ] T084 [US3] Implement `cargo xtask bench-search` in `xtask/src/bench_search.rs`: time from `Enter` in project scope to the first result row on the fixture; fail at ≥ 1 s (p95 of 10 runs). Satisfies: SC-010.
-- [ ] T085 [US3] Add `gen-fixture` (cached), `bench-memory --loaded` and `bench-search` to `.github/workflows/ci.yml` on all three OSes. Satisfies: FR-053, Constitution VI.
+- [X] T082 [US3] Implement `cargo xtask gen-fixture` in `xtask/src/gen_fixture.rs`: a synthetic project of about 50,000 files and about 1 GB across the 15 highlighted languages, generated from fixed seeds and cached in CI by a hash of the generator. Satisfies: R-13 (resolves constitution TODO(LARGE_PROJECT_FIXTURE)).
+- [X] T083 [US3] Implement `cargo xtask bench-memory --loaded` in `xtask/src/bench_memory.rs`: open the fixture, run one project search, open five files of different languages through scripted keys, perform one copy (to exercise `arboard`), then sample for 60 s. Fail at **≥ 150 MB** or if the run is INVALID. Satisfies: FR-040, SC-005.
+- [X] T084 [US3] Implement `cargo xtask bench-search` in `xtask/src/bench_search.rs`: time from `Enter` in project scope to the first result row on the fixture; fail at ≥ 1 s (p95 of 10 runs). Satisfies: SC-010.
+- [X] T085 [US3] Add `gen-fixture` (cached), `bench-memory --loaded` and `bench-search` to `.github/workflows/ci.yml` on all three OSes. Satisfies: FR-053, Constitution VI.
 
 **Checkpoint**: Editing works on its own. The loaded budget and search time are enforced in CI.
 
