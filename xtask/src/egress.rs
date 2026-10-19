@@ -425,15 +425,21 @@ fn judge_strace(text: &str, seen: &mut Seen) {
             .to_string();
         let inet = line.contains("sa_family=AF_INET");
         match call {
-            "socket" if line.contains("(AF_INET") => {
+            // close() is not traced, so a new socket() replaces whatever its fd number held.
+            "socket" => {
                 if let Some(ret) = line.rsplit("= ").next().map(str::trim) {
-                    socks.insert(
-                        (tid.clone(), ret.to_string()),
-                        Sock {
-                            dgram: line.contains("SOCK_DGRAM"),
-                            port: None,
-                        },
-                    );
+                    let key = (tid.clone(), ret.to_string());
+                    if line.contains("(AF_INET") {
+                        socks.insert(
+                            key,
+                            Sock {
+                                dgram: line.contains("SOCK_DGRAM"),
+                                port: None,
+                            },
+                        );
+                    } else {
+                        socks.remove(&key);
+                    }
                 }
             }
             "connect" if inet => {
@@ -748,6 +754,17 @@ fn sockets_of(_pid: u32) -> Vec<String> {
 
 /// Judges `tcpdump -k` lines whose process or effective process is Fallow.
 fn judge_tcpdump(text: &str, seen: &mut Seen) {
+    let lines = text.lines().count();
+    let dns_lines = text
+        .lines()
+        .filter(|l| l.contains(".53:") || l.contains(".53 "))
+        .count();
+    seen.notes.push(format!(
+        "tcpdump captured {lines} packets, {dns_lines} on port 53; first DNS line: {}",
+        text.lines()
+            .find(|l| l.contains(".53:") || l.contains(".53 "))
+            .map_or("none".into(), short)
+    ));
     let mut unattributed = 0usize;
     for line in text.lines() {
         let ours = line.contains("proc fallow:") || line.contains("eproc fallow:");
@@ -836,6 +853,19 @@ mod tests {
         let mut s = Seen::default();
         judge_strace(&sent, &mut s);
         assert_eq!(s.violations.len(), 1, "{:?}", s.violations);
+
+        let reused = format!(
+            "{probe}7 socket(AF_NETLINK, SOCK_RAW, NETLINK_ROUTE) = 6
+7 sendto(6, [{{nlmsg_len=20}}], 20, 0, {{sa_family=AF_NETLINK, nl_pid=0}}, 12) = 20
+"
+        );
+        let mut s = Seen::default();
+        judge_strace(&reused, &mut s);
+        assert!(
+            s.violations.is_empty(),
+            "fd reused for netlink: {:?}",
+            s.violations
+        );
 
         let tcp = "7 socket(AF_INET, SOCK_STREAM, IPPROTO_TCP) = 6
 7 connect(6, {sa_family=AF_INET, sin_port=htons(0), sin_addr=inet_addr(\"1.2.3.4\")}, 16) = 0
