@@ -80,6 +80,8 @@ pub struct Session {
     late_bytes: Arc<AtomicU64>,
     stats_path: PathBuf,
     watch: Arc<Mutex<Watch>>,
+    /// The executable, recorded before a quit that ends the process early.
+    exe: Option<String>,
 }
 
 /// A byte pattern the reader looks for in the output, and when it first appeared.
@@ -238,6 +240,7 @@ impl Session {
             late_bytes,
             stats_path,
             watch,
+            exe: None,
         })
     }
 
@@ -291,16 +294,36 @@ impl Session {
         matches!(self.child.try_wait(), Ok(Some(_)))
     }
 
+    /// Quits a Fallow that has sessions running: Ctrl-Q, then `y` in the confirmation that
+    /// lists them. `finish` then waits for the exit.
+    pub fn quit_with_sessions(&mut self) {
+        // The process is gone after the quit; record what it was first.
+        self.exe = crate::rss::exe_path(self.pid);
+        // Leave a focused session. The pauses keep this press from pairing with an earlier one
+        // into a "send it to the agent" double press (600 ms).
+        std::thread::sleep(Duration::from_millis(700));
+        self.send(b"\x1d");
+        std::thread::sleep(Duration::from_millis(700));
+        self.send(CTRL_Q);
+        std::thread::sleep(Duration::from_millis(500));
+        self.send(b"y");
+        std::thread::sleep(Duration::from_millis(200));
+    }
+
     /// Checks the executable (the PID must be Fallow by now), then quits with Ctrl-Q, waits up
-    /// to 5 s for a clean exit and reads the stats file.
+    /// to 10 s for a clean exit (sessions get a 5 s graceful stop) and reads the stats file.
     pub fn finish(mut self) -> Outcome {
-        let exe = crate::rss::exe_path(self.pid).unwrap_or_else(|| "<unreadable>".into());
+        let exe = self
+            .exe
+            .take()
+            .or_else(|| crate::rss::exe_path(self.pid))
+            .unwrap_or_else(|| "<unreadable>".into());
         let elapsed = self.spawned.elapsed();
         if let Ok(mut w) = self.writer.lock() {
             let _ = w.write_all(CTRL_Q);
             let _ = w.flush();
         }
-        let until = Instant::now() + Duration::from_secs(5);
+        let until = Instant::now() + Duration::from_secs(10);
         let mut clean_exit = false;
         while Instant::now() < until {
             if let Ok(Some(status)) = self.child.try_wait() {
@@ -345,7 +368,7 @@ impl Outcome {
             ));
         }
         if !self.clean_exit {
-            p.push("fallow did not exit cleanly on Ctrl-Q within 5 s".to_string());
+            p.push("fallow did not exit cleanly on Ctrl-Q within 10 s".to_string());
         }
         match self.stats {
             None => p.push("no --bench-stats file written".to_string()),

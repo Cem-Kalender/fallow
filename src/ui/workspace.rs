@@ -27,7 +27,7 @@ pub struct Geometry {
 
 /// Rows of the session list (with borders).
 fn list_rows(state: &AppState) -> u16 {
-    let n = state.project_sessions().len() as u16;
+    let n = state.listed_sessions().len() as u16;
     if state.workspace.focus == AgentsFocus::Session {
         3
     } else {
@@ -99,8 +99,34 @@ pub fn geometry(state: &AppState) -> Geometry {
 }
 
 /// The inner area of the session pane: the agent's terminal size.
-pub fn session_rect(state: &AppState) -> Rect {
+/// The active session's pane and, in split view, the second session's pane (FR-011).
+pub fn session_panes(state: &AppState) -> (Rect, Option<Rect>) {
     let r = geometry(state).session;
+    match state.workspace.split {
+        Some(_) if r.width >= 40 => {
+            let [a, b] =
+                Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)])
+                    .areas(r);
+            (a, Some(b))
+        }
+        _ => (r, None),
+    }
+}
+
+fn inner(r: Rect) -> Rect {
+    if r.width < 3 || r.height < 3 {
+        return Rect::new(0, 0, 80, 24);
+    }
+    Rect::new(r.x + 1, r.y + 1, r.width - 2, r.height - 2)
+}
+
+/// The terminal area of the split session, if shown.
+pub fn split_rect(state: &AppState) -> Option<Rect> {
+    session_panes(state).1.map(inner)
+}
+
+pub fn session_rect(state: &AppState) -> Rect {
+    let r = session_panes(state).0;
     if r.width < 3 || r.height < 3 {
         // Before the first layout: a sensible default for the agent.
         return Rect::new(0, 0, 80, 24);
@@ -155,7 +181,11 @@ pub fn draw(f: &mut Frame<'_>, state: &AppState) {
         draw_sessions(f, state, g.list);
     }
     if g.session.width > 0 {
-        terminal_pane::draw(f, state, g.session);
+        let (a, b) = session_panes(state);
+        terminal_pane::draw(f, state, a, state.workspace.active, true);
+        if let (Some(b), Some(id)) = (b, state.workspace.split) {
+            terminal_pane::draw(f, state, b, Some(id), false);
+        }
     }
     if g.procs.width > 0 {
         processes::draw(f, state, g.procs);
@@ -189,11 +219,27 @@ fn draw_projects(f: &mut Frame<'_>, state: &AppState, area: Rect) {
                 .iter()
                 .filter(|s| s.project == p.id)
                 .count();
+            let waiting = state
+                .sessions
+                .sessions
+                .iter()
+                .filter(|s| {
+                    s.project == p.id && s.state == crate::session::SessionState::NeedsAttention
+                })
+                .count();
             let mut spans = vec![Span::raw(p.name.clone())];
             if n > 0 {
                 spans.push(Span::styled(
                     format!("  {n}"),
                     Style::default().fg(Color::Cyan),
+                ));
+            }
+            if waiting > 0 {
+                spans.push(Span::styled(
+                    format!(" ●{waiting}"),
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
                 ));
             }
             if !p.present {
@@ -217,8 +263,13 @@ fn draw_sessions(f: &mut Frame<'_>, state: &AppState, area: Rect) {
         .selected()
         .map_or_else(|| "—".to_string(), |p| p.name.clone());
     let focused = state.workspace.focus == AgentsFocus::Sessions;
-    let b = block(state, format!(" Sessions: {name} "), focused);
-    let ids = state.project_sessions();
+    let title = if state.workspace.overview {
+        " All sessions (Ctrl-T or Esc: this project) ".to_string()
+    } else {
+        format!(" Sessions: {name} ")
+    };
+    let b = block(state, title, focused);
+    let ids = state.listed_sessions();
     if ids.is_empty() {
         let hint = if state.projects.selected().is_some() {
             "No sessions. n: start an agent in this project"
@@ -248,8 +299,18 @@ fn draw_sessions(f: &mut Frame<'_>, state: &AppState, area: Rect) {
                 }
                 _ => Style::default().fg(Color::Green),
             };
+            let metrics = state
+                .session_metrics(s.id)
+                .map_or(String::new(), |(bytes, cpu, n)| {
+                    format!("  {} {:.0}% {n}p", crate::ui::processes::bytes(bytes), cpu)
+                });
+            let project = if state.workspace.overview {
+                format!("{}  ", s.project_name)
+            } else {
+                String::new()
+            };
             ListItem::new(Line::from(vec![
-                Span::raw(format!("#{} {}  ", s.id, s.profile.name)),
+                Span::raw(format!("#{} {}  {project}", s.id, s.profile.name)),
                 Span::styled(
                     s.workdir
                         .branch()
@@ -261,6 +322,7 @@ fn draw_sessions(f: &mut Frame<'_>, state: &AppState, area: Rect) {
                     format!("  {}:{:02}", since / 60, since % 60),
                     Style::default().add_modifier(Modifier::DIM),
                 ),
+                Span::styled(metrics, Style::default().add_modifier(Modifier::DIM)),
             ]))
         })
         .collect();

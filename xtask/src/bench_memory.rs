@@ -126,7 +126,20 @@ pub fn run(args: &[String]) -> i32 {
             .map_or(String::new(), |f| format!(", fixture {}", f.display()))
     );
     let fixture_arg = a.loaded.as_ref().map(|f| f.display().to_string());
-    let args: Vec<&str> = fixture_arg.iter().map(String::as_str).collect();
+    // Loaded profile: a temporary config directory whose only profile is the flood persona
+    // (002 T037), so the script can start sessions without touching the user's config.
+    let config_dir =
+        std::env::temp_dir().join(format!("fallow-bench-memory-{}", std::process::id()));
+    let config_arg = config_dir.display().to_string();
+    let mut args: Vec<&str> = Vec::new();
+    if a.loaded.is_some() {
+        if let Err(e) = write_flood_profile(&config_dir) {
+            eprintln!("bench-memory: INVALID: {e}");
+            return 2;
+        }
+        args.extend(["--config-dir", config_arg.as_str()]);
+    }
+    args.extend(fixture_arg.iter().map(String::as_str));
     let mut s = match Session::spawn(&a.bin, &args, a.settle) {
         Ok(s) => s,
         Err(e) => {
@@ -161,6 +174,9 @@ pub fn run(args: &[String]) -> i32 {
         };
         samples.push((second, bytes));
     }
+    if a.loaded.is_some() {
+        s.quit_with_sessions();
+    }
     let outcome = s.finish();
 
     let mut csv = String::from("second,rss_bytes\n");
@@ -186,7 +202,14 @@ pub fn run(args: &[String]) -> i32 {
         // Fallow's own counters prove the script did what it says (T083).
         let field = |k| pty::stat_field(&outcome.stats_line, k).unwrap_or(0);
         let (buffers, searches, copies) = (field("buffers"), field("searches"), field("copies"));
-        println!("loaded evidence: buffers={buffers} searches={searches} copies={copies}");
+        let sessions = field("sessions");
+        let _ = std::fs::remove_dir_all(&config_dir);
+        println!(
+            "loaded evidence: buffers={buffers} searches={searches} copies={copies} sessions={sessions}"
+        );
+        if sessions < SESSIONS {
+            problems.push(format!("{sessions} sessions started, need {SESSIONS}"));
+        }
         if buffers < OPEN_FILES {
             problems.push(format!("{buffers} files opened, need {OPEN_FILES}"));
         }
@@ -340,7 +363,38 @@ fn script(s: &mut Session, start: Instant, samples: &mut Vec<(u64, u64)>) -> Res
     s.send(CTRL_A);
     s.send(CTRL_C);
     wait(s, Duration::from_secs(2), start, samples);
+    // 002 T037: back to the agent workspace and four sessions of the flood persona, each
+    // printing 10,000 lines of 200-column colored text (full default scrollback).
+    s.send(CTRL_E);
+    wait(s, Duration::from_millis(500), start, samples);
+    for _ in 0..SESSIONS {
+        s.send(b"n");
+        wait(s, Duration::from_millis(500), start, samples);
+        s.send(b"\r");
+        wait(s, Duration::from_secs(4), start, samples);
+        s.send(LEAVE);
+        wait(s, Duration::from_millis(500), start, samples);
+    }
     Ok(())
+}
+
+/// Sessions the loaded profile starts (FR-029: 4 with full scrollback).
+const SESSIONS: u64 = 4;
+const CTRL_E: &[u8] = b"\x05";
+const LEAVE: &[u8] = b"\x1d";
+
+fn write_flood_profile(dir: &std::path::Path) -> Result<(), String> {
+    std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let me = std::env::current_exe().map_err(|e| e.to_string())?;
+    let mut t = String::new();
+    for id in ["claude", "codex", "gemini", "aider", "shell"] {
+        t.push_str(&format!("[[profile]]\nid = \"{id}\"\nenabled = false\n\n"));
+    }
+    t.push_str(&format!(
+        "[[profile]]\nid = \"flood\"\nname = \"Flood\"\ncommand = {:?}\nargs = [\"flood-agent\", \"10000\"]\n",
+        me.display().to_string()
+    ));
+    std::fs::write(dir.join("profiles.toml"), t).map_err(|e| e.to_string())
 }
 
 /// Groups and LLM processes in `fallow --snapshot-json`, plus the system's process count.

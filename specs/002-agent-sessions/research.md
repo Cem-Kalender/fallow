@@ -111,6 +111,12 @@ without reading conversation content:
 4. **Quiet fallback**: no output for `attention_delay_ms` (5 s) while the process group's CPU is
    under the 001 busy threshold.
 
+**Clearing (refined during US2, 2026-10-19)**:
+- An explicit signal (1–3) stays until the user types into the session or the agent reports
+  working again (OSC 9;4, OSC 7501 "working", a "✦" title). Agent TUIs often redraw right after
+  ringing the bell, so plain output must not clear it.
+- The quiet fallback (4) clears on any new output.
+
 **Supporting decisions**:
 - **Focus reporting (`?1004`)**: Fallow tells agents that asked for it whether their pane is visible
   and focused. Several agents only notify when they believe they are unfocused (Codex
@@ -145,7 +151,10 @@ Producers:
     at most one pending per session;
   - a **waiter thread** that sends `SessionExited(id, status)`.
 
-Rendering is capped at one frame per 16 ms while output streams. A pane with synchronized output
+Rendering is capped at one frame per 16 ms while output streams. A session's wake-up flag is
+re-armed by the main loop at most once per frame (not when its event is handled), so a flooding
+agent costs one wake-up per frame. Measured with 7 flooding sessions: about 116 loop iterations
+per second instead of about 21,000. A pane with synchronized output
 active (`?2026h`) is not redrawn until `?2026l` or a 150 ms timeout.
 
 **Rationale**: with sessions, the main loop must wake on agent output, not only on keys. Polling

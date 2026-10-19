@@ -126,6 +126,10 @@ pub enum SignalKind {
     LocalModelConnection {
         server: ProcessKey,
     },
+    /// The user started it as a Fallow session (002 FR-013).
+    Session {
+        id: u32,
+    },
 }
 
 /// `Certain` ranks above `Likely`.
@@ -145,7 +149,7 @@ impl DetectionSignal {
     /// A signature match is certain; a connection is only likely.
     pub fn new(kind: SignalKind) -> Self {
         let confidence = match kind {
-            SignalKind::Signature { .. } => Confidence::Certain,
+            SignalKind::Signature { .. } | SignalKind::Session { .. } => Confidence::Certain,
             SignalKind::ProviderConnection { .. } | SignalKind::LocalModelConnection { .. } => {
                 Confidence::Likely
             }
@@ -231,6 +235,8 @@ pub struct Snapshot {
     pub records: HashMap<ProcessKey, ProcessRecord>,
     pub summary: SystemSummary,
     pub notes: Vec<Note>,
+    /// Agents started as Fallow sessions: process → session id (002 FR-013, R-8).
+    pub sessions: HashMap<ProcessKey, u32>,
 }
 
 #[cfg(test)]

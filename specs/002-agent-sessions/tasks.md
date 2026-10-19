@@ -209,14 +209,14 @@ folder; a dirty worktree can't be removed.
 
 ### Tests for User Story 2
 
-- [ ] T027 [P] [US2] Write `tests/session_attention.rs` with an xtask "attention" persona (works, rings BEL, prints OSC 9, OSC 777 and OSC 7501 waiting, sets a Gemini-style title, goes quiet). Check:
+- [X] T027 [P] [US2] Write `tests/session_attention.rs` with an xtask "attention" persona (works, rings BEL, prints OSC 9, OSC 777 and OSC 7501 waiting, sets a Gemini-style title, goes quiet). Check:
   - each signal moves the session to `NeedsAttention` and new output moves it back to `Working`;
   - the quiet fallback fires after `attention_delay_ms` only while group CPU is under the 001 busy threshold;
   - a hidden session raises a notice;
   - the timing is within the delay + 2 s (SC-004).
 
   Satisfies: research R-4.
-- [ ] T028 [P] [US2] Extend `tests/control_requires_confirmation.rs` (001 SC-008), or create it if 001 Phase 8 has not landed:
+- [X] T028 [P] [US2] Extend `tests/control_requires_confirmation.rs` (001 SC-008), or create it if 001 Phase 8 has not landed:
   - stopping a session is unreachable without a `ConfirmedToken` naming that session;
   - force stop needs its own token;
   - quitting with running sessions needs one confirmation listing them.
@@ -225,30 +225,41 @@ folder; a dirty worktree can't be removed.
 
 ### Implementation for User Story 2
 
-- [ ] T029 [US2] Implement `src/session/attention.rs`:
+- [X] T029 [US2] Implement `src/session/attention.rs`:
   - the R-4 signal order (BEL, OSC 9/777/7501, title status, quiet fallback with group CPU from the latest snapshot);
   - state transitions and `state_since` per the data-model.md state machine;
   - notices for sessions that are not visible with focus;
   - per-project counts of sessions needing attention.
-- [ ] T030 [US2] Add `Request::Track { key, session }` and `Request::Untrack` to `src/procmon/worker.rs`. Tracked processes are always group roots, labelled `#n project`, type "session". Expose group memory and CPU per session to the UI (research R-8, FR-013). Add the cases to `tests/grouping.rs`.
-- [ ] T031 [US2] Implement the session overview in `src/ui/sessions.rs` (`Ctrl-T`):
+- [X] T030 [US2] Add `Request::Track { key, session }` and `Request::Untrack` to `src/procmon/worker.rs`. Tracked processes are always group roots, labelled `#n project`, type "session". Expose group memory and CPU per session to the UI (research R-8, FR-013). Add the cases to `tests/grouping.rs`.
+- [X] T031 [US2] Implement the session overview in `src/ui/sessions.rs` (`Ctrl-T`):
   - all sessions across projects with project, profile, state, time in state, and group memory and CPU (FR-008);
   - `Enter` or double-click focuses a session;
   - `p` jumps to its process;
   - `w` closes an exited session;
   - `R` restarts.
-- [ ] T032 [US2] Implement next/previous session (`Ctrl-N` / `Ctrl-B` outside sessions; palette "Next session" / "Previous session") and split view (`s`: two panes side by side in the middle column, each focusable) in `src/app/workspace.rs` and `src/ui/workspace.rs` (FR-010, FR-011).
-- [ ] T033 [US2] Implement stop (`Shift-K`) through 001's ControlRequest lifecycle in `src/app/workspace.rs` and `src/session/platform/*`:
+- [X] T032 [US2] Implement next/previous session (`Ctrl-N` / `Ctrl-B` outside sessions; palette "Next session" / "Previous session") and split view (`s`: two panes side by side in the middle column, each focusable) in `src/app/workspace.rs` and `src/ui/workspace.rs` (FR-010, FR-011).
+- [X] T033 [US2] Implement stop (`Shift-K`) through 001's ControlRequest lifecycle in `src/app/workspace.rs` and `src/session/platform/*`:
   - the confirmation names the session, the agent and the process count;
   - graceful stop, then a separately confirmed force stop on Linux and macOS (FR-012).
-- [ ] T034 [US2] Implement the quit flow in `src/app/state.rs`: `Ctrl-Q` with running sessions shows one confirmation listing them (project, profile, process count). Confirming stops all gracefully, waits up to 5 s, then exits; on Windows the Job Objects guarantee nothing outlives Fallow (spec Edge Cases).
-- [ ] T035 [US2] Add the LLM-panel jump `j` (processes started as sessions only) and the `#n project` label in `src/ui/processes.rs` (FR-013).
-- [ ] T036 [US2] Extend `xtask/src/bench_sessions.rs` with:
+- [X] T034 [US2] Implement the quit flow in `src/app/state.rs`: `Ctrl-Q` with running sessions shows one confirmation listing them (project, profile, process count). Confirming stops all gracefully, waits up to 5 s, then exits; on Windows the Job Objects guarantee nothing outlives Fallow (spec Edge Cases).
+- [X] T035 [US2] Add the LLM-panel jump `j` (processes started as sessions only) and the `#n project` label in `src/ui/processes.rs` (FR-013).
+- [X] T036 [US2] Extend `xtask/src/bench_sessions.rs` with:
   - a switch benchmark: time from `Ctrl-N` to the other session fully drawn, under 100 ms (SC-005);
   - a flood benchmark: 8 sessions of a "flood" persona printing continuously, key echo in the focused session p95 under 100 ms (SC-006).
-- [ ] T037 [US2] Extend `cargo xtask bench-memory --loaded` in `xtask/src/bench_memory.rs`: after the 001 script, start 4 sessions of the "flood" persona, each printing 10,000 lines of 200-column colored text, then settle and sample as before. Fail at ≥ 150 MB; INVALID unless `--bench-stats` reports `sessions=4` (FR-029, SC-007). Add `sessions` to the stats line in `src/main.rs` and contracts/cli.md of 001.
+- [X] T037 [US2] Extend `cargo xtask bench-memory --loaded` in `xtask/src/bench_memory.rs`: after the 001 script, start 4 sessions of the "flood" persona, each printing 10,000 lines of 200-column colored text, then settle and sample as before. Fail at ≥ 150 MB; INVALID unless `--bench-stats` reports `sessions=4` (FR-029, SC-007). Add `sessions` to the stats line in `src/main.rs` and contracts/cli.md of 001.
 
 **Checkpoint**: several sessions can be overseen, switched, split and stopped; the loaded budget includes sessions.
+
+*Notes from implementation (2026-10-19):*
+- **Force stop on every platform.** A force stop is offered after 5 s on Windows too, through the
+  Job Object, not only on Linux and macOS.
+- **The overview is a mode of the session list.** `Ctrl-T` switches the list to all projects
+  with memory, CPU and process count per session; it is not a separate overlay.
+- **T028 created the control-test file.** `tests/control_requires_confirmation.rs` did not exist
+  yet, because 001 Phase 8 has not landed; T028 created it.
+- **The leave key's double press was redefined.** The first press leaves; only an immediate second
+  press, with no key in between, goes back and sends the key to the agent. This came after
+  fast switching exposed the original behavior.
 
 ---
 

@@ -276,7 +276,18 @@ pub fn draw(f: &mut Frame<'_>, state: &AppState, area: Rect) {
     .areas(inner);
 
     let selected = state.panel.selected.min(rows.len() - 1);
-    let ctx = Ctx::new(snap, state.all_users);
+    let mut ctx = Ctx::new(snap, state.all_users);
+    ctx.sessions = snap
+        .sessions
+        .iter()
+        .map(|(k, id)| {
+            let project = state
+                .sessions
+                .get(*id)
+                .map_or("", |s| s.project_name.as_str());
+            (*k, format!(" #{id} {project}"))
+        })
+        .collect();
     let cols = choose_columns(table_area.width, state.all_users);
     let header = TableRow::new(
         cols.iter()
@@ -477,6 +488,8 @@ struct Ctx<'a> {
     home: Option<String>,
     totals: HashMap<ProcessKey, (u64, f32, bool)>,
     all_users: bool,
+    /// Agents started as Fallow sessions: `#n project` (002 FR-013).
+    sessions: HashMap<ProcessKey, String>,
 }
 
 impl<'a> Ctx<'a> {
@@ -501,6 +514,7 @@ impl<'a> Ctx<'a> {
             home: home_dir(),
             totals,
             all_users,
+            sessions: HashMap::new(),
         }
     }
 
@@ -524,6 +538,9 @@ impl<'a> Ctx<'a> {
                     .strip_suffix(".exe")
                     .or_else(|| name.strip_suffix(".EXE"))
                     .unwrap_or(name);
+                let label = self.sessions.get(&r.key).map_or("", String::as_str);
+                let owned = format!("{name}{label}");
+                let name = owned.as_str();
                 if r.depth == 0 {
                     let mark = match (r.expandable, expanded) {
                         (false, _) => "  ",
@@ -641,6 +658,7 @@ impl<'a> Ctx<'a> {
                 .iter()
                 .map(|s| match &s.kind {
                     SignalKind::Signature { id } => format!("signature {id}"),
+                    SignalKind::Session { id } => format!("started in Fallow as session #{id}"),
                     SignalKind::ProviderConnection { provider_id, via } => format!(
                         "{provider_id} connection via {}",
                         if *via == crate::procmon::snapshot::Via::Resolved {
@@ -696,6 +714,7 @@ pub fn kind(k: Kind) -> &'static str {
         Kind::LocalModelServer => "local model server",
         Kind::Unknown => "unknown",
         Kind::Browser => "browser",
+        Kind::Session => "session",
     }
 }
 

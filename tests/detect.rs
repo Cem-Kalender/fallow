@@ -306,3 +306,54 @@ fn footprints_are_read_at_most_every_footprint_interval() {
     assert_eq!(reads, 2);
     assert_ne!(cpus[0], cpus[7], "CPU still updates on every refresh");
 }
+
+#[test]
+fn session_agents_are_tracked_as_their_own_groups() {
+    // 002 R-8: outer claude (10) → fallow (20) → session shell (30) → child (31). The tracked
+    // shell is listed even without a signature, is certain, and roots its own group: its
+    // child is not counted in the outer claude's group.
+    use fallow::procmon::worker::Request;
+    let fake = Fake::default();
+    fake.0
+        .borrow_mut()
+        .cmdlines
+        .insert(10, vec!["/home/u/.local/bin/claude"]);
+    let mut m = monitor(&fake, false);
+    m.request(Request::Track {
+        pid: 30,
+        session: 4,
+    });
+    let mut fallow = p(20, 6, "fallow");
+    fallow.parent_pid = Some(10);
+    let mut shell = p(30, 7, "bash");
+    shell.parent_pid = Some(20);
+    let mut child = p(31, 8, "pytest");
+    child.parent_pid = Some(30);
+    let s = m.cycle(
+        &[p(1, 1, "init"), p(10, 5, "claude"), fallow, shell, child],
+        100,
+        50,
+    );
+    let l = llm_of(&s, 30).expect("the session agent is listed");
+    assert_eq!(l.kind, Kind::Session);
+    assert_eq!(l.confidence, Confidence::Certain);
+    assert!(matches!(l.signals[0].kind, SignalKind::Session { id: 4 }));
+    assert_eq!(s.sessions.values().copied().collect::<Vec<_>>(), [4]);
+    let outer = s.groups.iter().find(|g| g.root.pid == 10).unwrap();
+    let inner = s.groups.iter().find(|g| g.root.pid == 30).unwrap();
+    assert!(
+        outer.members.iter().any(|k| k.pid == 20),
+        "fallow stays in the outer group"
+    );
+    assert!(!outer.members.iter().any(|k| k.pid == 30 || k.pid == 31));
+    assert_eq!(
+        inner.members.iter().map(|k| k.pid).collect::<Vec<_>>(),
+        [31]
+    );
+    m.request(Request::Untrack { pid: 30 });
+    let s = m.cycle(&[p(1, 1, "init"), p(30, 7, "bash")], 100, 50);
+    assert!(
+        llm_of(&s, 30).is_none(),
+        "untracked: an ordinary process again"
+    );
+}

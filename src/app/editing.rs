@@ -103,6 +103,10 @@ pub enum Pending {
         id: u32,
         offer_remove: bool,
     },
+    /// 002 FR-012: stop this session gracefully.
+    StopSession(u32),
+    /// 002 FR-012: force-stop this session (second confirmation).
+    ForceStopSession(u32),
 }
 
 const DOUBLE_CLICK: Duration = Duration::from_millis(400);
@@ -481,6 +485,14 @@ impl AppState {
             Outcome::Confirmed(token) => {
                 self.overlay = Overlay::None;
                 match action {
+                    Pending::StopSession(id) => match self.sessions.stop(id, token) {
+                        Ok(()) => self.say("Stopping… (force stop is offered after 5 s)"),
+                        Err(e) => self.say(e),
+                    },
+                    Pending::ForceStopSession(id) => match self.sessions.force_stop(id, token) {
+                        Ok(()) => self.say("Force stopped"),
+                        Err(e) => self.say(e),
+                    },
                     Pending::CloseSession { id, offer_remove } => {
                         if offer_remove {
                             let target = self.sessions.get(id).and_then(|s| match &s.workdir {
@@ -502,7 +514,17 @@ impl AppState {
                         }
                         self.close_session(id);
                     }
-                    Pending::Quit => self.quit = true,
+                    Pending::Quit => {
+                        if self.sessions.running() == 0 {
+                            self.quit = true;
+                        } else {
+                            // Spec Edge Cases: stop every agent gracefully, then quit (tick_stops
+                            // forces what is left after 5 s).
+                            self.sessions.stop_all_confirmed(token);
+                            self.quitting = Some(Instant::now());
+                            self.say("Stopping sessions, then quitting…");
+                        }
+                    }
                     Pending::CloseBuffer(i) => self.editor.close(i),
                     Pending::Delete(path) => match fileops::delete(&path, token) {
                         Ok(()) => {
@@ -542,15 +564,45 @@ impl AppState {
 
     /// Ctrl-Q (FR-007): warns and lists the dirty buffers.
     pub(super) fn request_quit(&mut self) -> bool {
+        if self.quitting.is_some() {
+            // Already stopping sessions on the way out.
+            return false;
+        }
         let dirty = self.editor.dirty_names();
-        if dirty.is_empty() {
+        let running: Vec<String> = self
+            .sessions
+            .sessions
+            .iter()
+            .filter(|s| s.state.running())
+            .map(|s| {
+                let procs = self.session_metrics(s.id).map_or(1, |m| m.2);
+                format!(
+                    "  {}  ({procs} process{})",
+                    s.label(),
+                    if procs == 1 { "" } else { "es" }
+                )
+            })
+            .collect();
+        if dirty.is_empty() && running.is_empty() {
             self.quit = true;
             return false;
         }
-        let mut body = vec!["These files have unsaved changes:".to_string()];
-        body.extend(dirty.iter().map(|d| format!("  {d}")));
-        body.push("Quitting discards them.".into());
-        let mut d = Dialog::new("Quit without saving?", "quit", body, "Quit");
+        let mut body = Vec::new();
+        if !running.is_empty() {
+            body.push("These sessions are running and will be stopped:".to_string());
+            body.extend(running);
+        }
+        if !dirty.is_empty() {
+            body.push("These files have unsaved changes:".to_string());
+            body.extend(dirty.iter().map(|d| format!("  {d}")));
+            body.push("Quitting discards them.".into());
+        }
+        let title = if dirty.is_empty() {
+            "Quit and stop sessions?"
+        } else {
+            "Quit without saving?"
+        };
+        let mut d = Dialog::new(title, "quit", body, "Quit");
         d.cancel_label = "Cancel".into();
         self.confirm(d, Pending::Quit);
         true
