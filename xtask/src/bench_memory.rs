@@ -305,9 +305,12 @@ fn script(s: &mut Session, start: Instant, samples: &mut Vec<(u64, u64)>) -> Res
     if s.wait_frame(Duration::from_secs(10)).is_none() {
         return Err("no first frame".into());
     }
-    // Fallow starts in the Files pane; Tab moves to the editor, where Ctrl-F works. One project
+    // Fallow starts on the agent workspace (002); Ctrl-E switches to the editor view of the
+    // project (focus in Files), and Tab moves to the editor, where Ctrl-F works. One project
     // search over the whole fixture: no file is open yet, so the find bar starts in "whole
     // project". The search is left to finish, then the bar is closed.
+    s.send(b"\x05");
+    wait(s, Duration::from_millis(300), start, samples);
     s.send(b"\t");
     wait(s, Duration::from_millis(300), start, samples);
     search(s, crate::gen_fixture::NEEDLE, false, start, samples)?;
