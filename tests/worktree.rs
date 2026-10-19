@@ -106,8 +106,11 @@ fn worktrees_are_isolated_and_listed() {
     listed.sort_by(|x, y| x.branch.cmp(&y.branch));
     let branches: Vec<&str> = listed.iter().map(|w| w.branch.as_str()).collect();
     assert_eq!(branches, ["fallow/a-1", "fallow/b-1"]);
+    // Git reports resolved paths (macOS /var -> /private/var, Windows 8.3 short names expanded),
+    // so compare canonical forms.
     let same = |x: &Path, y: &Path| {
-        x.to_string_lossy().to_lowercase() == y.to_string_lossy().to_lowercase()
+        let c = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+        c(x) == c(y)
     };
     assert!(listed.iter().any(|w| same(&w.path, &a.path)), "{listed:?}");
     cleanup(&r);
