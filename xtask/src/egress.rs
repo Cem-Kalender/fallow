@@ -194,6 +194,7 @@ fn one_run(bin: &Path, base: &Path, config: &Path, no_dns: bool) -> Result<Seen,
         None => Session::spawn(bin, &args, Duration::from_secs(1))?,
     };
     let poller = capture.watch_pid(s.pid);
+    progress("fallow started");
     let started = std::time::Instant::now();
     let steps = (|| {
         if s.wait_frame(Duration::from_secs(20)).is_none() {
@@ -222,15 +223,27 @@ fn one_run(bin: &Path, base: &Path, config: &Path, no_dns: bool) -> Result<Seen,
         }
         Ok(())
     })();
+    progress(&format!(
+        "session steps done: {}",
+        if steps.is_ok() { "ok" } else { "failed" }
+    ));
     s.quit_with_sessions();
     let outcome = s.finish();
+    progress("fallow quit");
     let fallow_pid = outcome.stats.map_or(outcome.pid, |st| st.pid);
     if let Some(p) = poller {
         p.stop.store(true, Ordering::Relaxed);
         let _ = p.handle.join();
+        progress("socket polling stopped");
     }
     steps?;
     capture.finish(fallow_pid)
+}
+
+/// A progress line, flushed at once so a hang shows where it is.
+fn progress(what: &str) {
+    println!("egress: {what}");
+    fixtures::flush();
 }
 
 struct Poller {
@@ -358,10 +371,23 @@ impl Capture {
         }
         if let Some(mut child) = self.tcpdump.take() {
             std::thread::sleep(Duration::from_secs(1));
-            let _ = std::process::Command::new("sudo")
-                .args(["kill", "-INT", &child.id().to_string()])
-                .status();
-            let _ = child.wait();
+            // Stop tcpdump itself (not the sudo in front of it), and never wait forever.
+            let stop = |sig: &str| {
+                let _ = std::process::Command::new("sudo")
+                    .args(["pkill", sig, "-f", "tcpdump -i pktap"])
+                    .status();
+            };
+            stop("-INT");
+            let until = std::time::Instant::now() + Duration::from_secs(5);
+            while child.try_wait().ok().flatten().is_none() && std::time::Instant::now() < until {
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            if child.try_wait().ok().flatten().is_none() {
+                stop("-KILL");
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+            progress("tcpdump stopped");
             let text = std::fs::read_to_string(self.dir.join("tcpdump.txt")).unwrap_or_default();
             judge_tcpdump(&text, &mut seen);
         }
