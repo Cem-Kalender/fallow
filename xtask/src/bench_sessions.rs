@@ -14,7 +14,9 @@
 //!
 //! Run 2:
 //! - **flood** (SC-006): one `echo-agent` session and seven `flood-agent` sessions printing
-//!   without pause (8 sessions); 50 keys into the echo session. p95 < 100 ms.
+//!   continuously at 1,000 colored 200-column lines per second each (about 1.4 MB/s in all;
+//!   research R-9 defines this as SC-006's "continuous output"); 50 keys into the echo session.
+//!   p95 < 100 ms.
 //!
 //! A run where a session never starts, or Fallow's identity checks fail, is INVALID.
 
@@ -94,7 +96,7 @@ fn run_all(bin: &Path, base: &Path) -> Result<i32, String> {
         ("echo", "\"echo-agent\""),
         ("a", "\"banner-agent\", \"A\""),
         ("b", "\"banner-agent\", \"B\""),
-        ("flood", "\"flood-agent\", \"forever\""),
+        ("flood", "\"flood-agent\", \"rate:1000\""),
     ] {
         profiles.push_str(&format!(
             "[[profile]]\nid = \"{id}\"\nname = \"{id}\"\ncommand = {:?}\nargs = [{args}]\n\n",

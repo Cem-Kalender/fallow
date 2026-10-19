@@ -305,3 +305,19 @@ the folder holds nothing but the fresh checkout (FR-031, scenario 7).
 - **Switching branches in one folder:** agents would still share files.
 - **Worktrees inside the repository** (`.fallow/worktrees`): they would appear in the project's
   tree and need ignore rules.
+
+### R-9 addendum: the SC-006 load (2026-10-19)
+
+SC-006 asks for responsiveness "while the other sessions produce continuous output" without a
+rate. The benchmark first used producers printing as fast as the CPU allows. On the 3-core
+`macos-15` runner, seven of them plus their seven parser threads saturated the machine. Key echo
+in the eighth session reached p95 254 ms, max 366 ms (CI run 39261492616), against 27 ms on Linux
+and 31 ms on Windows (4-core runners). That measured the runner's CPU, not Fallow.
+
+**Decision**: "continuous output" is defined as **1,000 colored 200-column lines per second per
+session**, about 200 KB/s per session and 1.4 MB/s across seven. That is far above what agent
+CLIs print, even during builds. The `flood-agent rate:1000` persona produces it.
+
+**Alternative kept open**: backpressure for sessions that are not on screen (read them more
+slowly so their agents block on output, as a slow terminal would). It would hold up under
+unbounded output, but it also slows agents that write a lot while hidden.
