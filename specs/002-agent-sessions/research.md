@@ -130,6 +130,10 @@ without reading conversation content:
   - Aider: `--notifications-command` pointing to `fallow --notify-session <id>` (**verify**).
 
   Each flag is listed in the profile and can be removed by overriding the profile.
+  Checked 2026-10-19 (US5): Claude Code 2.1.303 lists `--settings <file-or-json>` and starts with
+  the inline JSON. Codex was not installed on the test machine; its flags follow its documented
+  `-c key=value` syntax and stay to be confirmed. Aider's `--notifications-command` stays
+  unverified and is not added; Aider sessions rely on the bell and the quiet fallback.
 - Hooks (Claude Code, Codex, Gemini) give the most precise events but need a channel back to
   Fallow. That channel is feature 003's; 002 doesn't use hooks.
 

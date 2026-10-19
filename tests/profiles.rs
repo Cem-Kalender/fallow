@@ -2,6 +2,9 @@
 
 use std::path::Path;
 
+use fallow::app::state::AppState;
+use fallow::app::workspace::Where;
+use fallow::session::SessionState;
 use fallow::session::profiles::{Shim, builtins, load, parse_npm_shim, resolve};
 
 #[test]
@@ -118,4 +121,132 @@ fn missing_commands_say_so() {
     // The current executable can be resolved by absolute path.
     let me = std::env::current_exe().unwrap();
     assert_eq!(resolve(&me.display().to_string()).unwrap().program, me);
+}
+
+#[test]
+fn built_ins_turn_on_notifications_for_the_run_only() {
+    // Research R-4: per-run flags, listed in the profile.
+    let b = builtins();
+    let args = |id: &str| b.iter().find(|p| p.id == id).unwrap().args.clone();
+    assert_eq!(
+        args("claude"),
+        ["--settings", r#"{"preferredNotifChannel":"terminal_bell"}"#]
+    );
+    assert_eq!(
+        args("codex"),
+        [
+            "-c",
+            "tui.notifications=true",
+            "-c",
+            r#"tui.notification_method="bel""#
+        ]
+    );
+    assert!(args("gemini").is_empty());
+    assert!(args("aider").is_empty());
+    assert!(args("shell").is_empty());
+
+    // The Claude Code value is inline JSON, not a settings file: nothing on disk is edited.
+    let v: serde_json::Value = serde_json::from_str(&args("claude")[1]).unwrap();
+    assert_eq!(v["preferredNotifChannel"], "terminal_bell");
+    for p in &b {
+        for a in &p.args {
+            assert!(
+                !a.ends_with(".json") && !a.ends_with(".toml") && !std::path::Path::new(a).exists(),
+                "{}: {a:?} looks like a settings file",
+                p.id
+            );
+        }
+    }
+
+    // The profile view lists each flag.
+    let claude = &b[0];
+    assert!(
+        claude
+            .details()
+            .iter()
+            .any(|d| d.contains("--settings") && d.contains("terminal_bell")),
+        "{:?}",
+        claude.details()
+    );
+
+    // Overriding the profile removes the flags.
+    let text = "[[profile]]\nid = \"claude\"\nname = \"Claude Code\"\ncommand = \"claude\"\n";
+    let (ps, notices) = load(Some(("profiles.toml", text)));
+    assert!(notices.is_empty(), "{notices:?}");
+    assert!(ps[0].args.is_empty());
+}
+
+#[test]
+fn details_show_env_names_but_never_values() {
+    let text = "[[profile]]\nid = \"mine\"\nname = \"Mine\"\ncommand = \"agent\"\nargs = [\"--fast\"]\n[profile.env]\nAPI_TOKEN = \"secret-value-456\"\n";
+    let (ps, _) = load(Some(("profiles.toml", text)));
+    let d = ps
+        .iter()
+        .find(|p| p.id == "mine")
+        .unwrap()
+        .details()
+        .join("\n");
+    assert!(d.contains("command: agent"), "{d}");
+    assert!(d.contains("args: --fast"), "{d}");
+    assert!(d.contains("API_TOKEN"), "{d}");
+    assert!(!d.contains("secret-value-456"), "{d}");
+}
+
+fn temp(name: &str) -> std::path::PathBuf {
+    let d = std::env::temp_dir().join(format!("fallow-prof-{}-{name}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&d);
+    std::fs::create_dir_all(&d).unwrap();
+    std::path::absolute(&d).unwrap()
+}
+
+#[test]
+fn reload_configuration_reads_profiles_again() {
+    let cfg = temp("reload");
+    let mut s = AppState::new(None, Vec::new());
+    s.store.dir = Some(cfg.clone());
+    assert!(!s.profiles.iter().any(|p| p.id == "mine"));
+    std::fs::write(
+        cfg.join("profiles.toml"),
+        "[[profile]]\nid = \"mine\"\nname = \"Mine\"\ncommand = \"agent\"\n",
+    )
+    .unwrap();
+    s.run("config.reload");
+    assert!(s.profiles.iter().any(|p| p.id == "mine"));
+    assert!(s.notices.is_empty(), "{:?}", s.notices);
+
+    // A broken file: the built-ins remain and the error is reported as file:line, once.
+    std::fs::write(cfg.join("profiles.toml"), "[[profile]\n").unwrap();
+    s.run("config.reload");
+    s.run("config.reload");
+    assert!(!s.profiles.iter().any(|p| p.id == "mine"));
+    assert_eq!(s.profiles.len(), 5);
+    let errors: Vec<&String> = s
+        .notices
+        .iter()
+        .filter(|n| n.starts_with("profiles.toml:1:"))
+        .collect();
+    assert_eq!(errors.len(), 1, "{:?}", s.notices);
+    let _ = std::fs::remove_dir_all(&cfg);
+}
+
+#[test]
+fn a_failing_command_shows_its_error_in_the_session_only() {
+    let d = temp("failing");
+    let mut s = AppState::new(Some(d.clone()), Vec::new());
+    let (tx, _rx) = std::sync::mpsc::channel();
+    s.events = Some(tx);
+    let (ps, _) = load(Some((
+        "profiles.toml",
+        "[[profile]]\nid = \"broken\"\nname = \"Broken\"\ncommand = \"no-such-agent-xyz\"\n",
+    )));
+    s.profiles = ps;
+    s.start_session_at("broken", Where::ProjectFolder).unwrap();
+    let sess = &s.sessions.sessions[0];
+    match &sess.state {
+        SessionState::Failed(why) => assert!(why.contains("not found"), "{why}"),
+        other => panic!("{other:?}"),
+    }
+    assert!(s.notices.is_empty(), "not a global notice: {:?}", s.notices);
+    assert_eq!(s.sessions.sessions.len(), 1);
+    let _ = std::fs::remove_dir_all(&d);
 }
