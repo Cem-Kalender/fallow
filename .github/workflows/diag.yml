@@ -1,0 +1,44 @@
+# Performance diagnostics (002 SC-006 investigation). Runs only for commits whose message
+# contains "[diag]"; normal CI is unaffected. Uploads the latency trace, a `sample` profile of
+# Fallow and a process CPU snapshot taken while seven sessions print.
+name: diag
+
+on:
+  push:
+
+permissions:
+  contents: read
+
+jobs:
+  sessions:
+    if: contains(github.event.head_commit.message, '[diag]')
+    name: diag ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust toolchain (from rust-toolchain.toml)
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - name: Build (release)
+        run: cargo build --release --locked
+      - name: diag-sessions
+        env:
+          FALLOW_DIAG_LOG: ${{ runner.temp }}/diag/trace.log
+        run: |
+          mkdir -p "$RUNNER_TEMP/diag"
+          cargo xtask diag-sessions --out "$RUNNER_TEMP/diag"
+          echo "trace lines: $(wc -l < "$RUNNER_TEMP/diag/trace.log")"
+      - name: Upload
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: diag-${{ matrix.os }}
+          path: ${{ runner.temp }}/diag

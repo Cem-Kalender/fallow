@@ -62,6 +62,7 @@ pub fn spawn(
     spec: &SpawnSpec,
     id: SessionId,
     term: Arc<Mutex<Term>>,
+    signals: Arc<Mutex<Vec<super::term::Signal>>>,
     waker: OutputWaker,
     events: Sender<AppEvent>,
 ) -> Result<Pty, String> {
@@ -111,13 +112,21 @@ pub fn spawn(
                     Ok(0) | Err(_) => break,
                     Ok(n) => n,
                 };
-                let replies = match term.lock() {
+                crate::app::diag::mark("read", u64::from(id));
+                let (replies, sigs) = match term.lock() {
                     Ok(mut t) => {
                         t.process(&buf[..n]);
-                        t.take_replies()
+                        (t.take_replies(), t.take_signals())
                     }
                     Err(_) => break,
                 };
+                // Signals go through their own small queue, so the main thread never waits on
+                // this session's terminal while it parses (002 SC-006 investigation).
+                if !sigs.is_empty() {
+                    if let Ok(mut q) = signals.lock() {
+                        q.extend(sigs);
+                    }
+                }
                 if !replies.is_empty() {
                     if let Ok(mut w) = w.lock() {
                         let _ = w.write_all(&replies);
@@ -154,6 +163,7 @@ impl Pty {
             let _ = w.write_all(bytes);
             let _ = w.flush();
         }
+        crate::app::diag::mark("written", bytes.len() as u64);
     }
 
     pub fn resize(&self, rows: u16, cols: u16) {

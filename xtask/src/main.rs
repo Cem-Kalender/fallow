@@ -7,6 +7,7 @@ mod bench_search;
 mod bench_sessions;
 mod bench_startup;
 mod canary;
+mod diag;
 mod fixtures;
 mod gen_fixture;
 mod pty;
@@ -30,6 +31,7 @@ const TASKS: &[&str] = &[
     "unprivileged",
     "bench-sessions",
     "record-transcript",
+    "diag-sessions",
 ];
 
 fn main() -> ExitCode {
@@ -55,6 +57,7 @@ fn main() -> ExitCode {
         "bench-search" => ExitCode::from(bench_search::run(rest) as u8),
         "bench-sessions" => ExitCode::from(bench_sessions::run(rest) as u8),
         "record-transcript" => ExitCode::from(record::run(rest) as u8),
+        "diag-sessions" => ExitCode::from(diag::run(rest) as u8),
         t if fixtures::subcommand(t, rest).is_some() => ExitCode::from(3),
         t if TASKS.contains(&t) => {
             eprintln!("xtask {t}: not implemented");

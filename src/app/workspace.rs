@@ -871,12 +871,20 @@ impl AppState {
     }
 
     /// New output from a session. Returns true if it is on screen.
+    /// New output from a session. Returns true only if the screen must be redrawn: the session
+    /// is on screen, or its state (shown in the lists) changed. Output of hidden sessions does
+    /// not redraw the screen (002 SC-006 investigation: 7 flooding hidden sessions caused ~28
+    /// full redraws per second).
     pub fn session_output(&mut self, id: SessionId) -> bool {
+        let before = self.sessions.get(id).map(|s| s.state.clone());
         let (_signals, entered) = self.sessions.output(id);
         if entered {
             self.attention_notice(id);
         }
-        self.workspace.view == View::Agents
+        let after = self.sessions.get(id).map(|s| s.state.clone());
+        let visible = self.workspace.view == View::Agents
+            && (self.workspace.active == Some(id) || self.workspace.split == Some(id));
+        visible || before != after
     }
 
     /// FR-009: tell the user when a session they are not looking at needs them.

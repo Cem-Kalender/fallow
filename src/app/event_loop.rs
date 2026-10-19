@@ -59,8 +59,10 @@ pub fn run(
         if dirty {
             let hold = frames.wait();
             if hold.is_zero() {
+                let t = Instant::now();
                 state.prepare_frame();
                 term.draw(|f| ui::draw(f, state))?;
+                super::diag::mark("drawn", t.elapsed().as_micros() as u64);
                 frames.drawn();
                 dirty = false;
             } else {
@@ -68,9 +70,12 @@ pub fn run(
             }
         }
         state.ticks += 1;
-        for ev in events::next_batch(&rx, wait) {
+        let batch = events::next_batch(&rx, wait);
+        super::diag::mark("wake", batch.len() as u64);
+        for ev in batch {
             dirty |= match ev {
                 AppEvent::Input(ev, burst) => {
+                    super::diag::mark("input", 0);
                     state.burst = burst;
                     let changed = handle(state, ev);
                     state.burst = false;
@@ -80,7 +85,12 @@ pub fn run(
                     state.set_snapshot(s);
                     true
                 }
-                AppEvent::SessionOutput(id) => state.session_output(id),
+                AppEvent::SessionOutput(id) => {
+                    if state.workspace.active == Some(id) {
+                        super::diag::mark("out_active", u64::from(id));
+                    }
+                    state.session_output(id)
+                }
                 AppEvent::SessionExited(id, code) => state.session_exited(id, code),
                 AppEvent::Wake => true,
             };
@@ -101,6 +111,7 @@ pub fn run(
         dirty |= state.tick_sessions();
         dirty |= state.tick();
     }
+    super::diag::flush();
     Ok(())
 }
 
