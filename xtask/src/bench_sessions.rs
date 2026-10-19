@@ -14,8 +14,8 @@
 //!
 //! Run 2:
 //! - **flood** (SC-006): one `echo-agent` session and seven `flood-agent` sessions printing
-//!   continuously at 1,000 colored 200-column lines per second each (about 1.4 MB/s in all;
-//!   research R-9 defines this as SC-006's "continuous output"); 50 keys into the echo session.
+//!   colored 200-column lines as fast as they can (research R-9: SC-006's "continuous output"
+//!   is unbounded); 50 keys into the echo session.
 //!   p95 < 100 ms.
 //!
 //! A run where a session never starts, or Fallow's identity checks fail, is INVALID.

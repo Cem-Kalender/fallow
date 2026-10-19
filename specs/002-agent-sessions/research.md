@@ -309,15 +309,19 @@ the folder holds nothing but the fresh checkout (FR-031, scenario 7).
 ### R-9 addendum: the SC-006 load (2026-10-19)
 
 SC-006 asks for responsiveness "while the other sessions produce continuous output" without a
-rate. The benchmark first used producers printing as fast as the CPU allows. On the 3-core
-`macos-15` runner, seven of them plus their seven parser threads saturated the machine. Key echo
-in the eighth session reached p95 254 ms, max 366 ms (CI run 39261492616), against 27 ms on Linux
-and 31 ms on Windows (4-core runners). That measured the runner's CPU, not Fallow.
+rate. The benchmark uses seven producers printing as fast as the CPU allows (`flood-agent
+forever`), the hardest load available.
 
-**Decision**: "continuous output" is defined as **1,000 colored 200-column lines per second per
-session**, about 200 KB/s per session and 1.4 MB/s across seven. That is far above what agent
-CLIs print, even during builds. The `flood-agent rate:1000` persona produces it.
+On the 3-core `macos-15` runner the first runs failed: key echo in the eighth session reached
+p95 254 ms (CI run 39261492616). For a while this was put down to the runner's CPU, and the load
+was briefly capped at 1,000 lines/s per session. Tracing (`xtask diag-sessions`) then showed
+the real cause: output from hidden sessions made Fallow redraw the screen. With that fixed
+(output redraws only when its session is visible or its state changed), the unbounded load
+passes on all three runners (CI run 39275983766): flood echo p95 5.0 ms on macOS, 9.3 ms on
+Linux and 18.2 ms on Windows, against a budget of 100 ms.
+
+**Decision**: "continuous output" stays unbounded; no rate is defined.
 
 **Alternative kept open**: backpressure for sessions that are not on screen (read them more
-slowly so their agents block on output, as a slow terminal would). It would hold up under
-unbounded output, but it also slows agents that write a lot while hidden.
+slowly so their agents block on output, as a slow terminal would). Not needed now; it would also
+slow agents that write a lot while hidden.
