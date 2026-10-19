@@ -4,8 +4,8 @@
 
 **Created**: 2026-10-19
 
-**Status**: Draft. Blocked on a constitution amendment
-([constitution-amendment.md](./constitution-amendment.md)).
+**Status**: Draft. The constitution amendment it needed
+([constitution-amendment.md](./constitution-amendment.md)) was ratified on 2026-10-19 (v4.0.0).
 
 **Input**: User description: "Agent orchestration in Fallow, building on 002 agent sessions.
 Agents running in Fallow sessions can coordinate with each other: post and read messages on a
