@@ -74,6 +74,9 @@ jobs:
       - name: New/exited process latency (<= two refresh intervals)
         run: cargo xtask bench-new-process
 
+      - name: Session echo latency (002 SC-003, p95 < 50 ms)
+        run: cargo xtask bench-sessions
+
       # The reference large project (T082, R-13): ~50,000 files, ~1 GB, generated from fixed
       # seeds and cached by a hash of the generator.
       - name: Reference fixture cache

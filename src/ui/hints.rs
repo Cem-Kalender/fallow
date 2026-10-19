@@ -65,7 +65,30 @@ pub fn draw(f: &mut Frame<'_>, state: &AppState, area: Rect) {
         }
         Overlay::Palette { .. } => hints.extend([("Enter", "Run"), ("Esc", "Close")]),
         Overlay::Prompt { .. } => hints.extend([("Enter", "OK"), ("Esc", "Cancel")]),
+        Overlay::Menu { .. } => hints.extend([("Enter", "Start"), ("Esc", "Cancel")]),
         Overlay::Confirm { .. } | Overlay::None => {}
+    }
+    // A focused session: every key but the leave key goes to the agent, so only that is shown.
+    if matches!(state.overlay, Overlay::None)
+        && state.workspace.view == crate::app::workspace::View::Agents
+        && state.workspace.focus == crate::app::workspace::AgentsFocus::Session
+    {
+        let leave = state.sessions.limits.leave_key.label();
+        let line = Line::from(vec![
+            Span::styled(leave, Style::default().add_modifier(Modifier::BOLD)),
+            Span::raw(" Leave session (keys go to the agent until then)"),
+        ]);
+        let msg = state.message.as_ref().map(|(m, _)| m.as_str());
+        let mut line = line;
+        if let Some(m) = msg {
+            line.spans.push(Span::raw(SEPARATOR));
+            line.spans.push(Span::styled(
+                m.to_string(),
+                Style::default().fg(Color::Yellow),
+            ));
+        }
+        f.render_widget(Paragraph::new(line), area);
+        return;
     }
     let msg = state.message.as_ref().map(|(m, _)| m.as_str());
     f.render_widget(Paragraph::new(line(&hints, msg, area.width)), area);

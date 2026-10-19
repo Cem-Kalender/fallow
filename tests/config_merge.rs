@@ -265,6 +265,42 @@ fn dns_refresh_minutes_1_to_60() {
 }
 
 #[test]
+fn sessions_settings_defaults_and_ranges() {
+    // 002 contracts/config.md "[sessions]".
+    let d = settings("");
+    assert_eq!(d.settings.sessions.scrollback_lines, 10_000);
+    assert_eq!(d.settings.sessions.attention_delay_ms, 5_000);
+    assert_eq!(d.settings.sessions.max_sessions, 8);
+    assert_eq!(d.settings.sessions.leave_key, "ctrl-]");
+    for (key, bad, good, rule) in [
+        ("scrollback_lines", 999, 100_000, "1000..=100000"),
+        ("scrollback_lines", 100_001, 1000, "1000..=100000"),
+        ("attention_delay_ms", 999, 600_000, "1000..=600000"),
+        ("max_sessions", 0, 16, "1..=16"),
+        ("max_sessions", 17, 1, "1..=16"),
+    ] {
+        let c = settings(&format!("[sessions]\n{key} = {bad}\n"));
+        assert!(
+            has(&errors(&c), "settings.toml:2:"),
+            "{key}={bad}: {:?}",
+            c.notices
+        );
+        assert!(has(&errors(&c), rule));
+        let c = settings(&format!("[sessions]\n{key} = {good}\n"));
+        assert!(c.notices.is_empty(), "{key}={good}: {:?}", c.notices);
+    }
+    let c = settings("[sessions]\nleave_key = \"f12\"\n");
+    assert!(c.notices.is_empty());
+    assert_eq!(c.settings.sessions.leave_key, "f12");
+    let c = settings("[sessions]\nleave_key = \"ctrl-]]\"\n");
+    assert!(has(&errors(&c), "leave_key"));
+    assert_eq!(
+        c.settings.sessions.leave_key, "ctrl-]",
+        "the default is kept"
+    );
+}
+
+#[test]
 fn partial_settings_keep_other_defaults() {
     let c = settings("[ui]\nmouse = false\n[windows]\nread_working_directory = \"never\"\n");
     assert!(c.notices.is_empty(), "{:?}", c.notices);

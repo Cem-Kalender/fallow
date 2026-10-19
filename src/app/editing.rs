@@ -71,6 +71,8 @@ pub enum PromptKind {
     NewFile(PathBuf),
     NewFolder(PathBuf),
     Rename(PathBuf),
+    /// Search the active session's scrollback (002).
+    SearchSession,
 }
 
 impl PromptKind {
@@ -81,6 +83,7 @@ impl PromptKind {
             PromptKind::NewFile(_) => "New file name",
             PromptKind::NewFolder(_) => "New folder name",
             PromptKind::Rename(_) => "Rename to",
+            PromptKind::SearchSession => "Search the session (upward from the view)",
         }
     }
 }
@@ -115,7 +118,10 @@ impl AppState {
     pub fn text_input(&self) -> bool {
         match self.overlay {
             Overlay::Palette { .. } | Overlay::Prompt { .. } => true,
-            Overlay::Confirm { .. } | Overlay::Help { .. } => false,
+            Overlay::Confirm { .. } | Overlay::Help { .. } | Overlay::Menu { .. } => false,
+            Overlay::None if self.workspace.view == super::workspace::View::Agents => {
+                self.workspace.focus == super::workspace::AgentsFocus::Session
+            }
             Overlay::None => {
                 self.focus == Pane::Editor
                     && (self.find.is_some()
@@ -128,6 +134,9 @@ impl AppState {
     pub fn context(&self) -> Context {
         match self.overlay {
             Overlay::Confirm { .. } => Context::Dialog,
+            Overlay::None if self.workspace.view == super::workspace::View::Agents => {
+                self.agents_context()
+            }
             Overlay::None if self.focus == Pane::Editor && self.find.is_some() => Context::FindBar,
             _ => self.focus.context(),
         }
@@ -367,6 +376,7 @@ impl AppState {
 
     fn submit_prompt(&mut self, kind: &PromptKind, text: &str) -> Result<(), String> {
         match kind {
+            PromptKind::SearchSession => self.search_session(text),
             PromptKind::GotoLine => {
                 let (line, col) = goto::parse(text)?;
                 let rows = self.editor_areas().text.height as usize;
@@ -382,6 +392,10 @@ impl AppState {
                     return Err("Enter a folder path".into());
                 }
                 let p = Project::open(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+                // 002: the folder joins the project list and is selected.
+                if self.projects.add(&p.root).is_err() {
+                    self.projects.push(p.root.clone(), None, true);
+                }
                 self.project = Some(p);
                 self.focus = Pane::Files;
                 self.watch_dirty = true;
@@ -572,6 +586,7 @@ impl AppState {
     pub fn open_file(&mut self, path: &Path) -> bool {
         match self.editor.open(path, self.prefs.read_only_bytes) {
             Ok(i) => {
+                self.workspace.view = super::workspace::View::Editor;
                 if self.editor.buffers[i].read_only {
                     self.say(format!(
                         "{} is over {} MB: opened read-only",
@@ -732,6 +747,15 @@ impl AppState {
 
     /// A bracketed paste (FR-008): inserted literally where the focus is.
     pub fn paste(&mut self, text: &str) -> bool {
+        if self.session_paste(text) {
+            return true;
+        }
+        if matches!(self.overlay, Overlay::None)
+            && self.workspace.view == super::workspace::View::Agents
+            && self.workspace.focus == super::workspace::AgentsFocus::Session
+        {
+            return false;
+        }
         match &mut self.overlay {
             Overlay::Prompt { input, error, .. } => {
                 input.insert(text);
@@ -743,7 +767,7 @@ impl AppState {
                 *selected = 0;
                 return true;
             }
-            Overlay::Confirm { .. } | Overlay::Help { .. } => return false,
+            Overlay::Confirm { .. } | Overlay::Help { .. } | Overlay::Menu { .. } => return false,
             Overlay::None => {}
         }
         if self.focus != Pane::Editor {
@@ -1246,6 +1270,7 @@ impl AppState {
     /// Before drawing: scrolls the active buffer to its cursor and refreshes highlighting for
     /// the visible lines.
     pub fn prepare_frame(&mut self) {
+        self.prepare_workspace();
         let a = self.editor_areas();
         let tab = self.prefs.tab_width;
         let follow = std::mem::take(&mut self.editor.follow);

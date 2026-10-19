@@ -144,6 +144,7 @@ fn record(
 
 fn state() -> AppState {
     let mut s = AppState::new(None, Vec::new());
+    s.workspace.view = fallow::app::workspace::View::Editor;
     s.focus = Pane::Processes;
     s.area = Rect::new(0, 0, 120, 40);
     s.set_snapshot(Arc::new(snapshot()));

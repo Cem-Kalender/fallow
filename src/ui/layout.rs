@@ -162,6 +162,12 @@ pub fn draw(f: &mut Frame<'_>, state: &AppState) {
     if mode(area) == Mode::TooSmall {
         return draw_too_small(f, area);
     }
+    if state.workspace.view == crate::app::workspace::View::Agents {
+        super::workspace::draw(f, state);
+        hints::draw(f, state, super::workspace::geometry(state).hints);
+        overlays(f, state, area);
+        return;
+    }
     let g = geometry(area, state.sizes, state.focus);
     if !g.full {
         f.render_widget(tab_line(state.focus), g.tabs);
@@ -177,6 +183,10 @@ pub fn draw(f: &mut Frame<'_>, state: &AppState) {
         summary::draw(f, state, g.system);
     }
     hints::draw(f, state, g.hints);
+    overlays(f, state, area);
+}
+
+fn overlays(f: &mut Frame<'_>, state: &AppState, area: Rect) {
     match &state.overlay {
         Overlay::None => {}
         Overlay::Help { scroll } => help::draw(f, area, *scroll),
@@ -185,6 +195,7 @@ pub fn draw(f: &mut Frame<'_>, state: &AppState) {
         Overlay::Prompt { kind, input, error } => {
             prompt::draw(f, area, kind, input, error.as_deref())
         }
+        Overlay::Menu { items, selected } => super::workspace::draw_menu(f, area, items, *selected),
     }
 }
 
@@ -218,7 +229,12 @@ fn tab_line(focus: Pane) -> Line<'static> {
 
 /// A pane's block, highlighted when focused.
 pub fn pane_block(state: &AppState, pane: Pane, title: Line<'static>) -> Block<'static> {
-    let border = if state.focus == pane {
+    use crate::app::workspace::{AgentsFocus, View};
+    let focused = match state.workspace.view {
+        View::Agents => pane == Pane::Processes && state.workspace.focus == AgentsFocus::Processes,
+        View::Editor => state.focus == pane,
+    };
+    let border = if focused {
         Style::default()
             .fg(Color::Cyan)
             .add_modifier(Modifier::BOLD)
@@ -261,7 +277,8 @@ pub(crate) mod tests {
 
     #[test]
     fn full_layout_has_three_panes_system_and_marker() {
-        let s = AppState::new(None, Vec::new());
+        let mut s = AppState::new(None, Vec::new());
+        s.workspace.view = crate::app::workspace::View::Editor;
         let screen = render(120, 40, &s);
         for title in [" Files ", " Editor ", " LLM Processes ", " System "] {
             assert!(screen.contains(title), "missing {title}\n{screen}");
@@ -284,6 +301,7 @@ pub(crate) mod tests {
     #[test]
     fn tabs_show_only_the_focused_pane() {
         let mut s = AppState::new(None, Vec::new());
+        s.workspace.view = crate::app::workspace::View::Editor;
         s.focus = Pane::Processes;
         let screen = render(80, 20, &s);
         assert!(screen.contains("scanning…"));
@@ -333,6 +351,30 @@ pub(crate) mod tests {
         );
         assert!(!screen.contains("Results:"), "no results before a search");
         let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn the_agent_workspace_is_the_default_screen() {
+        // 002 FR-019: projects, sessions and processes; no file tree or editor; the startup
+        // marker is still in the hint bar (001 contracts/cli.md).
+        let s = AppState::new(None, Vec::new());
+        let screen = render(120, 40, &s);
+        for title in [
+            " Projects ",
+            " Sessions",
+            " Session ",
+            " LLM Processes ",
+            " System ",
+        ] {
+            assert!(
+                screen.contains(title),
+                "missing {title}
+{screen}"
+            );
+        }
+        assert!(!screen.contains(" Files "), "{screen}");
+        assert!(screen.contains("Ctrl-P Commands"), "{screen}");
+        assert!(screen.contains("n New session"), "{screen}");
     }
 
     #[test]

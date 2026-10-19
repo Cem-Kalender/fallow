@@ -11,6 +11,12 @@ pub enum Context {
     Editor,
     FindBar,
     Dialog,
+    /// Agent workspace: the project list (002).
+    Projects,
+    /// Agent workspace: the sessions of the selected project.
+    Sessions,
+    /// A focused session: every key but the leave key goes to the agent.
+    Session,
 }
 
 impl Context {
@@ -22,16 +28,22 @@ impl Context {
             Context::Editor => "Editor",
             Context::FindBar => "Find bar",
             Context::Dialog => "Dialogs",
+            Context::Projects => "Projects",
+            Context::Sessions => "Sessions",
+            Context::Session => "Focused session",
         }
     }
 
-    pub const ALL: [Context; 6] = [
+    pub const ALL: [Context; 9] = [
         Context::Global,
         Context::Processes,
         Context::Files,
         Context::Editor,
         Context::FindBar,
         Context::Dialog,
+        Context::Projects,
+        Context::Sessions,
+        Context::Session,
     ];
 }
 
@@ -288,6 +300,110 @@ pub const COMMANDS: &[Command] = &[
         4,
         "Esc",
         "Close",
+    )),
+    // Agent workspace (002)
+    on(hint(
+        cmd(
+            "view.toggle",
+            "Switch agent workspace / editor view",
+            Global,
+            "Ctrl-E",
+        ),
+        9,
+        "Ctrl-E",
+        "Editor",
+    )),
+    on(cmd("projects.up", "Previous project", Projects, "↑")),
+    on(cmd("projects.down", "Next project", Projects, "↓")),
+    on(hint(
+        cmd(
+            "projects.open",
+            "Show the project's sessions",
+            Projects,
+            "Enter",
+        ),
+        3,
+        "Enter",
+        "Sessions",
+    )),
+    on(hint(
+        cmd("session.new", "New session", Projects, "n"),
+        2,
+        "n",
+        "New session",
+    )),
+    on(cmd("project.add", "Add project", Projects, "a")),
+    on(cmd(
+        "sessions.up",
+        "Previous session in the list",
+        Sessions,
+        "↑",
+    )),
+    on(cmd(
+        "sessions.down",
+        "Next session in the list",
+        Sessions,
+        "↓",
+    )),
+    on(hint(
+        cmd("session.focus", "Focus session", Sessions, "Enter"),
+        2,
+        "Enter",
+        "Open",
+    )),
+    on(hint(
+        cmd(
+            "session.new_here",
+            "New session in this project",
+            Sessions,
+            "n",
+        ),
+        3,
+        "n",
+        "New session",
+    )),
+    on(hint(
+        cmd("session.restart", "Restart session", Sessions, "R"),
+        4,
+        "R",
+        "Restart",
+    )),
+    on(cmd("session.close", "Close exited session", Sessions, "w")),
+    on(cmd(
+        "session.scroll_up",
+        "Scroll session back",
+        Sessions,
+        "Shift-PgUp",
+    )),
+    on(cmd(
+        "session.scroll_down",
+        "Scroll session forward",
+        Sessions,
+        "Shift-PgDn",
+    )),
+    on(cmd(
+        "session.search",
+        "Search session scrollback",
+        Sessions,
+        "Ctrl-F",
+    )),
+    on(cmd(
+        "session.copy",
+        "Copy session selection",
+        Sessions,
+        "Ctrl-C",
+    )),
+    on(cmd(
+        "sessions.back",
+        "Back to the project list",
+        Sessions,
+        "Esc",
+    )),
+    on(hint(
+        cmd("session.leave", "Leave the session", Session, "Ctrl-]"),
+        0,
+        "Ctrl-]",
+        "Leave session",
     )),
     // Dialogs
     on(hint(

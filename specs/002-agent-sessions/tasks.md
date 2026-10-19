@@ -29,9 +29,9 @@ US1; US4 and US5 extend the foundation.
 
 **Purpose**: dependencies and module skeletons.
 
-- [ ] T001 Add `vt100 = "=0.18.1"` and `portable-pty = "0.9"` to `[dependencies]` in `Cargo.toml`, and the `windows-sys` feature `Win32_System_JobObjects`. Run `cargo deny check` and record any licence or ban change in `deny.toml` with a reason (research R-1, R-7; plan Dependency budget).
-- [ ] T002 [P] Create the module skeletons with doc comments only: `src/projects/mod.rs`, `src/projects/store.rs`, `src/session/mod.rs`, `src/session/pty.rs`, `src/session/term.rs`, `src/session/scrollback.rs`, `src/session/attention.rs`, `src/session/keys.rs`, `src/session/profiles.rs`, `src/session/platform/{mod.rs,unix.rs,windows.rs}`. Register them in `src/lib.rs`.
-- [ ] T003 [P] Create the UI skeletons `src/ui/workspace.rs`, `src/ui/projects.rs`, `src/ui/sessions.rs`, `src/ui/terminal_pane.rs` and `src/app/workspace.rs`, `src/app/events.rs`, and register them in `src/ui/mod.rs` and `src/app/mod.rs`.
+- [X] T001 Add `vt100 = "=0.18.1"` and `portable-pty = "0.9"` to `[dependencies]` in `Cargo.toml`, and the `windows-sys` feature `Win32_System_JobObjects`. Run `cargo deny check` and record any licence or ban change in `deny.toml` with a reason (research R-1, R-7; plan Dependency budget).
+- [X] T002 [P] Create the module skeletons with doc comments only: `src/projects/mod.rs`, `src/projects/store.rs`, `src/session/mod.rs`, `src/session/pty.rs`, `src/session/term.rs`, `src/session/scrollback.rs`, `src/session/attention.rs`, `src/session/keys.rs`, `src/session/profiles.rs`, `src/session/platform/{mod.rs,unix.rs,windows.rs}`. Register them in `src/lib.rs`.
+- [X] T003 [P] Create the UI skeletons `src/ui/workspace.rs`, `src/ui/projects.rs`, `src/ui/sessions.rs`, `src/ui/terminal_pane.rs` and `src/app/workspace.rs`, `src/app/events.rs`, and register them in `src/ui/mod.rs` and `src/app/mod.rs`.
 
 ---
 
@@ -41,29 +41,29 @@ US1; US4 and US5 extend the foundation.
 
 **⚠️ CRITICAL**: no user story work starts before this phase is done, and every 001 benchmark (startup, idle, loaded, refresh CPU, new-process latency, search) stays green in CI after T005.
 
-- [ ] T004 Write `tests/event_loop.rs`:
+- [X] T004 Write `tests/event_loop.rs`:
   - input, worker, search, watch and session events all arrive through one `AppEvent` channel;
   - a burst of queued key events is marked as a burst (the 001 paste fix);
   - output from a session wakes the loop within 20 ms.
 
   Satisfies: research R-5.
-- [ ] T005 Rework the event loop (research R-5):
+- [X] T005 Rework the event loop (research R-5):
   - `src/app/events.rs` defines `AppEvent`: `Input(crossterm::Event, burst: bool)`, `Snapshot`, `SessionOutput(SessionId)`, `SessionExited(SessionId, ExitStatus)`, `Wake`.
   - It also spawns an input thread that forwards crossterm events and computes `burst`.
   - `src/app/event_loop.rs` blocks on `recv_timeout(250 ms)`, drains the channel, and redraws at most once per 16 ms while output streams.
   - Move the procmon, search and watch draining onto the same channel.
   - Keep the `--bench-stats` counters (ticks every wake, at least every 250 ms).
-- [ ] T006 [P] Add the `[sessions]` settings to `src/config/schema.rs` with validation verbatim from contracts/config.md: `scrollback_lines` "1000..=100000" (default 10000), `attention_delay_ms` "1000..=600000" (default 5000), `max_sessions` "1..=16" (default 8), `leave_key` (default "ctrl-]"; one key such as "ctrl-]", "ctrl-\\", "ctrl-5", "f12"). Add tests to `tests/config_merge.rs`.
-- [ ] T007 [P] Write `tests/profiles.rs`:
+- [X] T006 [P] Add the `[sessions]` settings to `src/config/schema.rs` with validation verbatim from contracts/config.md: `scrollback_lines` "1000..=100000" (default 10000), `attention_delay_ms` "1000..=600000" (default 5000), `max_sessions` "1..=16" (default 8), `leave_key` (default "ctrl-]"; one key such as "ctrl-]", "ctrl-\\", "ctrl-5", "f12"). Add tests to `tests/config_merge.rs`.
+- [X] T007 [P] Write `tests/profiles.rs`:
   - the built-ins `claude`, `codex`, `gemini`, `aider`, `shell` and their commands (contracts/config.md table);
   - `profiles.toml` merge by `id` (a user entry with a built-in's id replaces it; `enabled = false` hides it);
   - validation `id` "`[a-z0-9_-]{1,32}`", `name` "1..=64 chars", `command` non-empty, `env` names "`[A-Za-z_][A-Za-z0-9_]*`", errors as `file:line`;
   - env values never appear in `Debug` output or the profile view.
-- [ ] T008 Implement `src/session/profiles.rs`:
+- [X] T008 Implement `src/session/profiles.rs`:
   - `AgentProfile { id, name, command, args, env, kind, available }` (data-model.md), the built-in table, and `profiles.toml` parsing and merge reusing 001's config machinery (`src/config/merge.rs`).
   - Command resolution: `PATH`, plus `PATHEXT` on Windows. On Windows, prefer a real `.exe`; resolve an npm `.cmd` shim to its `node` + script target; never run through `cmd.exe` (research R-7).
   - `available` is computed lazily, when the start menu opens, never at startup.
-- [ ] T009 [P] Write `tests/projects_model.rs` for the in-memory `ProjectList`:
+- [X] T009 [P] Write `tests/projects_model.rs` for the in-memory `ProjectList`:
   - add rejects a path that is not a readable folder, with the reason;
   - no two entries with the same canonical path ("case-insensitively on Windows and macOS");
   - `name` "1..=64 chars";
@@ -71,8 +71,8 @@ US1; US4 and US5 extend the foundation.
   - move up and down;
   - `present = false` for a missing folder;
   - limit 200 projects.
-- [ ] T010 Implement `ProjectList` and `ProjectEntry` in `src/projects/mod.rs` per data-model.md: ids unique per run, absolute paths via `std::path::absolute`, `selected`, add/remove/rename/move/relocate. The lazy 001 `Project` tree is created on first use in the editor view. No persistence yet (US4).
-- [ ] T011 Extend `AppState` in `src/app/state.rs` with `projects: ProjectList`, `sessions: SessionManager` (empty), and `workspace: Workspace { view, agents_focus, layout, process_filter }` (data-model.md). The command-line `PATH` becomes the first entry of the list. Keep all 001 behavior in the editor view and keep the 001 tests passing.
+- [X] T010 Implement `ProjectList` and `ProjectEntry` in `src/projects/mod.rs` per data-model.md: ids unique per run, absolute paths via `std::path::absolute`, `selected`, add/remove/rename/move/relocate. The lazy 001 `Project` tree is created on first use in the editor view. No persistence yet (US4).
+- [X] T011 Extend `AppState` in `src/app/state.rs` with `projects: ProjectList`, `sessions: SessionManager` (empty), and `workspace: Workspace { view, agents_focus, layout, process_filter }` (data-model.md). The command-line `PATH` becomes the first entry of the list. Keep all 001 behavior in the editor view and keep the 001 tests passing.
 
 **Checkpoint**: 001 still behaves the same and passes CI; sessions can now be built.
 
@@ -86,44 +86,44 @@ US1; US4 and US5 extend the foundation.
 
 ### Tests for User Story 1
 
-- [ ] T012 [P] [US1] Write `tests/session_keys.rs`:
+- [X] T012 [P] [US1] Write `tests/session_keys.rs`:
   - every key in a table (printable characters, `Enter`, `Esc`, `Tab`, `Shift-Tab`, `Backspace`, arrows in normal and application cursor mode, `Home`/`End`/`PgUp`/`PgDn`, `F1`–`F12`, `Ctrl-A`…`Ctrl-Z`, `Alt-x`, `Ctrl-C`, `Ctrl-Q`, `Ctrl-P`) becomes the expected bytes for the agent;
   - only the leave key (`Ctrl-]` in all its encodings: 0x1D, `Ctrl-5`, kitty form) is captured;
   - `Ctrl-]` twice sends one 0x1D;
   - a configured `leave_key` replaces it.
 
   Satisfies: FR-003, research R-3.
-- [ ] T013 [P] [US1] Write `tests/session_replies.rs`: feeding DSR `CSI 6n`, DA1 `CSI c`, DA2 `CSI > c`, XTVERSION `CSI > q`, OSC 10/11 queries, kitty query `CSI ? u` and DECRQM `?2026` produces exactly the replies in research R-6.
-- [ ] T014 [P] [US1] Write `tests/scrollback.rs`:
+- [X] T013 [P] [US1] Write `tests/session_replies.rs`: feeding DSR `CSI 6n`, DA1 `CSI c`, DA2 `CSI > c`, XTVERSION `CSI > q`, OSC 10/11 queries, kitty query `CSI ? u` and DECRQM `?2026` produces exactly the replies in research R-6.
+- [X] T014 [P] [US1] Write `tests/scrollback.rs`:
   - rows leaving the 1,000-row vt100 tier go to the compact tier with text and style runs and no trailing blanks;
   - the total is capped at `scrollback_lines` with the oldest lines dropped first;
   - line addressing is continuous across both tiers;
   - selection text and search span both tiers.
 
   Satisfies: research R-2, FR-004.
-- [ ] T015 [P] [US1] Write `tests/session_lifecycle.rs`, using an xtask persona as the agent:
+- [X] T015 [P] [US1] Write `tests/session_lifecycle.rs`, using an xtask persona as the agent:
   - Fallow spawns nothing at startup (FR-025);
   - a session starts in the project folder with the profile's args and env additions;
   - exit shows the status and keeps the last output;
   - restart uses the same profile and project;
   - on Windows the agent is in the session's Job Object;
   - dropping the `SessionManager` leaves no agent process running.
-- [ ] T016 [P] [US1] Write `tests/session_transcripts.rs` and add scrubbed recorded first screens to `tests/fixtures/transcripts/` for each built-in agent available on the developer machine: replaying each through `src/session/term.rs` yields the stored golden screen (SC-002).
+- [X] T016 [P] [US1] Write `tests/session_transcripts.rs` and add scrubbed recorded first screens to `tests/fixtures/transcripts/` for each built-in agent available on the developer machine: replaying each through `src/session/term.rs` yields the stored golden screen (SC-002).
 
 ### Implementation for User Story 1
 
-- [ ] T017 [US1] Implement `src/session/term.rs`:
+- [X] T017 [US1] Implement `src/session/term.rs`:
   - wrap `vt100::Parser` with `Callbacks` for bell, title, OSC 52 (ignored for privacy unless the user copies), `on_scroll` into `scrollback.rs`, and `unhandled_csi` / `unhandled_osc`;
   - produce the R-6 replies into a reply buffer;
   - track `?2026` (synchronized output, with a 150 ms timeout), `?1004` (focus reporting), and OSC 9/777/7501 events for attention.
-- [ ] T018 [US1] Implement `src/session/scrollback.rs`: the compact tier (text plus style runs, wrap flag) capped by `sessions.scrollback_lines`, and one line-addressing API over both tiers for the renderer, selection and search (research R-2).
-- [ ] T019 [US1] Implement `src/session/keys.rs`: `KeyEvent` → bytes in legacy encoding, honoring application cursor and keypad modes from the parser; bracketed paste wraps pasted text when the agent enabled `?2004`; the leave-key matcher (research R-3).
-- [ ] T020 [US1] Implement `src/session/platform/unix.rs` and `src/session/platform/windows.rs`:
+- [X] T018 [US1] Implement `src/session/scrollback.rs`: the compact tier (text plus style runs, wrap flag) capped by `sessions.scrollback_lines`, and one line-addressing API over both tiers for the renderer, selection and search (research R-2).
+- [X] T019 [US1] Implement `src/session/keys.rs`: `KeyEvent` → bytes in legacy encoding, honoring application cursor and keypad modes from the parser; bracketed paste wraps pasted text when the agent enabled `?2004`; the leave-key matcher (research R-3).
+- [X] T020 [US1] Implement `src/session/platform/unix.rs` and `src/session/platform/windows.rs`:
   - Unix: process group signals `kill(-pgid, SIGTERM)` and `SIGKILL`;
   - Windows: a Job Object created with `KILL_ON_JOB_CLOSE` and the agent assigned to it right after spawn; graceful stop by `ClosePseudoConsole`, force by `TerminateJobObject`.
 
   Satisfies: research R-7.
-- [ ] T021 [US1] Implement `src/session/pty.rs`:
+- [X] T021 [US1] Implement `src/session/pty.rs`:
   - `portable-pty` `openpty` at the pane size and `spawn_command` with `cwd` = project path, the profile's args and env additions, and no shell;
   - a reader thread (64 KiB reads → parser → replies to the writer → one coalesced `AppEvent::SessionOutput`);
   - a waiter thread (`child.wait()` → `AppEvent::SessionExited`);
@@ -131,26 +131,30 @@ US1; US4 and US5 extend the foundation.
   - on Windows, `ClosePseudoConsole` off the UI thread while the reader drains.
 
   Satisfies: research R-7.
-- [ ] T022 [US1] Implement `Session` and `SessionManager` in `src/session/mod.rs` per data-model.md:
+- [X] T022 [US1] Implement `Session` and `SessionManager` in `src/session/mod.rs` per data-model.md:
   - the fields `id`, `project`, `profile`, `child`, `term`, `size`, `state`, `state_since`, `last_output`, `bell`, `scroll`, `selection`;
   - states `Starting`, `Working`, `NeedsAttention`, `Exited(status)`, `Failed(reason)`, `Stopping`;
   - start, restart and close (exited only);
   - refuse a start beyond `max_sessions` with the reason.
-- [ ] T023 [US1] Implement `src/ui/terminal_pane.rs`:
+- [X] T023 [US1] Implement `src/ui/terminal_pane.rs`:
   - render the vt100 screen into the ratatui buffer (colors 16/256/RGB, bold, dim, italic, underline, inverse, wide characters, cursor position and style);
   - scrolled-back views across both tiers, with a "N lines kept" marker at the top;
   - mouse drag selection, or `Shift`-drag when the agent enabled mouse reporting; mouse events go to the agent when it asked for them;
   - the exited banner with status and the restart hint.
-- [ ] T024 [US1] Implement session focus handling in `src/app/workspace.rs`:
+- [X] T024 [US1] Implement session focus handling in `src/app/workspace.rs`:
   - while a session has focus, every key except the leave key goes to `keys.rs` and the PTY;
   - pastes go to the agent;
   - the leave key returns focus to Fallow;
   - focus-in/out reports (`?1004`) are sent when focus or visibility changes;
   - after leaving: `Shift-PgUp`/`Shift-PgDn` scroll back, `Ctrl-F` searches the scrollback, `Ctrl-C` copies the selection (001 clipboard).
-- [ ] T025 [US1] Add a minimal start flow in `src/app/workspace.rs` and `src/ui/sessions.rs`: `n` opens the profile menu for the selected project (available profiles only, lazily resolved); choosing one starts a session and focuses it. Add the command entries to `src/app/commands.rs`.
-- [ ] T026 [US1] Add the xtask persona "echo" (an agent that echoes typed bytes and answers DSR like a real program) in `xtask/src/fixtures.rs`. Implement `cargo xtask bench-sessions` echo latency in `xtask/src/bench_sessions.rs`: Fallow under the PTY harness starts a session of the persona; the time from a typed key to its echo on screen has p95 < 50 ms over 100 keys (SC-003).
+- [X] T025 [US1] Add a minimal start flow in `src/app/workspace.rs` and `src/ui/sessions.rs`: `n` opens the profile menu for the selected project (available profiles only, lazily resolved); choosing one starts a session and focuses it. Add the command entries to `src/app/commands.rs`.
+- [X] T026 [US1] Add the xtask persona "echo" (an agent that echoes typed bytes and answers DSR like a real program) in `xtask/src/fixtures.rs`. Implement `cargo xtask bench-sessions` echo latency in `xtask/src/bench_sessions.rs`: Fallow under the PTY harness starts a session of the persona; the time from a typed key to its echo on screen has p95 < 50 ms over 100 keys (SC-003).
 
 **Checkpoint**: US1 works on its own: one project, start an agent, use it, leave, return, scroll, copy, paste, exit, restart.
+
+*Notes from implementation (2026-10-19):*
+- **Workspace pulled forward from US3.** A minimal agent workspace (projects | sessions | processes, `Ctrl-E` to the editor view, `Tab` cycling) was built in Phase 3, because a session can't be used without one. It is now the default screen. US3 (T038–T041) keeps the polish, hints and help.
+- **T016 uses synthetic transcripts.** Recording a real agent's screen can capture account names and paths, so nothing from a real agent is committed. `cargo xtask record-transcript -- <agent>` records locally for review. A real-agent check runs instead in `tests/session_lifecycle.rs`: `claude --version` through its npm launcher and the pseudo-terminal, when installed.
 
 ---
 

@@ -208,6 +208,11 @@ Per session:
 - If neither works, Fallow refuses to start the profile and says why, rather than going through
   `cmd.exe`.
 
+**Inherited environment**: `CommandBuilder::new` copies Fallow's own environment so the agent
+inherits it, which is what any process start does. Fallow adds `TERM`, `COLORTERM` and
+`TERM_PROGRAM=fallow` and the profile's additions. It never reads, displays or logs another
+process's environment (Principle VII, FR-027).
+
 **ConPTY version**: Fallow uses the system ConPTY. portable-pty prefers a `conpty.dll` /
 `OpenConsole.exe` placed next to the executable. Shipping those (NuGet
 `Microsoft.Windows.Console.ConPTY`, MIT) is a release-packaging option recorded for the Windows

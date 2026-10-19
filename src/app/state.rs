@@ -13,13 +13,18 @@ use ratatui::layout::Rect;
 
 use super::commands::{self, Context};
 use super::editing::{EditorPrefs, FindBar, Pending, PromptKind};
+use super::events::AppEvent;
 use super::keymap;
+use super::workspace::{MenuItem, View, Workspace};
 use crate::clipboard::Clipboard;
 use crate::editor::selection::LineInput;
 use crate::editor::watch::FileWatcher;
 use crate::editor::{Editor, Project};
 use crate::procmon::snapshot::{ProcessKey, Snapshot};
 use crate::procmon::worker::Request;
+use crate::projects::ProjectList;
+use crate::session::SessionManager;
+use crate::session::profiles::AgentProfile;
 use crate::ui::confirm::Dialog;
 use crate::ui::layout::{self, Border};
 use crate::ui::processes;
@@ -108,6 +113,11 @@ pub enum Overlay {
         input: LineInput,
         error: Option<String>,
     },
+    /// The profile menu for a new session (002).
+    Menu {
+        items: Vec<MenuItem>,
+        selected: usize,
+    },
 }
 
 /// Selection and expansion in the process panel.
@@ -125,8 +135,15 @@ const MESSAGE_FOR: Duration = Duration::from_secs(3);
 pub struct AppState {
     pub focus: Pane,
     pub sizes: PaneSizes,
-    /// The open project (`PATH` or `Ctrl-O`), if any.
+    /// The editor view's project: the selected project's lazy tree (001 editor).
     pub project: Option<Project>,
+    /// The remembered list of projects (002).
+    pub projects: ProjectList,
+    pub sessions: SessionManager,
+    pub profiles: Vec<AgentProfile>,
+    pub workspace: Workspace,
+    /// The application event channel, for sessions' reader and waiter threads.
+    pub events: Option<Sender<AppEvent>>,
     pub editor: Editor,
     pub find: Option<FindBar>,
     /// The last find query, offered again by the next `Ctrl-F`.
@@ -172,11 +189,20 @@ impl AppState {
                 None
             }
         });
+        let mut projects = ProjectList::default();
+        if let Some(p) = &project {
+            projects.push(p.root.clone(), None, true);
+        }
         AppState {
             focus: Pane::Files,
             sizes: PaneSizes::default(),
             watch_dirty: project.is_some(),
             project,
+            projects,
+            sessions: SessionManager::default(),
+            profiles: crate::session::profiles::builtins(),
+            workspace: Workspace::default(),
+            events: None,
             editor: Editor::default(),
             find: None,
             last_query: String::new(),
@@ -235,7 +261,17 @@ impl AppState {
             Overlay::Palette { .. } => return self.palette_key(key),
             Overlay::Confirm { .. } => return self.confirm_key(key),
             Overlay::Prompt { .. } => return self.prompt_key(key),
+            Overlay::Menu { .. } => return self.menu_key(key),
             Overlay::None => {}
+        }
+        if self.workspace.view == View::Agents {
+            if self.workspace.focus == super::workspace::AgentsFocus::Session {
+                return self.workspace_key(key).unwrap_or(false);
+            }
+            match keymap::lookup(&key, self.agents_context(), false) {
+                Some(id) => return self.run(id),
+                None => return false,
+            }
         }
         let mut context = self.focus.context();
         if self.focus == Pane::Editor {
@@ -332,6 +368,11 @@ impl AppState {
                 };
                 true
             }
+            "pane.next" | "pane.prev" | "pane.files" | "pane.editor" | "pane.processes"
+                if self.workspace.view == View::Agents =>
+            {
+                self.run_workspace(id).unwrap_or(false)
+            }
             "pane.next" => self.focus(self.focus.next()),
             "pane.prev" => self.focus(self.focus.prev()),
             "pane.files" => self.focus(Pane::Files),
@@ -353,6 +394,9 @@ impl AppState {
             "proc.sort.status" => self.sort_by(processes::Col::Status),
             "proc.sort.confidence" => self.sort_by(processes::Col::Conf),
             other => {
+                if let Some(changed) = self.run_workspace(other) {
+                    return changed;
+                }
                 if let Some(changed) = self.run_editing(other) {
                     return changed;
                 }
@@ -459,6 +503,9 @@ impl AppState {
         // first.
         let border_press = matches!(m.kind, MouseEventKind::Down(MouseButton::Left))
             && layout::border_at(&g, x, y).is_some();
+        if let Some(changed) = self.workspace_mouse(m) {
+            return changed;
+        }
         if !border_press && self.drag.is_none() {
             if let Some(changed) = self.editing_mouse(m, g.pane_at(x, y)) {
                 return changed;
@@ -531,6 +578,7 @@ mod tests {
     #[test]
     fn tab_cycles_forward_and_back() {
         let mut s = AppState::new(None, Vec::new());
+        s.workspace.view = View::Editor;
         assert_eq!(s.focus, Pane::Files);
         assert!(s.handle_key(press(KeyCode::Tab, KeyModifiers::NONE)));
         assert_eq!(s.focus, Pane::Editor);
@@ -542,6 +590,28 @@ mod tests {
         // The kitty protocol can report Shift-Tab as Tab with Shift.
         s.handle_key(press(KeyCode::Tab, KeyModifiers::SHIFT));
         assert_eq!(s.focus, Pane::Editor);
+    }
+
+    #[test]
+    fn tab_cycles_the_agent_workspace() {
+        use crate::app::workspace::AgentsFocus;
+        let mut s = AppState::new(None, Vec::new());
+        assert_eq!(s.workspace.focus, AgentsFocus::Projects);
+        s.handle_key(press(KeyCode::Tab, KeyModifiers::NONE));
+        assert_eq!(s.workspace.focus, AgentsFocus::Sessions);
+        s.handle_key(press(KeyCode::Tab, KeyModifiers::NONE));
+        assert_eq!(s.workspace.focus, AgentsFocus::Processes);
+        s.handle_key(press(KeyCode::BackTab, KeyModifiers::SHIFT));
+        assert_eq!(s.workspace.focus, AgentsFocus::Sessions);
+        s.handle_key(press(KeyCode::Char('e'), KeyModifiers::CONTROL));
+        assert_eq!(s.workspace.view, View::Editor);
+        s.handle_key(press(KeyCode::Char('e'), KeyModifiers::CONTROL));
+        assert_eq!(s.workspace.view, View::Agents);
+        assert_eq!(
+            s.workspace.focus,
+            AgentsFocus::Sessions,
+            "focus is kept per view"
+        );
     }
 
     #[test]
@@ -592,6 +662,7 @@ mod tests {
     #[test]
     fn unavailable_commands_say_so() {
         let mut s = AppState::new(None, Vec::new());
+        s.workspace.view = View::Editor;
         s.focus = Pane::Processes;
         s.handle_key(press(KeyCode::Char('p'), KeyModifiers::NONE));
         assert_eq!(s.message.as_ref().unwrap().0, "Pause: not available yet");
