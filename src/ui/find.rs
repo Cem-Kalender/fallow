@@ -5,7 +5,7 @@
 //! and opens the results list.
 //!
 //! The results header starts with `Results:` only once there is at least one result row; the
-//! search benchmark (T084) waits for that text.
+//! search benchmark (T084) waits for that text. Until then the header row is blank.
 
 use ratatui::Frame;
 use ratatui::layout::{Position, Rect};
@@ -40,8 +40,15 @@ pub fn draw_bar(f: &mut Frame<'_>, fb: &FindBar, area: Rect) -> Position {
             Scope::Project => "this file",
         }
     );
-    let note = if fb.no_match { " No match " } else { "" };
-    let fixed = (label.len() + scope.chars().count() + note.len()) as u16;
+    let searching = fb.session.as_ref().is_some_and(|s| s.running());
+    let note = if fb.no_match {
+        " No match "
+    } else if searching {
+        " Searching… "
+    } else {
+        ""
+    };
+    let fixed = (label.len() + scope.chars().count() + note.chars().count()) as u16;
     let field_w = area.width.saturating_sub(fixed).max(1);
     let (line, cx) = input_line(&fb.input, field_w);
     let mut spans = vec![Span::styled(
@@ -74,7 +81,9 @@ pub fn draw_results(f: &mut Frame<'_>, fb: &FindBar, area: Rect) {
     let n = s.results.len();
     let mut header = if n == 0 {
         match s.state {
-            SearchState::Running => "Searching…".to_string(),
+            // Blank while searching ("Searching…" is in the bar), so the first `Results:` is
+            // drawn over empty cells and reaches the terminal as one run of bytes.
+            SearchState::Running => String::new(),
             SearchState::Cancelled => "Search cancelled, no results".to_string(),
             SearchState::Failed => {
                 format!("Search failed: {}", s.error.clone().unwrap_or_default())

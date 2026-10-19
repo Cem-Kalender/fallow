@@ -3,9 +3,11 @@
 mod bench_memory;
 mod bench_new_process;
 mod bench_refresh;
+mod bench_search;
 mod bench_startup;
 mod canary;
 mod fixtures;
+mod gen_fixture;
 mod pty;
 mod rss;
 mod unprivileged;
@@ -45,6 +47,8 @@ fn main() -> ExitCode {
         "bench-new-process" => ExitCode::from(bench_new_process::run(rest) as u8),
         "unprivileged" => ExitCode::from(unprivileged::run(rest) as u8),
         "canary" => ExitCode::from(canary::run(rest) as u8),
+        "gen-fixture" => ExitCode::from(gen_fixture::run(rest) as u8),
+        "bench-search" => ExitCode::from(bench_search::run(rest) as u8),
         t if fixtures::subcommand(t, rest).is_some() => ExitCode::from(3),
         t if TASKS.contains(&t) => {
             eprintln!("xtask {t}: not implemented");
