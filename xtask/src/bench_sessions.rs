@@ -96,7 +96,7 @@ fn run_all(bin: &Path, base: &Path) -> Result<i32, String> {
         ("echo", "\"echo-agent\""),
         ("a", "\"banner-agent\", \"A\""),
         ("b", "\"banner-agent\", \"B\""),
-        ("flood", "\"flood-agent\", \"rate:1000\""),
+        ("flood", "\"flood-agent\", \"forever\""),
     ] {
         profiles.push_str(&format!(
             "[[profile]]\nid = \"{id}\"\nname = \"{id}\"\ncommand = {:?}\nargs = [{args}]\n\n",
