@@ -186,7 +186,7 @@ pub const CONFLICTS: &[[&str; 4]] = &[
         "free",
     ],
     [
-        "a, Shift-A, d, r, g, p, m, c, u, n, s, w, j, Shift-R, Shift-K, Space",
+        "a, Shift-A, d, r, g, p, m, c, u, n, s, w, j, e, f, Shift-R, Shift-K, Space",
         "free",
         "free",
         "free",

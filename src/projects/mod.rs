@@ -1,5 +1,5 @@
 //! The project list (002 data-model.md "ProjectList", FR-014, FR-018). Persistence is in
-//! `store.rs` (US4).
+//! `store.rs` (FR-015).
 
 use std::path::{Path, PathBuf};
 
@@ -38,7 +38,7 @@ pub struct ProjectList {
 }
 
 /// Paths compare case-insensitively where the file system usually is (Windows, macOS).
-fn same_path(a: &Path, b: &Path) -> bool {
+pub(crate) fn same_path(a: &Path, b: &Path) -> bool {
     if cfg!(any(windows, target_os = "macos")) {
         a.to_string_lossy().to_lowercase() == b.to_string_lossy().to_lowercase()
     } else {
@@ -46,7 +46,7 @@ fn same_path(a: &Path, b: &Path) -> bool {
     }
 }
 
-fn folder_name(p: &Path) -> String {
+pub(crate) fn folder_name(p: &Path) -> String {
     p.file_name()
         .map_or_else(
             || p.display().to_string(),
@@ -57,7 +57,7 @@ fn folder_name(p: &Path) -> String {
         .collect()
 }
 
-fn check_name(name: &str) -> Result<String, String> {
+pub(crate) fn check_name(name: &str) -> Result<String, String> {
     let n = name.trim();
     if (1..=64).contains(&n.chars().count()) {
         Ok(n.to_string())
@@ -164,6 +164,73 @@ impl ProjectList {
             self.selected = Some(j as usize);
         }
         true
+    }
+
+    /// Puts the remembered list (`projects.toml`) in place, after the first frame (FR-028).
+    /// Entries already in the list (a folder given on the command line, FR-017) are kept and
+    /// selected: an entry the file already has keeps its place; a new one is appended. Returns
+    /// true when the result differs from the file and should be written.
+    pub fn restore(
+        &mut self,
+        entries: Vec<(PathBuf, Option<String>)>,
+        selected: Option<usize>,
+    ) -> bool {
+        let current = std::mem::take(&mut self.projects);
+        let current_sel = self.selected.take();
+        for (path, name) in entries {
+            self.push(path, name, false);
+        }
+        self.selected = selected.filter(|&i| i < self.projects.len());
+        if self.selected.is_none() && !self.projects.is_empty() {
+            self.selected = Some(0);
+        }
+        let mut changed = false;
+        for (i, e) in current.into_iter().enumerate() {
+            let select = current_sel == Some(i);
+            let at = match self.index_of(&e.path) {
+                Some(j) => {
+                    // Keep the running entry's id and editor tree.
+                    let slot = &mut self.projects[j];
+                    slot.id = e.id;
+                    slot.present = e.present;
+                    if slot.editor.is_none() {
+                        slot.editor = e.editor;
+                    }
+                    j
+                }
+                None if self.projects.len() < MAX_PROJECTS => {
+                    changed = true;
+                    self.projects.push(e);
+                    self.projects.len() - 1
+                }
+                None => continue,
+            };
+            if select && self.selected != Some(at) {
+                self.selected = Some(at);
+                changed = true;
+            }
+        }
+        changed
+    }
+
+    /// Points entry `i` at another folder (a moved project, spec Edge Cases).
+    pub fn relocate(&mut self, i: usize, path: &Path) -> Result<(), String> {
+        let abs = std::path::absolute(path).map_err(|e| format!("{}: {e}", path.display()))?;
+        if !abs.is_dir() {
+            return Err(format!("{}: not a folder", abs.display()));
+        }
+        std::fs::read_dir(&abs).map_err(|e| format!("{}: {e}", abs.display()))?;
+        if self.index_of(&abs).is_some_and(|j| j != i) {
+            return Err(format!("{} is already in the list", abs.display()));
+        }
+        let p = self.projects.get_mut(i).ok_or("no such project")?;
+        if p.name == folder_name(&p.path) {
+            p.name = folder_name(&abs);
+        }
+        p.path = abs;
+        p.present = true;
+        p.editor = None;
+        Ok(())
     }
 
     /// Re-checks whether each folder exists (after the first frame, and on select).

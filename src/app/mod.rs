@@ -6,6 +6,7 @@ pub mod editing;
 pub mod event_loop;
 pub mod events;
 pub mod keymap;
+pub mod project_list;
 pub mod state;
 pub mod workspace;
 
@@ -105,6 +106,7 @@ pub fn run(opts: &Options) -> (ExitCode, RunStats) {
     let mut notices: Vec<String> = cfg.notices.iter().map(|n| n.to_string()).collect();
     notices.extend(all_note);
     let mut state = state::AppState::new(opts.path.clone(), notices);
+    state.store.dir = paths.dir.clone();
     state.all_users = all;
     state.sessions.limits = crate::session::Limits {
         scrollback_lines: cfg.settings.sessions.scrollback_lines as usize,
@@ -161,6 +163,7 @@ pub fn run(opts: &Options) -> (ExitCode, RunStats) {
         Some(handle)
     };
     let result = event_loop::run(&mut term, &mut state, start, &cycles);
+    state.save_selection(true);
     drop(term);
     terminal::restore();
     stats.ticks = state.ticks;

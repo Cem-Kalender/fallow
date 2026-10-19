@@ -177,6 +177,8 @@ pub struct AppState {
     pub area: Rect,
     pub drag: Option<Border>,
     pub requests: Option<Sender<Request>>,
+    /// Where the project list is saved (002 FR-015).
+    pub store: super::project_list::ProjectStore,
 }
 
 impl AppState {
@@ -225,6 +227,7 @@ impl AppState {
             area: Rect::new(0, 0, 120, 40),
             drag: None,
             requests: None,
+            store: Default::default(),
         }
     }
 
@@ -246,6 +249,7 @@ impl AppState {
     /// Drops an expired message. Returns true if the screen changed.
     pub fn tick(&mut self) -> bool {
         let stops = self.tick_stops();
+        self.save_selection(false);
         if self
             .message
             .as_ref()
@@ -411,6 +415,9 @@ impl AppState {
                 if let Some(changed) = self.run_workspace(other) {
                     return changed;
                 }
+                if let Some(changed) = self.run_project_list(other) {
+                    return changed;
+                }
                 if let Some(changed) = self.run_editing(other) {
                     return changed;
                 }
@@ -439,9 +446,14 @@ impl AppState {
         changed
     }
 
-    fn rows(&self) -> Vec<processes::Row> {
+    pub(crate) fn rows(&self) -> Vec<processes::Row> {
         self.snapshot.as_deref().map_or_else(Vec::new, |s| {
-            processes::rows(s, &self.panel.expanded, self.panel.sort)
+            processes::rows_for(
+                s,
+                &self.panel.expanded,
+                self.panel.sort,
+                self.process_filter().as_ref(),
+            )
         })
     }
 

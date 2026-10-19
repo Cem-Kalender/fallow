@@ -333,6 +333,55 @@ pub const COMMANDS: &[Command] = &[
         "New session",
     )),
     on(cmd("project.add", "Add project", Projects, "a")),
+    on(cmd("projects.home", "First project", Projects, "Home")),
+    on(cmd("projects.end", "Last project", Projects, "End")),
+    on(hint(
+        cmd(
+            "project.remove",
+            "Remove project from the list (the folder is kept)",
+            Projects,
+            "Delete, d",
+        ),
+        7,
+        "d",
+        "Remove",
+    )),
+    on(cmd("project.rename", "Rename project", Projects, "F2, r")),
+    on(cmd(
+        "project.move_up",
+        "Move project up",
+        Projects,
+        "Shift-↑",
+    )),
+    on(cmd(
+        "project.move_down",
+        "Move project down",
+        Projects,
+        "Shift-↓",
+    )),
+    on(hint(
+        cmd(
+            "project.filter",
+            "Show only this project's LLM processes (toggle)",
+            Projects,
+            "f",
+        ),
+        6,
+        "f",
+        "Filter processes",
+    )),
+    on(cmd(
+        "project.edit",
+        "Open project in the editor view",
+        Projects,
+        "e",
+    )),
+    on(cmd(
+        "project.relocate",
+        "Point project to a new folder",
+        Projects,
+        "",
+    )),
     on(cmd(
         "sessions.up",
         "Previous session in the list",
@@ -539,7 +588,7 @@ mod tests {
         };
         assert_eq!(
             text(Projects),
-            "? Help · Ctrl-P Commands · n New session · Ctrl-N/B Switch session · Ctrl-E Editor · Enter Sessions"
+            "? Help · Ctrl-P Commands · n New session · Ctrl-N/B Switch session · Ctrl-E Editor · Enter Sessions · f Filter processes · d Remove"
         );
         assert_eq!(
             text(Sessions),

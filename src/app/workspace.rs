@@ -65,6 +65,8 @@ pub struct Workspace {
     pub overview: bool,
     /// A second session shown beside the active one (FR-011).
     pub split: Option<SessionId>,
+    /// The LLM panel shows only this project's processes (`f`, FR-016).
+    pub process_filter: Option<crate::projects::ProjectId>,
 }
 
 /// Where a new session's agent runs (US6).
@@ -421,7 +423,7 @@ impl AppState {
     }
 
     /// Shows the selected list entry in the pane (without focusing it).
-    fn show_listed_session(&mut self) {
+    pub(super) fn show_listed_session(&mut self) {
         let list = self.listed_sessions();
         self.workspace.active = list
             .get(
@@ -1031,11 +1033,7 @@ impl AppState {
                 if inside(g.projects) {
                     self.workspace.focus = AgentsFocus::Projects;
                     if let Some(i) = ws_ui::list_row(g.projects, y) {
-                        if i < self.projects.len() {
-                            self.projects.selected = Some(i);
-                            self.workspace.list_selected = 0;
-                            self.show_listed_session();
-                        }
+                        self.select_project(i);
                     }
                     return Some(true);
                 }

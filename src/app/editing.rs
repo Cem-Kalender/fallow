@@ -73,6 +73,9 @@ pub enum PromptKind {
     Rename(PathBuf),
     /// Search the active session's scrollback (002).
     SearchSession,
+    /// 002 US4: rename a project in the list / point it to another folder.
+    RenameProject(crate::projects::ProjectId),
+    RelocateProject(crate::projects::ProjectId),
 }
 
 impl PromptKind {
@@ -84,6 +87,8 @@ impl PromptKind {
             PromptKind::NewFolder(_) => "New folder name",
             PromptKind::Rename(_) => "Rename to",
             PromptKind::SearchSession => "Search the session (upward from the view)",
+            PromptKind::RenameProject(_) => "Project name",
+            PromptKind::RelocateProject(_) => "New folder for this project",
         }
     }
 }
@@ -107,6 +112,8 @@ pub enum Pending {
     StopSession(u32),
     /// 002 FR-012: force-stop this session (second confirmation).
     ForceStopSession(u32),
+    /// 002 US4: remove a project with running sessions from the list.
+    RemoveProject(crate::projects::ProjectId),
 }
 
 const DOUBLE_CLICK: Duration = Duration::from_millis(400);
@@ -388,6 +395,8 @@ impl AppState {
     fn submit_prompt(&mut self, kind: &PromptKind, text: &str) -> Result<(), String> {
         match kind {
             PromptKind::SearchSession => self.search_session(text),
+            PromptKind::RenameProject(id) => self.rename_project(*id, text),
+            PromptKind::RelocateProject(id) => self.relocate_project(*id, text),
             PromptKind::GotoLine => {
                 let (line, col) = goto::parse(text)?;
                 let rows = self.editor_areas().text.height as usize;
@@ -407,6 +416,7 @@ impl AppState {
                 if self.projects.add(&p.root).is_err() {
                     self.projects.push(p.root.clone(), None, true);
                 }
+                self.save_projects();
                 self.project = Some(p);
                 self.focus = Pane::Files;
                 self.watch_dirty = true;
@@ -526,6 +536,7 @@ impl AppState {
                         }
                     }
                     Pending::CloseBuffer(i) => self.editor.close(i),
+                    Pending::RemoveProject(id) => self.remove_project(id),
                     Pending::Delete(path) => match fileops::delete(&path, token) {
                         Ok(()) => {
                             for b in &mut self.editor.buffers {
@@ -1399,7 +1410,7 @@ fn contains(r: ratatui::layout::Rect, x: u16, y: u16) -> bool {
 }
 
 /// `~` and `~/…` expand to the home directory.
-fn expand_home(p: &str) -> PathBuf {
+pub(super) fn expand_home(p: &str) -> PathBuf {
     let home = || std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" });
     if p == "~" {
         if let Some(h) = home() {

@@ -126,8 +126,9 @@ pub fn run(args: &[String]) -> i32 {
             .map_or(String::new(), |f| format!(", fixture {}", f.display()))
     );
     let fixture_arg = a.loaded.as_ref().map(|f| f.display().to_string());
-    // Loaded profile: a temporary config directory whose only profile is the flood persona
-    // (002 T037), so the script can start sessions without touching the user's config.
+    // A temporary config directory, so the user's config is never read or written. Loaded
+    // profile: its only agent profile is the flood persona (002 T037). Idle profile: it
+    // remembers 50 projects (002 T046).
     let config_dir =
         std::env::temp_dir().join(format!("fallow-bench-memory-{}", std::process::id()));
     let config_arg = config_dir.display().to_string();
@@ -137,8 +138,12 @@ pub fn run(args: &[String]) -> i32 {
             eprintln!("bench-memory: INVALID: {e}");
             return 2;
         }
-        args.extend(["--config-dir", config_arg.as_str()]);
+    } else if let Err(e) = crate::projects::write(&config_dir, crate::projects::COUNT) {
+        // Idle profile: 50 remembered projects and no session (002 FR-029).
+        eprintln!("bench-memory: INVALID: {e}");
+        return 2;
     }
+    args.extend(["--config-dir", config_arg.as_str()]);
     args.extend(fixture_arg.iter().map(String::as_str));
     let mut s = match Session::spawn(&a.bin, &args, a.settle) {
         Ok(s) => s,
@@ -178,6 +183,7 @@ pub fn run(args: &[String]) -> i32 {
         s.quit_with_sessions();
     }
     let outcome = s.finish();
+    let _ = std::fs::remove_dir_all(&config_dir);
 
     let mut csv = String::from("second,rss_bytes\n");
     for (sec, b) in &samples {
@@ -203,7 +209,6 @@ pub fn run(args: &[String]) -> i32 {
         let field = |k| pty::stat_field(&outcome.stats_line, k).unwrap_or(0);
         let (buffers, searches, copies) = (field("buffers"), field("searches"), field("copies"));
         let sessions = field("sessions");
-        let _ = std::fs::remove_dir_all(&config_dir);
         println!(
             "loaded evidence: buffers={buffers} searches={searches} copies={copies} sessions={sessions}"
         );

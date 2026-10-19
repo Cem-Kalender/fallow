@@ -299,7 +299,7 @@ folder; a dirty worktree can't be removed.
 
 ### Tests for User Story 4
 
-- [ ] T042 [P] [US4] Write `tests/projects_store.rs`:
+- [X] T042 [P] [US4] Write `tests/projects_store.rs`:
   - `projects.toml` round trip (order, `selected`, names);
   - atomic write (a temporary file, then rename);
   - a failed write keeps the in-memory list and reports a notice;
@@ -311,12 +311,12 @@ folder; a dirty worktree can't be removed.
 
 ### Implementation for User Story 4
 
-- [ ] T043 [US4] Implement `src/projects/store.rs` per contracts/config.md "projects.toml": read once after the first frame (FR-028), atomic write after every change, errors as `file:line`.
-- [ ] T044 [US4] Implement the project list pane in `src/ui/projects.rs` and its commands in `src/app/workspace.rs`:
+- [X] T043 [US4] Implement `src/projects/store.rs` per contracts/config.md "projects.toml": read once after the first frame (FR-028), atomic write after every change, errors as `file:line`.
+- [X] T044 [US4] Implement the project list pane in `src/ui/projects.rs` and its commands in `src/app/workspace.rs`:
   - move, `Enter`, `a` add (path prompt; `Ctrl-O` in both views), `Delete`/`d` remove (confirmation when it has sessions; the folder is never touched), `F2`/`r` rename, `Shift-↑`/`Shift-↓` reorder, `e` open in the editor view;
   - row markers: session count and `●n` needing attention; "missing" rows (FR-018).
-- [ ] T045 [US4] Implement the per-project process filter `f` in `src/ui/processes.rs` (processes whose cwd is inside the project, with the filter shown in the panel title, FR-016) and the per-project session list in `src/ui/sessions.rs`.
-- [ ] T046 [US4] Extend `bench-startup` and `bench-memory --idle` in `xtask/src/bench_startup.rs` and `xtask/src/bench_memory.rs` to run with a generated `projects.toml` of 50 projects in a temporary `--config-dir`. The budgets are unchanged: startup p95 < 100 ms, idle < 50 MB (FR-028, FR-029).
+- [X] T045 [US4] Implement the per-project process filter `f` in `src/ui/processes.rs` (processes whose cwd is inside the project, with the filter shown in the panel title, FR-016) and the per-project session list in `src/ui/sessions.rs`.
+- [X] T046 [US4] Extend `bench-startup` and `bench-memory --idle` in `xtask/src/bench_startup.rs` and `xtask/src/bench_memory.rs` to run with a generated `projects.toml` of 50 projects in a temporary `--config-dir`. The budgets are unchanged: startup p95 < 100 ms, idle < 50 MB (FR-028, FR-029).
 
 **Checkpoint**: projects persist across restarts and can be browsed.
 
