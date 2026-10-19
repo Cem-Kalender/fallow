@@ -170,7 +170,7 @@ folder; a dirty worktree can't be removed.
 
 ### Tests for User Story 6
 
-- [ ] T054 [P] [US6] Write `tests/worktree.rs` against a real temporary repository (`git init`, one commit). Check:
+- [X] T054 [P] [US6] Write `tests/worktree.rs` against a real temporary repository (`git init`, one commit). Check:
   - git detection by walking up to `.git` (directory or file), and a plain folder is not a git project;
   - the branch is `fallow/<profile>-<n>` with the first free `n`, and an existing branch is never reused or reset (FR-033);
   - the path is `<parent>/<project>.worktrees/<profile>-<n>`, and `sessions.worktree_root` overrides the parent (FR-034);
@@ -178,24 +178,24 @@ folder; a dirty worktree can't be removed.
   - `git worktree list` filtering keeps only `fallow/` branches;
   - removal is refused with uncommitted changes and with untracked files, succeeds when clean, and keeps the branch (FR-035);
   - git is never run without an explicit call: no git process when `AppState` starts (FR-037).
-- [ ] T055 [P] [US6] Extend `tests/session_lifecycle.rs`: a session started in a new worktree runs there (its `pwd`/`cd` prints the worktree path); restart reuses the same worktree; closing with "Remove" removes a clean worktree; a failed `worktree add` (for example a path that already exists as a file) leaves nothing behind and reports the error.
+- [X] T055 [P] [US6] Extend `tests/session_lifecycle.rs`: a session started in a new worktree runs there (its `pwd`/`cd` prints the worktree path); restart reuses the same worktree; closing with "Remove" removes a clean worktree; a failed `worktree add` (for example a path that already exists as a file) leaves nothing behind and reports the error.
 
 ### Implementation for User Story 6
 
-- [ ] T056 [US6] Implement `src/session/worktree.rs` per research R-11: `is_git_project`, `list` (porcelain, `fallow/` branches only), `next_branch`, `create` (from `git rev-parse HEAD`), `is_clean` (`status --porcelain --untracked-files=normal`), `remove` (never `--force`), each a short `std::process::Command` of the user's `git` with the error text kept for the UI. Add the `[sessions]` settings `worktrees` ("auto" | "never", default "auto") and `worktree_root` (default empty) to `src/config/schema.rs` with tests in `tests/config_merge.rs`.
-- [ ] T057 [US6] Add `workdir: ProjectFolder | Worktree { path, branch }` to `Session` in `src/session/mod.rs` and `StartRequest`. The agent's `cwd` is the worktree path; `restart` reuses it; `Session::label` shows the branch (FR-036).
-- [ ] T058 [US6] Extend the start menu (`Overlay::Menu`) in `src/app/workspace.rs` and `src/ui/workspace.rs` with the "Where" section per contracts/ui-commands.md:
+- [X] T056 [US6] Implement `src/session/worktree.rs` per research R-11: `is_git_project`, `list` (porcelain, `fallow/` branches only), `next_branch`, `create` (from `git rev-parse HEAD`), `is_clean` (`status --porcelain --untracked-files=normal`), `remove` (never `--force`), each a short `std::process::Command` of the user's `git` with the error text kept for the UI. Add the `[sessions]` settings `worktrees` ("auto" | "never", default "auto") and `worktree_root` (default empty) to `src/config/schema.rs` with tests in `tests/config_merge.rs`.
+- [X] T057 [US6] Add `workdir: ProjectFolder | Worktree { path, branch }` to `Session` in `src/session/mod.rs` and `StartRequest`. The agent's `cwd` is the worktree path; `restart` reuses it; `Session::label` shows the branch (FR-036).
+- [X] T058 [US6] Extend the start menu (`Overlay::Menu`) in `src/app/workspace.rs` and `src/ui/workspace.rs` with the "Where" section per contracts/ui-commands.md:
   - "new worktree (fallow/<profile>-<n>)" preselected for git projects when `worktrees = "auto"`;
   - "project folder";
   - each existing `fallow/` worktree of the project.
 
   The list is computed when the menu opens (FR-032, FR-037). On a create failure, show the error and keep the menu open with "project folder" selected (US6 scenario 7).
-- [ ] T059 [US6] Implement closing a worktree session in `src/app/workspace.rs`:
+- [X] T059 [US6] Implement closing a worktree session in `src/app/workspace.rs`:
   - a dialog (001 `ui::confirm`) with "Keep the worktree" focused by default and "Remove the worktree (the branch … is kept)";
   - Remove is not offered when `is_clean` is false, and the dialog says why;
   - removal runs `worktree::remove` (FR-035).
-- [ ] T060 [US6] Show the branch in the session list, the overview and the pane title (`src/ui/workspace.rs`, `src/ui/terminal_pane.rs`). Make `Ctrl-E` from a session in a worktree open the editor view on the worktree folder (US6 scenario 8, `src/app/workspace.rs`).
-- [ ] T061 [US6] Extend `xtask/src/bench_sessions.rs` to run in a temporary git repository with the default choice, so the CI echo-latency run also covers worktree creation. Record the worktree creation time in the step summary (informational; no budget).
+- [X] T060 [US6] Show the branch in the session list, the overview and the pane title (`src/ui/workspace.rs`, `src/ui/terminal_pane.rs`). Make `Ctrl-E` from a session in a worktree open the editor view on the worktree folder (US6 scenario 8, `src/app/workspace.rs`).
+- [X] T061 [US6] Extend `xtask/src/bench_sessions.rs` to run in a temporary git repository with the default choice, so the CI echo-latency run also covers worktree creation. Record the worktree creation time in the step summary (informational; no budget).
 
 **Checkpoint**: sessions in git projects are isolated by default; US1 still works for plain folders.
 

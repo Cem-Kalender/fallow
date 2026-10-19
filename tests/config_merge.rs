@@ -289,6 +289,19 @@ fn sessions_settings_defaults_and_ranges() {
         let c = settings(&format!("[sessions]\n{key} = {good}\n"));
         assert!(c.notices.is_empty(), "{key}={good}: {:?}", c.notices);
     }
+    assert!(
+        d.settings.sessions.worktrees,
+        "worktrees by default (FR-031)"
+    );
+    assert_eq!(d.settings.sessions.worktree_root, None);
+    let c = settings("[sessions]\nworktrees = \"never\"\n");
+    assert!(c.notices.is_empty());
+    assert!(!c.settings.sessions.worktrees);
+    let c = settings("[sessions]\nworktrees = \"sometimes\"\n");
+    assert!(has(&errors(&c), "\"auto\" or \"never\""));
+    assert!(c.settings.sessions.worktrees, "the default is kept");
+    let c = settings("[sessions]\nworktree_root = \"relative/path\"\n");
+    assert!(has(&errors(&c), "absolute"));
     let c = settings("[sessions]\nleave_key = \"f12\"\n");
     assert!(c.notices.is_empty());
     assert_eq!(c.settings.sessions.leave_key, "f12");

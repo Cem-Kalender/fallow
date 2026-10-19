@@ -65,7 +65,11 @@ pub fn draw(f: &mut Frame<'_>, state: &AppState, area: Rect) {
         }
         Overlay::Palette { .. } => hints.extend([("Enter", "Run"), ("Esc", "Close")]),
         Overlay::Prompt { .. } => hints.extend([("Enter", "OK"), ("Esc", "Cancel")]),
-        Overlay::Menu { .. } => hints.extend([("Enter", "Start"), ("Esc", "Cancel")]),
+        Overlay::Menu(_) => hints.extend([
+            ("Enter", "Start"),
+            ("Tab", "Agent/where"),
+            ("Esc", "Cancel"),
+        ]),
         Overlay::Confirm { .. } | Overlay::None => {}
     }
     // A focused session: every key but the leave key goes to the agent, so only that is shown.

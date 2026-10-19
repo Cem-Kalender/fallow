@@ -15,7 +15,7 @@ use super::commands::{self, Context};
 use super::editing::{EditorPrefs, FindBar, Pending, PromptKind};
 use super::events::AppEvent;
 use super::keymap;
-use super::workspace::{MenuItem, View, Workspace};
+use super::workspace::{StartMenu, View, Workspace};
 use crate::clipboard::Clipboard;
 use crate::editor::selection::LineInput;
 use crate::editor::watch::FileWatcher;
@@ -113,11 +113,8 @@ pub enum Overlay {
         input: LineInput,
         error: Option<String>,
     },
-    /// The profile menu for a new session (002).
-    Menu {
-        items: Vec<MenuItem>,
-        selected: usize,
-    },
+    /// The start menu for a new session (002): agent and where it runs.
+    Menu(StartMenu),
 }
 
 /// Selection and expansion in the process panel.
@@ -261,7 +258,7 @@ impl AppState {
             Overlay::Palette { .. } => return self.palette_key(key),
             Overlay::Confirm { .. } => return self.confirm_key(key),
             Overlay::Prompt { .. } => return self.prompt_key(key),
-            Overlay::Menu { .. } => return self.menu_key(key),
+            Overlay::Menu(_) => return self.menu_key(key),
             Overlay::None => {}
         }
         if self.workspace.view == View::Agents {

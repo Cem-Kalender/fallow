@@ -1,8 +1,10 @@
 //! `cargo xtask bench-sessions` (002 T026, SC-003, research R-9).
 //!
 //! Fallow runs in the PTY harness with a project and one profile: the xtask `echo-agent`
-//! persona (other profiles disabled in a temporary config directory). The harness starts a
-//! session with `n`, `Enter`, then types 100 keys. For each, the time from the key to the
+//! persona (other profiles disabled in a temporary config directory). The project is a git
+//! repository, so `n`, `Enter` takes the default choice and starts the agent in a new worktree
+//! (US6); the time from `Enter` to the agent's first output is reported (informational). The
+//! harness then types 100 keys. For each, the time from the key to the
 //! agent's redraw appearing on Fallow's screen is measured. Fails if the p95 is 50 ms or more.
 //! A run where the session never starts, or Fallow's identity checks fail, is INVALID.
 
@@ -61,6 +63,10 @@ pub fn run(args: &[String]) -> i32 {
         eprintln!("bench-sessions: profiles.toml: {e}");
         return 2;
     }
+    if let Err(e) = init_repo(&project) {
+        eprintln!("bench-sessions: INVALID: cannot create the test repository: {e}");
+        return 2;
+    }
     println!(
         "bench-sessions: {} ({KEYS} keys, budget echo p95 < {} ms)",
         bin.display(),
@@ -82,11 +88,11 @@ pub fn run(args: &[String]) -> i32 {
     let outcome = s.finish();
     let _ = std::fs::remove_dir_all(&base);
     let mut problems = outcome.problems(None);
-    let times = match result {
+    let (start, times) = match result {
         Ok(t) => t,
         Err(e) => {
             problems.push(e);
-            Vec::new()
+            (Duration::ZERO, Vec::new())
         }
     };
     println!("evidence: {}", outcome.evidence());
@@ -109,8 +115,9 @@ pub fn run(args: &[String]) -> i32 {
     let pass = p95 < BUDGET;
     let result = if pass { "PASS" } else { "FAIL" };
     println!(
-        "os={} keys={} median_ms={:.1} p95_ms={:.1} max_ms={:.1} budget_ms={} result={result}",
+        "os={} worktree_start_ms={:.1} keys={} median_ms={:.1} p95_ms={:.1} max_ms={:.1} budget_ms={} result={result}",
         std::env::consts::OS,
+        pty::ms(start),
         sorted.len(),
         pty::ms(median),
         pty::ms(p95),
@@ -118,8 +125,9 @@ pub fn run(args: &[String]) -> i32 {
         BUDGET.as_millis()
     );
     pty::step_summary(&format!(
-        "### Session echo latency ({})\n\n| median | p95 | budget | result |\n|---|---|---|---|\n| {:.1} ms | {:.1} ms | < {} ms | **{result}** |\n",
+        "### Session echo latency ({})\n\n| session start in a new worktree | median | p95 | budget | result |\n|---|---|---|---|---|\n| {:.0} ms | {:.1} ms | {:.1} ms | < {} ms | **{result}** |\n",
         std::env::consts::OS,
+        pty::ms(start),
         pty::ms(median),
         pty::ms(p95),
         BUDGET.as_millis()
@@ -127,7 +135,38 @@ pub fn run(args: &[String]) -> i32 {
     if pass { 0 } else { 1 }
 }
 
-fn measure(s: &mut Session) -> Result<Vec<Duration>, String> {
+/// A one-commit repository, so the session starts in a new worktree by default.
+fn init_repo(dir: &std::path::Path) -> Result<(), String> {
+    let run = |args: &[&str]| -> Result<(), String> {
+        let o = std::process::Command::new("git")
+            .current_dir(dir)
+            .args(args)
+            .output()
+            .map_err(|e| format!("git: {e}"))?;
+        if o.status.success() {
+            Ok(())
+        } else {
+            Err(String::from_utf8_lossy(&o.stderr).into_owned())
+        }
+    };
+    run(&["init", "-q"])?;
+    std::fs::write(dir.join("README.md"), "bench\n").map_err(|e| e.to_string())?;
+    run(&["add", "."])?;
+    run(&[
+        "-c",
+        "user.name=bench",
+        "-c",
+        "user.email=bench@example.invalid",
+        "-c",
+        "commit.gpgsign=false",
+        "commit",
+        "-q",
+        "-m",
+        "init",
+    ])
+}
+
+fn measure(s: &mut Session) -> Result<(Duration, Vec<Duration>), String> {
     if s.wait_frame(Duration::from_secs(10)).is_none() {
         return Err("no first frame".into());
     }
@@ -136,10 +175,12 @@ fn measure(s: &mut Session) -> Result<Vec<Duration>, String> {
     s.expect(b"echo-ready");
     s.send(b"n");
     std::thread::sleep(Duration::from_millis(300));
+    let t0 = Instant::now();
     s.send(b"\r");
-    if s.seen(Duration::from_secs(20)).is_none() {
+    let Some(ready) = s.seen(Duration::from_secs(30)) else {
         return Err("the session never showed echo-ready".into());
-    }
+    };
+    let start = ready.saturating_duration_since(t0);
     std::thread::sleep(Duration::from_millis(300));
     let mut times = Vec::with_capacity(KEYS);
     for i in 0..KEYS {
@@ -153,5 +194,5 @@ fn measure(s: &mut Session) -> Result<Vec<Duration>, String> {
         }
         std::thread::sleep(Duration::from_millis(20));
     }
-    Ok(times)
+    Ok((start, times))
 }

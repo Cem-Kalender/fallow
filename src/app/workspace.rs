@@ -11,7 +11,8 @@ use super::state::{AppState, Overlay, Pane};
 use crate::app::events::SessionId;
 use crate::editor::selection::LineInput;
 use crate::session::profiles;
-use crate::session::{SessionState, StartRequest};
+use crate::session::worktree::{self, Worktree};
+use crate::session::{SessionState, StartRequest, Workdir};
 use crate::ui::workspace as ws_ui;
 
 /// Which view is on screen (FR-020).
@@ -60,6 +61,37 @@ pub struct Workspace {
     pub leave_armed: Option<Instant>,
     /// A drag that started in the session pane selects text.
     pub drag_from: Option<(usize, u16)>,
+}
+
+/// Where a new session's agent runs (US6).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Where {
+    NewWorktree,
+    ProjectFolder,
+    Existing(Worktree),
+}
+
+impl Where {
+    pub fn label(&self, profile: &str) -> String {
+        match self {
+            Where::NewWorktree => format!("new worktree ({}{profile}-…)", worktree::PREFIX),
+            Where::ProjectFolder => "project folder".into(),
+            Where::Existing(w) => format!("{}  (existing worktree)", w.branch),
+        }
+    }
+}
+
+/// The start menu (contracts/ui-commands.md "Start menu").
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StartMenu {
+    pub agents: Vec<MenuItem>,
+    pub agent: usize,
+    /// Empty for projects that are not git repositories.
+    pub wheres: Vec<Where>,
+    pub where_sel: usize,
+    /// `Tab` moved the selection to "Where".
+    pub on_where: bool,
+    pub error: Option<String>,
 }
 
 /// One entry of the profile menu.
@@ -267,6 +299,34 @@ impl AppState {
 
     /// The editor view shows the selected project: swap its lazy tree into the editor.
     fn sync_editor_project(&mut self) {
+        let wt = self
+            .workspace
+            .active
+            .filter(|_| self.workspace.focus != AgentsFocus::Projects)
+            .and_then(|id| self.sessions.get(id))
+            .and_then(|s| match &s.workdir {
+                Workdir::Worktree(w) => Some(w.path.clone()),
+                Workdir::ProjectFolder => None,
+            });
+        if let Some(path) = wt {
+            if self.project.as_ref().is_some_and(|p| p.root == path) {
+                return;
+            }
+            if let Some(cur) = self.project.take() {
+                if let Some(i) = self.projects.index_of(&cur.root) {
+                    self.projects.projects[i].editor = Some(cur);
+                }
+            }
+            match crate::editor::Project::open(&path) {
+                Ok(p) => {
+                    self.project = Some(p);
+                    self.focus = Pane::Files;
+                    self.watch_dirty = true;
+                }
+                Err(e) => self.say(format!("{}: {e}", path.display())),
+            }
+            return;
+        }
         let Some(sel) = self.projects.selected else {
             return;
         };
@@ -356,6 +416,52 @@ impl AppState {
         let Some(id) = self.workspace.active else {
             return false;
         };
+        let wt = self.sessions.get(id).and_then(|s| match &s.workdir {
+            Workdir::Worktree(w) if !s.state.running() => Some(w.clone()),
+            _ => None,
+        });
+        if let Some(w) = wt {
+            let clean = w.path.is_dir() && worktree::is_clean(&w.path).unwrap_or(false);
+            let dialog = if clean {
+                let mut d = crate::ui::confirm::Dialog::new(
+                    "Close session",
+                    &w.path.display().to_string(),
+                    vec![
+                        w.path.display().to_string(),
+                        format!(
+                            "Keep the worktree, or remove it? The branch {} is kept either way.",
+                            w.branch
+                        ),
+                    ],
+                    "Remove worktree",
+                );
+                d.cancel_label = "Keep worktree".into();
+                d
+            } else {
+                crate::ui::confirm::Dialog::new(
+                    "Close session",
+                    &w.path.display().to_string(),
+                    vec![
+                        w.path.display().to_string(),
+                        "The worktree is kept: it has uncommitted changes or untracked files (or is missing).".into(),
+                    ],
+                    "Close session",
+                )
+            };
+            self.overlay = Overlay::Confirm {
+                dialog,
+                action: super::editing::Pending::CloseSession {
+                    id,
+                    offer_remove: clean,
+                },
+            };
+            return true;
+        }
+        self.close_session(id)
+    }
+
+    /// Closes an exited session (the worktree, if any, stays).
+    pub(super) fn close_session(&mut self, id: SessionId) -> bool {
         match self.sessions.close(id) {
             Ok(()) => {
                 self.workspace.list_selected = self.workspace.list_selected.saturating_sub(1);
@@ -384,14 +490,15 @@ impl AppState {
         true
     }
 
-    /// Opens the profile menu for the selected project. Availability is resolved now, never at
-    /// startup (FR-023).
+    /// Opens the start menu for the selected project: agents (availability resolved now, never
+    /// at startup, FR-023) and, for git projects, where the agent runs (FR-031, FR-032).
     fn open_profile_menu(&mut self) -> bool {
-        if self.projects.selected().is_none() {
+        let Some(p) = self.projects.selected() else {
             self.say("Add a project first: Ctrl-O");
             return true;
-        }
-        let items = self
+        };
+        let path = p.path.clone();
+        let agents: Vec<MenuItem> = self
             .profiles
             .iter()
             .map(|p| MenuItem {
@@ -400,25 +507,75 @@ impl AppState {
                 available: profiles::resolve(&p.command).map(|_| ()),
             })
             .collect();
-        self.overlay = Overlay::Menu { items, selected: 0 };
+        let mut wheres = Vec::new();
+        let mut error = None;
+        if worktree::is_git_project(&path) {
+            if self.sessions.limits.worktrees {
+                wheres.push(Where::NewWorktree);
+                wheres.push(Where::ProjectFolder);
+            } else {
+                wheres.push(Where::ProjectFolder);
+                wheres.push(Where::NewWorktree);
+            }
+            match worktree::list(&path) {
+                Ok(list) => wheres.extend(list.into_iter().map(Where::Existing)),
+                Err(e) => error = Some(format!("Existing worktrees not listed: {e}")),
+            }
+        }
+        let agent = agents.iter().position(|a| a.available.is_ok()).unwrap_or(0);
+        self.overlay = Overlay::Menu(StartMenu {
+            agents,
+            agent,
+            wheres,
+            where_sel: 0,
+            on_where: false,
+            error,
+        });
         true
     }
 
     pub(super) fn menu_key(&mut self, key: KeyEvent) -> bool {
-        let Overlay::Menu { items, selected } = &mut self.overlay else {
+        let Overlay::Menu(m) = &mut self.overlay else {
             return false;
         };
         match key.code {
             KeyCode::Esc => self.overlay = Overlay::None,
-            KeyCode::Up => *selected = selected.saturating_sub(1),
-            KeyCode::Down => *selected = (*selected + 1).min(items.len().saturating_sub(1)),
+            KeyCode::Tab | KeyCode::BackTab if !m.wheres.is_empty() => m.on_where = !m.on_where,
+            KeyCode::Up if m.on_where => m.where_sel = m.where_sel.saturating_sub(1),
+            KeyCode::Down if m.on_where => {
+                m.where_sel = (m.where_sel + 1).min(m.wheres.len().saturating_sub(1));
+            }
+            KeyCode::Up => m.agent = m.agent.saturating_sub(1),
+            KeyCode::Down => m.agent = (m.agent + 1).min(m.agents.len().saturating_sub(1)),
             KeyCode::Enter => {
-                let item = items.get(*selected).cloned();
-                self.overlay = Overlay::None;
-                if let Some(item) = item {
-                    match item.available {
-                        Ok(()) => self.start_session(&item.id),
-                        Err(e) => self.say(e),
+                let item = m.agents.get(m.agent).cloned();
+                let place = m
+                    .wheres
+                    .get(m.where_sel)
+                    .cloned()
+                    .unwrap_or(Where::ProjectFolder);
+                let Some(item) = item else {
+                    return true;
+                };
+                if let Err(e) = item.available {
+                    m.error = Some(e);
+                    return true;
+                }
+                match self.start_session_at(&item.id, place) {
+                    Ok(()) => {}
+                    Err(e) => {
+                        // US6 scenario 7: keep the menu, offer the project folder.
+                        if let Overlay::Menu(m) = &mut self.overlay {
+                            m.error =
+                                Some(format!("{e}. Choose \"project folder\" to start there."));
+                            m.where_sel = m
+                                .wheres
+                                .iter()
+                                .position(|w| *w == Where::ProjectFolder)
+                                .unwrap_or(0);
+                            m.on_where = true;
+                        }
+                        return true;
                     }
                 }
             }
@@ -427,45 +584,64 @@ impl AppState {
         true
     }
 
-    /// Starts a session of profile `id` in the selected project and focuses it.
+    /// Starts a session of profile `id` in the project folder (tests and plain folders).
     pub fn start_session(&mut self, id: &str) {
-        let Some(profile) = self.profiles.iter().find(|p| p.id == id).cloned() else {
-            return;
-        };
-        let Some(p) = self.projects.selected() else {
-            return;
-        };
-        let Some(tx) = self.events.clone() else {
-            self.say("Sessions are not available in this mode");
-            return;
+        if let Err(e) = self.start_session_at(id, Where::ProjectFolder) {
+            self.say(e);
+        }
+    }
+
+    /// Starts a session of profile `id` in the selected project, in `place`, and focuses it.
+    /// A worktree is created first when asked for (FR-031). Errors before the agent starts are
+    /// returned; a failure to start the agent itself shows in the session.
+    pub fn start_session_at(&mut self, id: &str, place: Where) -> Result<(), String> {
+        let profile = self
+            .profiles
+            .iter()
+            .find(|p| p.id == id)
+            .cloned()
+            .ok_or("no such profile")?;
+        let p = self.projects.selected().ok_or("no project selected")?;
+        let tx = self
+            .events
+            .clone()
+            .ok_or("Sessions are not available in this mode")?;
+        let (project, project_name, project_path) = (p.id, p.name.clone(), p.path.clone());
+        let root = self.sessions.limits.worktree_root.clone();
+        let (cwd, workdir) = match place {
+            Where::ProjectFolder => (project_path.clone(), Workdir::ProjectFolder),
+            Where::Existing(w) => (w.path.clone(), Workdir::Worktree(w)),
+            Where::NewWorktree => {
+                let branch = worktree::next_branch(&project_path, &profile.id, root.as_deref())?;
+                let w = worktree::create(&project_path, &branch, root.as_deref())
+                    .map_err(|e| format!("Could not create a worktree: {e}"))?;
+                (w.path.clone(), Workdir::Worktree(w))
+            }
         };
         let area = ws_ui::session_rect(self);
         let req = StartRequest {
-            project: p.id,
-            project_name: p.name.clone(),
-            cwd: p.path.clone(),
+            project,
+            project_name,
+            cwd,
+            workdir,
             profile,
             rows: area.height.max(1),
             cols: area.width.max(1),
         };
-        match self.sessions.start(req, &tx) {
-            Ok(sid) => {
-                self.workspace.active = Some(sid);
-                self.workspace.list_selected = self
-                    .project_sessions()
-                    .iter()
-                    .position(|s| *s == sid)
-                    .unwrap_or(0);
-                self.workspace.view = View::Agents;
-                self.set_session_focus(true);
-                if let Some(SessionState::Failed(e)) =
-                    self.sessions.get(sid).map(|s| s.state.clone())
-                {
-                    self.say(e);
-                }
-            }
-            Err(e) => self.say(e),
+        let sid = self.sessions.start(req, &tx)?;
+        self.overlay = Overlay::None;
+        self.workspace.active = Some(sid);
+        self.workspace.list_selected = self
+            .project_sessions()
+            .iter()
+            .position(|s| *s == sid)
+            .unwrap_or(0);
+        self.workspace.view = View::Agents;
+        self.set_session_focus(true);
+        if let Some(SessionState::Failed(e)) = self.sessions.get(sid).map(|s| s.state.clone()) {
+            self.say(e);
         }
+        Ok(())
     }
 
     /// New output from a session. Returns true if it is on screen.

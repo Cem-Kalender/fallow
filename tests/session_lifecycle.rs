@@ -61,6 +61,7 @@ fn req(dir: &std::path::Path, p: AgentProfile) -> StartRequest {
         project: 1,
         project_name: "p".into(),
         cwd: dir.to_path_buf(),
+        workdir: fallow::session::Workdir::ProjectFolder,
         profile: p,
         rows: 24,
         cols: 100,
@@ -222,4 +223,81 @@ fn claude_code_version_if_installed() {
     let text = screen_text(&m, id);
     assert!(text.contains("Claude Code"), "{text}");
     let _ = std::fs::remove_dir_all(&d);
+}
+
+fn git(dir: &std::path::Path, args: &[&str]) {
+    let ok = std::process::Command::new("git")
+        .current_dir(dir)
+        .args(args)
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    assert!(ok, "git {args:?}");
+}
+
+/// 002 T055: through the app, the default for a git project is a new worktree; the agent runs
+/// there; restart reuses it; closing with Remove removes a clean worktree.
+#[test]
+fn sessions_of_git_projects_run_in_their_own_worktree() {
+    use fallow::app::workspace::Where;
+    let base = temp("wt-app");
+    let r = base.join("repo");
+    std::fs::create_dir_all(&r).unwrap();
+    git(&r, &["init", "-q", "-b", "main"]);
+    git(&r, &["config", "user.email", "t@example.invalid"]);
+    git(&r, &["config", "user.name", "t"]);
+    std::fs::write(r.join("a.txt"), "x").unwrap();
+    git(&r, &["add", "."]);
+    git(
+        &r,
+        &["-c", "commit.gpgsign=false", "commit", "-q", "-m", "init"],
+    );
+
+    let (tx, rx) = channel();
+    let mut s = AppState::new(Some(r.clone()), Vec::new());
+    s.events = Some(tx);
+    s.profiles = vec![echo_profile()];
+    s.start_session_at("test", Where::NewWorktree).unwrap();
+    let id = s.workspace.active.unwrap();
+    let wt = match &s.sessions.get(id).unwrap().workdir {
+        fallow::session::Workdir::Worktree(w) => w.clone(),
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(wt.branch, "fallow/test-1");
+    assert!(
+        s.sessions
+            .get(id)
+            .unwrap()
+            .label()
+            .contains("fallow/test-1")
+    );
+    assert_eq!(wait_exit(&mut s.sessions, &rx, id), Some(3));
+    std::thread::sleep(Duration::from_millis(300));
+    while let Ok(AppEvent::SessionOutput(i)) = rx.try_recv() {
+        s.sessions.output(i);
+    }
+    let text = screen_text(&s.sessions, id);
+    assert!(text.contains("test-1"), "runs in the worktree\n{text}");
+    // Restart reuses the worktree.
+    let tx2 = s.events.clone().unwrap();
+    s.sessions.restart(id, &tx2).unwrap();
+    assert_eq!(s.sessions.get(id).unwrap().cwd, wt.path);
+    assert_eq!(wait_exit(&mut s.sessions, &rx, id), Some(3));
+    // Close: the clean worktree can be removed; the dialog defaults to Keep.
+    s.workspace.focus = fallow::app::workspace::AgentsFocus::Sessions;
+    s.run("session.close");
+    match &s.overlay {
+        fallow::app::state::Overlay::Confirm { dialog, .. } => {
+            assert_eq!(dialog.cancel_label, "Keep worktree");
+            assert_eq!(dialog.focus, fallow::ui::confirm::Button::Cancel);
+        }
+        o => panic!("{o:?}"),
+    }
+    s.handle_key(crossterm::event::KeyEvent::new(
+        crossterm::event::KeyCode::Char('y'),
+        crossterm::event::KeyModifiers::NONE,
+    ));
+    assert!(s.sessions.get(id).is_none(), "closed");
+    assert!(!wt.path.exists(), "removed");
+    let _ = std::fs::remove_dir_all(&base);
 }

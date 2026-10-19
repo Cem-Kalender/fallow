@@ -96,6 +96,13 @@ pub enum Pending {
     CloseBuffer(usize),
     /// FR-006 "keep mine / load disk" for this buffer's file. Confirm = load disk.
     DiskConflict(PathBuf),
+    /// 002 FR-035: closing a session in a worktree. With `offer_remove`, confirm removes the
+    /// clean worktree and cancel keeps it; both close the session. Without, confirm closes and
+    /// cancel does nothing.
+    CloseSession {
+        id: u32,
+        offer_remove: bool,
+    },
 }
 
 const DOUBLE_CLICK: Duration = Duration::from_millis(400);
@@ -118,7 +125,7 @@ impl AppState {
     pub fn text_input(&self) -> bool {
         match self.overlay {
             Overlay::Palette { .. } | Overlay::Prompt { .. } => true,
-            Overlay::Confirm { .. } | Overlay::Help { .. } | Overlay::Menu { .. } => false,
+            Overlay::Confirm { .. } | Overlay::Help { .. } | Overlay::Menu(_) => false,
             Overlay::None if self.workspace.view == super::workspace::View::Agents => {
                 self.workspace.focus == super::workspace::AgentsFocus::Session
             }
@@ -456,6 +463,14 @@ impl AppState {
             Outcome::Pending => return true,
             Outcome::Cancelled => {
                 self.overlay = Overlay::None;
+                if let Pending::CloseSession {
+                    id,
+                    offer_remove: true,
+                } = &action
+                {
+                    self.close_session(*id);
+                    self.say("Closed; the worktree was kept");
+                }
                 if let Pending::DiskConflict(p) = &action {
                     if let Some(i) = self.editor.index_of(p) {
                         self.editor.buffers[i].keep_mine();
@@ -466,6 +481,27 @@ impl AppState {
             Outcome::Confirmed(token) => {
                 self.overlay = Overlay::None;
                 match action {
+                    Pending::CloseSession { id, offer_remove } => {
+                        if offer_remove {
+                            let target = self.sessions.get(id).and_then(|s| match &s.workdir {
+                                crate::session::Workdir::Worktree(w) => self
+                                    .projects
+                                    .get(s.project)
+                                    .map(|p| (p.path.clone(), w.clone())),
+                                crate::session::Workdir::ProjectFolder => None,
+                            });
+                            if let Some((project, w)) = target {
+                                match crate::session::worktree::remove(&project, &w.path) {
+                                    Ok(()) => self.say(format!(
+                                        "Removed the worktree; the branch {} is kept",
+                                        w.branch
+                                    )),
+                                    Err(e) => self.say(format!("The worktree was kept: {e}")),
+                                }
+                            }
+                        }
+                        self.close_session(id);
+                    }
                     Pending::Quit => self.quit = true,
                     Pending::CloseBuffer(i) => self.editor.close(i),
                     Pending::Delete(path) => match fileops::delete(&path, token) {
@@ -767,7 +803,7 @@ impl AppState {
                 *selected = 0;
                 return true;
             }
-            Overlay::Confirm { .. } | Overlay::Help { .. } | Overlay::Menu { .. } => return false,
+            Overlay::Confirm { .. } | Overlay::Help { .. } | Overlay::Menu(_) => return false,
             Overlay::None => {}
         }
         if self.focus != Pane::Editor {
