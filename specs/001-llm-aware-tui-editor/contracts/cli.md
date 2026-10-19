@@ -6,7 +6,7 @@ fallow [OPTIONS] [PATH]
 
 | Argument / option | Meaning |
 |---|---|
-| `PATH` | Project directory to open. If omitted, Fallow starts with no project (idle state). |
+| `PATH` | Project directory to open. If omitted, Fallow starts with no project (idle state). 002 (FR-017): the folder is added to the project list and selected; without it, Fallow opens on the remembered list. |
 | `--all-users` | Show all users' processes (FR-031). Takes effect only when Fallow already runs elevated (root/Administrator). Otherwise Fallow starts normally and shows a notice. Fallow never requests elevation. |
 | `--no-dns` | Disable provider hostname resolution for this run (same as `dns.enabled = false`). |
 | `--config-dir <DIR>` | Use this directory instead of the platform config dir. |

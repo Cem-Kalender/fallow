@@ -42,3 +42,32 @@ cargo xtask canary                # also with a session printing the canary (SC-
 | S16 | Worktree by default (US6) | In a git project, `n`, pick an agent, `Enter` without touching "Where". Repeat for a second session. | Each session's title shows its own branch (`fallow/claude-1`, `fallow/claude-2`); `<project>.worktrees/` next to the project holds both folders. |
 | S17 | Isolation | Ask one agent to change a file; look at the same file in the other worktree and in the project folder. | Only the first worktree has the change. |
 | S18 | Close and remove | Exit an agent whose worktree has a new untracked file; `w`. Then delete the file, `w` again, choose Remove. | First: Remove is not offered and the dialog says why. Second: the worktree folder is gone; `git branch` still lists its branch. |
+
+## Results
+
+### Windows (T053), 2026-10-19
+
+**Manual run: not done yet.** The scenarios need a person at an interactive terminal with a
+signed-in agent; they were not run during implementation. What is already proven automatically,
+on Windows locally and on all three CI runners (run 39299115129 and later):
+
+| # | Automated evidence | Still needs the manual run for |
+|---|---|---|
+| S1 | `ui::workspace` tests: default screen, focus on Projects, hint bar (FR-019, FR-021) | the look in Windows Terminal |
+| S2 | `projects_model`: add validates (a file is rejected with the reason) and dedups | — |
+| S3 | `session_lifecycle`: runs in the project folder; `bench-sessions` starts sessions through the menu | a real agent's first screen |
+| S4 | `session_keys`; `workspace_keys_go_to_the_agent_while_a_session_has_focus` | each key's effect in a real agent |
+| S5 | leave-key tests in `app::state` (one press leaves, a second sends it) | — |
+| S6 | `scrollback` (both tiers, search); `clipboard` (OSC 52 and the platform clipboard) | mouse selection and the Windows clipboard in a session |
+| S7 | `session_keys::pastes_are_bracketed_when_the_agent_asked` | a real terminal paste |
+| S8 | `session_attention` (signals, quiet fallback, notice, per-project count); profile flags in `profiles` | Claude Code ringing the bell with the per-run flag |
+| S9 | `bench-sessions` switch timing (p95 < 100 ms on all three OSes) | split view on screen |
+| S10 | `control_requires_confirmation`; restart in `session_lifecycle` | ConPTY close reaching a real agent |
+| S11 | `detect::session_agents_are_tracked_as_their_own_groups`; `project_list::f_filters_the_llm_panel_to_the_project` | — |
+| S12 | `ctrl_e_shows_the_project_in_the_editor_layout_and_back` | — |
+| S13 | `projects_store` (order, selection, command-line folder); `quitting_with_sessions_asks_once_and_lists_them`; `nothing_is_started_at_startup` | — |
+| S14 | `profiles::reload_configuration_reads_profiles_again`; custom profile args in `session_lifecycle` | — |
+| S15 | `project_list::missing_folders_are_kept_and_can_be_pointed_elsewhere` | — |
+
+macOS and Linux manual runs are on the macOS hardware checklist of 001 (plan.md, Release
+blockers, item 5).

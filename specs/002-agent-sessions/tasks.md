@@ -352,8 +352,11 @@ folder; a dirty worktree can't be removed.
     proves the search works. **Not done: the egress part.** `xtask egress` (001 T051) is not
     implemented yet; run it with a session open once it exists.
 - [X] T051 [P] Add CI wiring in `.github/workflows/ci.yml` on all three OSes: `bench-sessions`, the extended `bench-memory --loaded`, and the 50-project startup and idle runs (constitution VI).
-- [ ] T052 [P] Update `README.md` and help: sessions, the leave key, known gaps (no kitty keyboard protocol in sessions, no reflow), and the Windows note on npm `.cmd` shims (research R-6, R-7).
+- [X] T052 [P] Update `README.md` and help: sessions, the leave key, known gaps (no kitty keyboard protocol in sessions, no reflow), and the Windows note on npm `.cmd` shims (research R-6, R-7).
 - [ ] T053 Run quickstart S1–S15 on Windows locally and record the results in `specs/002-agent-sessions/quickstart.md`. Add the macOS and Linux manual runs to the macOS hardware checklist of 001 (plan, Release blockers).
+  - Partly done: the macOS and Linux runs are on the 001 checklist (plan.md, Release blockers,
+    item 5), and quickstart.md "Results" maps each scenario to its automated evidence. **The
+    Windows manual run itself is still open**: it needs a person at the terminal.
 
 ---
 

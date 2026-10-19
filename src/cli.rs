@@ -7,12 +7,14 @@ use std::path::PathBuf;
 
 /// Usage text for `--help`. The hidden test-only options are deliberately absent.
 pub const USAGE: &str = "\
-Fallow: a terminal editor that shows the LLM processes on your machine.
+Fallow: a terminal workspace for LLM coding agents, with a live panel of the LLM processes on
+your machine and a file editor.
 
 Usage: fallow [OPTIONS] [PATH]
 
 Arguments:
-  [PATH]  Project directory to open. Without it, Fallow starts with no project.
+  [PATH]  Project folder to add to the project list and select. Without it, Fallow opens on
+          the remembered project list.
 
 Options:
       --all-users           Show all users' processes (only when already running elevated)
