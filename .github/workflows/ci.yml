@@ -62,10 +62,10 @@ jobs:
       - name: Tests
         run: cargo test --workspace --locked
 
-      - name: Startup benchmark (p95 of 30 runs < 100 ms)
+      - name: Startup benchmark (50 remembered projects; p95 of 30 runs < 100 ms)
         run: cargo xtask bench-startup
 
-      - name: Idle memory benchmark (peak RSS < 50 MB)
+      - name: Idle memory benchmark (50 remembered projects; peak RSS < 50 MB)
         run: cargo xtask bench-memory --idle --csv bench-memory-idle-${{ matrix.os }}.csv
 
       - name: Refresh CPU benchmark (~600 processes, <= 2% of one core)
@@ -74,8 +74,12 @@ jobs:
       - name: New/exited process latency (<= two refresh intervals)
         run: cargo xtask bench-new-process
 
-      - name: Session echo latency (002 SC-003, p95 < 50 ms)
+      - name: Sessions (002 SC-003 echo, SC-005 switch, SC-006 echo under flood)
         run: cargo xtask bench-sessions
+
+      # The macOS run also dumps Fallow's memory with lldb, which needs sudo (as the canary).
+      - name: Session canary (002 FR-026, output never leaves memory)
+        run: cargo xtask canary --sessions
 
       # The reference large project (T082, R-13): ~50,000 files, ~1 GB, generated from fixed
       # seeds and cached by a hash of the generator.
@@ -88,7 +92,7 @@ jobs:
       - name: Reference fixture (generated unless cached)
         run: cargo xtask gen-fixture --out "$RUNNER_TEMP/fallow-fixture"
 
-      - name: Loaded memory benchmark (peak RSS < 150 MB)
+      - name: Loaded memory benchmark (large project + 4 flooding sessions; peak RSS < 150 MB)
         run: cargo xtask bench-memory --loaded --fixture "$RUNNER_TEMP/fallow-fixture" --csv bench-memory-loaded-${{ matrix.os }}.csv
 
       - name: Search time (first result row, p95 of 10 < 1 s)

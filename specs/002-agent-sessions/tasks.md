@@ -346,8 +346,12 @@ folder; a dirty worktree can't be removed.
 
 ## Phase 8: Polish & Cross-Cutting Concerns
 
-- [ ] T050 Extend the SC-007 canary in `xtask/src/canary.rs`: a session persona prints a canary. After use and quit, no file in the config directory or temp directory contains it, and a memory dump during the session finds it only in Fallow's live scrollback (FR-026, SC-008). Run the existing egress test with a session open.
-- [ ] T051 [P] Add CI wiring in `.github/workflows/ci.yml` on all three OSes: `bench-sessions`, the extended `bench-memory --loaded`, and the 50-project startup and idle runs (constitution VI).
+- [X] T050 Extend the SC-007 canary in `xtask/src/canary.rs`: a session persona prints a canary. After use and quit, no file in the config directory or temp directory contains it, and a memory dump during the session finds it only in Fallow's live scrollback (FR-026, SC-008). Run the existing egress test with a session open.
+  - Done as `cargo xtask canary --sessions` (all OSes; the memory dump on macOS). The canary
+    reaches the agent through a hand-off file the agent deletes, and a planted control file
+    proves the search works. **Not done: the egress part.** `xtask egress` (001 T051) is not
+    implemented yet; run it with a session open once it exists.
+- [X] T051 [P] Add CI wiring in `.github/workflows/ci.yml` on all three OSes: `bench-sessions`, the extended `bench-memory --loaded`, and the 50-project startup and idle runs (constitution VI).
 - [ ] T052 [P] Update `README.md` and help: sessions, the leave key, known gaps (no kitty keyboard protocol in sessions, no reflow), and the Windows note on npm `.cmd` shims (research R-6, R-7).
 - [ ] T053 Run quickstart S1–S15 on Windows locally and record the results in `specs/002-agent-sessions/quickstart.md`. Add the macOS and Linux manual runs to the macOS hardware checklist of 001 (plan, Release blockers).
 

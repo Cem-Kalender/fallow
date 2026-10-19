@@ -5,6 +5,8 @@
 //! environment). Fallow's memory is then dumped with lldb while `--snapshot-hold` keeps all its
 //! state alive, and the core, Fallow's output, and its config and cache directories are
 //! searched for the canary in UTF-8 and UTF-16LE. Any hit fails.
+//!
+//! `--sessions` runs the session canary instead (002 T050, all OSes): see `canary_sessions.rs`.
 
 use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
@@ -19,15 +21,27 @@ const ROUNDS: usize = 5;
 
 pub fn run(args: &[String]) -> i32 {
     let mut bin = pty::default_binary();
+    let mut sessions = false;
     let mut it = args.iter();
     while let Some(a) = it.next() {
-        match (a.as_str(), it.next()) {
-            ("--bin", Some(v)) => bin = PathBuf::from(v),
+        match a.as_str() {
+            "--sessions" => sessions = true,
+            "--bin" => match it.next() {
+                Some(v) => bin = PathBuf::from(v),
+                None => {
+                    eprintln!("usage: cargo xtask canary [--sessions] [--bin <path>]");
+                    return 2;
+                }
+            },
             _ => {
-                eprintln!("usage: cargo xtask canary [--bin <path>]");
+                eprintln!("usage: cargo xtask canary [--sessions] [--bin <path>]");
                 return 2;
             }
         }
+    }
+    if sessions {
+        let bin = std::path::absolute(&bin).unwrap_or(bin);
+        return crate::canary_sessions::run(&bin);
     }
     if !cfg!(target_os = "macos") {
         eprintln!(
@@ -117,50 +131,7 @@ fn inspect(bin: &Path, dir: &Path, agent_bin: &Path, agent_pid: u32, canary: &st
     let agent_path = agent_bin.to_string_lossy().into_owned();
 
     let core = dir.join("fallow.core");
-    let mut dumped = false;
-    // A modified-memory core sometimes comes out partial; retry, then fall back to a full one.
-    // A dump counts only if it holds the fixture's argv, i.e. Fallow's heap.
-    for style in [
-        Some("modified-memory"),
-        Some("modified-memory"),
-        Some("modified-memory"),
-        Some("full"),
-    ] {
-        let _ = Command::new("sudo").args(["rm", "-f"]).arg(&core).status();
-        let mut cmd = format!("process save-core {}", core.display());
-        if let Some(s) = style {
-            cmd = format!("process save-core -s {s} {}", core.display());
-        }
-        let st = Command::new("sudo")
-            .args([
-                "lldb",
-                "-p",
-                &pid.to_string(),
-                "--batch",
-                "-o",
-                &cmd,
-                "-o",
-                "detach",
-            ])
-            .stdout(Stdio::null())
-            .status();
-        let _ = Command::new("sudo")
-            .args(["chmod", "a+r"])
-            .arg(&core)
-            .status();
-        if st.is_ok_and(|s| s.success())
-            && core.metadata().is_ok_and(|m| m.len() > 0)
-            && fixtures::file_contains(&core, agent_path.as_bytes()).unwrap_or(false)
-        {
-            println!(
-                "canary: core dump with {} style: {} bytes",
-                style.unwrap_or("default"),
-                core.metadata().unwrap().len()
-            );
-            dumped = true;
-            break;
-        }
-    }
+    let dumped = save_core(pid, &core, agent_path.as_bytes());
     let _ = fallow.kill();
     let mut rest = String::new();
     let _ = stdout.read_to_string(&mut rest);
@@ -249,4 +220,51 @@ fn files(dir: &Path) -> Vec<PathBuf> {
         }
     }
     out
+}
+
+/// macOS: saves a core of `pid` to `core` with lldb. It counts only if it holds `marker` (proof
+/// that the heap was captured). A modified-memory core sometimes comes out partial; retry, then
+/// fall back to a full one.
+pub fn save_core(pid: u32, core: &Path, marker: &[u8]) -> bool {
+    for style in [
+        Some("modified-memory"),
+        Some("modified-memory"),
+        Some("modified-memory"),
+        Some("full"),
+    ] {
+        let _ = Command::new("sudo").args(["rm", "-f"]).arg(core).status();
+        let mut cmd = format!("process save-core {}", core.display());
+        if let Some(s) = style {
+            cmd = format!("process save-core -s {s} {}", core.display());
+        }
+        let st = Command::new("sudo")
+            .args([
+                "lldb",
+                "-p",
+                &pid.to_string(),
+                "--batch",
+                "-o",
+                &cmd,
+                "-o",
+                "detach",
+            ])
+            .stdout(Stdio::null())
+            .status();
+        let _ = Command::new("sudo")
+            .args(["chmod", "a+r"])
+            .arg(core)
+            .status();
+        if st.is_ok_and(|s| s.success())
+            && core.metadata().is_ok_and(|m| m.len() > 0)
+            && fixtures::file_contains(core, marker).unwrap_or(false)
+        {
+            println!(
+                "canary: core dump with {} style: {} bytes",
+                style.unwrap_or("default"),
+                core.metadata().unwrap().len()
+            );
+            return true;
+        }
+    }
+    false
 }
