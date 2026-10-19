@@ -9,8 +9,8 @@
 //!   agent's redraw on Fallow's screen. p95 < 50 ms. The session start time in a new worktree
 //!   is reported (no budget).
 //! - **switch** (SC-005): two `banner-agent` sessions that fill their screens with `A` and `B`;
-//!   10 switches with `Ctrl-B`/`Ctrl-N`, each timed from the key to the other session's letters
-//!   on screen. p95 < 100 ms.
+//!   30 switches with `Ctrl-B`/`Ctrl-N` (enough that one outlier is not the p95), each timed
+//!   from the key to the other session's letters on screen. p95 < 100 ms.
 //!
 //! Run 2:
 //! - **flood** (SC-006): one `echo-agent` session and seven `flood-agent` sessions printing
@@ -27,7 +27,7 @@ use crate::pty::{self, Session};
 
 const ECHO_KEYS: usize = 100;
 const ECHO_BUDGET: Duration = Duration::from_millis(50);
-const SWITCHES: usize = 10;
+const SWITCHES: usize = 30;
 const SWITCH_BUDGET: Duration = Duration::from_millis(100);
 const FLOOD_SESSIONS: usize = 7;
 const FLOOD_KEYS: usize = 50;
