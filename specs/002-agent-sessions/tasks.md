@@ -158,6 +158,49 @@ US1; US4 and US5 extend the foundation.
 
 ---
 
+## Phase 3b: User Story 6 - Each agent works in its own git worktree (Priority: P1)
+
+**Goal**: sessions of git projects run in their own worktree on a new branch by default; the user
+can choose the project folder or an existing worktree; closing offers keep/remove, never removing
+uncommitted work (FR-031 to FR-037, research R-11).
+
+**Independent Test**: quickstart S16–S18. Two default sessions in one git project run in separate
+worktrees on separate branches; a change in one is absent from the other and from the project
+folder; a dirty worktree can't be removed.
+
+### Tests for User Story 6
+
+- [ ] T054 [P] [US6] Write `tests/worktree.rs` against a real temporary repository (`git init`, one commit). Check:
+  - git detection by walking up to `.git` (directory or file), and a plain folder is not a git project;
+  - the branch is `fallow/<profile>-<n>` with the first free `n`, and an existing branch is never reused or reset (FR-033);
+  - the path is `<parent>/<project>.worktrees/<profile>-<n>`, and `sessions.worktree_root` overrides the parent (FR-034);
+  - two worktrees are isolated: a file changed in one is unchanged in the other and in the project folder (SC-010);
+  - `git worktree list` filtering keeps only `fallow/` branches;
+  - removal is refused with uncommitted changes and with untracked files, succeeds when clean, and keeps the branch (FR-035);
+  - git is never run without an explicit call: no git process when `AppState` starts (FR-037).
+- [ ] T055 [P] [US6] Extend `tests/session_lifecycle.rs`: a session started in a new worktree runs there (its `pwd`/`cd` prints the worktree path); restart reuses the same worktree; closing with "Remove" removes a clean worktree; a failed `worktree add` (for example a path that already exists as a file) leaves nothing behind and reports the error.
+
+### Implementation for User Story 6
+
+- [ ] T056 [US6] Implement `src/session/worktree.rs` per research R-11: `is_git_project`, `list` (porcelain, `fallow/` branches only), `next_branch`, `create` (from `git rev-parse HEAD`), `is_clean` (`status --porcelain --untracked-files=normal`), `remove` (never `--force`), each a short `std::process::Command` of the user's `git` with the error text kept for the UI. Add the `[sessions]` settings `worktrees` ("auto" | "never", default "auto") and `worktree_root` (default empty) to `src/config/schema.rs` with tests in `tests/config_merge.rs`.
+- [ ] T057 [US6] Add `workdir: ProjectFolder | Worktree { path, branch }` to `Session` in `src/session/mod.rs` and `StartRequest`. The agent's `cwd` is the worktree path; `restart` reuses it; `Session::label` shows the branch (FR-036).
+- [ ] T058 [US6] Extend the start menu (`Overlay::Menu`) in `src/app/workspace.rs` and `src/ui/workspace.rs` with the "Where" section per contracts/ui-commands.md:
+  - "new worktree (fallow/<profile>-<n>)" preselected for git projects when `worktrees = "auto"`;
+  - "project folder";
+  - each existing `fallow/` worktree of the project.
+
+  The list is computed when the menu opens (FR-032, FR-037). On a create failure, show the error and keep the menu open with "project folder" selected (US6 scenario 7).
+- [ ] T059 [US6] Implement closing a worktree session in `src/app/workspace.rs`:
+  - a dialog (001 `ui::confirm`) with "Keep the worktree" focused by default and "Remove the worktree (the branch … is kept)";
+  - Remove is not offered when `is_clean` is false, and the dialog says why;
+  - removal runs `worktree::remove` (FR-035).
+- [ ] T060 [US6] Show the branch in the session list, the overview and the pane title (`src/ui/workspace.rs`, `src/ui/terminal_pane.rs`). Make `Ctrl-E` from a session in a worktree open the editor view on the worktree folder (US6 scenario 8, `src/app/workspace.rs`).
+- [ ] T061 [US6] Extend `xtask/src/bench_sessions.rs` to run in a temporary git repository with the default choice, so the CI echo-latency run also covers worktree creation. Record the worktree creation time in the step summary (informational; no budget).
+
+**Checkpoint**: sessions in git projects are isolated by default; US1 still works for plain folders.
+
+---
+
 ## Phase 4: User Story 2 - Run and oversee several agent sessions at once (Priority: P2)
 
 **Goal**: an overview of all sessions with state and time in state, "needs attention" detection and notices, one-key switching, split view, confirmed stop and quit.
@@ -306,6 +349,7 @@ US1; US4 and US5 extend the foundation.
 - Setup (Phase 1) → Foundational (Phase 2) → user stories.
 - T005 (event loop) blocks everything that streams output.
 - US1 (Phase 3) depends on Phase 2.
+- US6 (Phase 3b) depends on US1: it changes where sessions start. It comes before US2.
 - US2 and US3 depend on US1: they need sessions to show.
 - US4 depends on Phase 2 only; it can run in parallel with US1.
 - US5 depends on T008 only; it can run in parallel with US2 and US3.
@@ -319,6 +363,7 @@ US1; US4 and US5 extend the foundation.
 - T037 needs T026's personas
 - T043 → T044, T046
 - T008 → T025, T048, T049
+- T022 → T056, T057 → T058, T059 → T060; T026 → T061
 
 ### Within each story
 
@@ -347,7 +392,7 @@ T017 src/session/term.rs   T018 src/session/scrollback.rs   T019 src/session/key
 
 ### Incremental delivery
 
-US1 → US2 (oversight and the memory gate with sessions) → US3 (agent-first screen) → US4 (projects
+US1 → US6 (worktrees by default) → US2 (oversight and the memory gate with sessions) → US3 (agent-first screen) → US4 (projects
 persist) → US5 (profiles). Each increment keeps every constitution gate green in CI.
 
 ## Notes

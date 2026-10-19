@@ -70,6 +70,34 @@ gracefully and quits (spec Edge Cases).
 | Close (exited session only) | `w` |
 | Jump to the agent's process in the LLM panel | `p` |
 
+## Start menu (`n`)
+
+```text
+┌ New session in api ──────────────────────────────┐
+│ Agent:  Claude Code                              │
+│         Codex CLI                                │
+│         Shell                                    │
+│ Where:  ● new worktree  (fallow/claude-3)        │  <- default for git projects (FR-031)
+│         ○ project folder                         │
+│         ○ fallow/claude-1  (existing worktree)   │
+└ ↑↓ choose · Tab agent/where · Enter start · Esc ─┘
+```
+
+- `↑`/`↓` choose within the focused section; `Tab` moves between "Agent" and "Where"; `Enter`
+  starts.
+- For a project that is not a git repository there is no "Where" section.
+- Session rows and the session pane title show the branch, for example
+  `#3 Claude Code · fallow/claude-3`.
+
+## Closing a session in a worktree
+
+`w` on an exited session in a worktree opens a dialog with two choices:
+- "Keep the worktree" (default focus);
+- "Remove the worktree (the branch fallow/claude-3 is kept)".
+
+If the worktree has uncommitted changes or untracked files, Remove is not offered and the dialog
+says so (FR-035).
+
 ## Focused session
 
 | Command | Default key |
