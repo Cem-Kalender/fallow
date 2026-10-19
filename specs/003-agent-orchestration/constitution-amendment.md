@@ -1,7 +1,7 @@
 # Constitution Amendment Proposal: Agent Sessions and Orchestration
 
-**Status**: PROPOSED, not ratified. `.specify/memory/constitution.md` is unchanged until the
-project owner approves this proposal.
+**Status**: RATIFIED 2026-10-19 by the project owner, as written. Applied to
+`.specify/memory/constitution.md` (v4.0.0).
 
 **Proposed version**: 3.0.1 → **4.0.0** (MAJOR: Principle IV is redefined to allow scoped standing
 permissions for non-destructive input to Fallow's own sessions).

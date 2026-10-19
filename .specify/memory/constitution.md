@@ -1,40 +1,37 @@
 <!--
 Sync Impact Report
 ==================
-Version change: 3.0.0 → 3.0.1
-Bump rationale: PATCH. Clarification only: the Performance Budgets table now defines how the
-startup budget is measured (p95 of 30 runs after 3 warm-ups, with one automatic retry of the
-whole benchmark job). No principle or budget value changes. Source:
-specs/001-llm-aware-tui-editor analysis finding A1.
-
-Modified sections:
-  - Performance Budgets & Measurement: Startup row "Measured as" column, plus a note on the
-    statistic.
-
-Previous amendment (3.0.0): MAJOR. Principle VII is redefined. The blanket ban on reading environment
-variable values becomes a ban on parsing, storing, displaying or logging them, with a bounded
-exception for platforms where a command-line read unavoidably returns them (macOS
-KERN_PROCARGS2; see specs/001-llm-aware-tui-editor/research.md R-2). Under this constitution's
-versioning policy, redefining a principle is a MAJOR change.
+Version change: 3.0.1 → 4.0.0
+Bump rationale: MAJOR. Principle IV is redefined: input delivered into Fallow's own agent
+sessions may be covered by a scoped, time-limited, visible, revocable standing permission instead
+of a per-action confirmation. Destructive actions keep per-action confirmation everywhere.
+Approved by the project owner on 2026-10-19. Source: specs/003-agent-orchestration/
+constitution-amendment.md.
 
 Modified principles:
-  - VII. Privacy by Construction: "environment variable values" removed from the list of secret
-    values that must not be read. New rule: never parse, store, display or log environment
-    values. Where a command-line read returns them, wipe the buffer before the call returns and
-    run the SC-007 canary test on that platform.
+  - II. Instant Startup, No Implicit Background Work: the orchestration channel starts with the
+    first session that uses it, never at startup.
+  - IV. Observability Over Control: redefined (Fallow sessions, standing permissions,
+    destructive actions).
+  - V. Least Privilege, Read-Only by Default: starting a process is a write capability, allowed
+    only on explicit request or under a standing permission with a session limit.
+  - VII. Privacy by Construction: one local, user-only channel for Fallow's sessions; no network
+    socket, loopback included; orchestration content and session output are memory-only.
 
-Added sections: none
+Added sections: none (two new quality gates in Development Workflow & Quality Gates).
 Removed sections: none
 
-Previous amendment (2.0.0): Principle VII allowed forward DNS resolution of configured provider
-hostnames as the only outbound traffic.
+Templates requiring updates: none. plan-template.md, spec-template.md and tasks-template.md read
+the constitution at runtime.
 
-Follow-up TODOs (carried over from 1.0.0; research.md R-13 proposes resolutions, to be written
-in once CI exists):
-  - TODO(LARGE_PROJECT_FIXTURE): The "large project" used for the 150 MB budget must be pinned
-    as a concrete, versioned fixture in the benchmark suite (file count, total size, languages).
-  - TODO(REFERENCE_HARDWARE): The CI runner class on which budgets are measured must be named
-    once CI exists.
+Previous amendment (3.0.1): PATCH. The startup budget statistic (p95 of 30 runs after 3
+warm-ups, one automatic retry).
+
+Previous amendment (3.0.0): MAJOR. Principle VII: environment values are never parsed, stored,
+displayed or logged; macOS KERN_PROCARGS2 exception with a wiped buffer and the SC-007 canary.
+
+Follow-up TODOs: none. TODO(LARGE_PROJECT_FIXTURE) and TODO(REFERENCE_HARDWARE) are resolved in
+specs/001-llm-aware-tui-editor/research.md R-13 (fixture "fallow-fixture v1", 2026-10-19).
 -->
 
 # Fallow Constitution
@@ -65,6 +62,8 @@ being cheap enough to leave open permanently.
   explicitly enabled it. Such features are opt-in and off by default.
 - Work needed at startup MUST be lazy: deferred until the user requests the view that
   needs it.
+- The orchestration channel and its state are created when the first session that uses them
+  starts, never at Fallow's startup and never before the first frame.
 
 Rationale: a tool that is slow to open stops being opened; hidden background work silently
 erodes both the startup and memory budgets.
@@ -80,13 +79,25 @@ runtimes is a precondition for meeting Principles I and II.
 
 ### IV. Observability Over Control
 
-- Fallow's job is to show what LLM processes are doing.
-- Fallow MUST NOT kill, signal, suspend, re-prioritize, inject into, or otherwise modify any
-  process without explicit, per-action user confirmation.
-- A confirmation MUST name the target process and the action before it executes. There is
-  no "don't ask again" for destructive actions.
+- Fallow's job is to show what LLM processes are doing, and to run the agent sessions the user
+  starts in it.
+- For processes Fallow did not start, nothing changes: Fallow MUST NOT kill, signal, suspend,
+  re-prioritize, inject into, or otherwise modify them without explicit, per-action user
+  confirmation.
+- For **Fallow sessions** (processes Fallow started at the user's request, and their children):
+  - The user's own typing and pasting into a focused session is not an action by Fallow.
+  - Text that another agent asks Fallow to deliver into a session is input on the user's behalf.
+    It MUST be approved per action, **or** covered by a standing permission that the user granted
+    and that is scoped by source, target and action, limited in time (at most 8 hours), visible at
+    all times while active, revocable at once, and announced each time it is used.
+  - Every delivered text MUST carry a sender label set by Fallow that an agent cannot forge.
+- **Destructive actions** (kill, force kill, suspend, resume, re-prioritize) on any process,
+  including Fallow sessions, MUST be confirmed per action. A confirmation MUST name the target and
+  the action before it executes. There is no "don't ask again" and no standing permission for
+  them.
 
-Rationale: users must be able to trust that watching a process never changes its behavior.
+Rationale: users must be able to trust that watching a process never changes its behavior, and that
+agents can only influence each other within limits the user set and can see.
 
 ### V. Least Privilege, Read-Only by Default
 
@@ -96,6 +107,10 @@ Rationale: users must be able to trust that watching a process never changes its
   When data is unavailable without elevation, Fallow MUST degrade gracefully and say so,
   not prompt for elevation.
 - Any write capability MUST be opt-in and scoped to an explicit user action.
+- Starting a process is a write capability. Fallow MAY start a process only when the user
+  explicitly starts or restarts a session, or when an agent's request is approved by the user or
+  covered by a standing permission with a session limit (Principle IV). It never starts processes
+  on its own, and never with more privileges than its own.
 
 Rationale: a monitoring tool with broad privileges is an attack surface; staying unprivileged
 keeps it safe to install anywhere.
@@ -122,6 +137,13 @@ Rationale: performance budgets that are not measured continuously regress silent
   a command-line read unavoidably returns them, the buffer is wiped before the call returns, and
   the SC-007 canary test runs on that platform.
 - Fallow MUST NOT inspect network payloads.
+- Fallow MAY open **one local channel** for its own sessions to reach it (a Unix domain socket or a
+  Windows named pipe, or the agent's standard input and output), restricted to the current user.
+  It MUST NOT open any network socket for this, including on the loopback interface. Only processes
+  Fallow started may use the channel, each only as itself. Fallow never makes network requests on
+  an agent's behalf.
+- Messages, events, tasks, permissions and the activity log of orchestration, and the output of
+  sessions, are kept in memory only. They MUST NOT be written to disk, logged or sent anywhere.
 - Detection of LLM processes MUST rely only on process metadata (name, PID, executable path,
   command line, parent/child relationships, resource usage) and connection endpoints
   (remote host, port, protocol).
@@ -157,6 +179,10 @@ hostnames reveals nothing about the user beyond the fact that Fallow is running.
   including its effect on binary size, memory, and startup.
 - Any code path that acts on another process MUST be covered by a test proving it is
   unreachable without user confirmation (Principle IV).
+- Any code path that types into a Fallow session on another agent's behalf MUST be covered by a
+  test proving it is unreachable without a per-action approval or a matching, unexpired standing
+  permission.
+- CI MUST verify that Fallow never opens a listening network socket, alongside the egress test.
 - Any code path that opens a network connection MUST be treated as a constitution violation,
   except forward DNS resolution of configured provider hostnames as permitted by Principle VII.
   Any further exception requires an amendment.
@@ -175,4 +201,4 @@ hostnames reveals nothing about the user beyond the fact that Fallow is running.
   Tracking section; unjustified violations block merge.
 - Compliance is reviewed at every PR and at every release.
 
-**Version**: 3.0.1 | **Ratified**: 2026-10-13 | **Last Amended**: 2026-10-13
+**Version**: 4.0.0 | **Ratified**: 2026-10-13 | **Last Amended**: 2026-10-19
