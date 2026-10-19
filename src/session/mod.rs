@@ -105,6 +105,9 @@ pub struct Session {
     /// Selection as (virtual line, column) start and end, inclusive start, exclusive end.
     pub selection: Option<((usize, u16), (usize, u16))>,
     output_pending: Option<Arc<AtomicBool>>,
+    /// Signals from the reader thread (bell, notifications, titles), kept apart from the
+    /// terminal so collecting them never waits on parsing.
+    signals: Arc<Mutex<Vec<Signal>>>,
 }
 
 impl Session {
@@ -152,6 +155,7 @@ impl Session {
             scroll: 0,
             selection: None,
             output_pending: None,
+            signals: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
@@ -306,6 +310,7 @@ impl SessionManager {
             scroll: 0,
             selection: None,
             output_pending: None,
+            signals: Arc::new(Mutex::new(Vec::new())),
         };
         self.spawn_into(&mut s, req.rows, req.cols, events);
         self.sessions.push(s);
@@ -333,7 +338,14 @@ impl SessionManager {
         };
         let waker = OutputWaker::new(s.id, events.clone());
         s.output_pending = Some(waker.flag());
-        match pty::spawn(&spec, s.id, s.term.clone(), waker, events.clone()) {
+        match pty::spawn(
+            &spec,
+            s.id,
+            s.term.clone(),
+            s.signals.clone(),
+            waker,
+            events.clone(),
+        ) {
             Ok(p) => {
                 s.pid = p.pid;
                 s.pty = Some(p);
@@ -390,9 +402,9 @@ impl SessionManager {
         // The output flag stays set until `rearm`: at most one wake-up per session per frame.
         s.last_output = Instant::now();
         let signals = s
-            .term
+            .signals
             .lock()
-            .map(|mut t| t.take_signals())
+            .map(|mut q| std::mem::take(&mut *q))
             .unwrap_or_default();
         for sig in &signals {
             match sig {

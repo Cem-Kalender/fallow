@@ -1,6 +1,7 @@
 //! Application state, commands, key bindings and the main event loop.
 
 pub mod commands;
+pub mod diag;
 pub mod editing;
 pub mod event_loop;
 pub mod events;

@@ -192,7 +192,10 @@ fn run_all(bin: &Path, base: &Path) -> Result<i32, String> {
         // Sessions in start order: echo, flood ×7. From the last flood, Ctrl-N wraps to echo.
         s.send(CTRL_N);
         std::thread::sleep(Duration::from_millis(1000));
-        echo_keys(&mut s, FLOOD_KEYS)
+        let diag = diag_start(s.pid);
+        let r = echo_keys(&mut s, FLOOD_KEYS);
+        diag_finish(diag, &r);
+        r
     })();
     s.quit_with_sessions();
     let outcome = s.finish();
@@ -321,4 +324,56 @@ fn init_repo(dir: &Path) -> Result<(), String> {
         "-m",
         "init",
     ])
+}
+
+/// `diag-sessions`: with `FALLOW_DIAG_SAMPLE=DIR`, profile Fallow while the keys are typed
+/// (`sample` on macOS, which needs no privileges for one's own processes) and record the
+/// per-process CPU (`ps`) once the flood is running.
+fn diag_start(pid: u32) -> Option<(PathBuf, Option<std::process::Child>)> {
+    let dir = PathBuf::from(std::env::var_os("FALLOW_DIAG_SAMPLE")?);
+    let _ = std::fs::create_dir_all(&dir);
+    let child = if cfg!(target_os = "macos") {
+        std::process::Command::new("sample")
+            .args([
+                &pid.to_string(),
+                "6",
+                "-file",
+                &dir.join("fallow-sample.txt").display().to_string(),
+            ])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .ok()
+    } else {
+        None
+    };
+    if cfg!(unix) {
+        std::thread::sleep(Duration::from_millis(500));
+        if let Ok(o) = std::process::Command::new("ps")
+            .args(["-A", "-o", "pid,ppid,%cpu,comm"])
+            .output()
+        {
+            let _ = std::fs::write(dir.join("ps.txt"), o.stdout);
+        }
+    }
+    Some((dir, child))
+}
+
+fn diag_finish(
+    diag: Option<(PathBuf, Option<std::process::Child>)>,
+    r: &Result<Vec<Duration>, String>,
+) {
+    let Some((dir, child)) = diag else {
+        return;
+    };
+    if let Some(mut c) = child {
+        let _ = c.wait();
+    }
+    if let Ok(times) = r {
+        let list: Vec<String> = times
+            .iter()
+            .map(|t| format!("{:.1}", pty::ms(*t)))
+            .collect();
+        let _ = std::fs::write(dir.join("flood-echo-ms.txt"), list.join("\n"));
+    }
 }
