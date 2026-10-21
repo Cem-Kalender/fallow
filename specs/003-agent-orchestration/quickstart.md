@@ -54,6 +54,9 @@ folder, #3 in the worktree `FallowSandbox.worktrees\claude-1`), release build of
 | M7 | pass | A grant from the request let the next "ping" through with only a notice; after `Shift-X` the next request prompted again. |
 | M11 | pass | Asked to stop session 3, the agent found no tool for it. It suggested delivering `/exit` instead (T057). Tested: an approved delivery of exactly `/exit` reached #3 as the second line of the labelled paste; Claude Code did not run it, #3 kept running, and the agent said slash commands count only when the user types them. |
 
+| M8 | pass | `#3 write a hello.txt file after:deploy-ok` stayed blocked until `deploy-ok` was signalled with `v`, then was typed into #3 with the label "task T1 from the user's queue"; #3 wrote `hello.txt` in its worktree only (checked from outside), reported T1 done, and the Queue tab showed `done` with its note. Finding: the `v` prompt was read as a confirmation (T059). |
+| M10 | pass | #1 asked to start a Claude Code session with the first task "say hi"; after `y`, #4 started in a new worktree `fallow/claude-2` without taking focus, connected, and got T2 with its label without a second approval. Finding: #4 did the task but did not report it (T058). |
+
 Also found: a repository with no commits offers a worktree by default and fails (002 T062).
 
 Automated gates: CI run 39600896179 (`8d27fc8`): Windows and macOS green; Linux red only in the
