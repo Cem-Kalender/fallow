@@ -52,7 +52,7 @@ folder, #3 in the worktree `FallowSandbox.worktrees\claude-1`), release build of
 | M3 | pass | The session list showed `waiting for sandbox-ready` with a running time; the agent repeated `event_wait` (the 45 s block limit), then got the signal from #3 with its message, and said it came from another agent. |
 | M5 | pass | The Requests tab showed sender, target, expiry and the exact text; rejecting typed nothing; approving typed the label and text as one paste, and #3 acted on it; #1 learned the outcome through `inbox`. Findings: the label line is cut off at the right edge (T055); an agent read the 002 state "needs attention" as a problem (T056). |
 | M7 | pass | A grant from the request let the next "ping" through with only a notice; after `Shift-X` the next request prompted again. |
-| M11 | pass | Asked to stop session 3, the agent found no tool for it. It suggested delivering `/exit` instead (see T057); the engineer typed `/exit` into #3 by hand, so that path is not tested yet. |
+| M11 | pass | Asked to stop session 3, the agent found no tool for it. It suggested delivering `/exit` instead (T057). Tested: an approved delivery of exactly `/exit` reached #3 as the second line of the labelled paste; Claude Code did not run it, #3 kept running, and the agent said slash commands count only when the user types them. |
 
 Also found: a repository with no commits offers a worktree by default and fails (002 T062).
 
