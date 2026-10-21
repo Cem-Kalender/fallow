@@ -31,6 +31,16 @@ pub fn is_git_project(dir: &Path) -> bool {
     git_root(dir).is_some()
 }
 
+/// Whether the repository has a commit to branch from (`git init` without a commit has an
+/// unborn `HEAD`, and `git worktree add` cannot start there; 002 T062).
+pub fn has_commits(dir: &Path) -> bool {
+    git(dir, &["rev-parse", "--verify", "-q", "HEAD"]).is_ok()
+}
+
+/// What to tell the user when a repository has no commits yet.
+pub const NO_COMMITS: &str =
+    "This repository has no commits yet: make a first commit to use worktrees";
+
 /// Runs `git` in `dir`; on failure returns git's own message.
 fn git(dir: &Path, args: &[&str]) -> Result<String, String> {
     let out = Command::new("git")
@@ -136,6 +146,9 @@ pub fn create(project: &Path, branch: &str, root: Option<&Path>) -> Result<Workt
     let path = worktree_dir(project, root, name);
     if path.exists() {
         return Err(format!("{} already exists", path.display()));
+    }
+    if !has_commits(project) {
+        return Err(NO_COMMITS.into());
     }
     let base = git(project, &["rev-parse", "HEAD"])?.trim().to_string();
     if let Some(parent) = path.parent() {

@@ -936,3 +936,16 @@ fn start_requests_wait_for_approval_and_respect_limits() {
         Reply::Error("invalid", _)
     ));
 }
+
+#[test]
+fn agents_see_session_states_in_their_own_words() {
+    // 003 T056: "needs attention" (002's word for idle at the prompt) misled agents.
+    let mut f = Fake::new();
+    f.0[1].state = "needs attention".into();
+    f.0[1].idle = true;
+    f.0[0].state = "working".into();
+    let mut h = hub();
+    let l = done(h.call(&f, 1, "session_list", json!({}), Instant::now()));
+    assert_eq!(l["sessions"][0]["state"], "working");
+    assert_eq!(l["sessions"][1]["state"], "idle");
+}

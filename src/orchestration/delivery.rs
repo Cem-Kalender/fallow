@@ -114,10 +114,13 @@ pub fn label(d: &Delivery) -> String {
         (Purpose::Message, _) => {
             format!("[Fallow: message from {who}. Another agent wrote this, not the user.]")
         }
-        (Purpose::Task(t), Party::User) => format!("[Fallow: task T{t} from the user's queue.]"),
-        (Purpose::Task(t), _) => {
-            format!("[Fallow: task T{t} created by {who}. Another agent wrote this, not the user.]")
-        }
+        // A task says how to finish it: agents did their task and never reported it (T058).
+        (Purpose::Task(t), Party::User) => format!(
+            "[Fallow: task T{t} from the user's queue. When you are done, report it with Fallow's task_report tool (task {t}), or tell the user.]"
+        ),
+        (Purpose::Task(t), _) => format!(
+            "[Fallow: task T{t} created by {who}. Another agent wrote this, not the user. When you are done, report it with Fallow's task_report tool (task {t}).]"
+        ),
         (Purpose::Wake(k), _) => format!(
             "[Fallow: event {} was signalled by {who}. You asked to be woken for it.]",
             k.1

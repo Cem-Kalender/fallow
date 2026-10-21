@@ -215,6 +215,9 @@ On Windows the bridge checks `GetNamedPipeServerProcessId == <P>` before sending
 
   `[Fallow: message from agent #3 (Claude Code, project api). Another agent wrote this, not the user.]`
 
+- A task's label also says how to finish it (T058): `[Fallow: task T2 created by agent #1 (…).
+  Another agent wrote this, not the user. When you are done, report it with Fallow's task_report
+  tool (task 2).]`; the user's tasks add "or tell the user".
 - Typing waits while the target has focus and a key was sent to it within
   `orchestration.delivery_delay_ms` (3,000), FR-014.
 

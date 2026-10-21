@@ -778,7 +778,11 @@ impl AppState {
             .collect();
         let mut wheres = Vec::new();
         let mut error = None;
-        if worktree::is_git_project(&path) {
+        if worktree::is_git_project(&path) && !worktree::has_commits(&path) {
+            // A worktree needs a commit to branch from (002 T062).
+            wheres.push(Where::ProjectFolder);
+            error = Some(worktree::NO_COMMITS.to_string());
+        } else if worktree::is_git_project(&path) {
             if self.sessions.limits.worktrees {
                 wheres.push(Where::NewWorktree);
                 wheres.push(Where::ProjectFolder);
@@ -889,7 +893,7 @@ impl AppState {
             .projects
             .iter()
             .find(|p| p.id == project)
-            .is_some_and(|p| worktree::is_git_project(&p.path));
+            .is_some_and(|p| worktree::is_git_project(&p.path) && worktree::has_commits(&p.path));
         if git && self.sessions.limits.worktrees {
             Where::NewWorktree
         } else {

@@ -186,3 +186,42 @@ fn starting_fallow_runs_no_git() {
     assert!(!r.parent().unwrap().join("repo.worktrees").exists());
     cleanup(&r);
 }
+
+#[test]
+fn a_repository_without_commits_offers_no_worktree() {
+    // 002 T062 (found in the 003 manual run): `git init` and no commit yet.
+    let base = std::env::temp_dir().join(format!("fallow-wt-{}-unborn", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    let r = std::path::absolute(base.join("repo")).unwrap();
+    std::fs::create_dir_all(&r).unwrap();
+    git(&r, &["init", "-q", "-b", "main"]);
+    assert!(worktree::is_git_project(&r));
+    assert!(!worktree::has_commits(&r));
+    let e = worktree::create(&r, "fallow/claude-1", None).unwrap_err();
+    assert!(e.contains("first commit"), "{e}");
+    assert!(!base.join("repo.worktrees").exists(), "nothing left behind");
+    // The start menu offers only the project folder, and says why.
+    let mut s = fallow::app::state::AppState::new(Some(r.clone()), Vec::new());
+    let project = s.projects.selected().unwrap().id;
+    assert_eq!(
+        s.default_where(project),
+        fallow::app::workspace::Where::ProjectFolder
+    );
+    s.run("session.new");
+    match &s.overlay {
+        fallow::app::state::Overlay::Menu(m) => {
+            assert_eq!(m.wheres, vec![fallow::app::workspace::Where::ProjectFolder]);
+            assert!(
+                m.error.as_deref().unwrap_or("").contains("first commit"),
+                "{:?}",
+                m.error
+            );
+        }
+        o => panic!("{o:?}"),
+    }
+    let _ = std::fs::remove_dir_all(&base);
+    // With a commit, worktrees are offered first again.
+    let r = repo("born");
+    assert!(worktree::has_commits(&r));
+    cleanup(&r);
+}

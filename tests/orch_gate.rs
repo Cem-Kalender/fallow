@@ -258,6 +258,34 @@ fn the_typed_bytes_are_the_label_then_the_text_then_enter() {
 }
 
 #[test]
+fn a_typed_task_says_how_to_report_it() {
+    // 003 T058: a fresh agent did its task but never reported it.
+    let d = Delivery {
+        id: 1,
+        from: Party::User,
+        to: 2,
+        text: "say hi".into(),
+        purpose: Purpose::Task(2),
+        at: std::time::SystemTime::now(),
+        created: Instant::now(),
+        expires: Instant::now(),
+        covered_by: None,
+        edited: false,
+        state: State::Approved,
+    };
+    let l = delivery::label(&d);
+    assert!(
+        l.starts_with("[Fallow: task T2 from the user's queue."),
+        "{l}"
+    );
+    assert!(
+        l.contains("report it with Fallow's task_report tool (task 2)"),
+        "{l}"
+    );
+    assert!(l.ends_with(']'), "{l}");
+}
+
+#[test]
 fn deliveries_wait_while_the_engineer_types_in_the_target() {
     // FR-014 with real sessions in the app: the typing loop skips a focused session that got a
     // key within the delivery delay, and types once the engineer leaves.

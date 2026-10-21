@@ -165,7 +165,7 @@ releases is a follow-up for tasks (R-12, product implication).
 
 Items that don't block planning or tasks, but block a release or a release label.
 
-### Findings of the manual runs (OPEN)
+### Findings of the manual runs (OPEN: only 003 T057 left)
 
 Fixes found in the 003 manual run on Windows (2026-10-21) that block the next release:
 - 003 T055: the Requests tab cuts off the delivery label;
