@@ -41,4 +41,19 @@ cargo xtask bench-startup         # unchanged, < 100 ms; no hub before the first
 
 ## Results
 
-Filled in during implementation (per OS, with CI run numbers for the automated gates).
+### Windows (T054), 2026-10-21, Claude Code 2.1.304, in progress
+
+Run by the engineer in `C:\Repos\FallowSandbox` with two Claude Code sessions (#1 in the project
+folder, #3 in the worktree `FallowSandbox.worktrees\claude-1`), release build of `8d27fc8`.
+
+| # | Result | Notes |
+|---|---|---|
+| M1 | pass | No trust or permission prompt for the `fallow` server (the open research item); `/mcp` lists it as connected; the bridge runs as a child of Claude Code (checked from outside). The second agent read the post with sender `#3 Claude Code · FallowSandbox` and treated it as information, not an instruction. |
+| M3 | pass | The session list showed `waiting for sandbox-ready` with a running time; the agent repeated `event_wait` (the 45 s block limit), then got the signal from #3 with its message, and said it came from another agent. |
+| M5 | pass | The Requests tab showed sender, target, expiry and the exact text; rejecting typed nothing; approving typed the label and text as one paste, and #3 acted on it; #1 learned the outcome through `inbox`. Findings: the label line is cut off at the right edge (T055); an agent read the 002 state "needs attention" as a problem (T056). |
+| M7, M11 | pending | standing permission; no destructive tool |
+
+Also found: a repository with no commits offers a worktree by default and fails (002 T062).
+
+Automated gates: CI run 39600896179 (`8d27fc8`): Windows and macOS green; Linux red only in the
+session canary harness (fixed in `b4e2de7`).
