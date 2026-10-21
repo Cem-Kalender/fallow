@@ -136,11 +136,21 @@ pub fn run(args: &[String]) -> i32 {
     );
     fixtures::flush();
     let mut r2 = measure(&o, n2, "with");
-    let enough = detected >= o.large && min_fp >= (o.large_mb as u64) * 1_048_576 * 9 / 10;
+    // Windows may trim an idle fixture's working set even with a minimum set (see
+    // `fixtures::keep_working_set`); the footprint read costs the same either way, so half the
+    // allocation is enough there. Elsewhere it must be near the full size.
+    let need = if cfg!(windows) {
+        (o.large_mb as u64) * 1_048_576 / 2
+    } else {
+        (o.large_mb as u64) * 1_048_576 * 9 / 10
+    };
+    let enough = detected >= o.large && min_fp >= need;
     if r2.code != 2 && !enough {
         println!(
-            "invalid: only {detected} of {} large processes detected with a footprint near {} MB",
-            o.large, o.large_mb
+            "invalid: {detected} of {} large processes detected as LLM processes; the smallest footprint is {:.0} MB, at least {} MB needed",
+            o.large,
+            min_fp as f64 / 1_048_576.0,
+            need / 1_048_576
         );
         r2.code = 2;
         r2.result = "INVALID";

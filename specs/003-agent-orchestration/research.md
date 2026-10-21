@@ -264,3 +264,13 @@ wrapped as:
   exists before the first orchestrated session.
 - **Real agents (SC-001 with real CLIs)**: quickstart manual run with Claude Code (signed in) and
   Codex. CI cannot sign in.
+
+## Verification of the open items (T053, 2026-10-21)
+
+| Item | Result | How |
+|---|---|---|
+| Codex `default_tools_approval_mode` value | `"approve"` is right: of `auto \| prompt \| writes \| approve` it is the least restrictive (`AppToolApproval::restrict_to` treats it as the identity), and the tool-call path then requires no approval (`codex-rs/core/src/mcp_tool_call.rs`: `AppToolApproval::Approve => false`). Defaults: `tool_timeout_sec` 60, `startup_timeout_sec` 10. | Codex config reference (learn.chatgpt.com/docs/config-file/config-reference) and the `openai/codex` sources |
+| Codex: does progress reset its timeout? | Not needed: waits answer within `wait_block_s` (45 s, below the 60 s default), and Fallow raises `tool_timeout_sec` to 120 for its server anyway. | design (R-4) |
+| Gemini timeout | Default 10 min per server; Fallow sets `"timeout": 120000`. Waits never come near either. | Gemini CLI `docs/tools/mcp-server.md` |
+| Unix: bridges behind wrappers that exit (`npx`, shell shims) | Covered: membership is checked by POSIX session first (the agent leads its session; orphans keep the session id), parent walk second. `tests/orch_identity.rs::a_process_orphaned_inside_the_session_is_still_accepted` runs on Linux and macOS CI. | test |
+| Claude Code trust prompt for `--mcp-config` servers | Not verified without a signed-in run (a real start would use the account). Docs describe the trust prompt only for project `.mcp.json` servers. Checked in the manual run (quickstart M1: "Claude Code asked no tool permission"). | deferred to T054 |

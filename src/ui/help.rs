@@ -68,6 +68,14 @@ pub const NOTES: &[(&str, &str)] = &[
         "npm installs agents as `.cmd` shims. Fallow runs the program the shim points to (`node` with its script, or the agent's `.exe`), never `cmd.exe`. A shim it cannot read is refused with the reason; point a profile in profiles.toml at the real executable.",
     ),
     (
+        "Agent orchestration",
+        "Agents in Fallow sessions get tools to post on a board, signal and wait for events, ask Fallow to type a message into another session, queue tasks, and ask for new sessions. Nothing is typed into a session and nothing starts unless you approve it in the orchestration view (`o`), or a standing permission you granted covers it: one source, one target, chosen actions, at most 8 hours, revocable at once (`Shift-X` revokes all). No tool and no permission can stop, pause or kill a session. Everything stays in memory and is gone when Fallow quits.",
+    ),
+    (
+        "Connecting other agents",
+        "Claude Code, Codex CLI and Gemini CLI are connected for each run without changing their own settings. For a profile of your own that runs one of them, add `orchestration = \"claude\"` (or `\"codex\"`, `\"gemini\"`) to it in profiles.toml. Aider has no tool support; Gemini is not connected when an administrator's system settings file exists. The session list says `no orchestration` and why.",
+    ),
+    (
         "Ctrl-] on AltGr layouts",
         "Where `]` needs AltGr (German, Nordic), many terminals also send `Ctrl-]` for `Ctrl-5`; Fallow accepts both. The key can be changed with `sessions.leave_key`.",
     ),
@@ -242,6 +250,20 @@ pub const CONFLICTS_002: &[[&str; 5]] = &[
     ],
 ];
 
+/// 003 keys (contracts/ui-commands.md "Known terminal conflicts (003 keys)"): key, Windows
+/// Terminal, Terminal.app, iTerm2, agents.
+pub const CONFLICTS_003: &[[&str; 5]] = &[
+    ["o", "free", "free", "free", "n/a (outside sessions)"],
+    ["i", "free", "free", "free", "n/a (outside sessions)"],
+    [
+        "Shift-X",
+        "free",
+        "free",
+        "free",
+        "n/a (orchestration view)",
+    ],
+];
+
 pub const CONFLICTS_STATUS: &str = "Windows Terminal: verified against its published defaults.json. Terminal.app and iTerm2: checked against documented defaults; to be confirmed in the macOS hardware run-through.";
 
 /// The overlay's text.
@@ -302,6 +324,15 @@ pub fn lines() -> Vec<Line<'static>> {
     for [k, wt, ta, it, ag] in CONFLICTS_002 {
         out.push(Line::raw(format!("  {k:<17}{wt:<40}{ta:<50}{it:<16}{ag}")));
     }
+    out.push(Line::raw(""));
+    out.push(Line::styled("Known terminal conflicts: orchestration", h));
+    out.push(Line::styled(
+        "  Plain letters, Tab and Shift-↑/↓ inside the orchestration view are Fallow's own; no terminal intercepts them.",
+        dim,
+    ));
+    for [k, wt, ta, it, ag] in CONFLICTS_003 {
+        out.push(Line::raw(format!("  {k:<17}{wt:<40}{ta:<50}{it:<16}{ag}")));
+    }
     out
 }
 
@@ -352,8 +383,12 @@ mod tests {
             assert!(t.contains(k));
         }
         assert!(t.contains("Known terminal conflicts"));
-        for [k, ..] in CONFLICTS_002 {
+        for [k, ..] in CONFLICTS_002.iter().chain(CONFLICTS_003) {
             assert!(t.contains(k), "help is missing the {k} row");
         }
+        assert!(
+            t.contains("orchestration = \"claude\""),
+            "the one-step setup (FR-004)"
+        );
     }
 }

@@ -605,6 +605,14 @@ pub const COMMANDS: &[Command] = &[
         "Space",
     )),
     on(cmd("orch.signal", "Signal an event", Orchestration, "v")),
+    on(cmd("orch.activity", "Activity log", Global, "")),
+    on(cmd(
+        "orch.filter",
+        "Activity: filter to the session / project",
+        Orchestration,
+        "f",
+    )),
+    on(cmd("orch.search", "Activity: search", Orchestration, "/")),
     on(cmd(
         "orch.clear",
         "Clear the selected event",

@@ -25,6 +25,9 @@ Options:
   -h, --help                Print this help and exit
 
 Exit codes: 0 normal quit, 1 startup failure, 2 invalid arguments.
+
+Agents in Fallow's sessions start `fallow mcp-bridge ...` themselves to reach its coordination
+tools; it is internal and not meant to be run by hand.
 ";
 
 /// Options for a normal run.

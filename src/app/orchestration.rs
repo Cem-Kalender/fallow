@@ -309,6 +309,13 @@ impl AppState {
                 ));
                 return Some(true);
             }
+            "orch.activity" => {
+                self.overlay = Overlay::Orch(OrchView {
+                    tab: Tab::Activity,
+                    ..OrchView::default()
+                });
+                return Some(true);
+            }
             "orch.task_new" if !matches!(self.overlay, Overlay::Orch(_)) => {
                 return Some(self.new_task_prompt(OrchView {
                     tab: Tab::Queue,
@@ -445,6 +452,19 @@ impl AppState {
                 }
             }
             "orch.grant_new" => return Some(self.open_grant(None)),
+            "orch.filter" if v.tab == Tab::Activity => {
+                v.filter = (v.filter + 1) % 3;
+                v.scroll = 0;
+            }
+            "orch.search" if v.tab == Tab::Activity => {
+                let view = v.clone();
+                let q = view.query.clone();
+                self.overlay = Overlay::Prompt {
+                    kind: PromptKind::SearchActivity(view),
+                    input: LineInput::selected(&q),
+                    error: None,
+                };
+            }
             "orch.delete" if v.tab == Tab::Permissions => {
                 let i = v.selected;
                 if let Some(h) = self.hub.as_mut() {

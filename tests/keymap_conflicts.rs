@@ -9,7 +9,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use fallow::app::commands::{COMMANDS, Context, find};
 use fallow::app::keymap::lookup;
 use fallow::session::keys::LeaveKey;
-use fallow::ui::help::{CONFLICTS, CONFLICTS_002};
+use fallow::ui::help::{CONFLICTS, CONFLICTS_002, CONFLICTS_003};
 use fallow::ui::palette;
 
 fn parse_key(s: &str) -> KeyEvent {
@@ -203,6 +203,34 @@ const CONTRACT: &[(Context, &str, &str)] = &[
     (Context::Sessions, "Ctrl-C", "session.copy"),
     // 002: process panel
     (Context::Processes, "j", "proc.jump_session"),
+    // 003: orchestration (contracts/ui-commands.md)
+    (Context::Projects, "o", "orch.open"),
+    (Context::Sessions, "o", "orch.open"),
+    (Context::Sessions, "i", "session.details"),
+    (Context::Orchestration, "Esc", "orch.close"),
+    (Context::Orchestration, "Tab", "orch.tab_next"),
+    (Context::Orchestration, "Shift-Tab", "orch.tab_prev"),
+    (Context::Orchestration, "y", "orch.approve"),
+    (Context::Orchestration, "e", "orch.edit"),
+    (Context::Orchestration, "x", "orch.reject"),
+    (Context::Orchestration, "g", "orch.grant"),
+    (Context::Orchestration, "a", "orch.grant_new"),
+    (Context::Orchestration, "Shift-X", "orch.revoke_all"),
+    (Context::Orchestration, "Delete", "orch.delete"),
+    (Context::Orchestration, "w", "orch.write"),
+    (Context::Orchestration, "b", "orch.board_toggle"),
+    (Context::Orchestration, "n", "orch.task_new"),
+    (Context::Orchestration, "Space", "orch.pause"),
+    (Context::Orchestration, "Shift-↑", "orch.move_up"),
+    (Context::Orchestration, "Shift-↓", "orch.move_down"),
+    (Context::Orchestration, "v", "orch.signal"),
+    (Context::Orchestration, "c", "orch.clear"),
+    (Context::Orchestration, "f", "orch.filter"),
+    (Context::Orchestration, "/", "orch.search"),
+    (Context::Orchestration, "↑", "orch.up"),
+    (Context::Orchestration, "↓", "orch.down"),
+    (Context::Orchestration, "PgUp", "orch.page_up"),
+    (Context::Orchestration, "PgDn", "orch.page_down"),
 ];
 
 /// Contexts that are text inputs (FR-066: `?` is text there).
@@ -284,6 +312,20 @@ fn every_002_key_in_the_conflicts_table_is_bound() {
                 assert!(leave.matches(&parse_key(&key)));
                 continue;
             }
+            let ev = parse_key(&key);
+            let hit = contexts
+                .iter()
+                .find_map(|c| lookup(&ev, *c, false).filter(|id| find(id).is_some()));
+            assert!(hit.is_some(), "{key:?} maps to no command");
+        }
+    }
+}
+
+#[test]
+fn every_003_key_in_the_conflicts_table_is_bound() {
+    let contexts = [Context::Projects, Context::Sessions, Context::Orchestration];
+    for row in CONFLICTS_003 {
+        for key in expand(row[0]) {
             let ev = parse_key(&key);
             let hit = contexts
                 .iter()

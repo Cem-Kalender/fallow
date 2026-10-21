@@ -4,8 +4,9 @@ Fallow is a terminal workspace for developers who run several LLM coding agents 
 opens on your projects and the agent sessions running in them. Each session is a full terminal
 for an agent CLI (Claude Code, Codex, Gemini CLI, Aider or a shell), in its own git worktree by
 default. Next to them, a live panel shows every LLM process on the machine with its memory, CPU,
-status and working directory. A file editor is one key away. Fallow itself stays small enough to
-leave the RAM to the agents.
+status and working directory. A file editor is one key away. Agents can also coordinate through
+Fallow: a shared board, events to wait for, a task queue, and messages into each other's sessions,
+always within limits you approve. Fallow itself stays small enough to leave the RAM to the agents.
 
 **Status: pre-release.** It builds from source and passes its CI gates on Linux, macOS and
 Windows; there are no release binaries yet. The specifications, plans and research are in
@@ -22,7 +23,9 @@ Enforced by CI benchmarks on all three platforms:
   other sessions print as fast as they can;
 - no root or administrator rights needed;
 - no data leaves the machine, except optional DNS lookups of known LLM provider hostnames.
-  Session output and scrollback stay in memory and are never written anywhere.
+  Session output and scrollback stay in memory and are never written anywhere;
+- a message one agent posts is readable by another in under 1 s (p95), and on your screen in
+  under 1 s; Fallow never opens a listening network socket.
 
 ## Getting started
 
@@ -49,8 +52,36 @@ marked, and the project list counts them. The built-in Claude Code and Codex pro
 their bell notifications for that run only, with command-line flags; Fallow never edits an
 agent's settings files.
 
+## Agent orchestration
+
+Agents in Fallow sessions get coordination tools through the Model Context Protocol. Fallow
+connects Claude Code, Codex CLI and Gemini CLI to them for each run, with the agents' own
+command-line options; it never edits their settings files. The tools let an agent:
+
+- post on a board of its project, or on one shared by all projects, and read it;
+- signal a named event ("pr-123-merged") and wait for one;
+- ask Fallow to type a message into another agent's session;
+- queue tasks for a session, or for the next free session of a profile in a project, to start
+  when given events have been signalled;
+- ask Fallow to start another session, with a first task.
+
+**You stay in control.**
+- Nothing is typed into a session, and no session starts, unless you approve it in the
+  orchestration view (`o`), or a standing permission covers it.
+- You grant a permission for one source, one target and chosen actions. It lasts at most 8 hours
+  and is revoked with `Delete`, or all at once with `Shift-X`.
+- Every delivered text starts with a label naming the agent that sent it, set by Fallow.
+- No tool and no permission can stop, pause or kill a session.
+- Board, events, tasks, permissions and the activity log live in memory only and are gone when
+  Fallow quits.
+
+The agents connect through Fallow's own binary (`fallow mcp-bridge`), over a Unix socket in
+Fallow's cache directory, or a named pipe on Windows. Only the current user can reach either, and
+only processes of the session they name are accepted, each only as itself.
+
 Configuration lives in the platform config directory (`fallow --print-config-paths`):
-`settings.toml` (including `[sessions]`), `profiles.toml` for your own agent profiles, and
+`settings.toml` (including `[sessions]` and `[orchestration]`), `profiles.toml` for your own
+agent profiles (`orchestration = "claude"` connects a profile of your own to the tools), and
 `projects.toml`, the remembered project list, which Fallow writes. The palette's "Reload
 configuration" reads `profiles.toml` again.
 
@@ -67,6 +98,12 @@ configuration" reads `profiles.toml` again.
 - **Gemini CLI and Aider** have no per-run notification flag. Fallow uses Gemini CLI's window
   titles, the terminal bell, and "quiet for 5 s" to mark them as needing attention.
 - **WSL2:** processes inside WSL2 are not visible to the Windows build.
+- **Orchestration: Aider** has no tool support, so its sessions run without orchestration.
+  **Gemini CLI** is not connected when an administrator's system settings file exists, because
+  Fallow's per-run settings file would replace it.
+- **Orchestration: waking an idle agent** needs a delivery you approve (or a permission).
+  Claude Code's "channels", which could wake it without typing, are a research preview behind a
+  confirmation screen at every launch, so Fallow does not use them yet.
 
 ## Platform support
 

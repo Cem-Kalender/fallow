@@ -85,6 +85,8 @@ pub enum PromptKind {
     NewTask(crate::ui::orchestration::OrchView),
     /// 003: edit a task's text (and approve it, for an agent's request).
     EditTask(u32, bool, crate::ui::orchestration::OrchView),
+    /// 003: search the activity log (empty clears).
+    SearchActivity(crate::ui::orchestration::OrchView),
     /// 003: edit a delivery's text, then approve it.
     EditDelivery(u64, crate::ui::orchestration::OrchView),
     /// 003: signal an event as the user: "name [message]".
@@ -112,6 +114,7 @@ impl PromptKind {
                 "New task: #2 or claude@api, then the text; after:event waits for it"
             }
             PromptKind::EditTask(..) => "Task text",
+            PromptKind::SearchActivity(..) => "Search the activity log (empty shows everything)",
         }
     }
 }
@@ -426,6 +429,13 @@ impl AppState {
             PromptKind::SearchSession => self.search_session(text),
             PromptKind::RenameProject(id) => self.rename_project(*id, text),
             PromptKind::RelocateProject(id) => self.relocate_project(*id, text),
+            PromptKind::SearchActivity(view) => {
+                let mut v = view.clone();
+                v.query = text.trim().to_string();
+                v.scroll = 0;
+                self.overlay = Overlay::Orch(v);
+                Ok(())
+            }
             PromptKind::NewTask(view) => {
                 let id = self.submit_new_task(text)?;
                 self.overlay = Overlay::Orch(view.clone());

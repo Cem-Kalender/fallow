@@ -215,8 +215,21 @@ fn setup(base: &Path) -> Result<PathBuf, String> {
         profiles.push_str(&format!("[[profile]]\nid = \"{id}\"\nenabled = false\n\n"));
     }
     profiles.push_str(&format!(
-        "[[profile]]\nid = \"echo\"\nname = \"echo\"\ncommand = {:?}\nargs = [\"echo-agent\"]\n",
+        "[[profile]]\nid = \"echo\"\nname = \"echo\"\ncommand = {:?}\nargs = [\"echo-agent\"]\n\n",
         me.display().to_string()
+    ));
+    // An agent using Fallow's tools, so the orchestration channel is open during the run (003
+    // SC-006: no listening network socket, the channel included).
+    let script = base.join("orch.script");
+    std::fs::write(
+        &script,
+        "call whoami {}\ncall board_post {\"text\":\"egress check\"}\nprint orch-ready\n",
+    )
+    .map_err(|e| e.to_string())?;
+    profiles.push_str(&format!(
+        "[[profile]]\nid = \"orch\"\nname = \"orch\"\ncommand = {:?}\nargs = [\"mcp-agent\", {:?}]\norchestration = \"claude\"\n",
+        me.display().to_string(),
+        script.display().to_string()
     ));
     std::fs::write(config.join("profiles.toml"), profiles).map_err(|e| e.to_string())?;
     Ok(config)
@@ -260,6 +273,18 @@ fn one_run(bin: &Path, base: &Path, config: &Path, no_dns: bool) -> Result<Seen,
             std::thread::sleep(Duration::from_millis(100));
         }
         std::thread::sleep(Duration::from_millis(700));
+        s.send(LEAVE);
+        std::thread::sleep(Duration::from_millis(700));
+        // A second session through Fallow's tools: the channel opens and is used.
+        s.expect(b"orch-ready");
+        s.send(b"n");
+        std::thread::sleep(Duration::from_millis(400));
+        s.send(b"\x1b[B");
+        std::thread::sleep(Duration::from_millis(100));
+        s.send(b"\r");
+        s.seen(Duration::from_secs(30))
+            .ok_or("the orchestrated session never used its tools")?;
+        std::thread::sleep(Duration::from_millis(300));
         s.send(LEAVE);
         std::thread::sleep(Duration::from_millis(700));
         s.send(CTRL_E);
@@ -506,6 +531,21 @@ fn judge_strace(text: &str, seen: &mut Seen) {
                     s.port = port;
                 }
             }
+            // A listening network socket is never allowed (003 SC-006, constitution VII); the
+            // orchestration channel is a Unix socket and is noted.
+            "bind" if inet => seen
+                .violations
+                .push(format!("bind on a network socket: {}", short(line))),
+            "bind" if line.contains("sa_family=AF_UNIX") => {
+                if let Some(path) = line.split("sun_path=\"").nth(1) {
+                    let mut v = b"listener ".to_vec();
+                    v.extend(decode_hex(path.split('"').next().unwrap_or("")));
+                    local.insert(v);
+                }
+            }
+            "listen" if socks.contains_key(&(tid.clone(), fd.clone())) => seen
+                .violations
+                .push(format!("listen on a network socket: {}", short(line))),
             "connect" if line.contains("sa_family=AF_UNIX") => {
                 if let Some(path) = line.split("sun_path=\"").nth(1) {
                     local.insert(decode_hex(path.split('"').next().unwrap_or("")));
@@ -904,6 +944,24 @@ mod tests {
             !allowed.contains("other.example.net"),
             "CNAMEs of other names are not allowed"
         );
+    }
+
+    #[test]
+    fn network_listeners_are_violations_and_the_channel_is_noted() {
+        let text = concat!(
+            "100 socket(AF_UNIX, SOCK_STREAM|SOCK_CLOEXEC, 0) = 5\n",
+            "100 bind(5, {sa_family=AF_UNIX, sun_path=\"\\x2f\\x72\\x75\\x6e\"}, 110) = 0\n",
+            "100 listen(5, 128) = 0\n",
+            "100 socket(AF_INET, SOCK_STREAM, IPPROTO_IP) = 6\n",
+            "100 bind(6, {sa_family=AF_INET, sin_port=htons(8080), sin_addr=inet_addr(\"127.0.0.1\")}, 16) = 0\n",
+            "100 listen(6, 128) = 0\n",
+        );
+        let mut s = Seen::default();
+        judge_strace(text, &mut s);
+        assert_eq!(s.violations.len(), 2, "{:?}", s.violations);
+        assert!(s.violations[0].starts_with("bind on a network socket"));
+        assert!(s.violations[1].starts_with("listen on a network socket"));
+        assert_eq!(s.notes, vec!["local socket: listener /run".to_string()]);
     }
 
     #[test]

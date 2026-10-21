@@ -894,4 +894,56 @@ mod tests {
             crate::orchestration::tasks::State::Queued
         );
     }
+
+    #[test]
+    fn the_activity_log_filters_and_searches() {
+        // 003 FR-022.
+        use crate::session::profiles::builtins;
+        let mut s = AppState::new(None, Vec::new());
+        for id in [1, 2] {
+            s.sessions.sessions.push(crate::session::Session::detached(
+                id,
+                1,
+                builtins().remove(0),
+            ));
+        }
+        let mut h = crate::orchestration::Hub::new(Default::default());
+        let now = std::time::Instant::now();
+        for (who, text) in [(1, "alpha from one"), (2, "beta from two")] {
+            h.call(
+                &s.sessions,
+                who,
+                "board_post",
+                serde_json::json!({"text": text}),
+                now,
+            );
+        }
+        s.hub = Some(h);
+        s.workspace.active = Some(1);
+        s.run("orch.activity");
+        let screen = render(140, 40, &mut s);
+        assert!(
+            screen.contains("alpha from one") && screen.contains("beta from two"),
+            "{screen}"
+        );
+        s.handle_key(key('f'));
+        let screen = render(140, 40, &mut s);
+        assert!(screen.contains("f filter: session #1"), "{screen}");
+        assert!(
+            screen.contains("alpha from one") && !screen.contains("beta from two"),
+            "{screen}"
+        );
+        s.handle_key(key('f'));
+        s.handle_key(key('f'));
+        s.handle_key(key('/'));
+        for c in "beta".chars() {
+            s.handle_key(key(c));
+        }
+        s.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        let screen = render(140, 40, &mut s);
+        assert!(
+            !screen.contains("alpha from one") && screen.contains("beta from two"),
+            "{screen}"
+        );
+    }
 }
