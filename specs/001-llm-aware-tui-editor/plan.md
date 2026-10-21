@@ -170,7 +170,9 @@ Items that don't block planning or tasks, but block a release or a release label
 Fixes found in the 003 manual run on Windows (2026-10-21) that block the next release:
 - 003 T055: the Requests tab cuts off the delivery label;
 - 003 T056: agents misread the session state "needs attention";
-- 002 T062: a git repository without commits offers a worktree that cannot be created.
+- 002 T062: a git repository without commits offers a worktree that cannot be created;
+- 003 T057: prove that a delivered `/exit` cannot stop an agent (or refuse to let permissions
+  cover such text).
 
 ### macOS hardware verification (OPEN)
 
