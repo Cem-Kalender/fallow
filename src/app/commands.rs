@@ -17,6 +17,8 @@ pub enum Context {
     Sessions,
     /// A focused session: every key but the leave key goes to the agent.
     Session,
+    /// The orchestration view (003).
+    Orchestration,
 }
 
 impl Context {
@@ -31,10 +33,11 @@ impl Context {
             Context::Projects => "Projects",
             Context::Sessions => "Sessions",
             Context::Session => "Focused session",
+            Context::Orchestration => "Orchestration view",
         }
     }
 
-    pub const ALL: [Context; 9] = [
+    pub const ALL: [Context; 10] = [
         Context::Global,
         Context::Processes,
         Context::Files,
@@ -44,6 +47,7 @@ impl Context {
         Context::Projects,
         Context::Sessions,
         Context::Session,
+        Context::Orchestration,
     ];
 }
 
@@ -496,6 +500,63 @@ pub const COMMANDS: &[Command] = &[
         "Ctrl-]",
         "Leave session",
     )),
+    // Orchestration (003 contracts/ui-commands.md)
+    on(hint(
+        cmd(
+            "orch.open",
+            "Orchestration: open",
+            Projects,
+            "o (project and session lists)",
+        ),
+        8,
+        "o",
+        "Orchestration",
+    )),
+    on(cmd("session.details", "Session details", Sessions, "i")),
+    on(hint(
+        cmd("orch.tab_next", "Next tab", Orchestration, "Tab"),
+        2,
+        "Tab",
+        "Next tab",
+    )),
+    on(cmd(
+        "orch.tab_prev",
+        "Previous tab",
+        Orchestration,
+        "Shift-Tab",
+    )),
+    on(hint(
+        cmd("orch.write", "Write on the board", Orchestration, "w"),
+        3,
+        "w",
+        "Write",
+    )),
+    on(hint(
+        cmd(
+            "orch.board_toggle",
+            "Board: project / shared",
+            Orchestration,
+            "b",
+        ),
+        4,
+        "b",
+        "Shared/project",
+    )),
+    on(cmd("orch.up", "Scroll up / previous", Orchestration, "↑")),
+    on(cmd("orch.down", "Scroll down / next", Orchestration, "↓")),
+    on(cmd("orch.page_up", "Page up", Orchestration, "PgUp")),
+    on(cmd("orch.page_down", "Page down", Orchestration, "PgDn")),
+    on(hint(
+        cmd(
+            "orch.close",
+            "Close the orchestration view",
+            Orchestration,
+            "Esc",
+        ),
+        9,
+        "Esc",
+        "Close",
+    )),
     // Dialogs
     on(hint(
         cmd("dialog.confirm", "Confirm", Dialog, "y, Enter on Confirm"),
@@ -593,7 +654,7 @@ mod tests {
         };
         assert_eq!(
             text(Projects),
-            "? Help · Ctrl-P Commands · n New session · Ctrl-N/B Switch session · Ctrl-E Editor · Enter Sessions · f Filter processes · d Remove"
+            "? Help · Ctrl-P Commands · n New session · Ctrl-N/B Switch session · Ctrl-E Editor · Enter Sessions · f Filter processes · d Remove · o Orchestration"
         );
         assert_eq!(
             text(Sessions),

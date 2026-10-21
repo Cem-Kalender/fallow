@@ -57,7 +57,7 @@ Fallow]` ([contracts/mcp-tools.md](./contracts/mcp-tools.md)).
 |---|---|---|
 | id | u64 | Increasing across all boards; agents read "since id". |
 | sender | Sender | |
-| at | SystemTime | Shown as local time. |
+| at | SystemTime | Shown as its age ("42s", "3m") in Fallow; sent to agents as RFC 3339 UTC. |
 | text | String | 1..=8 KiB UTF-8 (FR-008); control characters other than `\n` and `\t` are replaced with `�` before storing. |
 
 ## Event

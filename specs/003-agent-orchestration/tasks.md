@@ -44,7 +44,7 @@ deliveries, US5 on US4's queue.
 - [X] T002 [P] Create the module skeletons with doc comments only, and register them in `src/lib.rs`:
   - `src/orchestration/mod.rs`, `board.rs`, `events.rs`, `delivery.rs`, `permissions.rs`, `tasks.rs`, `activity.rs`;
   - `src/orchestration/tools.rs`, `rpc.rs`, `channel.rs`, `identity.rs`, `inject.rs`, `bridge.rs`.
-- [ ] T003 [P] (with T021) Create the UI skeletons `src/ui/orchestration.rs` and `src/app/orchestration.rs`, and register them in `src/ui/mod.rs` and `src/app/mod.rs`.
+- [X] T003 [P] (with T021) Create the UI skeletons `src/ui/orchestration.rs` and `src/app/orchestration.rs`, and register them in `src/ui/mod.rs` and `src/app/mod.rs`.
 
 ---
 
@@ -175,7 +175,7 @@ deliveries, US5 on US4's queue.
 
 **Independent Test**: two `mcp-agent` sessions; A posts, B reads A's message with A as sender; the Board tab shows it within 1 s.
 
-- [ ] T017 [P] [US1] Write the board tests in `tests/orch_hub.rs`:
+- [X] T017 [P] [US1] Write the board tests in `tests/orch_hub.rs`:
   - post and read: `since_id`, `limit` "1..=100" (default 20), oldest first, `newest_id`;
   - text "1..=8 KiB UTF-8"; control characters other than `\n` and `\t` are replaced with `�`;
   - "newest 1,000 per board";
@@ -183,24 +183,24 @@ deliveries, US5 on US4's queue.
   - `project` vs `shared` (a message appears only on the chosen board);
   - the rate limit gives `rate_limited` with `retry_after_s`;
   - a user post is labelled `{"kind":"user"}`.
-- [ ] T018 [P] [US1] Write `tests/orch_hub.rs::sender_cannot_be_forged` (SC-004):
+- [X] T018 [P] [US1] Write `tests/orch_hub.rs::sender_cannot_be_forged` (SC-004):
   - a link calls `board_post` with extra `from`, `sender` or `session` arguments → `-32602`, and nothing is stored;
   - a post whose text claims to come from another session is stored with the true sender;
   - 100% of 200 randomized attempts carry the true sender.
-- [ ] T019 [US1] Implement `src/orchestration/board.rs`: `BoardId = Shared | Project(ProjectId)`; `BoardMessage { id: u64 increasing across boards, sender, at: SystemTime, text }`; the caps above; activity entries `Post`/`Read`.
-- [ ] T020 [US1] Add the tools `board_post` and `board_read` to `src/orchestration/tools.rs`, returning labelled items (research R-8).
-- [ ] T021 [US1] Build the orchestration overlay in `src/ui/orchestration.rs` and `src/app/orchestration.rs`:
+- [X] T019 [US1] Implement `src/orchestration/board.rs`: `BoardId = Shared | Project(ProjectId)`; `BoardMessage { id: u64 increasing across boards, sender, at: SystemTime, text }`; the caps above; activity entries `Post`/`Read`.
+- [X] T020 [US1] Add the tools `board_post` and `board_read` to `src/orchestration/tools.rs`, returning labelled items (research R-8).
+- [X] T021 [US1] Build the orchestration overlay in `src/ui/orchestration.rs` and `src/app/orchestration.rs`:
   - **Layout**: the top counts line (requests · waiting · queued (blocked) · permissions with time left); the tabs Requests, Board, Queue, Permissions, Activity, switched with `Tab`/`Shift-Tab`; `Esc` closes.
   - **Board tab**: the selected project's board, `b` toggles shared; sender, local time and text per message; `↑↓ PgUp PgDn` scroll; `w` writes a message as the user (prompt).
   - **Keys and palette**: bind `o` in the Projects and Sessions contexts in `src/app/keymap.rs`. Add the palette entries "Orchestration: open" and "Write on the board" in `src/app/commands.rs`.
   - **Freshness**: redraw on every hub change, so a post is visible within one frame (SC-002).
-- [ ] T022 [US1] Show the link state in `src/ui/sessions.rs`: `no orchestration (<reason>)` for `Unsupported` and for `enabled = false`. Add a session details popup on `i` (link state, client name and version from `initialize`) in `src/app/workspace.rs`. Add render tests in `src/ui/workspace.rs`.
-- [ ] T023 [US1] Create `xtask/src/orchestration.rs` and register `cargo xtask orchestration` in `xtask/src/main.rs`:
+- [X] T022 [US1] Show the link state in `src/ui/sessions.rs`: `no orchestration (<reason>)` for `Unsupported` and for `enabled = false`. Add a session details popup on `i` (link state, client name and version from `initialize`) in `src/app/workspace.rs`. Add render tests in `src/ui/workspace.rs`.
+- [X] T023 [US1] Create `xtask/src/orchestration.rs` and register `cargo xtask orchestration` in `xtask/src/main.rs`:
   - start Fallow in the PTY harness with two `mcp-agent` sessions (A, B);
   - A posts 50 messages and B polls `board_read`; measure post-to-read latency. The fixture timestamps the post, and B reports when it sees it.
   - **Gate**: p95 < 1,000 ms (SC-002).
   - print `os=… post_read_p95_ms=… result=PASS|FAIL`.
-- [ ] T024 [US1] Add a step "Orchestration (003)" running `cargo xtask orchestration` to `.github/workflows/ci.yml` on all three OSes, with `timeout-minutes: 10`.
+- [X] T024 [US1] Add a step "Orchestration (003)" running `cargo xtask orchestration` to `.github/workflows/ci.yml` on all three OSes, with `timeout-minutes: 10`.
 
 **Checkpoint**: quickstart M1, M2 and M12 pass. CI is green with the SC-002 gate.
 

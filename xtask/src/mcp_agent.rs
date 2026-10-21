@@ -11,8 +11,11 @@
 //! - `sleep <ms>`
 //! - `until <text>`: reads lines typed into the terminal until one contains `text`.
 //! - `post-timed <count> <interval ms> <scope>`: posts `t=<epoch ms> i=<n>` messages.
-//! - `measure-reads <count> <scope>`: polls `board_read` until `count` timed messages arrived and
-//!   prints `latency p95_ms=… max_ms=… n=…`.
+//! - `measure-reads <count> <scope> [file]`: polls `board_read` until `count` timed messages
+//!   arrived and prints (and writes to `file`) `latency p95_ms=… max_ms=… n=…`.
+//! - `post-stamped <file> <text>`: posts `text` and writes the epoch milliseconds just before
+//!   the call to `file`.
+//! - `write <file>`: writes the last result (or verdict) to `file`.
 //! - `save-bridge <file>`: writes the bridge's command line (JSON array) to `file`.
 //! - `bridge-from <file>`: runs the bridge saved in `file` and prints `accepted` or `refused`.
 //! - `print <text>`
@@ -196,6 +199,21 @@ pub fn run(args: &[String]) -> ! {
                     Err(_) => break,
                 }
             },
+            ("write", _) => {
+                let _ = std::fs::write(rest, &last);
+                out(&format!("ok {n}"));
+            }
+            ("post-stamped", Some((c, _))) => {
+                let (file, text) = rest.split_once(' ').unwrap_or((rest, "stamped"));
+                let t = now_ms();
+                match c.call("board_post", json!({"text": text})) {
+                    Ok(_) => {
+                        let _ = std::fs::write(file, t.to_string());
+                        out(&format!("ok {n}"));
+                    }
+                    Err(e) => out(&format!("fail {n} {e}")),
+                }
+            }
             ("expect", _) => {
                 if last.contains(rest) {
                     out(&format!("ok {n}"));
@@ -241,6 +259,7 @@ pub fn run(args: &[String]) -> ! {
                 let mut p = rest.split_whitespace();
                 let count: usize = p.next().and_then(|v| v.parse().ok()).unwrap_or(1);
                 let scope = p.next().unwrap_or("project");
+                let file = p.next();
                 let mut since = 0u64;
                 let mut lat = Vec::new();
                 let until = Instant::now() + Duration::from_secs(120);
@@ -270,10 +289,11 @@ pub fn run(args: &[String]) -> ! {
                     .copied()
                     .unwrap_or(f64::NAN);
                 let max = lat.last().copied().unwrap_or(f64::NAN);
-                out(&format!(
-                    "latency p95_ms={p95:.0} max_ms={max:.0} n={}",
-                    lat.len()
-                ));
+                let line = format!("latency p95_ms={p95:.0} max_ms={max:.0} n={}", lat.len());
+                if let Some(f) = file {
+                    let _ = std::fs::write(f, &line);
+                }
+                out(&line);
             }
             ("save-bridge", Some((_, cmd))) => {
                 let _ = std::fs::write(rest, serde_json::to_string(cmd).unwrap_or_default());
@@ -287,6 +307,7 @@ pub fn run(args: &[String]) -> ! {
                 let verdict = Client::start(&cmd)
                     .and_then(|mut c| c.initialize())
                     .map_or("refused", |()| "accepted");
+                last = verdict.to_string();
                 out(verdict);
             }
             (_, None) => out(&format!("fail {n} not connected")),

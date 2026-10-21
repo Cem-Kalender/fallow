@@ -78,6 +78,14 @@ impl Party {
     }
 }
 
+/// How a board is named in the activity log.
+pub fn board_name(b: board::BoardId) -> String {
+    match b {
+        board::BoardId::Shared => "shared board".into(),
+        board::BoardId::Project(p) => format!("project {p} board"),
+    }
+}
+
 /// What the hub needs to know about a session.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionInfo {
@@ -201,7 +209,12 @@ pub struct Hub {
     refusals: HashMap<u32, Instant>,
     /// Messages for the engineer (shown as notices by the app, then cleared).
     pub notices: Vec<String>,
+    pub boards: board::Boards,
 }
+
+/// All text the hub stores (board messages, and later notes and task text), at most; the
+/// oldest board messages go first (data-model.md "Limits", SC-007).
+pub const TEXT_BUDGET: usize = 24 * 1024 * 1024;
 
 impl std::fmt::Debug for Hub {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -217,6 +230,7 @@ impl Hub {
     pub fn new(settings: OrchestrationSettings) -> Hub {
         Hub {
             activity: Activity::new(settings.activity_entries as usize),
+            boards: board::Boards::new(settings.board_messages as usize),
             settings,
             channel: None,
             conns: HashMap::new(),
@@ -224,6 +238,21 @@ impl Hub {
             refusals: HashMap::new(),
             notices: Vec::new(),
         }
+    }
+
+    /// The engineer writes on a board (FR-006); labelled as the user (US1 scenario 5).
+    pub fn post_user(&mut self, board: board::BoardId, text: &str) -> Result<u64, String> {
+        let text = board::clean_text(text, board::TEXT_MAX).map_err(|(_, m)| m)?;
+        let subject = format!("{}: {text}", board_name(board));
+        let id = self.boards.post(
+            board,
+            Party::User,
+            text,
+            std::time::SystemTime::now(),
+            TEXT_BUDGET,
+        );
+        self.activity.add(Party::User, Action::Post, &subject, None);
+        Ok(id)
     }
 
     pub fn with_channel(settings: OrchestrationSettings, channel: Channel) -> Hub {
@@ -238,6 +267,7 @@ impl Hub {
 
     pub fn set_settings(&mut self, settings: OrchestrationSettings) {
         self.activity.set_cap(settings.activity_entries as usize);
+        self.boards.per_board = (settings.board_messages as usize).max(1);
         self.settings = settings;
     }
 

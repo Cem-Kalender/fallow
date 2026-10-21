@@ -77,6 +77,10 @@ jobs:
       - name: Sessions (002 SC-003 echo, SC-005 switch, SC-006 echo under flood)
         run: cargo xtask bench-sessions
 
+      - name: Orchestration (003 SC-002 board latency, FR-003 identity)
+        timeout-minutes: 10
+        run: cargo xtask orchestration
+
       # The macOS run also dumps Fallow's memory with lldb, which needs sudo (as the canary).
       - name: Session canary (002 FR-026, output never leaves memory)
         run: cargo xtask canary --sessions

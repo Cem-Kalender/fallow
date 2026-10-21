@@ -76,6 +76,11 @@ pub enum PromptKind {
     /// 002 US4: rename a project in the list / point it to another folder.
     RenameProject(crate::projects::ProjectId),
     RelocateProject(crate::projects::ProjectId),
+    /// 003: write on a board as the user; the orchestration view comes back afterwards.
+    BoardPost(
+        crate::orchestration::board::BoardId,
+        crate::ui::orchestration::OrchView,
+    ),
 }
 
 impl PromptKind {
@@ -89,6 +94,7 @@ impl PromptKind {
             PromptKind::SearchSession => "Search the session (upward from the view)",
             PromptKind::RenameProject(_) => "Project name",
             PromptKind::RelocateProject(_) => "New folder for this project",
+            PromptKind::BoardPost(..) => "Write on the board (as you)",
         }
     }
 }
@@ -136,7 +142,11 @@ impl AppState {
     pub fn text_input(&self) -> bool {
         match self.overlay {
             Overlay::Palette { .. } | Overlay::Prompt { .. } => true,
-            Overlay::Confirm { .. } | Overlay::Help { .. } | Overlay::Menu(_) => false,
+            Overlay::Confirm { .. }
+            | Overlay::Help { .. }
+            | Overlay::Menu(_)
+            | Overlay::Orch(_)
+            | Overlay::Info { .. } => false,
             Overlay::None if self.workspace.view == super::workspace::View::Agents => {
                 self.workspace.focus == super::workspace::AgentsFocus::Session
             }
@@ -152,6 +162,7 @@ impl AppState {
     pub fn context(&self) -> Context {
         match self.overlay {
             Overlay::Confirm { .. } => Context::Dialog,
+            Overlay::Orch(_) => Context::Orchestration,
             Overlay::None if self.workspace.view == super::workspace::View::Agents => {
                 self.agents_context()
             }
@@ -397,6 +408,15 @@ impl AppState {
             PromptKind::SearchSession => self.search_session(text),
             PromptKind::RenameProject(id) => self.rename_project(*id, text),
             PromptKind::RelocateProject(id) => self.relocate_project(*id, text),
+            PromptKind::BoardPost(board, view) => {
+                let hub = self
+                    .hub
+                    .as_mut()
+                    .ok_or("Start an agent session with orchestration first")?;
+                hub.post_user(*board, text)?;
+                self.overlay = Overlay::Orch(view.clone());
+                Ok(())
+            }
             PromptKind::GotoLine => {
                 let (line, col) = goto::parse(text)?;
                 let rows = self.editor_areas().text.height as usize;
@@ -866,7 +886,11 @@ impl AppState {
                 *selected = 0;
                 return true;
             }
-            Overlay::Confirm { .. } | Overlay::Help { .. } | Overlay::Menu(_) => return false,
+            Overlay::Confirm { .. }
+            | Overlay::Help { .. }
+            | Overlay::Menu(_)
+            | Overlay::Orch(_)
+            | Overlay::Info { .. } => return false,
             Overlay::None => {}
         }
         if self.focus != Pane::Editor {

@@ -115,6 +115,13 @@ pub enum Overlay {
     },
     /// The start menu for a new session (002): agent and where it runs.
     Menu(StartMenu),
+    /// The orchestration view (003).
+    Orch(crate::ui::orchestration::OrchView),
+    /// A read-only text popup (session details, 003).
+    Info {
+        title: String,
+        lines: Vec<String>,
+    },
 }
 
 /// Selection and expansion in the process panel.
@@ -282,6 +289,11 @@ impl AppState {
             Overlay::Confirm { .. } => return self.confirm_key(key),
             Overlay::Prompt { .. } => return self.prompt_key(key),
             Overlay::Menu(_) => return self.menu_key(key),
+            Overlay::Orch(_) => return self.orch_key(key),
+            Overlay::Info { .. } => {
+                self.overlay = Overlay::None;
+                return true;
+            }
             Overlay::None => {}
         }
         if self.workspace.view == View::Agents {
@@ -421,6 +433,9 @@ impl AppState {
                     return changed;
                 }
                 if let Some(changed) = self.run_project_list(other) {
+                    return changed;
+                }
+                if let Some(changed) = self.run_orch(other) {
                     return changed;
                 }
                 if let Some(changed) = self.run_editing(other) {

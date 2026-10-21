@@ -3,13 +3,20 @@
 
 use std::time::Instant;
 
-use super::state::AppState;
+use crossterm::event::KeyEvent;
+
+use super::commands::Context;
+use super::editing::PromptKind;
+use super::keymap;
+use super::state::{AppState, Overlay};
+use crate::editor::selection::LineInput;
 use crate::orchestration::channel::{self, Incoming};
 use crate::orchestration::identity::Peer;
 use crate::orchestration::inject::Bridge;
 use crate::orchestration::{Hub, SessionInfo, Sessions, tools};
 use crate::session::profiles::Style;
 use crate::session::{SessionManager, SessionState};
+use crate::ui::orchestration::{OrchView, Tab};
 
 impl Sessions for SessionManager {
     fn info(&self, id: u32) -> Option<SessionInfo> {
@@ -139,5 +146,95 @@ impl AppState {
             hub.notices.clear();
             self.say(last);
         }
+    }
+}
+
+impl AppState {
+    /// Orchestration commands (contracts/ui-commands.md). `None`: not one of them.
+    pub(crate) fn run_orch(&mut self, id: &str) -> Option<bool> {
+        if id == "orch.open" {
+            self.overlay = Overlay::Orch(OrchView::default());
+            return Some(true);
+        }
+        if id == "session.details" {
+            return Some(self.session_details());
+        }
+        let Overlay::Orch(v) = &mut self.overlay else {
+            return None;
+        };
+        let page = self.area.height.saturating_sub(8).max(1) as usize;
+        match id {
+            "orch.close" => self.overlay = Overlay::None,
+            "orch.tab_next" | "orch.tab_prev" => {
+                v.tab = v.tab.next(if id == "orch.tab_next" { 1 } else { -1 });
+                v.scroll = 0;
+                v.selected = 0;
+            }
+            "orch.board_toggle" if v.tab == Tab::Board => {
+                v.shared = !v.shared;
+                v.scroll = 0;
+            }
+            // Board: newest at the bottom, so "up" scrolls back in time.
+            "orch.up" => v.scroll += 1,
+            "orch.down" => v.scroll = v.scroll.saturating_sub(1),
+            "orch.page_up" => v.scroll += page,
+            "orch.page_down" => v.scroll = v.scroll.saturating_sub(page),
+            "orch.write" => {
+                let view = v.clone();
+                let (board, _) = crate::ui::orchestration::board_shown(self, &view);
+                self.overlay = Overlay::Prompt {
+                    kind: PromptKind::BoardPost(board, view),
+                    input: LineInput::default(),
+                    error: None,
+                };
+            }
+            _ => return Some(false),
+        }
+        Some(true)
+    }
+
+    /// Keys while the orchestration view is open.
+    pub(crate) fn orch_key(&mut self, key: KeyEvent) -> bool {
+        // Help, palette and quit stay reachable.
+        if let Some(id) = keymap::lookup(&key, Context::Global, true) {
+            if matches!(id, "palette" | "quit") {
+                self.overlay = Overlay::None;
+                return self.run(id);
+            }
+        }
+        match keymap::lookup(&key, Context::Orchestration, false) {
+            Some(id) => self.run(id),
+            None => false,
+        }
+    }
+
+    /// The selected session's link: state, client, reason (contracts/ui-commands.md
+    /// "Session details").
+    fn session_details(&mut self) -> bool {
+        let Some(s) = self.workspace.active.and_then(|id| self.sessions.get(id)) else {
+            return false;
+        };
+        let mut lines = vec![
+            format!("Profile: {}", s.profile.name),
+            format!("Project: {}", s.project_name),
+            format!("Folder:  {}", s.cwd.display()),
+            format!("State:   {}", s.state.label()),
+        ];
+        let link = self.hub.as_ref().and_then(|h| h.links.get(&s.id));
+        let orch = match (&s.orch.unsupported, s.orch.token.is_some(), link) {
+            (Some(why), ..) => format!("no orchestration ({why})"),
+            (None, true, Some(l)) if l.conn.is_some() => match &l.client {
+                Some((name, version)) => format!("connected ({name} {version})"),
+                None => "connected".into(),
+            },
+            (None, true, _) => "offered; the agent has not connected yet".into(),
+            (None, false, _) => "not running".into(),
+        };
+        lines.push(format!("Orchestration: {orch}"));
+        self.overlay = Overlay::Info {
+            title: s.label(),
+            lines,
+        };
+        true
     }
 }

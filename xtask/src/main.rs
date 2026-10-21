@@ -13,6 +13,7 @@ mod egress;
 mod fixtures;
 mod gen_fixture;
 mod mcp_agent;
+mod orchestration;
 mod projects;
 mod pty;
 mod record;
@@ -34,6 +35,7 @@ const TASKS: &[&str] = &[
     "bench-new-process",
     "unprivileged",
     "bench-sessions",
+    "orchestration",
     "record-transcript",
     "diag-sessions",
 ];
@@ -61,6 +63,7 @@ fn main() -> ExitCode {
         "gen-fixture" => ExitCode::from(gen_fixture::run(rest) as u8),
         "bench-search" => ExitCode::from(bench_search::run(rest) as u8),
         "bench-sessions" => ExitCode::from(bench_sessions::run(rest) as u8),
+        "orchestration" => ExitCode::from(orchestration::run(rest) as u8),
         "record-transcript" => ExitCode::from(record::run(rest) as u8),
         "diag-sessions" => ExitCode::from(diag::run(rest) as u8),
         t if fixtures::subcommand(t, rest).is_some() => ExitCode::from(3),

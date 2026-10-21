@@ -10,8 +10,8 @@ shows the tools as `mcp__fallow__<tool>` and Gemini shows them as `mcp_fallow_<t
   Unknown arguments are rejected with JSON-RPC error `-32602`.
 - **Scope arguments**: where a tool takes `scope`, it is `"project"` (the calling session's project)
   or `"shared"`. The default is `"project"`.
-- **Rate limit**: 30 calls per minute per session, counting every tool except `event_wait` repeats
-  and `inbox` (FR-008). Beyond the limit, a call returns a tool error `rate_limited`, with
+- **Rate limit**: 30 calls per minute per session, counting every tool except `board_read`,
+  `inbox` and `event_wait` repeats, which change nothing (FR-008). Beyond the limit, a call returns a tool error `rate_limited`, with
   `retry_after_s`.
 - **Items from others**: every message, signal, task or outcome from another party is returned in
   the labelled form ([research R-8](../research.md)):

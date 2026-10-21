@@ -77,7 +77,8 @@ pub fn draw(f: &mut Frame<'_>, state: &AppState, area: Rect) {
             ("Tab", "Agent/where"),
             ("Esc", "Cancel"),
         ]),
-        Overlay::Confirm { .. } | Overlay::None => {}
+        Overlay::Info { .. } => hints.push(("any key", "Close")),
+        Overlay::Confirm { .. } | Overlay::Orch(_) | Overlay::None => {}
     }
     // A focused session: every key but the leave key goes to the agent, so only that is shown.
     if matches!(state.overlay, Overlay::None)
