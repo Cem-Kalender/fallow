@@ -864,13 +864,59 @@ impl AppState {
     /// A worktree is created first when asked for (FR-031). Errors before the agent starts are
     /// returned; a failure to start the agent itself shows in the session.
     pub fn start_session_at(&mut self, id: &str, place: Where) -> Result<(), String> {
+        let project = self.projects.selected().ok_or("no project selected")?.id;
+        let sid = self.start_session_in(project, id, place)?;
+        self.overlay = Overlay::None;
+        self.workspace.active = Some(sid);
+        self.workspace.list_selected = self
+            .project_sessions()
+            .iter()
+            .position(|s| *s == sid)
+            .unwrap_or(0);
+        self.workspace.view = View::Agents;
+        self.set_session_focus(true);
+        if let Some(SessionState::Failed(e)) = self.sessions.get(sid).map(|s| s.state.clone()) {
+            self.say(e);
+        }
+        Ok(())
+    }
+
+    /// The "Where" the start menu offers first for a project (FR-031): a new worktree in a git
+    /// project when worktrees are on, else the project folder.
+    pub fn default_where(&self, project: crate::projects::ProjectId) -> Where {
+        let git = self
+            .projects
+            .projects
+            .iter()
+            .find(|p| p.id == project)
+            .is_some_and(|p| worktree::is_git_project(&p.path));
+        if git && self.sessions.limits.worktrees {
+            Where::NewWorktree
+        } else {
+            Where::ProjectFolder
+        }
+    }
+
+    /// Starts a session of profile `id` in `project`, in `place`, without changing focus.
+    /// A worktree is created first when asked for (FR-031).
+    pub fn start_session_in(
+        &mut self,
+        project: crate::projects::ProjectId,
+        id: &str,
+        place: Where,
+    ) -> Result<SessionId, String> {
         let profile = self
             .profiles
             .iter()
             .find(|p| p.id == id)
             .cloned()
             .ok_or("no such profile")?;
-        let p = self.projects.selected().ok_or("no project selected")?;
+        let p = self
+            .projects
+            .projects
+            .iter()
+            .find(|p| p.id == project)
+            .ok_or("no such project")?;
         let tx = self
             .events
             .clone()
@@ -900,19 +946,7 @@ impl AppState {
         self.ensure_hub(req.profile.orchestration);
         let sid = self.sessions.start(req, &tx)?;
         self.track(sid);
-        self.overlay = Overlay::None;
-        self.workspace.active = Some(sid);
-        self.workspace.list_selected = self
-            .project_sessions()
-            .iter()
-            .position(|s| *s == sid)
-            .unwrap_or(0);
-        self.workspace.view = View::Agents;
-        self.set_session_focus(true);
-        if let Some(SessionState::Failed(e)) = self.sessions.get(sid).map(|s| s.state.clone()) {
-            self.say(e);
-        }
-        Ok(())
+        Ok(sid)
     }
 
     /// New output from a session. Returns true if it is on screen.

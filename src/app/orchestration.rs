@@ -68,7 +68,14 @@ impl Sessions for SessionManager {
 pub struct AppView<'a> {
     pub sessions: &'a SessionManager,
     pub projects: &'a crate::projects::ProjectList,
+    pub profiles: &'a [crate::session::profiles::AgentProfile],
+    /// Why no session may start now, if so (session limit, memory).
+    pub guard: Option<String>,
 }
+
+/// Fallow's own memory above which agents may not start more sessions (FR-021: never beyond
+/// FR-029's 150 MB budget; the margin is for the session about to start).
+pub const START_MEMORY_LIMIT: u64 = 140 * 1024 * 1024;
 
 impl Sessions for AppView<'_> {
     fn info(&self, id: u32) -> Option<SessionInfo> {
@@ -79,6 +86,18 @@ impl Sessions for AppView<'_> {
     }
     fn verify(&self, id: u32, token: &str, peer: Peer) -> Result<(), String> {
         self.sessions.verify(id, token, peer)
+    }
+    fn profiles(&self) -> Vec<(String, String)> {
+        self.profiles
+            .iter()
+            .map(|p| (p.id.clone(), p.name.clone()))
+            .collect()
+    }
+    fn start_allowed(&self) -> Result<(), String> {
+        match &self.guard {
+            Some(why) => Err(why.clone()),
+            None => Ok(()),
+        }
     }
     fn projects(&self) -> Vec<(crate::projects::ProjectId, String, bool)> {
         self.projects
@@ -148,9 +167,12 @@ impl AppState {
             }
             return false;
         };
+        let guard = start_guard(&self.sessions, self.snapshot.as_deref());
         let view = AppView {
             sessions: &self.sessions,
             projects: &self.projects,
+            profiles: &self.profiles,
+            guard,
         };
         let changed = hub.handle(ev, &view, Instant::now());
         self.take_hub_notices();
@@ -162,14 +184,58 @@ impl AppState {
         let Some(hub) = self.hub.as_mut() else {
             return false;
         };
+        let guard = start_guard(&self.sessions, self.snapshot.as_deref());
         let view = AppView {
             sessions: &self.sessions,
             projects: &self.projects,
+            profiles: &self.profiles,
+            guard,
         };
         let mut changed = hub.tick(&view, Instant::now());
+        changed |= self.carry_out_starts();
         changed |= self.type_deliveries();
         self.take_hub_notices();
         changed
+    }
+
+    /// Starts the sessions agents' approved requests asked for (US5), checking the limits again
+    /// (FR-021). The new sessions do not take focus.
+    fn carry_out_starts(&mut self) -> bool {
+        let starts = match self.hub.as_ref() {
+            Some(h) => h.approved_starts(),
+            None => return false,
+        };
+        if starts.is_empty() {
+            return false;
+        }
+        for s in starts {
+            let result = match start_guard(&self.sessions, self.snapshot.as_deref()) {
+                Some(why) => Err(why),
+                None => {
+                    let place = self.default_where(s.project);
+                    self.start_session_in(s.project, &s.profile, place)
+                }
+            };
+            if let Ok(sid) = &result {
+                self.say(format!(
+                    "Started #{sid} {} in {} for {}",
+                    s.profile_name,
+                    s.project_name,
+                    s.from.label()
+                ));
+            }
+            let guard = start_guard(&self.sessions, self.snapshot.as_deref());
+            let view = AppView {
+                sessions: &self.sessions,
+                projects: &self.projects,
+                profiles: &self.profiles,
+                guard,
+            };
+            if let Some(h) = self.hub.as_mut() {
+                h.start_done(&view, s.id, result, Instant::now());
+            }
+        }
+        true
     }
 
     /// Types approved deliveries into their sessions, except while the engineer is typing in
@@ -297,6 +363,14 @@ impl AppState {
                                 self.say(e);
                             }
                         }
+                    }
+                    ("orch.approve" | "orch.reject", RequestRef::Start(st)) => {
+                        if let Some(h) = self.hub.as_mut() {
+                            h.decide_start(st, id == "orch.approve");
+                        }
+                    }
+                    ("orch.edit", RequestRef::Start(_)) => {
+                        self.say("A start request has nothing to edit");
                     }
                     ("orch.approve" | "orch.reject", RequestRef::Task(t)) => {
                         if let Some(h) = self.hub.as_mut() {
@@ -559,6 +633,8 @@ impl AppState {
         let view = AppView {
             sessions: &self.sessions,
             projects: &self.projects,
+            profiles: &self.profiles,
+            guard: None,
         };
         let hub = self
             .hub
@@ -608,8 +684,24 @@ impl AppState {
                 };
                 Some((from, to, true))
             }),
+            Some(RequestRef::Start(st)) => self.hub.as_ref().and_then(|h| {
+                let s = h.starts.iter().find(|s| s.id == st)?;
+                let from = s.from.session()?;
+                // A start's target is its project: any running session there stands for it.
+                let to = running
+                    .iter()
+                    .copied()
+                    .find(|r| {
+                        self.sessions
+                            .get(*r)
+                            .is_some_and(|x| x.project == s.project)
+                    })
+                    .unwrap_or(from);
+                Some((from, to, false))
+            }),
             None => None,
         };
+        let start = matches!(request, Some(RequestRef::Start(_)));
         let (from, to, tasks) = match from_request {
             Some(v) => v,
             None => {
@@ -624,10 +716,10 @@ impl AppState {
             from,
             from_any: false,
             to,
-            to_any: false,
-            deliver: !tasks,
+            to_any: start,
+            deliver: !tasks && !start,
             tasks,
-            starts: 0,
+            starts: u8::from(start) * 2,
             minutes: self.orch_settings.permission_default_min,
             field: 0,
             request,
@@ -723,6 +815,15 @@ impl AppState {
                             Some(crate::ui::orchestration::RequestRef::Task(t)) => {
                                 hub.decide_task(t, true);
                             }
+                            Some(crate::ui::orchestration::RequestRef::Start(s)) => {
+                                // The grant counts this start as its first use.
+                                if let Some(p) = hub.permissions.list.iter_mut().find(|x| x.id == p)
+                                {
+                                    p.uses += 1;
+                                    p.starts_used = p.starts_used.saturating_add(1);
+                                }
+                                hub.decide_start(s, true);
+                            }
                             None => {}
                         }
                         self.overlay = Overlay::Orch(back);
@@ -740,4 +841,30 @@ impl AppState {
         }
         true
     }
+}
+
+/// Why another session may not start now: 002's session limit (FR-007), the machine low on
+/// memory, or Fallow's own memory near its 150 MB budget (FR-029).
+pub fn start_guard(
+    sessions: &SessionManager,
+    snapshot: Option<&crate::procmon::snapshot::Snapshot>,
+) -> Option<String> {
+    if sessions.running() >= sessions.limits.max_sessions {
+        return Some(format!(
+            "{} sessions are running, the limit is {} (sessions.max_sessions)",
+            sessions.running(),
+            sessions.limits.max_sessions
+        ));
+    }
+    let summary = &snapshot?.summary;
+    if summary.low_memory {
+        return Some("the machine is low on memory".into());
+    }
+    if summary.fallow_ram.bytes > START_MEMORY_LIMIT {
+        return Some(format!(
+            "Fallow uses {} MB; its budget is 150 MB",
+            summary.fallow_ram.bytes / (1024 * 1024)
+        ));
+    }
+    None
 }

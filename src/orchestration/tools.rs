@@ -148,6 +148,30 @@ const SPECS: &[Spec] = &[
         ],
     },
     Spec {
+        name: "session_start",
+        description: "Ask Fallow to start another agent session (profile id, project name), optionally with a first task for it. The user approves each start unless they granted a standing permission with room for more sessions; Fallow refuses it beyond its session limit or memory budget. The outcome comes through inbox.",
+        args: &[
+            (
+                "profile",
+                "string",
+                "A profile id, for example \"claude\"",
+                true,
+            ),
+            (
+                "project",
+                "string",
+                "A project name as Fallow lists it",
+                true,
+            ),
+            (
+                "first_task",
+                "string",
+                "Optional: queued for the new session, at most 8 KiB",
+                false,
+            ),
+        ],
+    },
+    Spec {
         name: "event_status",
         description: "Whether a named event was signalled, by whom, and how many agents wait for it. Does not wait.",
         args: &[("name", "string", "Event name", true), SCOPE],
@@ -616,6 +640,36 @@ pub(super) fn call(
                 })
                 .collect();
             Reply::Done(json!({ "tasks": list }))
+        }
+        "session_start" => {
+            let first = match args.get("first_task").and_then(Value::as_str) {
+                None => None,
+                Some(t) => match board::clean_text(t, super::tasks::TEXT_MAX) {
+                    Ok(t) => Some(t),
+                    Err((code, m)) => return Reply::error(code, m),
+                },
+            };
+            match hub.request_start(
+                sessions,
+                &me,
+                args["profile"].as_str().unwrap_or_default(),
+                args["project"].as_str().unwrap_or_default(),
+                first,
+                now,
+            ) {
+                Ok((id, state)) => {
+                    let mut v = json!({ "start": id });
+                    match state {
+                        super::StartState::Refused(why) => {
+                            v["state"] = json!("refused");
+                            v["reason"] = json!(why);
+                        }
+                        s => v["state"] = json!(s.label()),
+                    }
+                    Reply::Done(v)
+                }
+                Err(r) => r,
+            }
         }
         "task_report" => {
             let Some(id) = args["task"].as_i64().and_then(|i| u32::try_from(i).ok()) else {

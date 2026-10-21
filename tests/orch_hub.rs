@@ -8,6 +8,7 @@ use fallow::orchestration::{Hub, Reply, SessionInfo, Sessions};
 use serde_json::{Value, json};
 
 /// Sessions #1 and #2 in project 1 ("api"), #3 in project 2 ("web").
+#[derive(Clone)]
 struct Fake(Vec<SessionInfo>);
 
 impl Fake {
@@ -791,4 +792,147 @@ fn delivery_requests_report_their_outcome_through_inbox() {
     let inbox = done(h.call(&f, 2, "inbox", json!({}), later));
     assert_eq!(inbox["deliveries"].as_array().unwrap().len(), 8);
     assert_eq!(inbox["deliveries"][0]["state"], "failed: target exited");
+}
+
+// ---- US5: session starts (T044) ----
+
+/// The fake with a start guard.
+struct Guarded(Fake, Option<String>);
+
+impl Sessions for Guarded {
+    fn info(&self, id: u32) -> Option<SessionInfo> {
+        self.0.info(id)
+    }
+    fn all(&self) -> Vec<SessionInfo> {
+        self.0.all()
+    }
+    fn verify(&self, a: u32, b: &str, c: Peer) -> Result<(), String> {
+        self.0.verify(a, b, c)
+    }
+    fn start_allowed(&self) -> Result<(), String> {
+        self.1.clone().map_or(Ok(()), Err)
+    }
+}
+
+#[test]
+fn start_requests_wait_for_approval_and_respect_limits() {
+    use fallow::orchestration::StartState;
+    use fallow::orchestration::permissions::{Grant, Scope};
+    let f = Fake::new();
+    let mut h = hub();
+    let now = Instant::now();
+    // Pending: nothing starts before approval (US5 scenario 1).
+    let r = done(h.call(
+        &f,
+        1,
+        "session_start",
+        json!({"profile": "claude", "project": "api", "first_task": "run the linter"}),
+        now,
+    ));
+    assert_eq!(r["state"], "pending");
+    assert!(h.approved_starts().is_empty());
+    assert_eq!(h.pending_requests(), 1);
+    let id = r["start"].as_u64().unwrap();
+    h.decide_start(id, true);
+    let starts = h.approved_starts();
+    assert_eq!(starts.len(), 1);
+    assert_eq!(starts[0].profile, "claude");
+    assert_eq!(starts[0].project, 1);
+    // The app started it as #7: the first task is queued for #7 and its hand-over is approved.
+    let mut f7 = Fake::new();
+    f7.0.push(SessionInfo {
+        id: 7,
+        idle: true,
+        ..f.info(1).unwrap()
+    });
+    h.start_done(&f7, id, Ok(7), now);
+    assert!(h.approved_starts().is_empty());
+    let t = h.tasks.list.last().unwrap();
+    assert_eq!(t.target, fallow::orchestration::tasks::Target::Session(7));
+    assert_eq!(t.text, "run the linter");
+    assert_eq!(t.created_by.session(), Some(1));
+    h.tick(&f7, now);
+    assert_eq!(
+        h.ready().len(),
+        1,
+        "the first task goes without another prompt"
+    );
+    let inbox = done(h.call(&f, 1, "inbox", json!({}), now));
+    assert_eq!(inbox["starts"][0]["state"], "started as #7");
+    assert_eq!(inbox["starts"][0]["session"], 7);
+    // A permission for up to 2 starts in project api: the third needs approval again.
+    h.grant(
+        &Grant {
+            source: Scope::Session(1),
+            target: Scope::Project(1),
+            deliver: false,
+            create_task: false,
+            start_limit: Some(2),
+            duration: Duration::from_secs(600),
+        },
+        now,
+    )
+    .unwrap();
+    let later = now + Duration::from_secs(10);
+    for want in ["approved", "approved", "pending"] {
+        let r = done(h.call(
+            &f,
+            1,
+            "session_start",
+            json!({"profile": "claude", "project": "api"}),
+            later,
+        ));
+        assert_eq!(r["state"], want);
+    }
+    // Rejected and expired.
+    let pending = h.pending_starts().next().unwrap().id;
+    h.decide_start(pending, false);
+    let r = done(h.call(
+        &f,
+        2,
+        "session_start",
+        json!({"profile": "claude", "project": "api"}),
+        later,
+    ));
+    let late = r["start"].as_u64().unwrap();
+    h.tick(&f, later + Duration::from_secs(600));
+    assert_eq!(
+        h.starts.iter().find(|s| s.id == late).unwrap().state,
+        StartState::Expired
+    );
+    // Beyond 002's limits it is refused with the reason (US5 scenario 3).
+    let g = Guarded(
+        Fake::new(),
+        Some("8 sessions are running, the limit is 8".into()),
+    );
+    let r = done(h.call(
+        &g,
+        1,
+        "session_start",
+        json!({"profile": "claude", "project": "api"}),
+        later,
+    ));
+    assert_eq!(r["state"], "refused");
+    assert!(r["reason"].as_str().unwrap().contains("limit is 8"));
+    // Unknown profile or project.
+    assert!(matches!(
+        h.call(
+            &f,
+            1,
+            "session_start",
+            json!({"profile": "nope", "project": "api"}),
+            later
+        ),
+        Reply::Error("invalid", _)
+    ));
+    assert!(matches!(
+        h.call(
+            &f,
+            1,
+            "session_start",
+            json!({"profile": "claude", "project": "nope"}),
+            later
+        ),
+        Reply::Error("invalid", _)
+    ));
 }
