@@ -78,6 +78,14 @@ impl Party {
     }
 }
 
+/// "#3" or "any session of project 2".
+pub fn scope_label(s: permissions::Scope) -> String {
+    match s {
+        permissions::Scope::Session(id) => format!("#{id}"),
+        permissions::Scope::Project(p) => format!("any session of project {p}"),
+    }
+}
+
 /// How a board is named in the activity log.
 pub fn board_name(b: board::BoardId) -> String {
     match b {
@@ -218,6 +226,10 @@ pub struct Hub {
     /// Sessions to wake because an event they asked for arrived while they were not waiting
     /// (turned into deliveries, US3).
     pub wakes: Vec<(u32, events::Key)>,
+    pub deliveries: delivery::Deliveries,
+    pub permissions: permissions::Permissions,
+    /// Outcomes for each requesting session, returned by its next `inbox` call.
+    pub outbox: HashMap<u32, Vec<Value>>,
 }
 
 /// Where the call being handled came from.
@@ -251,6 +263,9 @@ impl Hub {
             ctx: CallCtx::default(),
             answered: Vec::new(),
             wakes: Vec::new(),
+            deliveries: delivery::Deliveries::default(),
+            permissions: permissions::Permissions::default(),
+            outbox: HashMap::new(),
             settings,
             channel: None,
             conns: HashMap::new(),
@@ -494,6 +509,181 @@ impl Hub {
         Ok(n)
     }
 
+    /// Queued and blocked tasks (counts line; the queue arrives with US4).
+    pub fn queue_counts(&self) -> (usize, usize) {
+        (0, 0)
+    }
+
+    /// Requests waiting for the engineer (hint bar, counts line).
+    pub fn pending_requests(&self) -> usize {
+        self.deliveries.pending().count()
+    }
+
+    /// Records a finished delivery's outcome for its requester and the log.
+    fn delivery_outcome(&mut self, id: u64) {
+        let Some(d) = self.deliveries.get(id).cloned() else {
+            return;
+        };
+        let outcome = d.state.label();
+        if let (Some(s), delivery::Purpose::Message) = (d.from.session(), &d.purpose) {
+            let mut v = serde_json::json!({ "id": d.id, "to": d.to, "state": outcome });
+            if d.edited {
+                v["edited"] = Value::Bool(true);
+            }
+            self.outbox.entry(s).or_default().push(v);
+        }
+        self.activity.add(
+            d.from.clone(),
+            Action::DeliveryOutcome,
+            &format!("→ #{}: {}", d.to, d.text),
+            Some(outcome),
+        );
+    }
+
+    /// Asks to type `text` into session `to` on `from`'s behalf. A covering permission approves
+    /// it at once (and is announced); otherwise it waits for the engineer. `by_user`: the
+    /// engineer's own action caused it (a wake-up after their signal, a task they queued), so it
+    /// is approved as it is made.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn request_delivery(
+        &mut self,
+        sessions: &dyn Sessions,
+        from: Party,
+        to: u32,
+        text: String,
+        purpose: delivery::Purpose,
+        by_user: bool,
+        now: Instant,
+    ) -> Result<(u64, bool), String> {
+        let target = sessions
+            .info(to)
+            .filter(|t| t.running)
+            .ok_or_else(|| format!("session #{to} is not running"))?;
+        self.deliveries.room_for(&from)?;
+        let cover = match from.session().and_then(|s| sessions.info(s)) {
+            Some(src) => self
+                .permissions
+                .cover(&src, &target, permissions::Act::Deliver, now),
+            None => None,
+        };
+        let expires = now + std::time::Duration::from_secs(self.settings.request_timeout_s);
+        let subject = format!("{} → {}: {text}", from.label(), target.party().label());
+        let id = self
+            .deliveries
+            .add(from.clone(), to, text, purpose, now, expires, cover);
+        self.activity
+            .add(from.clone(), Action::DeliveryRequested, &subject, None);
+        if by_user && cover.is_none() {
+            let _ = self.deliveries.approve(id, None);
+            return Ok((id, true));
+        }
+        match cover {
+            Some(p) => {
+                self.activity.add(
+                    from.clone(),
+                    Action::PermissionUsed,
+                    &format!("P{p}: {} → #{to}", from.label()),
+                    None,
+                );
+                self.notices
+                    .push(format!("P{p} used: {} → #{to}", from.label()));
+            }
+            None => self.notices.push(format!(
+                "{} asks to deliver to #{to} (o to review)",
+                from.label()
+            )),
+        }
+        Ok((id, cover.is_some()))
+    }
+
+    /// The engineer approves a request (optionally with edited text).
+    pub fn approve(&mut self, id: u64, text: Option<String>) -> Result<(), String> {
+        self.deliveries.approve(id, text)
+    }
+
+    /// The engineer rejects a request; nothing is typed.
+    pub fn reject(&mut self, id: u64) {
+        if self
+            .deliveries
+            .finish(id, delivery::State::Rejected)
+            .is_some()
+        {
+            self.delivery_outcome(id);
+        }
+    }
+
+    /// Approved deliveries waiting to be typed.
+    pub fn ready(&self) -> Vec<u64> {
+        self.deliveries
+            .list
+            .iter()
+            .filter(|d| d.state == delivery::State::Approved)
+            .map(|d| d.id)
+            .collect()
+    }
+
+    /// The grant to type an approved delivery (the only way to get one, research R-7).
+    pub fn take_grant(&self, id: u64) -> Option<delivery::DeliveryGrant> {
+        self.deliveries.grant(id)
+    }
+
+    /// The typing of a delivery finished (or the target was gone).
+    pub fn delivered(&mut self, id: u64, result: Result<(), String>) {
+        let state = match result {
+            Ok(()) => delivery::State::Delivered,
+            Err(e) => delivery::State::Failed(e),
+        };
+        if self.deliveries.finish(id, state).is_some() {
+            self.delivery_outcome(id);
+        }
+    }
+
+    /// The engineer grants a standing permission (FR-015).
+    pub fn grant(&mut self, g: &permissions::Grant, now: Instant) -> Result<u32, String> {
+        let id = self.permissions.grant(g, now)?;
+        let p = self.permissions.list.last().cloned();
+        if let Some(p) = p {
+            self.activity.add(
+                Party::User,
+                Action::PermissionGranted,
+                &format!(
+                    "P{id}: {} → {} ({}) for {} min",
+                    scope_label(p.source),
+                    scope_label(p.target),
+                    p.actions_label(),
+                    g.duration.as_secs() / 60
+                ),
+                None,
+            );
+        }
+        Ok(id)
+    }
+
+    pub fn revoke(&mut self, id: u32) {
+        if self.permissions.revoke(id).is_some() {
+            self.activity.add(
+                Party::User,
+                Action::PermissionRevoked,
+                &format!("P{id}"),
+                None,
+            );
+        }
+    }
+
+    /// Revokes every permission at once (SC-005): requests handled after this prompt again.
+    pub fn revoke_all(&mut self) -> usize {
+        let n = self.permissions.revoke_all().len();
+        if n > 0 {
+            self.activity.add(
+                Party::User,
+                Action::PermissionRevoked,
+                &format!("all ({n})"),
+                None,
+            );
+        }
+        n
+    }
+
     /// The engineer clears an event: it is no longer signalled.
     pub fn clear_event(&mut self, key: &events::Key) {
         if let Some(e) = self.events.map.get_mut(key) {
@@ -578,6 +768,53 @@ impl Hub {
             };
             self.answer(w.conn, &w.id, &reply);
         }
+        // Requests nobody answered in time (FR-012).
+        let expired: Vec<u64> = self
+            .deliveries
+            .pending()
+            .filter(|d| now >= d.expires)
+            .map(|d| d.id)
+            .collect();
+        for id in expired {
+            self.deliveries.finish(id, delivery::State::Expired);
+            self.delivery_outcome(id);
+            if let Some(d) = self.deliveries.get(id) {
+                self.notices
+                    .push(format!("Request from {} expired", d.from.label()));
+            }
+            changed = true;
+        }
+        for p in self.permissions.expire(now) {
+            self.activity.add(
+                Party::User,
+                Action::PermissionRevoked,
+                &format!("P{}", p.id),
+                Some("expired".into()),
+            );
+            changed = true;
+        }
+        // Wake-ups for idle sessions whose event arrived (US2 scenario 5).
+        for (session, key) in std::mem::take(&mut self.wakes) {
+            let idle = sessions.info(session).is_some_and(|i| i.idle && i.running);
+            let signal = self.events.map.get(&key).and_then(|e| e.signal.clone());
+            let (Some(sig), true) = (signal, idle) else {
+                continue;
+            };
+            let text = sig.message.clone().unwrap_or_default();
+            let from = sig.from.clone();
+            // A wake-up after the engineer's own signal is the engineer's action.
+            let user = from == Party::User;
+            let _ = self.request_delivery(
+                sessions,
+                from,
+                session,
+                text,
+                delivery::Purpose::Wake(key.clone()),
+                user,
+                now,
+            );
+            changed = true;
+        }
         let mut progress = Vec::new();
         for w in &mut self.events.waits {
             if let (Some(token), Some(conn)) = (&w.progress, w.conn) {
@@ -601,6 +838,18 @@ impl Hub {
         self.events.drop_where(|w| w.session == id);
         self.events.recent.remove(&id);
         self.events.interests.remove(&id);
+        let to_it: Vec<u64> = self
+            .deliveries
+            .list
+            .iter()
+            .filter(|d| d.to == id && !d.state.finished())
+            .map(|d| d.id)
+            .collect();
+        for d in to_it {
+            self.deliveries
+                .finish(d, delivery::State::Failed("target exited".into()));
+            self.delivery_outcome(d);
+        }
         if let Some(l) = self.links.get_mut(&id) {
             if let Some(conn) = l.conn.take() {
                 if let Some(c) = self.conns.remove(&conn) {

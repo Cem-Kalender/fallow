@@ -79,13 +79,154 @@ pub fn counts(hub: Option<&Hub>, state: &AppState) -> String {
     let Some(h) = hub else {
         return "no session uses orchestration yet".into();
     };
+    let now = std::time::Instant::now();
     let connected = state
         .sessions
         .sessions
         .iter()
         .filter(|s| h.connected(s.id))
         .count();
-    format!("{connected} connected")
+    let waiting = state
+        .sessions
+        .sessions
+        .iter()
+        .filter(|s| h.waiting(s.id, now).is_some())
+        .count();
+    let plural =
+        |n: usize, one: &str, many: &str| format!("{n} {}", if n == 1 { one } else { many });
+    let mut parts = vec![
+        plural(h.pending_requests(), "request", "requests"),
+        format!("{waiting} waiting"),
+    ];
+    let (queued, blocked) = h.queue_counts();
+    parts.push(format!("{queued} queued ({blocked} blocked)"));
+    let perms = &h.permissions.list;
+    let mut p = plural(perms.len(), "permission", "permissions");
+    if let Some(first) = perms.iter().min_by_key(|p| p.expires) {
+        p.push_str(&format!(
+            " (P{} {})",
+            first.id,
+            time_left(first.expires.saturating_duration_since(now))
+        ));
+    }
+    parts.push(p);
+    parts.push(format!("{connected} connected"));
+    parts.join(" · ")
+}
+
+/// "28:12" or "1:05:00".
+pub fn time_left(d: std::time::Duration) -> String {
+    let s = d.as_secs();
+    if s >= 3600 {
+        format!("{}:{:02}:{:02}", s / 3600, s % 3600 / 60, s % 60)
+    } else {
+        format!("{}:{:02}", s / 60, s % 60)
+    }
+}
+
+/// The requests the Requests tab lists, oldest first: pending deliveries.
+pub fn requests_shown(state: &AppState) -> Vec<u64> {
+    state
+        .hub
+        .as_ref()
+        .map_or_else(Vec::new, |h| h.deliveries.pending().map(|d| d.id).collect())
+}
+
+fn session_name(state: &AppState, id: u32) -> String {
+    state.sessions.get(id).map_or(format!("#{id}"), |s| {
+        format!("#{} {} · {}", s.id, s.profile.name, s.project_name)
+    })
+}
+
+fn requests_lines(state: &AppState, v: &OrchView, width: usize) -> Vec<Line<'static>> {
+    let bold = Style::default().add_modifier(Modifier::BOLD);
+    let dim = Style::default().add_modifier(Modifier::DIM);
+    let sel = Style::default().add_modifier(Modifier::REVERSED);
+    let Some(h) = state.hub.as_ref() else {
+        return vec![Line::styled("No requests.", dim)];
+    };
+    let ids = requests_shown(state);
+    if ids.is_empty() {
+        return vec![Line::styled(
+            "No requests. Agents ask here before Fallow types into another session.",
+            dim,
+        )];
+    }
+    let now = std::time::Instant::now();
+    let mut lines = Vec::new();
+    let selected = v.selected.min(ids.len() - 1);
+    for (i, id) in ids.iter().enumerate() {
+        let Some(d) = h.deliveries.get(*id) else {
+            continue;
+        };
+        let what = match &d.purpose {
+            crate::orchestration::delivery::Purpose::Message => "deliver".to_string(),
+            crate::orchestration::delivery::Purpose::Task(t) => format!("task T{t}"),
+            crate::orchestration::delivery::Purpose::Wake(k) => format!("wake ({})", k.1),
+        };
+        let row = format!(
+            "{}  →  {}   {what}   expires in {}",
+            d.from.label(),
+            session_name(state, d.to),
+            time_left(d.expires.saturating_duration_since(now))
+        );
+        lines.push(Line::styled(
+            row,
+            if i == selected { sel } else { Style::default() },
+        ));
+        if i == selected {
+            lines.push(Line::styled("  text that would be typed:", dim));
+            lines.push(Line::styled(
+                format!("  {}", crate::orchestration::delivery::label(d)),
+                bold,
+            ));
+            for l in wrap(&d.text, width.saturating_sub(4)) {
+                lines.push(Line::raw(format!("  {l}")));
+            }
+            lines.push(Line::styled(
+                "  y Approve   e Edit   x Reject   g Grant permission…   ↑↓ Next request",
+                dim,
+            ));
+        }
+    }
+    lines
+}
+
+fn permissions_lines(state: &AppState, v: &OrchView) -> Vec<Line<'static>> {
+    let dim = Style::default().add_modifier(Modifier::DIM);
+    let sel = Style::default().add_modifier(Modifier::REVERSED);
+    let mut lines = vec![Line::styled(
+        "a Grant new · Delete Revoke · Shift-X Revoke all",
+        dim,
+    )];
+    let Some(h) = state.hub.as_ref() else {
+        lines.push(Line::styled("No standing permissions.", dim));
+        return lines;
+    };
+    if h.permissions.list.is_empty() {
+        lines.push(Line::styled("No standing permissions.", dim));
+    }
+    let now = std::time::Instant::now();
+    for (i, p) in h.permissions.list.iter().enumerate() {
+        let text = format!(
+            "P{}  {} → {}   {}   used {}   {} left",
+            p.id,
+            crate::orchestration::scope_label(p.source),
+            crate::orchestration::scope_label(p.target),
+            p.actions_label(),
+            p.uses,
+            time_left(p.expires.saturating_duration_since(now))
+        );
+        lines.push(Line::styled(
+            text,
+            if i == v.selected {
+                sel
+            } else {
+                Style::default()
+            },
+        ));
+    }
+    lines
 }
 
 /// Splits `text` into display lines at most `width` columns wide.
@@ -277,13 +418,12 @@ pub fn draw(f: &mut Frame<'_>, area: Rect, state: &AppState, v: &OrchView) {
         spans.push(Span::raw(" "));
     }
     f.render_widget(Paragraph::new(Line::from(spans)), tabs);
-    let dim = Style::default().add_modifier(Modifier::DIM);
     let lines = match v.tab {
         Tab::Board => board_lines(state, v, body.width as usize),
         Tab::Activity => activity_lines(state),
-        Tab::Requests => vec![Line::styled("No requests.", dim)],
+        Tab::Requests => requests_lines(state, v, body.width as usize),
         Tab::Queue => queue_lines(state, v, body.width as usize),
-        Tab::Permissions => vec![Line::styled("No standing permissions.", dim)],
+        Tab::Permissions => permissions_lines(state, v),
     };
     // Board: newest at the bottom, scrolled up by `scroll`. Activity: newest on top.
     let h = body.height as usize;
@@ -321,4 +461,96 @@ pub fn draw_info(f: &mut Frame<'_>, area: Rect, title: &str, lines: &[String]) {
     f.render_widget(block, r);
     let text: Vec<Line<'_>> = lines.iter().map(|l| Line::raw(l.as_str())).collect();
     f.render_widget(Paragraph::new(text), inner);
+}
+
+/// The grant dialog (contracts/ui-commands.md "Grant dialog").
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GrantForm {
+    pub from: u32,
+    pub from_any: bool,
+    pub to: u32,
+    pub to_any: bool,
+    pub deliver: bool,
+    pub tasks: bool,
+    /// Sessions it may start (0: none).
+    pub starts: u8,
+    pub minutes: u64,
+    /// The field with focus: 0 from, 1 to, 2 deliver, 3 tasks, 4 starts, 5 minutes.
+    pub field: usize,
+    /// The request to approve once granted.
+    pub request: Option<u64>,
+    pub back: OrchView,
+    pub error: Option<String>,
+}
+
+pub const GRANT_FIELDS: usize = 6;
+
+pub fn draw_grant(f: &mut Frame<'_>, area: Rect, state: &AppState, g: &GrantForm) {
+    let width = 80.min(area.width.saturating_sub(2));
+    let height = (12 + u16::from(g.error.is_some())).min(area.height.saturating_sub(2));
+    let [v] = Layout::vertical([Constraint::Length(height)])
+        .flex(Flex::Center)
+        .areas(area);
+    let [r] = Layout::horizontal([Constraint::Length(width)])
+        .flex(Flex::Center)
+        .areas(v);
+    f.render_widget(Clear, r);
+    let block = Block::bordered()
+        .title(" Grant standing permission ")
+        .title_bottom(" ↑↓ field · ←→ change · Space toggle · Enter grant · Esc cancel ");
+    let inner = block.inner(r);
+    f.render_widget(block, r);
+    let project = |id: u32| {
+        state
+            .sessions
+            .get(id)
+            .map_or("?".to_string(), |s| s.project_name.clone())
+    };
+    let radio = |on: bool| if on { "(•)" } else { "( )" };
+    let check = |on: bool| if on { "[x]" } else { "[ ]" };
+    let rows = [
+        format!(
+            "From:   {} session {}     {} any session of {}",
+            radio(!g.from_any),
+            session_name(state, g.from),
+            radio(g.from_any),
+            project(g.from)
+        ),
+        format!(
+            "To:     {} session {}     {} any session of {}",
+            radio(!g.to_any),
+            session_name(state, g.to),
+            radio(g.to_any),
+            project(g.to)
+        ),
+        format!("Allow:  {} deliver messages", check(g.deliver)),
+        format!("        {} create tasks", check(g.tasks)),
+        format!(
+            "        {} start sessions, up to [{}]",
+            check(g.starts > 0),
+            g.starts
+        ),
+        format!("For:    [{}] minutes (max 480)", g.minutes),
+    ];
+    let mut lines = vec![Line::raw("")];
+    for (i, row) in rows.into_iter().enumerate() {
+        let style = if i == g.field {
+            Style::default().add_modifier(Modifier::REVERSED)
+        } else {
+            Style::default()
+        };
+        lines.push(Line::styled(format!(" {row}"), style));
+    }
+    lines.push(Line::raw(""));
+    lines.push(Line::styled(
+        " Never covers stopping, pausing or killing a session.",
+        Style::default().add_modifier(Modifier::DIM),
+    ));
+    if let Some(e) = &g.error {
+        lines.push(Line::styled(
+            format!(" {e}"),
+            Style::default().fg(ratatui::style::Color::Red),
+        ));
+    }
+    f.render_widget(Paragraph::new(lines), inner);
 }

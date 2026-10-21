@@ -177,6 +177,7 @@ impl AppState {
             s.scroll = 0;
             s.selection = None;
             crate::session::attention::on_input(s, Instant::now());
+            s.last_key = Some(Instant::now());
             s.write(&bytes);
         }
         false
@@ -196,6 +197,7 @@ impl AppState {
         };
         let (_, bracketed, _) = s.modes();
         s.scroll = 0;
+        s.last_key = Some(Instant::now());
         s.write(&crate::session::keys::paste(text, bracketed));
         false
     }

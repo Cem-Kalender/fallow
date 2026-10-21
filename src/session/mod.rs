@@ -217,6 +217,24 @@ impl Session {
         }
     }
 
+    /// Types an approved delivery (003 FR-011 to FR-013): the only way text another party asked
+    /// for reaches the agent. The grant must be for this session and this delivery.
+    pub fn deliver(
+        &self,
+        grant: crate::orchestration::delivery::DeliveryGrant,
+        d: &crate::orchestration::delivery::Delivery,
+    ) -> Result<(), String> {
+        if grant.target() != self.id || grant.id() != d.id || d.to != self.id {
+            return Err("the grant is for another delivery".into());
+        }
+        if !self.state.running() || self.pty.is_none() {
+            return Err("target exited".into());
+        }
+        let (_, bracketed, _) = self.modes();
+        self.write(&crate::orchestration::delivery::bytes(d, bracketed));
+        Ok(())
+    }
+
     /// Sends bytes to the agent, if it runs.
     pub fn write(&self, bytes: &[u8]) {
         if let Some(p) = &self.pty {

@@ -97,6 +97,19 @@ const SPECS: &[Spec] = &[
         ],
     },
     Spec {
+        name: "deliver",
+        description: "Ask Fallow to type a message into another agent's session (session number from session_list). The user approves each delivery unless they granted a standing permission; the message is labelled with your session. Returns at once; the outcome comes through inbox. Use the board instead when the other agent does not need to act now. At most 8 KiB.",
+        args: &[
+            ("session", "integer", "The target session", true),
+            ("text", "string", "What to type", true),
+        ],
+    },
+    Spec {
+        name: "inbox",
+        description: "Outcomes of your requests since the last call: deliveries (approved, delivered, rejected, expired, failed), tasks and session starts.",
+        args: &[],
+    },
+    Spec {
         name: "event_status",
         description: "Whether a named event was signalled, by whom, and how many agents wait for it. Does not wait.",
         args: &[("name", "string", "Event name", true), SCOPE],
@@ -433,6 +446,42 @@ pub(super) fn call(
                 last_progress: now,
             });
             Reply::Parked
+        }
+        "deliver" => {
+            let to = args["session"].as_i64().unwrap_or(-1);
+            let Ok(to) = u32::try_from(to) else {
+                return Reply::error("invalid", "session must be a session number");
+            };
+            if to == caller {
+                return Reply::error("invalid", "that is your own session");
+            }
+            let text = match board::clean_text(
+                args["text"].as_str().unwrap_or_default(),
+                super::delivery::TEXT_MAX,
+            ) {
+                Ok(t) => t,
+                Err((code, m)) => return Reply::error(code, m),
+            };
+            match hub.request_delivery(
+                sessions,
+                me.party(),
+                to,
+                text,
+                super::delivery::Purpose::Message,
+                false,
+                now,
+            ) {
+                Ok((id, approved)) => Reply::Done(json!({
+                    "delivery": id,
+                    "state": if approved { "approved" } else { "pending" },
+                })),
+                Err(e) if e.contains("not running") => Reply::error("not_found", e),
+                Err(e) => Reply::error("too_many_pending", e),
+            }
+        }
+        "inbox" => {
+            let items = hub.outbox.remove(&caller).unwrap_or_default();
+            Reply::Done(json!({ "deliveries": items, "tasks": [], "starts": [] }))
         }
         _ => Reply::error("unavailable", format!("{name} is not available yet")),
     }

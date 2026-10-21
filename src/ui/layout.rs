@@ -197,6 +197,7 @@ fn overlays(f: &mut Frame<'_>, state: &AppState, area: Rect) {
         }
         Overlay::Menu(m) => super::workspace::draw_menu(f, area, m),
         Overlay::Orch(v) => super::orchestration::draw(f, area, state, v),
+        Overlay::Grant(g) => super::orchestration::draw_grant(f, area, state, g),
         Overlay::Info { title, lines } => super::orchestration::draw_info(f, area, title, lines),
     }
 }

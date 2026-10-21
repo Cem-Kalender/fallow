@@ -57,7 +57,13 @@ pub fn draw(f: &mut Frame<'_>, state: &AppState, area: Rect) {
         Overlay::Palette { .. } | Overlay::Prompt { .. } => (Context::Global, true),
         _ => (state.context(), state.text_input()),
     };
+    let pending = state.hub.as_ref().map_or(0, |h| h.pending_requests());
+    let requests = format!("{pending} request{}", if pending == 1 { "" } else { "s" });
     let mut hints = commands::hints(context, text_input);
+    // Requests waiting for the engineer, in both views (contracts/ui-commands.md "Elsewhere").
+    if pending > 0 && matches!(state.overlay, Overlay::None) && hints.len() >= 2 {
+        hints.insert(2, ("o", requests.as_str()));
+    }
     // The editor view: the way back to the agent workspace (002 FR-020).
     if state.workspace.view == crate::app::workspace::View::Editor
         && !text_input
@@ -78,7 +84,7 @@ pub fn draw(f: &mut Frame<'_>, state: &AppState, area: Rect) {
             ("Esc", "Cancel"),
         ]),
         Overlay::Info { .. } => hints.push(("any key", "Close")),
-        Overlay::Confirm { .. } | Overlay::Orch(_) | Overlay::None => {}
+        Overlay::Confirm { .. } | Overlay::Orch(_) | Overlay::Grant(_) | Overlay::None => {}
     }
     // A focused session: every key but the leave key goes to the agent, so only that is shown.
     if matches!(state.overlay, Overlay::None)
@@ -86,12 +92,19 @@ pub fn draw(f: &mut Frame<'_>, state: &AppState, area: Rect) {
         && state.workspace.focus == crate::app::workspace::AgentsFocus::Session
     {
         let leave = state.sessions.limits.leave_key.label();
-        let line = Line::from(vec![
+        let mut line = Line::from(vec![
             Span::styled(leave, Style::default().add_modifier(Modifier::BOLD)),
             Span::raw(" Leave session (keys go to the agent until then)"),
         ]);
+        // Only the count: the overlay never opens by itself over a focused session.
+        if pending > 0 {
+            line.spans.push(Span::raw(SEPARATOR));
+            line.spans.push(Span::styled(
+                format!("● {requests}"),
+                Style::default().fg(Color::Yellow),
+            ));
+        }
         let msg = state.message.as_ref().map(|(m, _)| m.as_str());
-        let mut line = line;
         if let Some(m) = msg {
             line.spans.push(Span::raw(SEPARATOR));
             line.spans.push(Span::styled(

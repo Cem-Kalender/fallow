@@ -117,6 +117,8 @@ pub enum Overlay {
     Menu(StartMenu),
     /// The orchestration view (003).
     Orch(crate::ui::orchestration::OrchView),
+    /// The grant dialog (003).
+    Grant(crate::ui::orchestration::GrantForm),
     /// A read-only text popup (session details, 003).
     Info {
         title: String,
@@ -290,6 +292,7 @@ impl AppState {
             Overlay::Prompt { .. } => return self.prompt_key(key),
             Overlay::Menu(_) => return self.menu_key(key),
             Overlay::Orch(_) => return self.orch_key(key),
+            Overlay::Grant(_) => return self.grant_key(key),
             Overlay::Info { .. } => {
                 self.overlay = Overlay::None;
                 return true;

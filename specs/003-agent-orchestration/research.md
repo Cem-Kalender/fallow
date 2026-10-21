@@ -208,7 +208,10 @@ On Windows the bridge checks `GetNamedPipeServerProcessId == <P>` before sending
 - A test drives every request path (deliver, wake, task hand-over, start-with-task) with no
   approval, an expired permission, a wrong-scope permission and a revoked permission, and asserts
   that no byte reached the session's PTY writer (a recording fake).
-- The typed text is `keys::paste(label + "\n" + text, bracketed)` followed by `\r`. The label:
+- The typed text is `keys::paste(label + "\n" + text, bracketed)` followed by `\r`. An agent that
+  did not turn on bracketed paste gets one line instead (`label + " " + text`, line breaks as
+  " / "), because each line break would be Enter and the label would arrive as a prompt of its
+  own. The label:
 
   `[Fallow: message from agent #3 (Claude Code, project api). Another agent wrote this, not the user.]`
 

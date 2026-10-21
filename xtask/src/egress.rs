@@ -42,6 +42,47 @@ struct Seen {
     notes: Vec<String>,
     /// The capture worked (for example the event log could be read).
     capture_ok: bool,
+    /// macOS: DNS ids of Fallow's questions, with the name asked.
+    asked: Vec<(u16, String)>,
+    /// macOS: CNAME targets in DNS answers, by DNS id. The system resolver follows a provider
+    /// hostname's CNAME chain with its own questions on Fallow's behalf; those names are part of
+    /// resolving the provider hostname, not other hostnames.
+    cnames: Vec<(u16, Vec<String>)>,
+}
+
+/// The provider hostnames plus the CNAME targets the resolver followed from them (macOS).
+fn allowed_names(hosts: &BTreeSet<String>, seen: &Seen) -> (BTreeSet<String>, Vec<String>) {
+    let mut allowed = hosts.clone();
+    let mut followed = Vec::new();
+    loop {
+        let mut added = false;
+        for (id, name) in &seen.asked {
+            if !allowed.contains(name) {
+                continue;
+            }
+            for (aid, targets) in &seen.cnames {
+                if aid != id {
+                    continue;
+                }
+                for t in targets {
+                    if allowed.insert(t.clone()) {
+                        followed.push(format!("{name} → {t}"));
+                        added = true;
+                    }
+                }
+            }
+        }
+        if !added {
+            return (allowed, followed);
+        }
+    }
+}
+
+/// The DNS id after "host.port: " in a tcpdump line ("13148+ A? …" or "13148 2/0/0 …").
+fn dns_id(line: &str) -> Option<u16> {
+    let after = line.split(": ").nth(1)?;
+    let digits: String = after.chars().take_while(char::is_ascii_digit).collect();
+    digits.parse().ok()
 }
 
 pub fn run(args: &[String]) -> i32 {
@@ -75,10 +116,16 @@ pub fn run(args: &[String]) -> i32 {
         }
     };
 
-    // Judge the names: provider hostnames only, A or AAAA only.
+    // Judge the names: provider hostnames (and the CNAME chains the system resolver followed
+    // from them), A or AAAA only.
+    let (allowed, followed) = allowed_names(&hosts, &dns);
+    if !followed.is_empty() {
+        dns.notes
+            .push(format!("resolver followed CNAMEs: {}", followed.join(", ")));
+    }
     for (name, kind) in &dns.queries {
         let host = name.trim_end_matches('.').to_ascii_lowercase();
-        if !hosts.contains(&host) {
+        if !allowed.contains(&host) {
             dns.violations
                 .push(format!("DNS query for {host} (not a provider hostname)"));
         }
@@ -767,6 +814,22 @@ fn judge_tcpdump(text: &str, seen: &mut Seen) {
     ));
     let mut unattributed = 0usize;
     for line in text.lines() {
+        // Answers (from port 53), whoever they are attributed to: their CNAME targets.
+        if line.contains(".53 > ") {
+            if let Some(id) = dns_id(line) {
+                let targets: Vec<String> = line
+                    .split("CNAME ")
+                    .skip(1)
+                    .filter_map(|r| r.split([',', ' ']).next())
+                    .map(|n| n.trim_end_matches('.').to_ascii_lowercase())
+                    .filter(|n| !n.is_empty())
+                    .collect();
+                if !targets.is_empty() {
+                    seen.cnames.push((id, targets));
+                }
+            }
+            continue;
+        }
         let ours = line.contains("proc fallow:") || line.contains("eproc fallow:");
         let dns = line.contains(".53:") || line.contains(".53 ");
         if !ours {
@@ -783,10 +846,12 @@ fn judge_tcpdump(text: &str, seen: &mut Seen) {
         for kind in ["AAAA?", "A?", "PTR?"] {
             if let Some(rest) = line.split(&format!(" {kind} ")).nth(1) {
                 let name = rest.split_whitespace().next().unwrap_or("");
-                seen.queries.insert((
-                    name.trim_end_matches('.').to_string(),
-                    kind.trim_end_matches('?').to_string(),
-                ));
+                let name = name.trim_end_matches('.').to_string();
+                if let Some(id) = dns_id(line) {
+                    seen.asked.push((id, name.to_ascii_lowercase()));
+                }
+                seen.queries
+                    .insert((name, kind.trim_end_matches('?').to_string()));
                 break;
             }
         }
@@ -817,6 +882,28 @@ mod tests {
         );
         let hex: String = q.iter().map(|b| format!("\\x{b:02x}")).collect();
         assert_eq!(decode_hex_bytes(&hex), q);
+    }
+
+    #[test]
+    fn cname_chains_of_provider_hostnames_are_allowed() {
+        let text = concat!(
+            "1.0 (en0, proc mDNSResponder:174, eproc fallow:18066, svc BE, out, so) IP 10.0.0.7.49581 > 10.0.0.1.53: 13148+ A? api.cohere.com. (32)\n",
+            "1.1 (en0, proc mDNSResponder:174, svc BE, in) IP 10.0.0.1.53 > 10.0.0.7.49581: 13148 2/0/0 CNAME d3bbv8sr76az5s.cloudfront.net., A 1.2.3.4 (100)\n",
+            "1.2 (en0, proc mDNSResponder:174, eproc fallow:18066, svc BE, out, so) IP 10.0.0.7.49582 > 10.0.0.1.53: 777+ A? d3bbv8sr76az5s.cloudfront.net. (45)\n",
+            "1.3 (en0, proc mDNSResponder:174, eproc fallow:18066, svc BE, out, so) IP 10.0.0.7.49583 > 10.0.0.1.53: 778+ A? example.org. (29)\n",
+            "1.4 (en0, proc mDNSResponder:174, svc BE, in) IP 10.0.0.1.53 > 10.0.0.7.49583: 778 1/0/0 CNAME other.example.net. (50)\n",
+        );
+        let mut s = Seen::default();
+        judge_tcpdump(text, &mut s);
+        let hosts: BTreeSet<String> = ["api.cohere.com".to_string()].into();
+        let (allowed, followed) = allowed_names(&hosts, &s);
+        assert!(allowed.contains("d3bbv8sr76az5s.cloudfront.net"));
+        assert_eq!(followed, ["api.cohere.com → d3bbv8sr76az5s.cloudfront.net"]);
+        assert!(!allowed.contains("example.org"), "not a provider hostname");
+        assert!(
+            !allowed.contains("other.example.net"),
+            "CNAMEs of other names are not allowed"
+        );
     }
 
     #[test]

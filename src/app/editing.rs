@@ -81,6 +81,8 @@ pub enum PromptKind {
         crate::orchestration::board::BoardId,
         crate::ui::orchestration::OrchView,
     ),
+    /// 003: edit a delivery's text, then approve it.
+    EditDelivery(u64, crate::ui::orchestration::OrchView),
     /// 003: signal an event as the user: "name [message]".
     SignalEvent(
         crate::orchestration::board::BoardId,
@@ -101,6 +103,7 @@ impl PromptKind {
             PromptKind::RelocateProject(_) => "New folder for this project",
             PromptKind::BoardPost(..) => "Write on the board (as you)",
             PromptKind::SignalEvent(..) => "Signal an event as you: name [message]",
+            PromptKind::EditDelivery(..) => "Text to deliver (Enter approves)",
         }
     }
 }
@@ -152,6 +155,7 @@ impl AppState {
             | Overlay::Help { .. }
             | Overlay::Menu(_)
             | Overlay::Orch(_)
+            | Overlay::Grant(_)
             | Overlay::Info { .. } => false,
             Overlay::None if self.workspace.view == super::workspace::View::Agents => {
                 self.workspace.focus == super::workspace::AgentsFocus::Session
@@ -414,6 +418,17 @@ impl AppState {
             PromptKind::SearchSession => self.search_session(text),
             PromptKind::RenameProject(id) => self.rename_project(*id, text),
             PromptKind::RelocateProject(id) => self.relocate_project(*id, text),
+            PromptKind::EditDelivery(id, view) => {
+                let hub = self.hub.as_mut().ok_or("No orchestration")?;
+                let text = crate::orchestration::board::clean_text(
+                    text,
+                    crate::orchestration::delivery::TEXT_MAX,
+                )
+                .map_err(|(_, m)| m)?;
+                hub.approve(*id, Some(text))?;
+                self.overlay = Overlay::Orch(view.clone());
+                Ok(())
+            }
             PromptKind::SignalEvent(scope, view) => {
                 let hub = self
                     .hub
@@ -923,6 +938,7 @@ impl AppState {
             | Overlay::Help { .. }
             | Overlay::Menu(_)
             | Overlay::Orch(_)
+            | Overlay::Grant(_)
             | Overlay::Info { .. } => return false,
             Overlay::None => {}
         }

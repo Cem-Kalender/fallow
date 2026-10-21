@@ -762,4 +762,81 @@ mod tests {
         let s1 = s.sessions.get(1).unwrap();
         assert_eq!(super::orch_mark(&s, s1), "  waiting for pr-123-merged 0:00");
     }
+
+    #[test]
+    fn requests_are_reviewed_in_the_orchestration_view() {
+        // 003 US3 scenarios 1, 2, 4 and 5; contracts/ui-commands.md.
+        use crate::session::profiles::builtins;
+        let mut s = AppState::new(None, Vec::new());
+        for id in [1, 2] {
+            s.sessions.sessions.push(crate::session::Session::detached(
+                id,
+                1,
+                builtins().remove(0),
+            ));
+        }
+        let mut h = crate::orchestration::Hub::new(Default::default());
+        let now = std::time::Instant::now();
+        let ask = |h: &mut crate::orchestration::Hub, s: &AppState| {
+            h.call(
+                &s.sessions,
+                1,
+                "deliver",
+                serde_json::json!({"session": 2, "text": "please merge feature/x"}),
+                now,
+            )
+        };
+        ask(&mut h, &s);
+        s.hub = Some(h);
+        let bar = render(140, 40, &mut s).lines().last().unwrap().to_string();
+        assert!(bar.contains("o 1 request"), "{bar:?}");
+        s.handle_key(key('o'));
+        let screen = render(140, 40, &mut s);
+        assert!(
+            screen.contains("1 request"),
+            "counts line
+{screen}"
+        );
+        assert!(
+            screen.contains("[Fallow: message from agent #1"),
+            "{screen}"
+        );
+        assert!(screen.contains("please merge feature/x"), "{screen}");
+        s.handle_key(key('x'));
+        assert!(render(140, 40, &mut s).contains("No requests"));
+        // A new request; g grants "#1 may deliver to #2" and approves it.
+        let mut h = s.hub.take().unwrap();
+        let r = ask(&mut h, &s);
+        s.hub = Some(h);
+        let crate::orchestration::Reply::Done(v) = r else {
+            panic!("{r:?}")
+        };
+        let id = v["delivery"].as_u64().unwrap();
+        s.handle_key(key('g'));
+        let screen = render(140, 40, &mut s);
+        assert!(screen.contains("Grant standing permission"), "{screen}");
+        assert!(screen.contains("[x] deliver messages"), "{screen}");
+        s.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert_eq!(
+            s.hub.as_ref().unwrap().ready(),
+            vec![id],
+            "approved with the grant"
+        );
+        // The Permissions tab lists it with its time left; Shift-X revokes all.
+        for _ in 0..3 {
+            s.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+        }
+        let screen = render(140, 40, &mut s);
+        assert!(
+            screen.contains("P1  #1 → #2   deliver   used 0"),
+            "{screen}"
+        );
+        assert!(
+            screen.contains("1 permission (P1 30:00)")
+                || screen.contains("1 permission (P1 29:59)"),
+            "{screen}"
+        );
+        s.handle_key(KeyEvent::new(KeyCode::Char('X'), KeyModifiers::SHIFT));
+        assert!(render(140, 40, &mut s).contains("No standing permissions"));
+    }
 }
