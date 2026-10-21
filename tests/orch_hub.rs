@@ -350,3 +350,263 @@ fn sender_cannot_be_forged() {
         "100% of stored messages carry the true sender"
     );
 }
+
+// ---- US2: events (T025) ----
+
+fn status(r: &Reply) -> String {
+    match r {
+        Reply::Done(v) => v["status"].as_str().unwrap_or_default().to_string(),
+        other => format!("{other:?}"),
+    }
+}
+
+fn answered(h: &mut Hub, id: u64) -> Option<Value> {
+    let i = h.answered.iter().position(|(rid, _)| *rid == json!(id))?;
+    match h.answered.remove(i).1 {
+        Reply::Done(v) => Some(v),
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn a_wait_ends_with_the_signal_and_its_sender() {
+    // US2 scenarios 1 and 2.
+    let mut h = hub();
+    let f = Fake::new();
+    let now = Instant::now();
+    let r = h.call_as(
+        &f,
+        2,
+        7,
+        "event_wait",
+        json!({"name": "pr-123-merged"}),
+        now,
+    );
+    assert_eq!(r, Reply::Parked);
+    assert_eq!(h.waiting(2, now).map(|(n, _)| n), Some("pr-123-merged"));
+    let s = done(h.call(
+        &f,
+        1,
+        "event_signal",
+        json!({"name": "pr-123-merged", "message": "merged at abc123"}),
+        now,
+    ));
+    assert_eq!(s["waiters_woken"], 1);
+    let v = answered(&mut h, 7).expect("the wait was answered");
+    assert_eq!(v["status"], "signalled");
+    assert_eq!(v["signal"]["from"]["session"], 1);
+    assert_eq!(v["signal"]["text"], "merged at abc123");
+    assert!(h.waiting(2, now).is_none());
+    // Sticky: a later wait in the same project ends at once.
+    let r = h.call(&f, 1, "event_wait", json!({"name": "pr-123-merged"}), now);
+    assert_eq!(status(&r), "signalled");
+    // Scopes are separate: #3 is in another project, so it waits.
+    let r = h.call_as(
+        &f,
+        3,
+        8,
+        "event_wait",
+        json!({"name": "pr-123-merged"}),
+        now,
+    );
+    assert_eq!(r, Reply::Parked);
+}
+
+#[test]
+fn events_are_scoped_like_boards() {
+    let mut h = hub();
+    let f = Fake::new();
+    let now = Instant::now();
+    done(h.call(&f, 1, "event_signal", json!({"name": "deploy-ok"}), now));
+    // Same project: signalled.
+    let r = h.call(&f, 2, "event_status", json!({"name": "deploy-ok"}), now);
+    assert_eq!(done(r)["signalled"], true);
+    // Other project: not.
+    let r = h.call(&f, 3, "event_status", json!({"name": "deploy-ok"}), now);
+    assert_eq!(done(r)["signalled"], false);
+    // Shared scope is shared.
+    done(h.call(
+        &f,
+        1,
+        "event_signal",
+        json!({"name": "release", "scope": "shared"}),
+        now,
+    ));
+    let r = h.call(
+        &f,
+        3,
+        "event_status",
+        json!({"name": "release", "scope": "shared"}),
+        now,
+    );
+    assert_eq!(done(r)["signalled"], true);
+}
+
+#[test]
+fn time_limits_block_limits_and_repeats() {
+    // US2 scenario 3, research R-4.
+    let mut h = hub();
+    let f = Fake::new();
+    let t0 = Instant::now();
+    // Own limit 3 s, block limit 45 s: times out after 3 s.
+    assert_eq!(
+        h.call_as(
+            &f,
+            1,
+            1,
+            "event_wait",
+            json!({"name": "x", "timeout_s": 3}),
+            t0
+        ),
+        Reply::Parked
+    );
+    h.tick(&f, t0 + Duration::from_secs(2));
+    assert!(answered(&mut h, 1).is_none());
+    h.tick(&f, t0 + Duration::from_secs(3));
+    assert_eq!(answered(&mut h, 1).unwrap()["status"], "timed_out");
+    // No own limit: the block limit answers still_waiting, and the repeat keeps the start.
+    assert_eq!(
+        h.call_as(&f, 2, 2, "event_wait", json!({"name": "y"}), t0),
+        Reply::Parked
+    );
+    let t1 = t0 + Duration::from_secs(45);
+    h.tick(&f, t1);
+    let v = answered(&mut h, 2).unwrap();
+    assert_eq!(v["status"], "still_waiting");
+    assert_eq!(v["waited_s"], 45);
+    assert_eq!(
+        h.waiting(2, t1).map(|(_, s)| s),
+        Some(t0),
+        "shown between repeats"
+    );
+    assert_eq!(
+        h.call_as(&f, 2, 3, "event_wait", json!({"name": "y"}), t1),
+        Reply::Parked
+    );
+    assert_eq!(
+        h.waiting(2, t1).map(|(_, s)| s),
+        Some(t0),
+        "since survives the repeat"
+    );
+    // The own limit counts from the first call.
+    h.call_as(
+        &f,
+        3,
+        4,
+        "event_wait",
+        json!({"name": "z", "timeout_s": 60}),
+        t0,
+    );
+    h.tick(&f, t0 + Duration::from_secs(45));
+    assert_eq!(answered(&mut h, 4).unwrap()["status"], "still_waiting");
+    h.call_as(
+        &f,
+        3,
+        5,
+        "event_wait",
+        json!({"name": "z", "timeout_s": 60}),
+        t0 + Duration::from_secs(45),
+    );
+    h.tick(&f, t0 + Duration::from_secs(60));
+    assert_eq!(answered(&mut h, 5).unwrap()["status"], "timed_out");
+}
+
+#[test]
+fn repeated_waits_do_not_use_up_the_rate_limit() {
+    let mut h = hub();
+    let f = Fake::new();
+    let mut t = Instant::now();
+    h.call_as(&f, 1, 0, "event_wait", json!({"name": "slow"}), t);
+    for i in 1..100 {
+        t += Duration::from_secs(45);
+        h.tick(&f, t);
+        let r = h.call_as(&f, 1, i, "event_wait", json!({"name": "slow"}), t);
+        assert_eq!(r, Reply::Parked, "repeat {i}");
+    }
+}
+
+#[test]
+fn names_messages_and_ending_sessions() {
+    let mut h = hub();
+    let f = Fake::new();
+    let now = Instant::now();
+    assert!(matches!(
+        h.call(&f, 1, "event_signal", json!({"name": "has space"}), now),
+        Reply::Error("invalid", _)
+    ));
+    assert!(matches!(
+        h.call(
+            &f,
+            1,
+            "event_signal",
+            json!({"name": "ok", "message": "x".repeat(2049)}),
+            now
+        ),
+        Reply::Error("too_large", _)
+    ));
+    assert!(matches!(
+        h.call(
+            &f,
+            1,
+            "event_wait",
+            json!({"name": "ok", "timeout_s": 0}),
+            now
+        ),
+        Reply::Error("invalid", _)
+    ));
+    h.call_as(&f, 2, 9, "event_wait", json!({"name": "never"}), now);
+    h.session_ended(2);
+    assert!(h.waiting(2, now).is_none());
+    done(h.call(&f, 1, "event_signal", json!({"name": "never"}), now));
+    assert!(
+        answered(&mut h, 9).is_none(),
+        "an ended session's wait is gone"
+    );
+}
+
+#[test]
+fn interests_become_wake_candidates_and_the_user_signals_as_the_user() {
+    // US2 scenarios 5 and 6.
+    let mut h = hub();
+    let f = Fake::new();
+    let t0 = Instant::now();
+    h.call_as(&f, 2, 1, "event_wait", json!({"name": "pr-9"}), t0);
+    h.tick(&f, t0 + Duration::from_secs(45));
+    answered(&mut h, 1);
+    // #2 stopped waiting (its turn ended). The user signals.
+    let key = (
+        fallow::orchestration::board::BoardId::Project(1),
+        "pr-9".to_string(),
+    );
+    h.signal(
+        &key,
+        fallow::orchestration::Party::User,
+        Some("merged".into()),
+    )
+    .unwrap();
+    assert_eq!(h.wakes, vec![(2, key.clone())], "#2 asked to be woken");
+    let v = done(h.call(&f, 1, "event_status", json!({"name": "pr-9"}), t0));
+    assert_eq!(v["signal"]["from"], json!({"kind": "user"}));
+    // Without wake_when_idle, no interest.
+    h.wakes.clear();
+    h.call_as(
+        &f,
+        1,
+        2,
+        "event_wait",
+        json!({"name": "pr-10", "wake_when_idle": false}),
+        t0,
+    );
+    h.session_ended(1);
+    let key10 = (
+        fallow::orchestration::board::BoardId::Project(1),
+        "pr-10".to_string(),
+    );
+    h.signal(&key10, fallow::orchestration::Party::User, None)
+        .unwrap();
+    assert!(h.wakes.is_empty());
+    // Clearing makes it unsignalled again.
+    h.clear_event(&key);
+    let v = done(h.call(&f, 2, "event_status", json!({"name": "pr-9"}), t0));
+    assert_eq!(v["signalled"], false);
+}

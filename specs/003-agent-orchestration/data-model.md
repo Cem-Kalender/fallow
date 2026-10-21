@@ -65,7 +65,7 @@ Fallow]` ([contracts/mcp-tools.md](./contracts/mcp-tools.md)).
 | Field | Type | Rules |
 |---|---|---|
 | scope | Shared \| Project(ProjectId) | |
-| name | String | `[A-Za-z0-9._:/#-]{1,64}`, case-sensitive. |
+| name | String | `[A-Za-z0-9._:/#-]{1,64}` (underscore allowed too), case-sensitive. |
 | signal | Option<Signal> | Sticky: once signalled, later waits end at once (FR-009). Signalling again replaces it (newest sender, time and message). |
 | waiters | Vec<SessionId> | Sessions in a wait now. |
 

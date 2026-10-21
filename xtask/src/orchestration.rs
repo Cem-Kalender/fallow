@@ -119,16 +119,18 @@ fn run_all(bin: &Path, base: &Path) -> Result<i32, String> {
     let me = std::env::current_exe().map_err(|e| e.to_string())?;
     let f = |name: &str| base.join(name).display().to_string();
     let script_a = format!(
-        "call whoami {{}}\nwrite {}\nsave-bridge {}\nprint a-ready\nuntil go\npost-timed {POSTS} 100 project\nsleep 1500\npost-stamped {} zz-visible-now\nprint a-done\n",
+        "call whoami {{}}\nwrite {}\nsave-bridge {}\nprint a-ready\nuntil go\npost-timed {POSTS} 100 project\nsleep 1500\npost-stamped {} zz-visible-now\nsleep 2000\ncall event_signal {{\"name\":\"pr-123-merged\",\"message\":\"merged\"}}\nprint a-done\n",
         f("a-whoami"),
         f("bridge-a.json"),
         f("a-stamp"),
     );
     let script_b = format!(
-        "call whoami {{}}\nbridge-from {}\nwrite {}\nprint b-measuring\nmeasure-reads {POSTS} project {}\n",
+        "call whoami {{}}\nbridge-from {}\nwrite {}\nprint b-measuring\nmeasure-reads {POSTS} project {}\nwait-loop pr-123-merged - {}\nwait-loop never 8 {}\n",
         f("bridge-a.json"),
         f("b-verdict"),
         f("b-latency"),
+        f("b-wait-signal"),
+        f("b-wait-timeout"),
     );
     std::fs::write(base.join("a.script"), script_a).map_err(|e| e.to_string())?;
     std::fs::write(base.join("b.script"), script_b).map_err(|e| e.to_string())?;
@@ -147,7 +149,7 @@ fn run_all(bin: &Path, base: &Path) -> Result<i32, String> {
     // The latency run posts faster than the default 30 per minute.
     std::fs::write(
         config.join("settings.toml"),
-        "[orchestration]\nrate_per_min = 600\n",
+        "[orchestration]\nrate_per_min = 600\nwait_block_s = 5\n",
     )
     .map_err(|e| e.to_string())?;
     println!(
@@ -200,6 +202,11 @@ fn run_all(bin: &Path, base: &Path) -> Result<i32, String> {
         Ok(epoch_ms(shown).saturating_sub(stamp) as f64)
     })();
     let latency = wait_file(&base.join("b-latency"), Duration::from_secs(60));
+    // B then waits for A's signal, and for an event nobody signals (8 s limit, 5 s blocks).
+    let wait_signal =
+        wait_file(&base.join("b-wait-signal"), Duration::from_secs(30)).unwrap_or_default();
+    let wait_timeout =
+        wait_file(&base.join("b-wait-timeout"), Duration::from_secs(30)).unwrap_or_default();
     let cmd: Option<Vec<String>> = std::fs::read_to_string(base.join("bridge-a.json"))
         .ok()
         .and_then(|t| serde_json::from_str(&t).ok());
@@ -243,10 +250,20 @@ fn run_all(bin: &Path, base: &Path) -> Result<i32, String> {
     let wrong_refused = wrong_token == Some(Some(3));
     let latency_ok = n as usize == POSTS && p95 < BUDGET_MS;
     let shown_ok = shown_ms < BUDGET_MS;
-    let pass = latency_ok && shown_ok && inside_refused && outside_refused && wrong_refused;
+    // US2: the signal reaches the waiting agent with A as sender; a limited wait times out after
+    // one "still_waiting" repeat.
+    let signal_ok = wait_signal.contains("status=signalled") && wait_signal.contains("from=1");
+    let timeout_ok = wait_timeout.trim() == "status=timed_out repeats=1 from=null";
+    let pass = latency_ok
+        && shown_ok
+        && inside_refused
+        && outside_refused
+        && wrong_refused
+        && signal_ok
+        && timeout_ok;
     let result = if pass { "PASS" } else { "FAIL" };
     println!(
-        "os={} posts={POSTS} reads={n} post_read_p95_ms={p95:.0} post_read_max_ms={max:.0} on_screen_ms={shown_ms:.0} budget_ms={BUDGET_MS} other_session_token={} outside_bridge={:?} wrong_token={:?} result={result}",
+        "os={} posts={POSTS} reads={n} post_read_p95_ms={p95:.0} post_read_max_ms={max:.0} on_screen_ms={shown_ms:.0} budget_ms={BUDGET_MS} other_session_token={} outside_bridge={:?} wrong_token={:?} wait_signal={:?} wait_timeout={:?} result={result}",
         std::env::consts::OS,
         if inside_refused {
             "refused"
@@ -255,9 +272,11 @@ fn run_all(bin: &Path, base: &Path) -> Result<i32, String> {
         },
         outside.flatten(),
         wrong_token.flatten(),
+        wait_signal.trim(),
+        wait_timeout.trim(),
     );
     pty::step_summary(&format!(
-        "### Orchestration ({})\n\n| check | result | budget |\n|---|---|---|\n| post → read by another agent, p95 of {POSTS} | {p95:.0} ms | < {BUDGET_MS} ms |\n| post → on the engineer's screen | {shown_ms:.0} ms | < {BUDGET_MS} ms |\n| another session's token, from inside a session | {} | refused |\n| bridge run outside every session | exit {:?} | exit 3 |\n| wrong token | exit {:?} | exit 3 |\n\n**{result}**\n",
+        "### Orchestration ({})\n\n| check | result | budget |\n|---|---|---|\n| post → read by another agent, p95 of {POSTS} | {p95:.0} ms | < {BUDGET_MS} ms |\n| post → on the engineer's screen | {shown_ms:.0} ms | < {BUDGET_MS} ms |\n| another session's token, from inside a session | {} | refused |\n| bridge run outside every session | exit {:?} | exit 3 |\n| wrong token | exit {:?} | exit 3 |\n| wait, then A signals | {} | signalled by #1 |\n| wait with an 8 s limit (5 s blocks) | {} | timed out after one repeat |\n\n**{result}**\n",
         std::env::consts::OS,
         if inside_refused {
             "refused"
@@ -266,6 +285,8 @@ fn run_all(bin: &Path, base: &Path) -> Result<i32, String> {
         },
         outside.flatten(),
         wrong_token.flatten(),
+        wait_signal.trim(),
+        wait_timeout.trim(),
     ));
     Ok(if pass { 0 } else { 1 })
 }

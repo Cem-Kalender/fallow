@@ -351,6 +351,14 @@ fn orch_mark(state: &AppState, s: &crate::session::Session) -> String {
     if !s.state.running() {
         return String::new();
     }
+    if let Some((event, since)) = state
+        .hub
+        .as_ref()
+        .and_then(|h| h.waiting(s.id, std::time::Instant::now()))
+    {
+        let secs = since.elapsed().as_secs();
+        return format!("  waiting for {event} {}:{:02}", secs / 60, secs % 60);
+    }
     if state.hub.as_ref().is_some_and(|h| h.connected(s.id)) {
         return "  ⇄".into();
     }
@@ -700,5 +708,58 @@ mod tests {
             matches!(s.overlay, crate::app::state::Overlay::None),
             "any key closes"
         );
+    }
+
+    #[test]
+    fn the_queue_tab_lists_events_and_v_signals_as_the_user() {
+        // 003 US2 scenario 6, contracts/ui-commands.md "Queue".
+        let mut s = AppState::new(None, Vec::new());
+        s.hub = Some(crate::orchestration::Hub::new(Default::default()));
+        s.handle_key(key('o'));
+        s.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+        assert!(render(120, 40, &mut s).contains("No events"));
+        s.handle_key(key('v'));
+        for c in "deploy-ok all green".chars() {
+            s.handle_key(key(c));
+        }
+        s.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        let screen = render(120, 40, &mut s);
+        assert!(screen.contains("● deploy-ok"), "{screen}");
+        assert!(screen.contains("by you"), "{screen}");
+        assert!(screen.contains("all green"), "{screen}");
+        s.handle_key(key('c'));
+        let screen = render(120, 40, &mut s);
+        assert!(
+            screen.contains("○ deploy-ok  (shared)  not signalled"),
+            "{screen}"
+        );
+    }
+
+    #[test]
+    fn a_waiting_session_shows_what_it_waits_for() {
+        // 003 FR-010.
+        use crate::orchestration::{SessionInfo, Sessions};
+        use crate::session::profiles::builtins;
+        let mut s = AppState::new(None, Vec::new());
+        s.sessions.sessions.push(crate::session::Session::detached(
+            1,
+            1,
+            builtins().remove(0),
+        ));
+        let mut h = crate::orchestration::Hub::new(Default::default());
+        let info: Option<SessionInfo> = s.sessions.info(1);
+        assert!(info.is_some());
+        let r = h.call_as(
+            &s.sessions,
+            1,
+            5,
+            "event_wait",
+            serde_json::json!({"name": "pr-123-merged"}),
+            std::time::Instant::now(),
+        );
+        assert_eq!(r, crate::orchestration::Reply::Parked);
+        s.hub = Some(h);
+        let s1 = s.sessions.get(1).unwrap();
+        assert_eq!(super::orch_mark(&s, s1), "  waiting for pr-123-merged 0:00");
     }
 }

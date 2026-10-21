@@ -16,6 +16,8 @@
 //! - `post-stamped <file> <text>`: posts `text` and writes the epoch milliseconds just before
 //!   the call to `file`.
 //! - `write <file>`: writes the last result (or verdict) to `file`.
+//! - `wait-loop <name> <timeout_s|-> <file>`: calls `event_wait` again after each
+//!   `still_waiting`, then writes `status=… repeats=… from=…` to `file`.
 //! - `save-bridge <file>`: writes the bridge's command line (JSON array) to `file`.
 //! - `bridge-from <file>`: runs the bridge saved in `file` and prints `accepted` or `refused`.
 //! - `print <text>`
@@ -199,6 +201,32 @@ pub fn run(args: &[String]) -> ! {
                     Err(_) => break,
                 }
             },
+            ("wait-loop", Some((c, _))) => {
+                let mut p = rest.split_whitespace();
+                let name = p.next().unwrap_or("x");
+                let timeout: Option<u64> = p.next().and_then(|t| t.parse().ok());
+                let file = p.next().unwrap_or("wait.out");
+                let mut a = json!({"name": name});
+                if let Some(t) = timeout {
+                    a["timeout_s"] = json!(t);
+                }
+                let mut repeats = 0;
+                let line = loop {
+                    match c.call("event_wait", a.clone()) {
+                        Ok(v) if v["status"] == "still_waiting" => repeats += 1,
+                        Ok(v) => {
+                            break format!(
+                                "status={} repeats={repeats} from={}",
+                                v["status"].as_str().unwrap_or("?"),
+                                v["signal"]["from"]["session"]
+                            );
+                        }
+                        Err(e) => break format!("status=error {e}"),
+                    }
+                };
+                let _ = std::fs::write(file, &line);
+                out(&line);
+            }
             ("write", _) => {
                 let _ = std::fs::write(rest, &last);
                 out(&format!("ok {n}"));

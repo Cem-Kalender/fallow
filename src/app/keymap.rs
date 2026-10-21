@@ -173,6 +173,8 @@ fn own(key: &KeyEvent, context: Context) -> Option<&'static str> {
             KeyCode::BackTab => Some("orch.tab_prev"),
             KeyCode::Char('w') if plain => Some("orch.write"),
             KeyCode::Char('b') if plain => Some("orch.board_toggle"),
+            KeyCode::Char('v') if plain => Some("orch.signal"),
+            KeyCode::Char('c') if plain => Some("orch.clear"),
             KeyCode::Up if plain => Some("orch.up"),
             KeyCode::Down if plain => Some("orch.down"),
             KeyCode::PageUp => Some("orch.page_up"),
