@@ -84,6 +84,7 @@ fn big() -> ! {
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(1024);
+    keep_working_set(mb);
     let mut mem: Vec<u64> = Vec::with_capacity(mb * 1024 * 1024 / 8);
     let mut x: u64 = 0x9E37_79B9_7F4A_7C15 ^ std::process::id() as u64;
     for _ in 0..mem.capacity() {
@@ -101,6 +102,37 @@ fn big() -> ! {
         std::hint::black_box(&mem);
     }
 }
+
+/// Windows trims the working set of idle processes, so a fixture that touched 1 GB can show
+/// half of that a minute later (001 T117, run 39595414001: 511 MB). Ask for a minimum working
+/// set that holds the allocation; if Windows refuses, the benchmark's check still accepts half.
+#[cfg(windows)]
+fn keep_working_set(mb: usize) {
+    use windows_sys::Win32::System::Memory::{
+        QUOTA_LIMITS_HARDWS_MIN_ENABLE, SetProcessWorkingSetSizeEx,
+    };
+    use windows_sys::Win32::System::Threading::GetCurrentProcess;
+    let min = (mb + 64) * 1024 * 1024;
+    let max = (mb + 512) * 1024 * 1024;
+    // SAFETY: the pseudo-handle of this process; sizes in bytes.
+    let ok = unsafe {
+        SetProcessWorkingSetSizeEx(
+            GetCurrentProcess(),
+            min,
+            max,
+            QUOTA_LIMITS_HARDWS_MIN_ENABLE,
+        )
+    };
+    if ok == 0 {
+        eprintln!(
+            "llama-server fixture: cannot keep a {mb} MB working set: {}",
+            std::io::Error::last_os_error()
+        );
+    }
+}
+
+#[cfg(not(windows))]
+fn keep_working_set(_mb: usize) {}
 
 fn serve() -> ! {
     let l = TcpListener::bind("127.0.0.1:0").expect("bind");

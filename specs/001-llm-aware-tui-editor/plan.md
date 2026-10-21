@@ -192,6 +192,11 @@ It covers:
    - S10 (graceful stop, then force stop) and S13 (quit stops every agent).
 
    Linux gets the same run-through once, in a desktop terminal (GNOME Terminal or Konsole).
+6. **003 agent orchestration** (added by 003 T052), with Claude Code signed in (Codex as well
+   if available): quickstart M1–M13 of `specs/003-agent-orchestration/quickstart.md`, in
+   particular M1 (Claude Code connects through `--mcp-config` and asks no tool permission), M5
+   (a delivery is typed as one bracketed paste with its label) and M13 (no socket is left in
+   `~/Library/Caches/fallow/run` after quit).
 
 The "beta" label is removed only when all five pass **and** the results are recorded in
 research.md (R-11 for item 1, R-2 for item 2, a new "macOS hardware verification" entry for items

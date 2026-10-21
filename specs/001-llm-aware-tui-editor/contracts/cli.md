@@ -17,6 +17,16 @@ fallow [OPTIONS] [PATH]
 **Exit codes**: `0` normal quit; `1` startup failure (no terminal, unreadable `PATH`); `2` invalid
 arguments.
 
+## Internal subcommand (003)
+
+`fallow mcp-bridge --endpoint <E> --fallow-pid <P> --session <N> --token <HEX>`: the stdio MCP
+server agents in Fallow sessions start, written into their per-run configuration by Fallow
+itself ([003 contracts/mcp-tools.md](../../003-agent-orchestration/contracts/mcp-tools.md)). It
+never starts the TUI. Exit codes: `0` when either side closes, `2` invalid arguments, `3` when it
+cannot reach Fallow or Fallow refuses it. `mcp-bridge` is taken as the subcommand only as the
+first argument followed by an option or nothing; a folder of that name opens with
+`fallow ./mcp-bridge`.
+
 ## Test-only interface (hidden, not in `--help`)
 
 These exist so CI can verify SC-002, SC-003, SC-007, SC-009 and the benchmarks without driving the

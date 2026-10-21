@@ -58,6 +58,10 @@ pub struct OrchView {
     /// Lines scrolled up from the newest (Board, Activity) or the selected row (lists).
     pub scroll: usize,
     pub selected: usize,
+    /// Activity tab: 0 everything, 1 the selected session, 2 its project (`f` cycles).
+    pub filter: u8,
+    /// Activity tab: only entries containing this (`/`).
+    pub query: String,
 }
 
 /// "now", "42s", "3m", "2h", "5d": how long ago.
@@ -496,31 +500,64 @@ fn queue_lines(state: &AppState, v: &OrchView, width: usize) -> Vec<Line<'static
     lines
 }
 
-fn activity_lines(state: &AppState) -> Vec<Line<'static>> {
+/// What the Activity filter means now: (session, project name), and its label.
+fn activity_filter(state: &AppState, v: &OrchView) -> (Option<u32>, Option<String>, String) {
+    let active = state.workspace.active.and_then(|id| state.sessions.get(id));
+    match (v.filter, active) {
+        (1, Some(s)) => (Some(s.id), None, format!("session #{}", s.id)),
+        (2, Some(s)) => (
+            None,
+            Some(s.project_name.clone()),
+            format!("project {}", s.project_name),
+        ),
+        _ => (None, None, "everything".into()),
+    }
+}
+
+fn activity_lines(state: &AppState, v: &OrchView) -> Vec<Line<'static>> {
     let dim = Style::default().add_modifier(Modifier::DIM);
     let Some(h) = state.hub.as_ref() else {
         return vec![Line::styled("Nothing yet.", dim)];
     };
-    let mut lines: Vec<Line<'static>> = h
-        .activity
-        .newest()
-        .map(|e| {
-            let mut spans = vec![
-                Span::styled(format!("{:>4}  ", age(e.at)), dim),
-                Span::raw(format!(
-                    "{}  {}  {}",
-                    e.actor.label(),
-                    e.action.label(),
-                    e.subject
-                )),
-            ];
-            if let Some(o) = &e.outcome {
-                spans.push(Span::styled(format!("  ({o})"), dim));
-            }
-            Line::from(spans)
-        })
-        .collect();
-    if lines.is_empty() {
+    let (session, project, label) = activity_filter(state, v);
+    let mut head = format!("f filter: {label} · / search");
+    if !v.query.is_empty() {
+        head.push_str(&format!(": {:?}", v.query));
+    }
+    let query = v.query.to_lowercase();
+    let mut lines: Vec<Line<'static>> = vec![Line::styled(head, dim)];
+    lines.extend(
+        h.activity
+            .filtered(session, project.as_deref())
+            .filter(|e| {
+                query.is_empty()
+                    || format!(
+                        "{} {} {} {}",
+                        e.actor.label(),
+                        e.action.label(),
+                        e.subject,
+                        e.outcome.as_deref().unwrap_or("")
+                    )
+                    .to_lowercase()
+                    .contains(&query)
+            })
+            .map(|e| {
+                let mut spans = vec![
+                    Span::styled(format!("{:>4}  ", age(e.at)), dim),
+                    Span::raw(format!(
+                        "{}  {}  {}",
+                        e.actor.label(),
+                        e.action.label(),
+                        e.subject
+                    )),
+                ];
+                if let Some(o) = &e.outcome {
+                    spans.push(Span::styled(format!("  ({o})"), dim));
+                }
+                Line::from(spans)
+            }),
+    );
+    if lines.len() == 1 {
         lines.push(Line::styled("Nothing yet.", dim));
     }
     lines
@@ -558,7 +595,7 @@ pub fn draw(f: &mut Frame<'_>, area: Rect, state: &AppState, v: &OrchView) {
     f.render_widget(Paragraph::new(Line::from(spans)), tabs);
     let lines = match v.tab {
         Tab::Board => board_lines(state, v, body.width as usize),
-        Tab::Activity => activity_lines(state),
+        Tab::Activity => activity_lines(state, v),
         Tab::Requests => requests_lines(state, v, body.width as usize),
         Tab::Queue => queue_lines(state, v, body.width as usize),
         Tab::Permissions => permissions_lines(state, v),

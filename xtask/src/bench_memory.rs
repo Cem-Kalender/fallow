@@ -161,6 +161,20 @@ pub fn run(args: &[String]) -> i32 {
         if let Err(e) = script(&mut s, start, &mut samples) {
             problems.push(e);
         }
+        // 003 SC-007: the four sessions fill the shared board (1,000 × 8 KiB) and the activity
+        // log (5,000 entries) through Fallow's tools; measure once they are done.
+        let done = config_dir.join("posted");
+        let until = Instant::now() + Duration::from_secs(300);
+        let count = || std::fs::read_dir(&done).map_or(0, |d| d.count());
+        while count() < SESSIONS as usize && Instant::now() < until {
+            wait(&s, Duration::from_secs(1), start, &mut samples);
+        }
+        if count() < SESSIONS as usize {
+            problems.push(format!(
+                "only {} of {SESSIONS} sessions finished posting",
+                count()
+            ));
+        }
     }
     let base = start.elapsed().as_secs();
     for i in 1..=a.samples {
@@ -368,8 +382,9 @@ fn script(s: &mut Session, start: Instant, samples: &mut Vec<(u64, u64)>) -> Res
     s.send(CTRL_A);
     s.send(CTRL_C);
     wait(s, Duration::from_secs(2), start, samples);
-    // 002 T037: back to the agent workspace and four sessions of the flood persona, each
-    // printing 10,000 lines of 200-column colored text (full default scrollback).
+    // 002 T037: back to the agent workspace and four sessions, each printing 10,000 lines of
+    // 200-column colored text (full default scrollback), then (003) posting 1,250 messages of
+    // 8 KiB to the shared board.
     s.send(CTRL_E);
     wait(s, Duration::from_millis(500), start, samples);
     for _ in 0..SESSIONS {
@@ -389,17 +404,35 @@ const CTRL_E: &[u8] = b"\x05";
 const LEAVE: &[u8] = b"\x1d";
 
 fn write_flood_profile(dir: &std::path::Path) -> Result<(), String> {
-    std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    std::fs::create_dir_all(dir.join("posted")).map_err(|e| format!("{}: {e}", dir.display()))?;
     let me = std::env::current_exe().map_err(|e| e.to_string())?;
     let mut t = String::new();
     for id in ["claude", "codex", "gemini", "aider", "shell"] {
         t.push_str(&format!("[[profile]]\nid = \"{id}\"\nenabled = false\n\n"));
     }
+    // Each session floods its scrollback, then fills the shared board through Fallow's tools
+    // (the `mcp-agent` persona, connected with the "claude" style).
+    let script = dir.join("loaded.script");
+    std::fs::write(
+        &script,
+        format!(
+            "flood 10000\npost-fill 1250 8192 shared\ndone-in {}\n",
+            dir.join("posted").display()
+        ),
+    )
+    .map_err(|e| e.to_string())?;
     t.push_str(&format!(
-        "[[profile]]\nid = \"flood\"\nname = \"Flood\"\ncommand = {:?}\nargs = [\"flood-agent\", \"10000\"]\n",
-        me.display().to_string()
+        "[[profile]]\nid = \"flood\"\nname = \"Flood\"\ncommand = {:?}\nargs = [\"mcp-agent\", {:?}]\norchestration = \"claude\"\n",
+        me.display().to_string(),
+        script.display().to_string()
     ));
-    std::fs::write(dir.join("profiles.toml"), t).map_err(|e| e.to_string())
+    std::fs::write(dir.join("profiles.toml"), t).map_err(|e| e.to_string())?;
+    // 600 calls per minute per session: the most the settings allow.
+    std::fs::write(
+        dir.join("settings.toml"),
+        "[orchestration]\nrate_per_min = 600\n",
+    )
+    .map_err(|e| e.to_string())
 }
 
 /// Groups and LLM processes in `fallow --snapshot-json`, plus the system's process count.

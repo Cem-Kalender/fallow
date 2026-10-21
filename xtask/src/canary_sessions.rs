@@ -9,6 +9,11 @@
 //!
 //! The canary reaches the agent through a hand-off file that the agent deletes before printing,
 //! so neither Fallow's command line, environment nor configuration ever holds it.
+//!
+//! Orchestration (003 SC-006): a second, `mcp-agent` session posts the canary to the board,
+//! puts it in a task and asks to deliver it (its script lives in the hand-off folder, which is
+//! not searched). The harness sees it in the Requests tab. After quit, Fallow's channel socket
+//! must be gone from its run folder.
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
@@ -63,9 +68,22 @@ fn check(bin: &Path, base: &Path) -> Result<(Vec<String>, String), String> {
         profiles.push_str(&format!("[[profile]]\nid = \"{id}\"\nenabled = false\n\n"));
     }
     profiles.push_str(&format!(
-        "[[profile]]\nid = \"canary\"\nname = \"canary\"\ncommand = {:?}\nargs = [\"canary-agent\", {:?}]\n",
+        "[[profile]]\nid = \"canary\"\nname = \"canary\"\ncommand = {:?}\nargs = [\"canary-agent\", {:?}]\n\n",
         me.display().to_string(),
         file.display().to_string()
+    ));
+    let script = handoff.join("orch.script");
+    std::fs::write(
+        &script,
+        format!(
+            "call board_post {{\"text\":\"{canary}\"}}\ncall task_create {{\"text\":\"{canary}\",\"target\":{{\"session\":1}}}}\ncall deliver {{\"session\":1,\"text\":\"{canary}\"}}\nprint orch-canary-posted\n"
+        ),
+    )
+    .map_err(|e| e.to_string())?;
+    profiles.push_str(&format!(
+        "[[profile]]\nid = \"orch\"\nname = \"orch\"\ncommand = {:?}\nargs = [\"mcp-agent\", {:?}]\norchestration = \"claude\"\n",
+        me.display().to_string(),
+        script.display().to_string()
     ));
     std::fs::write(config.join("profiles.toml"), profiles).map_err(|e| e.to_string())?;
 
@@ -91,6 +109,25 @@ fn check(bin: &Path, base: &Path) -> Result<(Vec<String>, String), String> {
         s.send(b"\r");
         s.seen(Duration::from_secs(10))
             .ok_or("the canary never reached Fallow's screen")?;
+        // 003: the canary through the board, a task and a delivery request.
+        s.send(b"\x1d");
+        std::thread::sleep(Duration::from_millis(500));
+        s.expect(b"orch-canary-posted");
+        s.send(b"n");
+        std::thread::sleep(Duration::from_millis(300));
+        s.send(b"\x1b[B");
+        std::thread::sleep(Duration::from_millis(100));
+        s.send(b"\r");
+        s.seen(Duration::from_secs(30))
+            .ok_or("the orchestrated session never posted")?;
+        s.send(b"\x1d");
+        std::thread::sleep(Duration::from_millis(500));
+        s.expect(&canary.as_bytes()[..32]);
+        s.send(b"o");
+        s.seen(Duration::from_secs(10))
+            .ok_or("the delivery request with the canary never showed")?;
+        s.send(b"\x1b");
+        std::thread::sleep(Duration::from_millis(300));
         Ok(())
     })();
     let dumped = match &shown {
@@ -109,6 +146,14 @@ fn check(bin: &Path, base: &Path) -> Result<(Vec<String>, String), String> {
     s.quit_with_sessions();
     let outcome = s.finish();
     shown?;
+    // The channel's socket is removed when Fallow quits (Linux, macOS).
+    let fallow_pid = outcome.stats.map_or(outcome.pid, |st| st.pid);
+    if let Some(run) = run_dir() {
+        let sock = run.join(format!("{fallow_pid}.sock"));
+        if sock.exists() {
+            return Err(format!("{} is still there after quit", sock.display()));
+        }
+    }
     if !outcome.clean_exit {
         return Err("fallow did not exit cleanly".into());
     }
@@ -186,6 +231,24 @@ fn platform_dirs() -> Vec<PathBuf> {
         }
     }
     out
+}
+
+/// Fallow's run folder (`<cache>/fallow/run`), where its channel socket lives on Linux and
+/// macOS.
+fn run_dir() -> Option<PathBuf> {
+    let env = |k: &str| std::env::var_os(k).map(PathBuf::from);
+    if cfg!(windows) {
+        return None;
+    }
+    let home = env("HOME")?;
+    let cache = if cfg!(target_os = "macos") {
+        home.join("Library/Caches")
+    } else {
+        env("XDG_CACHE_HOME")
+            .filter(|p| p.is_absolute())
+            .unwrap_or_else(|| home.join(".cache"))
+    };
+    Some(cache.join("fallow").join("run"))
 }
 
 fn changed_since(f: &Path, t: SystemTime) -> bool {

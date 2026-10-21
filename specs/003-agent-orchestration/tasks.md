@@ -377,35 +377,35 @@ deliveries, US5 on US4's queue.
 
 ## Phase 8: Polish & Cross-Cutting Concerns
 
-- [ ] T047 [P] Build the Activity tab in `src/ui/orchestration.rs`: newest first, `f` filters to the selected session or project, `/` searches. Add the palette entry "Activity log". Add render tests.
-- [ ] T048 [P] Update `src/ui/help.rs`:
+- [X] T047 [P] Build the Activity tab in `src/ui/orchestration.rs`: newest first, `f` filters to the selected session or project, `/` searches. Add the palette entry "Activity log". Add render tests.
+- [X] T048 [P] Update `src/ui/help.rs`:
   - an "Agent orchestration" section: tools, approvals, permissions, what is never allowed;
   - the one-step setup for other agents (the `orchestration` key in `profiles.toml`, FR-004);
   - conflict rows for `o` and `i` ("none known").
 
   Update `tests/keymap_conflicts.rs` so that every 003 key is in the table and bound.
-- [ ] T049 Extend `xtask/src/egress.rs` with the listening-socket check during an orchestrated run (SC-006; constitution quality gate). Add one `mcp-agent` session to the run. Per OS:
+- [X] T049 Extend `xtask/src/egress.rs` with the listening-socket check during an orchestrated run (SC-006; constitution quality gate). Add one `mcp-agent` session to the run. Per OS:
   - Linux: strace `bind`/`listen` on `AF_INET`/`AF_INET6` is a violation; `AF_UNIX` is noted.
   - Windows: `GetExtendedTcpTable` LISTEN rows and UDP rows owned by Fallow.
   - macOS: `lsof -a -p <pid> -iTCP -sTCP:LISTEN` and UDP.
 
   Add unit tests for the judge.
-- [ ] T050 Extend `xtask/src/canary_sessions.rs`:
+- [X] T050 Extend `xtask/src/canary_sessions.rs`:
   - An `mcp-agent` session posts the canary to a board, puts it in a task, and asks for it to be delivered.
   - After quit, every file Fallow wrote is searched for the canary: config, cache, and `run/`, which must be empty.
   - On macOS, the core dump check also runs.
 
   Satisfies: SC-006.
-- [ ] T051 Extend `xtask/src/bench_memory.rs`:
+- [X] T051 Extend `xtask/src/bench_memory.rs`:
   - `--loaded` adds the hub, filled through four `mcp-agent` sessions: the shared board to 1,000 × 8 KiB messages, and the activity log to 5,000 entries;
   - the 150 MB gate stays.
 
   Satisfies: SC-007.
-- [ ] T052 [P] Update the docs:
+- [X] T052 [P] Update the docs:
   - `README.md`: orchestration, the tools, approvals and permissions, supported agents, known gaps such as Aider and Gemini with system settings;
   - `src/cli.rs` USAGE: `mcp-bridge` is internal;
   - `specs/001-llm-aware-tui-editor/plan.md`: the macOS hardware checklist gains 003 M1–M13.
-- [ ] T053 Resolve the research **verify** items and record the results in `specs/003-agent-orchestration/research.md`:
+- [X] T053 Resolve the research **verify** items and record the results in `specs/003-agent-orchestration/research.md`:
   - the Codex `default_tools_approval_mode` value, and whether progress resets its timeout;
   - Gemini's timeout behaviour;
   - the Unix ancestry walk through wrappers that exit (`npx`, shell shims); if it fails, fall back to process-group membership in `src/orchestration/identity.rs`;

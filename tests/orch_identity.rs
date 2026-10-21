@@ -242,3 +242,71 @@ fn only_a_sessions_own_processes_with_its_token_are_accepted() {
         "the per-run file is removed when the agent exits"
     );
 }
+
+#[cfg(unix)]
+#[test]
+fn a_process_orphaned_inside_the_session_is_still_accepted() {
+    // research R-3: a bridge whose parent (an npx or shell wrapper) exited is reparented, so
+    // walking parents fails; it still belongs to the agent's POSIX session.
+    if fallow::orchestration::inject::gemini_system_settings_exist() {
+        eprintln!("skipped: a Gemini system settings file exists on this machine");
+        return;
+    }
+    let dir = temp("orphan");
+    let run = dir.join("run");
+    std::fs::create_dir_all(&run).unwrap();
+    let pidfile = dir.join("orphan.pid");
+    let mut m = SessionManager::default();
+    m.bridge = Some(Bridge {
+        exe: PathBuf::from("fallow"),
+        endpoint: "unused".into(),
+        fallow_pid: std::process::id(),
+        run_dir: Some(run),
+    });
+    let (tx, _rx) = channel();
+    let script = format!("(sleep 30 & echo $! > {}); sleep 30", pidfile.display());
+    let profile = AgentProfile {
+        id: "t".into(),
+        name: "Test".into(),
+        command: "/bin/sh".into(),
+        args: vec!["-c".into(), script],
+        env: Vec::new(),
+        builtin: false,
+        orchestration: Style::Gemini,
+    };
+    let id = m
+        .start(
+            StartRequest {
+                project: 1,
+                project_name: "p".into(),
+                cwd: dir.clone(),
+                workdir: fallow::session::Workdir::ProjectFolder,
+                profile,
+                rows: 24,
+                cols: 80,
+            },
+            &tx,
+        )
+        .unwrap();
+    let until = Instant::now() + Duration::from_secs(10);
+    let orphan: u32 = loop {
+        if let Some(p) = std::fs::read_to_string(&pidfile)
+            .ok()
+            .and_then(|t| t.trim().parse().ok())
+        {
+            break p;
+        }
+        assert!(Instant::now() < until, "the orphan never started");
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    let token = m.get(id).unwrap().orch.token.clone().unwrap().hex();
+    let peer = Peer {
+        pid: orphan,
+        uid: Some(fallow::orchestration::identity::my_uid()),
+    };
+    assert_eq!(m.verify(id, &token, peer), Ok(()), "same POSIX session");
+    let _ = std::process::Command::new("kill")
+        .arg(orphan.to_string())
+        .status();
+    m.exited(id, None);
+}

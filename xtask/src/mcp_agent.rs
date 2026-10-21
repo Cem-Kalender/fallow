@@ -23,6 +23,10 @@
 //! - `echo-to <file>`: after the script, typed lines are also appended to `file`.
 //! - `report-tasks <file>`: after the script, a typed task (`[Fallow: task T<n> …`) is reported
 //!   done with `task_report`, and `T<n> done` is appended to `file`.
+//! - `flood <lines>`: prints that many 200-column colored lines (fills the scrollback).
+//! - `post-fill <count> <bytes> <scope>`: posts `count` messages of `bytes` bytes as fast as the
+//!   rate limit allows (waiting `retry_after_s` when told to slow down).
+//! - `done-in <dir>`: creates `<dir>/<pid>` (the harness counts them).
 //! - `print <text>`
 //!
 //! After the script it prints `script done` and echoes every typed line as `got <line>`.
@@ -233,6 +237,48 @@ pub fn run(args: &[String]) -> ! {
                 out(&line);
             }
             ("echo-to", _) => echo_file = Some(rest.to_string()),
+            ("flood", _) => {
+                let n: u64 = rest.parse().unwrap_or(1000);
+                let body: String = "lorem ipsum dolor sit amet consectetur adipiscing elit "
+                    .chars()
+                    .cycle()
+                    .take(190)
+                    .collect();
+                let mut w = std::io::BufWriter::with_capacity(64 * 1024, std::io::stdout());
+                for i in 0..n {
+                    let _ = write!(w, "\x1b[{}m{i:>8} {body}\x1b[0m\r\n", 31 + i % 7);
+                }
+                let _ = w.flush();
+            }
+            ("done-in", _) => {
+                let _ = std::fs::write(
+                    std::path::Path::new(rest).join(std::process::id().to_string()),
+                    "done",
+                );
+            }
+            ("post-fill", Some((c, _))) => {
+                let mut p = rest.split_whitespace();
+                let count: u32 = p.next().and_then(|v| v.parse().ok()).unwrap_or(1);
+                let bytes: usize = p.next().and_then(|v| v.parse().ok()).unwrap_or(100);
+                let scope = p.next().unwrap_or("project").to_string();
+                let text: String = format!("{} ", std::process::id())
+                    .chars()
+                    .chain(std::iter::repeat('x'))
+                    .take(bytes)
+                    .collect();
+                let (mut ok, mut tries) = (0u32, 0u32);
+                while ok < count && tries < count * 20 {
+                    tries += 1;
+                    match c.call("board_post", json!({"text": text, "scope": scope})) {
+                        Ok(_) => ok += 1,
+                        Err(e) if e.contains("rate_limited") => {
+                            std::thread::sleep(Duration::from_millis(200));
+                        }
+                        Err(_) => break,
+                    }
+                }
+                out(&format!("posted {ok} of {count}"));
+            }
             ("report-tasks", _) => task_file = Some(rest.to_string()),
             ("write", _) => {
                 let _ = std::fs::write(rest, &last);
