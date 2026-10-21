@@ -20,6 +20,7 @@
 //!   `still_waiting`, then writes `status=… repeats=… from=…` to `file`.
 //! - `save-bridge <file>`: writes the bridge's command line (JSON array) to `file`.
 //! - `bridge-from <file>`: runs the bridge saved in `file` and prints `accepted` or `refused`.
+//! - `echo-to <file>`: after the script, typed lines are also appended to `file`.
 //! - `print <text>`
 //!
 //! After the script it prints `script done` and echoes every typed line as `got <line>`.
@@ -181,6 +182,7 @@ pub fn run(args: &[String]) -> ! {
         }
     };
     let mut last = String::new();
+    let mut echo_file: Option<String> = None;
     for (n, line) in script.lines().enumerate() {
         let n = n + 1;
         let line = line.trim();
@@ -227,6 +229,7 @@ pub fn run(args: &[String]) -> ! {
                 let _ = std::fs::write(file, &line);
                 out(&line);
             }
+            ("echo-to", _) => echo_file = Some(rest.to_string()),
             ("write", _) => {
                 let _ = std::fs::write(rest, &last);
                 out(&format!("ok {n}"));
@@ -345,7 +348,19 @@ pub fn run(args: &[String]) -> ! {
     out("script done");
     loop {
         match typed.recv() {
-            Ok(l) => out(&format!("got {l}")),
+            Ok(l) => {
+                if let Some(f) = &echo_file {
+                    use std::io::Write as _;
+                    if let Ok(mut file) = std::fs::OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open(f)
+                    {
+                        let _ = writeln!(file, "{l}");
+                    }
+                }
+                out(&format!("got {l}"));
+            }
             Err(_) => loop {
                 std::thread::sleep(Duration::from_secs(3600));
             },

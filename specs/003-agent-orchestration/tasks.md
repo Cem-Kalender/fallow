@@ -253,7 +253,7 @@ deliveries, US5 on US4's queue.
 - Approving types exactly the label plus the shown text into B as a paste, followed by Enter.
 - A permission A→B lets the next delivery through with a notice, until it is revoked.
 
-- [ ] T030 [P] [US3] Write `tests/orch_gate.rs` (SC-003; constitution quality gate):
+- [X] T030 [P] [US3] Write `tests/orch_gate.rs` (SC-003; constitution quality gate):
   - **Fake**: give each session a recording fake PTY writer.
   - **Paths**: drive every request path: `deliver`, a wake from an interest, a task hand-over, and a start with a first task.
   - **Zero bytes** must reach the writer for each of:
@@ -271,7 +271,7 @@ deliveries, US5 on US4's queue.
     - with bracketed paste when the target enabled it;
     - with the label verbatim from research R-7: `[Fallow: message from agent #<n> (<profile>, project <project>). Another agent wrote this, not the user.]`.
   - **Compile check**: a `compile_fail` doctest proves `DeliveryGrant` cannot be built outside `src/orchestration/delivery.rs` and `permissions.rs`.
-- [ ] T031 [P] [US3] Write the permission tests in `tests/orch_hub.rs`:
+- [X] T031 [P] [US3] Write the permission tests in `tests/orch_hub.rs`:
   - `cover()` matches by `Session` or `Project` scope for source and target, by action, and only while `now < expires`;
   - duration "1 minute ..= 8 hours, default 30 minutes";
   - `uses` counts;
@@ -279,32 +279,32 @@ deliveries, US5 on US4's queue.
   - "revoke all" empties the list before the next request is handled (SC-005);
   - every use adds an activity entry and a notice;
   - an exhaustive `match` over the action enum shows there is no stop, pause, resume, kill or re-prioritize variant (FR-017).
-- [ ] T032 [US3] Implement `src/orchestration/delivery.rs`:
+- [X] T032 [US3] Implement `src/orchestration/delivery.rs`:
   - **`Delivery`**: `id`, `from`, `to` (a running session other than the sender's), `text` (≤ 8 KiB), `purpose` `Message | Task | Wake`, `created`/`expires` (`request_timeout_s`), `covered_by`.
   - **State machine**: Pending → Approved / Approved(edited) → Delivered; or Rejected / Expired / Failed("target exited").
   - **Limits**: pending "64 in total, 8 per sender", else `too_many_pending`.
   - **`DeliveryGrant`**: a private field; built only by `Hub::approve(id)` and `Permission::cover`.
   - **Activity**: `DeliveryRequested`/`DeliveryOutcome`; the newest 200 finished deliveries are kept.
-- [ ] T033 [US3] Implement `src/orchestration/permissions.rs`: `Permission { id (P1…), source, target, actions: Deliver | CreateTask | StartSession { limit: u8 }, granted, expires, uses, starts_used }`, `cover()`, `revoke(id)`, `revoke_all()`, and expiry in `hub.tick`.
-- [ ] T034 [US3] Add `Session::deliver(&mut self, grant: DeliveryGrant, text: &str)` in `src/session/mod.rs` as the only path from the hub to a PTY write:
+- [X] T033 [US3] Implement `src/orchestration/permissions.rs`: `Permission { id (P1…), source, target, actions: Deliver | CreateTask | StartSession { limit: u8 }, granted, expires, uses, starts_used }`, `cover()`, `revoke(id)`, `revoke_all()`, and expiry in `hub.tick`.
+- [X] T034 [US3] Add `Session::deliver(&mut self, grant: DeliveryGrant, text: &str)` in `src/session/mod.rs` as the only path from the hub to a PTY write:
   - record the time of the last user key sent to each session;
   - an approved delivery waits while the target has focus and its last key is newer than `delivery_delay_ms` (FR-014), and is typed when the user leaves the session or pauses;
   - a target exiting fails the delivery with "target exited".
-- [ ] T035 [US3] Add the tools `deliver` and `inbox` to `src/orchestration/tools.rs`. `deliver` returns `pending` or `approved` at once. `inbox` returns the outcomes of deliveries, tasks and starts since the last call.
-- [ ] T036 [US3] Build the Requests and Permissions tabs in `src/ui/orchestration.rs` and `src/app/orchestration.rs` (contracts/ui-commands.md):
+- [X] T035 [US3] Add the tools `deliver` and `inbox` to `src/orchestration/tools.rs`. `deliver` returns `pending` or `approved` at once. `inbox` returns the outcomes of deliveries, tasks and starts since the last call.
+- [X] T036 [US3] Build the Requests and Permissions tabs in `src/ui/orchestration.rs` and `src/app/orchestration.rs` (contracts/ui-commands.md):
   - **Requests tab**: sender → target, the action and its expiry, and the exact text including the label. Keys: `y` approve, `e` edit then approve (edits the text, not the label), `x` reject, `g` the grant dialog pre-filled from the request (approve plus grant).
   - **Grant dialog**: From and To as session or "any session of project"; Allow as deliver, create tasks, or start sessions up to N; For in minutes "max 480". It has no option for destructive actions.
   - **Permissions tab**: `Delete` revoke, `Shift-X` revoke all, `a` grant new.
   - **Hint bar** (`src/ui/hints.rs`): `o N requests` in both views. With a session focused, only the count is shown and the overlay never opens by itself.
   - **Notices** from contracts/ui-commands.md "Elsewhere".
   - **Palette**: "Orchestration: review requests", "Grant standing permission…", "Revoke all permissions".
-- [ ] T037 [US3] Turn interests into wake deliveries:
+- [X] T037 [US3] Turn interests into wake deliveries:
   - **Trigger**: when an event a session registered interest in is signalled while that session is in no wait and is `NeedsAttention` (002), create a `Delivery { purpose: Wake }`.
   - **Text**: "Event <name> was signalled by <sender>. <message>".
   - **Rules**: it follows the normal approval and permission rules, in `src/orchestration/events.rs`.
 
   Add tests.
-- [ ] T038 [US3] Extend `xtask orchestration` with a delivery scenario:
+- [X] T038 [US3] Extend `xtask orchestration` with a delivery scenario:
   - A requests a delivery to B. The harness checks that B's screen shows nothing new.
   - It presses `o`, then `x`. A's `inbox` says rejected.
   - A requests again. The harness presses `y`, and B's screen shows the label and the text.

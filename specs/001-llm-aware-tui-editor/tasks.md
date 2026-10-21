@@ -400,6 +400,10 @@ and the Defender job reports PASS with protection verified.
     - Windows: Fallow owns no internet socket at all (the DNS Client service resolves); names come
       from the DNS-Client log, which needs an administrator (a local non-admin run is INVALID).
     - macOS: Fallow owns no internet socket; tcpdump attributes queries via `eproc fallow`.
+    - macOS (2026-10-21, run 39592815090): the system resolver follows a provider hostname's
+      CNAME chain with its own questions attributed to Fallow (`api.cohere.com` →
+      `*.cloudfront.net`). The judge now allows CNAME targets found in the answers to allowed
+      questions (matched by DNS id); CNAMEs of any other name stay violations.
       mDNSResponder answers most names from its cache, so few queries reach the wire, and
       queries it sends without an effective process are counted but not judged.
 - [ ] T052 [US1] Implement the **Windows Defender check** in `xtask/src/defender_check.rs` per research.md R-10:

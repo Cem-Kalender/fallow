@@ -133,8 +133,42 @@ impl AppState {
         let Some(hub) = self.hub.as_mut() else {
             return false;
         };
-        let changed = hub.tick(&self.sessions, Instant::now());
+        let mut changed = hub.tick(&self.sessions, Instant::now());
+        changed |= self.type_deliveries();
         self.take_hub_notices();
+        changed
+    }
+
+    /// Types approved deliveries into their sessions, except while the engineer is typing in
+    /// the target (FR-014): then it waits until they leave or pause for the delivery delay.
+    fn type_deliveries(&mut self) -> bool {
+        let Some(hub) = self.hub.as_mut() else {
+            return false;
+        };
+        let delay = std::time::Duration::from_millis(self.orch_settings.delivery_delay_ms);
+        let mut changed = false;
+        for id in hub.ready() {
+            let Some(d) = hub.deliveries.get(id).cloned() else {
+                continue;
+            };
+            let focused = self.workspace.view == super::workspace::View::Agents
+                && self.workspace.focus == super::workspace::AgentsFocus::Session
+                && self.workspace.active == Some(d.to);
+            let result = match self.sessions.get(d.to) {
+                None => Err("target exited".to_string()),
+                Some(s) => {
+                    if focused && s.last_key.is_some_and(|t| t.elapsed() < delay) {
+                        continue;
+                    }
+                    match hub.take_grant(id) {
+                        Some(g) => s.deliver(g, &d),
+                        None => continue,
+                    }
+                }
+            };
+            hub.delivered(id, result);
+            changed = true;
+        }
         changed
     }
 
@@ -152,9 +186,38 @@ impl AppState {
 impl AppState {
     /// Orchestration commands (contracts/ui-commands.md). `None`: not one of them.
     pub(crate) fn run_orch(&mut self, id: &str) -> Option<bool> {
-        if id == "orch.open" {
-            self.overlay = Overlay::Orch(OrchView::default());
-            return Some(true);
+        let pending = self.hub.as_ref().map_or(0, |h| h.pending_requests());
+        match id {
+            // Opens on Requests when requests wait (contracts/ui-commands.md).
+            "orch.open" | "orch.requests" => {
+                let tab = if id == "orch.requests" || pending > 0 {
+                    Tab::Requests
+                } else {
+                    Tab::Board
+                };
+                self.overlay = Overlay::Orch(OrchView {
+                    tab,
+                    ..OrchView::default()
+                });
+                return Some(true);
+            }
+            // Reachable from the palette anywhere (SC-005: one command).
+            "orch.revoke_all" => {
+                let n = self.hub.as_mut().map_or(0, |h| h.revoke_all());
+                self.say(format!(
+                    "Revoked {n} standing permission{}",
+                    if n == 1 { "" } else { "s" }
+                ));
+                return Some(true);
+            }
+            "orch.grant_new" if !matches!(self.overlay, Overlay::Orch(_)) => {
+                self.overlay = Overlay::Orch(OrchView {
+                    tab: Tab::Permissions,
+                    ..OrchView::default()
+                });
+                return Some(self.open_grant(None));
+            }
+            _ => {}
         }
         if id == "session.details" {
             return Some(self.session_details());
@@ -175,8 +238,56 @@ impl AppState {
                 v.scroll = 0;
             }
             // Lists: Up/Down move the selection.
-            "orch.up" if v.tab == Tab::Queue => v.selected = v.selected.saturating_sub(1),
-            "orch.down" if v.tab == Tab::Queue => v.selected += 1,
+            "orch.up" if v.tab != Tab::Board && v.tab != Tab::Activity => {
+                v.selected = v.selected.saturating_sub(1);
+            }
+            "orch.down" if v.tab != Tab::Board && v.tab != Tab::Activity => v.selected += 1,
+            "orch.approve" | "orch.reject" | "orch.edit" | "orch.grant"
+                if v.tab == Tab::Requests =>
+            {
+                let (sel, view) = (v.selected, v.clone());
+                let ids = crate::ui::orchestration::requests_shown(self);
+                let Some(&rid) = ids.get(sel.min(ids.len().saturating_sub(1))) else {
+                    return Some(false);
+                };
+                match id {
+                    "orch.approve" => {
+                        if let Some(h) = self.hub.as_mut() {
+                            if let Err(e) = h.approve(rid, None) {
+                                self.say(e);
+                            }
+                        }
+                    }
+                    "orch.reject" => {
+                        if let Some(h) = self.hub.as_mut() {
+                            h.reject(rid);
+                        }
+                    }
+                    "orch.edit" => {
+                        let text = self
+                            .hub
+                            .as_ref()
+                            .and_then(|h| h.deliveries.get(rid))
+                            .map(|d| d.text.clone())
+                            .unwrap_or_default();
+                        self.overlay = Overlay::Prompt {
+                            kind: PromptKind::EditDelivery(rid, view),
+                            input: LineInput::selected(&text),
+                            error: None,
+                        };
+                    }
+                    _ => return Some(self.open_grant(Some(rid))),
+                }
+            }
+            "orch.grant_new" => return Some(self.open_grant(None)),
+            "orch.revoke" if v.tab == Tab::Permissions => {
+                let i = v.selected;
+                if let Some(h) = self.hub.as_mut() {
+                    if let Some(p) = h.permissions.list.get(i).map(|p| p.id) {
+                        h.revoke(p);
+                    }
+                }
+            }
             // Board: newest at the bottom, so "up" scrolls back in time.
             "orch.up" => v.scroll += 1,
             "orch.down" => v.scroll = v.scroll.saturating_sub(1),
@@ -259,6 +370,151 @@ impl AppState {
             title: s.label(),
             lines,
         };
+        true
+    }
+}
+
+impl AppState {
+    /// Opens the grant dialog, pre-filled from a request or from the first running sessions.
+    fn open_grant(&mut self, request: Option<u64>) -> bool {
+        use crate::ui::orchestration::GrantForm;
+        let back = match &self.overlay {
+            Overlay::Orch(v) => v.clone(),
+            _ => OrchView::default(),
+        };
+        let running: Vec<u32> = self
+            .sessions
+            .sessions
+            .iter()
+            .filter(|s| s.state.running())
+            .map(|s| s.id)
+            .collect();
+        let d = request.and_then(|r| self.hub.as_ref()?.deliveries.get(r).cloned());
+        let (from, to, tasks) = match &d {
+            Some(d) => (
+                d.from.session().unwrap_or(d.to),
+                d.to,
+                matches!(d.purpose, crate::orchestration::delivery::Purpose::Task(_)),
+            ),
+            None => {
+                let Some(&a) = running.first() else {
+                    self.say("Start agent sessions first");
+                    return true;
+                };
+                (a, *running.get(1).unwrap_or(&a), false)
+            }
+        };
+        self.overlay = Overlay::Grant(GrantForm {
+            from,
+            from_any: false,
+            to,
+            to_any: false,
+            deliver: !tasks,
+            tasks,
+            starts: 0,
+            minutes: self.orch_settings.permission_default_min,
+            field: 0,
+            request,
+            back,
+            error: None,
+        });
+        true
+    }
+
+    /// Keys in the grant dialog.
+    pub(crate) fn grant_key(&mut self, key: KeyEvent) -> bool {
+        use crate::orchestration::permissions::{Grant, Scope};
+        use crossterm::event::KeyCode;
+        let running: Vec<u32> = self
+            .sessions
+            .sessions
+            .iter()
+            .filter(|s| s.state.running())
+            .map(|s| s.id)
+            .collect();
+        let project_of = |id: u32| self.sessions.get(id).map(|s| s.project);
+        let Overlay::Grant(g) = &mut self.overlay else {
+            return false;
+        };
+        let cycle = |cur: u32, step: isize| -> u32 {
+            match running.iter().position(|s| *s == cur) {
+                Some(i) if !running.is_empty() => {
+                    running[(i as isize + step).rem_euclid(running.len() as isize) as usize]
+                }
+                _ => running.first().copied().unwrap_or(cur),
+            }
+        };
+        g.error = None;
+        match key.code {
+            KeyCode::Esc => {
+                self.overlay = Overlay::Orch(g.back.clone());
+                return true;
+            }
+            KeyCode::Up => g.field = g.field.saturating_sub(1),
+            KeyCode::Down | KeyCode::Tab => {
+                g.field = (g.field + 1).min(crate::ui::orchestration::GRANT_FIELDS - 1)
+            }
+            KeyCode::Left | KeyCode::Right => {
+                let step: isize = if key.code == KeyCode::Left { -1 } else { 1 };
+                match g.field {
+                    0 => g.from = cycle(g.from, step),
+                    1 => g.to = cycle(g.to, step),
+                    4 => g.starts = (g.starts as isize + step).clamp(0, 9) as u8,
+                    5 => {
+                        let unit = if g.minutes < 10 || (g.minutes == 10 && step < 0) {
+                            1
+                        } else {
+                            5
+                        };
+                        g.minutes = (g.minutes as i64 + step as i64 * unit).clamp(1, 480) as u64;
+                    }
+                    _ => {}
+                }
+            }
+            KeyCode::Char(' ') => match g.field {
+                0 => g.from_any = !g.from_any,
+                1 => g.to_any = !g.to_any,
+                2 => g.deliver = !g.deliver,
+                3 => g.tasks = !g.tasks,
+                4 => g.starts = if g.starts == 0 { 1 } else { 0 },
+                _ => {}
+            },
+            KeyCode::Enter => {
+                let scope = |id: u32, any: bool| match (any, project_of(id)) {
+                    (true, Some(p)) => Scope::Project(p),
+                    _ => Scope::Session(id),
+                };
+                let grant = Grant {
+                    source: scope(g.from, g.from_any),
+                    target: scope(g.to, g.to_any),
+                    deliver: g.deliver,
+                    create_task: g.tasks,
+                    start_limit: (g.starts > 0).then_some(g.starts),
+                    duration: std::time::Duration::from_secs(g.minutes * 60),
+                };
+                let (request, back) = (g.request, g.back.clone());
+                let Some(hub) = self.hub.as_mut() else {
+                    self.overlay = Overlay::Orch(back);
+                    return true;
+                };
+                match hub.grant(&grant, Instant::now()) {
+                    Ok(p) => {
+                        if let Some(r) = request {
+                            let _ = hub.approve(r, None);
+                        }
+                        self.overlay = Overlay::Orch(back);
+                        self.say(format!("Granted P{p}"));
+                    }
+                    Err(e) => {
+                        if let Overlay::Grant(g) = &mut self.overlay {
+                            g.error = Some(e);
+                        }
+                    }
+                }
+                return true;
+            }
+            _ => return false,
+        }
         true
     }
 }

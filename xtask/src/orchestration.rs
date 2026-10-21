@@ -62,6 +62,22 @@ pub fn run(args: &[String]) -> i32 {
     }
 }
 
+/// A's requests to type into B (US3): rejected, approved, approved with a permission, covered by
+/// it, and (after "revoke all") pending again.
+fn delivery_script(f: &dyn Fn(&str) -> String) -> String {
+    let deliver = |t: &str| format!("call deliver {{\"session\":2,\"text\":\"{t}\"}}\n");
+    format!(
+        "sleep 1000\n{}sleep 4000\ncall inbox {{}}\nwrite {}\n{}sleep 4000\n{}sleep 4000\n{}sleep 7000\n{}write {}\nprint a-all-sent\n",
+        deliver("zz-first"),
+        f("a-inbox"),
+        deliver("zz-second"),
+        deliver("zz-third"),
+        deliver("zz-fourth"),
+        deliver("zz-fifth"),
+        f("a-fifth"),
+    )
+}
+
 fn epoch_ms(t: SystemTime) -> u128 {
     t.duration_since(SystemTime::UNIX_EPOCH)
         .map_or(0, |d| d.as_millis())
@@ -79,6 +95,39 @@ fn wait_file(path: &Path, limit: Duration) -> Option<String> {
         std::thread::sleep(Duration::from_millis(100));
     }
     None
+}
+
+/// The engineer's side of A's delivery requests, in the Requests tab: reject the first,
+/// approve the second, grant a permission with the third; the fourth needs no prompt; then
+/// revoke all before the fifth.
+fn deliveries(s: &mut Session) -> Result<(), String> {
+    // Opened before any request is pending, the view shows the Board: Shift-Tab to Requests.
+    s.send(b"o");
+    std::thread::sleep(Duration::from_millis(300));
+    s.send(b"[Z");
+    std::thread::sleep(Duration::from_millis(300));
+    for (text, keys) in [
+        (&b"zz-first"[..], &b"x"[..]),
+        (b"zz-second", b"y"),
+        (b"zz-third", b"g"),
+    ] {
+        s.expect(text);
+        s.seen(Duration::from_secs(30)).ok_or(format!(
+            "request {} never showed",
+            String::from_utf8_lossy(text)
+        ))?;
+        std::thread::sleep(Duration::from_millis(200));
+        s.send(keys);
+        std::thread::sleep(Duration::from_millis(300));
+    }
+    // The grant dialog is open, pre-filled "#1 → #2, deliver": grant it.
+    s.send(b"\r");
+    // The fourth request arrives ~4 s later and is covered; revoke all before the fifth (~11 s).
+    std::thread::sleep(Duration::from_secs(6));
+    s.send(b"X");
+    std::thread::sleep(Duration::from_millis(300));
+    s.send(ESC);
+    Ok(())
 }
 
 /// Runs a bridge command outside every session; its exit code (or `None` if it hung).
@@ -119,13 +168,15 @@ fn run_all(bin: &Path, base: &Path) -> Result<i32, String> {
     let me = std::env::current_exe().map_err(|e| e.to_string())?;
     let f = |name: &str| base.join(name).display().to_string();
     let script_a = format!(
-        "call whoami {{}}\nwrite {}\nsave-bridge {}\nprint a-ready\nuntil go\npost-timed {POSTS} 100 project\nsleep 1500\npost-stamped {} zz-visible-now\nsleep 2000\ncall event_signal {{\"name\":\"pr-123-merged\",\"message\":\"merged\"}}\nprint a-done\n",
+        "call whoami {{}}\nwrite {}\nsave-bridge {}\nprint a-ready\nuntil go\npost-timed {POSTS} 100 project\nsleep 1500\npost-stamped {} zz-visible-now\nsleep 2000\ncall event_signal {{\"name\":\"pr-123-merged\",\"message\":\"merged\"}}\nprint a-done\n{}",
         f("a-whoami"),
         f("bridge-a.json"),
         f("a-stamp"),
+        delivery_script(&f),
     );
     let script_b = format!(
-        "call whoami {{}}\nbridge-from {}\nwrite {}\nprint b-measuring\nmeasure-reads {POSTS} project {}\nwait-loop pr-123-merged - {}\nwait-loop never 8 {}\n",
+        "echo-to {}\ncall whoami {{}}\nbridge-from {}\nwrite {}\nprint b-measuring\nmeasure-reads {POSTS} project {}\nwait-loop pr-123-merged - {}\nwait-loop never 8 {}\n",
+        f("b-typed"),
         f("bridge-a.json"),
         f("b-verdict"),
         f("b-latency"),
@@ -196,12 +247,16 @@ fn run_all(bin: &Path, base: &Path) -> Result<i32, String> {
             .ok_or("the last post never showed in the orchestration view")?;
         let shown = SystemTime::now();
         s.send(ESC);
+        deliveries(&mut s)?;
         let stamp: u128 = wait_file(&base.join("a-stamp"), Duration::from_secs(10))
             .and_then(|t| t.trim().parse().ok())
             .ok_or("A did not record its post time")?;
         Ok(epoch_ms(shown).saturating_sub(stamp) as f64)
     })();
     let latency = wait_file(&base.join("b-latency"), Duration::from_secs(60));
+    let fifth = wait_file(&base.join("a-fifth"), Duration::from_secs(60)).unwrap_or_default();
+    let inbox = std::fs::read_to_string(base.join("a-inbox")).unwrap_or_default();
+    let typed = std::fs::read_to_string(base.join("b-typed")).unwrap_or_default();
     // B then waits for A's signal, and for an event nobody signals (8 s limit, 5 s blocks).
     let wait_signal =
         wait_file(&base.join("b-wait-signal"), Duration::from_secs(30)).unwrap_or_default();
@@ -254,7 +309,18 @@ fn run_all(bin: &Path, base: &Path) -> Result<i32, String> {
     // one "still_waiting" repeat.
     let signal_ok = wait_signal.contains("status=signalled") && wait_signal.contains("from=1");
     let timeout_ok = wait_timeout.trim() == "status=timed_out repeats=1 from=null";
-    let pass = latency_ok
+    // US3: only approved or covered requests were typed, each with its label; the fifth waits.
+    let label = "[Fallow: message from agent #1";
+    let got = |t: &str| typed.lines().any(|l| l.contains(t) && l.starts_with(label));
+    let delivery_ok = !typed.contains("zz-first")
+        && got("zz-second")
+        && got("zz-third")
+        && got("zz-fourth")
+        && !typed.contains("zz-fifth")
+        && inbox.contains("rejected")
+        && fifth.contains("pending");
+    let pass = delivery_ok
+        && latency_ok
         && shown_ok
         && inside_refused
         && outside_refused
@@ -263,7 +329,7 @@ fn run_all(bin: &Path, base: &Path) -> Result<i32, String> {
         && timeout_ok;
     let result = if pass { "PASS" } else { "FAIL" };
     println!(
-        "os={} posts={POSTS} reads={n} post_read_p95_ms={p95:.0} post_read_max_ms={max:.0} on_screen_ms={shown_ms:.0} budget_ms={BUDGET_MS} other_session_token={} outside_bridge={:?} wrong_token={:?} wait_signal={:?} wait_timeout={:?} result={result}",
+        "os={} posts={POSTS} reads={n} post_read_p95_ms={p95:.0} post_read_max_ms={max:.0} on_screen_ms={shown_ms:.0} budget_ms={BUDGET_MS} other_session_token={} outside_bridge={:?} wrong_token={:?} wait_signal={:?} wait_timeout={:?} deliveries={} result={result}",
         std::env::consts::OS,
         if inside_refused {
             "refused"
@@ -274,9 +340,13 @@ fn run_all(bin: &Path, base: &Path) -> Result<i32, String> {
         wrong_token.flatten(),
         wait_signal.trim(),
         wait_timeout.trim(),
+        if delivery_ok { "ok" } else { "WRONG" },
     );
+    if !delivery_ok {
+        println!("typed into B: {typed:?}; A's inbox: {inbox:?}; fifth: {fifth:?}");
+    }
     pty::step_summary(&format!(
-        "### Orchestration ({})\n\n| check | result | budget |\n|---|---|---|\n| post → read by another agent, p95 of {POSTS} | {p95:.0} ms | < {BUDGET_MS} ms |\n| post → on the engineer's screen | {shown_ms:.0} ms | < {BUDGET_MS} ms |\n| another session's token, from inside a session | {} | refused |\n| bridge run outside every session | exit {:?} | exit 3 |\n| wrong token | exit {:?} | exit 3 |\n| wait, then A signals | {} | signalled by #1 |\n| wait with an 8 s limit (5 s blocks) | {} | timed out after one repeat |\n\n**{result}**\n",
+        "### Orchestration ({})\n\n| check | result | budget |\n|---|---|---|\n| post → read by another agent, p95 of {POSTS} | {p95:.0} ms | < {BUDGET_MS} ms |\n| post → on the engineer's screen | {shown_ms:.0} ms | < {BUDGET_MS} ms |\n| another session's token, from inside a session | {} | refused |\n| bridge run outside every session | exit {:?} | exit 3 |\n| wrong token | exit {:?} | exit 3 |\n| wait, then A signals | {} | signalled by #1 |\n| wait with an 8 s limit (5 s blocks) | {} | timed out after one repeat |\n| deliveries: rejected, approved, granted, covered, revoked | {} | only approved or covered ones typed, labelled |\n\n**{result}**\n",
         std::env::consts::OS,
         if inside_refused {
             "refused"
@@ -287,6 +357,7 @@ fn run_all(bin: &Path, base: &Path) -> Result<i32, String> {
         wrong_token.flatten(),
         wait_signal.trim(),
         wait_timeout.trim(),
+        if delivery_ok { "ok" } else { "WRONG" },
     ));
     Ok(if pass { 0 } else { 1 })
 }

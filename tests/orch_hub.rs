@@ -610,3 +610,185 @@ fn interests_become_wake_candidates_and_the_user_signals_as_the_user() {
     let v = done(h.call(&f, 2, "event_status", json!({"name": "pr-9"}), t0));
     assert_eq!(v["signalled"], false);
 }
+
+// ---- US3: permissions (T031) ----
+
+#[test]
+fn permissions_cover_by_scope_action_and_time() {
+    use fallow::orchestration::permissions::{Act, Grant, Scope};
+    let f = Fake::new();
+    let mut h = hub();
+    let t0 = Instant::now();
+    let g = |source, target, minutes: u64| Grant {
+        source,
+        target,
+        deliver: true,
+        create_task: false,
+        start_limit: None,
+        duration: Duration::from_secs(minutes * 60),
+    };
+    // Duration 1 min ..= 8 h.
+    assert!(
+        h.grant(&g(Scope::Session(1), Scope::Session(2), 0), t0)
+            .is_err()
+    );
+    assert!(
+        h.grant(&g(Scope::Session(1), Scope::Session(2), 481), t0)
+            .is_err()
+    );
+    let none = Grant {
+        deliver: false,
+        ..g(Scope::Session(1), Scope::Session(2), 30)
+    };
+    assert!(h.grant(&none, t0).is_err(), "at least one action");
+    // Project scopes: any session of api may deliver to any session of api.
+    let p = h
+        .grant(&g(Scope::Project(1), Scope::Project(1), 30), t0)
+        .unwrap();
+    let info = |id| f.info(id).unwrap();
+    assert_eq!(
+        h.permissions.cover(&info(2), &info(1), Act::Deliver, t0),
+        Some(p)
+    );
+    assert_eq!(
+        h.permissions.cover(&info(1), &info(3), Act::Deliver, t0),
+        None
+    );
+    assert_eq!(
+        h.permissions.cover(&info(1), &info(2), Act::CreateTask, t0),
+        None,
+        "only the granted action"
+    );
+    assert_eq!(
+        h.permissions.cover(
+            &info(1),
+            &info(2),
+            Act::Deliver,
+            t0 + Duration::from_secs(1800)
+        ),
+        None,
+        "not after it expires"
+    );
+    assert_eq!(h.permissions.list[0].uses, 1);
+    // Expiry in tick moves it to the log.
+    h.tick(&f, t0 + Duration::from_secs(1800));
+    assert!(h.permissions.list.is_empty());
+    // Session starts count against the limit.
+    let s = Grant {
+        deliver: false,
+        start_limit: Some(2),
+        ..g(Scope::Session(1), Scope::Project(1), 30)
+    };
+    h.grant(&s, t0).unwrap();
+    let start_target = SessionInfo { id: 0, ..info(1) };
+    assert!(
+        h.permissions
+            .cover(&info(1), &start_target, Act::StartSession, t0)
+            .is_some()
+    );
+    assert!(
+        h.permissions
+            .cover(&info(1), &start_target, Act::StartSession, t0)
+            .is_some()
+    );
+    assert!(
+        h.permissions
+            .cover(&info(1), &start_target, Act::StartSession, t0)
+            .is_none(),
+        "the third start needs approval again"
+    );
+}
+
+#[test]
+fn revoke_all_takes_effect_before_the_next_request() {
+    // SC-005.
+    use fallow::orchestration::permissions::{Grant, Scope};
+    let f = Fake::new();
+    let mut h = hub();
+    let t0 = Instant::now();
+    for (a, b) in [(1, 2), (2, 1), (1, 3)] {
+        h.grant(
+            &Grant {
+                source: Scope::Session(a),
+                target: Scope::Session(b),
+                deliver: true,
+                create_task: true,
+                start_limit: None,
+                duration: Duration::from_secs(600),
+            },
+            t0,
+        )
+        .unwrap();
+    }
+    assert_eq!(h.revoke_all(), 3);
+    let r = done(h.call(&f, 1, "deliver", json!({"session": 2, "text": "x"}), t0));
+    assert_eq!(r["state"], "pending");
+}
+
+#[test]
+fn delivery_requests_report_their_outcome_through_inbox() {
+    let f = Fake::new();
+    let mut h = hub();
+    let t0 = Instant::now();
+    let id = done(h.call(
+        &f,
+        1,
+        "deliver",
+        json!({"session": 2, "text": "please merge"}),
+        t0,
+    ))["delivery"]
+        .as_u64()
+        .unwrap();
+    assert!(
+        h.notices
+            .iter()
+            .any(|n| n.contains("asks to deliver to #2"))
+    );
+    h.reject(id);
+    let inbox = done(h.call(&f, 1, "inbox", json!({}), t0));
+    assert_eq!(inbox["deliveries"][0]["state"], "rejected");
+    assert_eq!(inbox["deliveries"][0]["id"], id);
+    let again = done(h.call(&f, 1, "inbox", json!({}), t0));
+    assert_eq!(again["deliveries"], json!([]), "outcomes are reported once");
+    // Invalid targets.
+    assert!(matches!(
+        h.call(&f, 1, "deliver", json!({"session": 1, "text": "me"}), t0),
+        Reply::Error("invalid", _)
+    ));
+    assert!(matches!(
+        h.call(
+            &f,
+            1,
+            "deliver",
+            json!({"session": 9, "text": "nobody"}),
+            t0
+        ),
+        Reply::Error("not_found", _)
+    ));
+    // At most 8 pending per sender.
+    let later = t0 + Duration::from_secs(120);
+    for i in 0..8 {
+        done(h.call(
+            &f,
+            2,
+            "deliver",
+            json!({"session": 1, "text": format!("{i}")}),
+            later,
+        ));
+    }
+    assert!(matches!(
+        h.call(
+            &f,
+            2,
+            "deliver",
+            json!({"session": 1, "text": "ninth"}),
+            later
+        ),
+        Reply::Error("too_many_pending", _)
+    ));
+    // A target that exits fails its pending deliveries.
+    h.session_ended(1);
+    let inbox = done(h.call(&f, 2, "inbox", json!({}), later));
+    assert_eq!(inbox["deliveries"].as_array().unwrap().len(), 8);
+    assert_eq!(inbox["deliveries"][0]["state"], "failed: target exited");
+}
