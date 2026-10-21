@@ -172,7 +172,7 @@ Fixes found in the 003 manual run on Windows (2026-10-21) that block the next re
 - 003 T056: agents misread the session state "needs attention";
 - 002 T062: a git repository without commits offers a worktree that cannot be created;
 - 003 T057: prove that a delivered `/exit` cannot stop an agent (or refuse to let permissions
-  cover such text).
+  cover such text). Proven for Claude Code; Codex and Gemini still to check.
 
 ### macOS hardware verification (OPEN)
 
