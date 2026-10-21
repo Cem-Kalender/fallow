@@ -157,6 +157,66 @@ fn board_lines(state: &AppState, v: &OrchView, width: usize) -> Vec<Line<'static
     lines
 }
 
+/// The events the Queue tab lists: the selected project's and the shared ones.
+pub fn events_shown(state: &AppState) -> Vec<crate::orchestration::events::Key> {
+    state.hub.as_ref().map_or_else(Vec::new, |h| {
+        h.event_list(state.projects.selected().map(|p| p.id))
+    })
+}
+
+fn queue_lines(state: &AppState, v: &OrchView, width: usize) -> Vec<Line<'static>> {
+    let bold = Style::default().add_modifier(Modifier::BOLD);
+    let dim = Style::default().add_modifier(Modifier::DIM);
+    let sel = Style::default().add_modifier(Modifier::REVERSED);
+    let mut lines = vec![Line::styled("Events · v signal as you · c clear", bold)];
+    let Some(h) = state.hub.as_ref() else {
+        lines.push(Line::styled("  No events.", dim));
+        return lines;
+    };
+    let keys = events_shown(state);
+    if keys.is_empty() {
+        lines.push(Line::styled("  No events. v signals one as you.", dim));
+    }
+    for (i, k) in keys.iter().enumerate() {
+        let scope = match k.0 {
+            BoardId::Shared => "shared",
+            BoardId::Project(_) => "project",
+        };
+        let waiters = h.events.waiters(k);
+        let mut text = match h.events.map.get(k).and_then(|e| e.signal.as_ref()) {
+            Some(s) => format!(
+                "● {}  ({scope})  signalled {} ago by {}",
+                k.1,
+                age(s.at),
+                s.from.label()
+            ),
+            None => format!("○ {}  ({scope})  not signalled", k.1),
+        };
+        if !waiters.is_empty() {
+            let ids: Vec<String> = waiters.iter().map(|w| format!("#{w}")).collect();
+            text.push_str(&format!("  · waiting: {}", ids.join(", ")));
+        }
+        let style = if i == v.selected {
+            sel
+        } else {
+            Style::default()
+        };
+        lines.push(Line::styled(text, style));
+        if let Some(m) = h
+            .events
+            .map
+            .get(k)
+            .and_then(|e| e.signal.as_ref())
+            .and_then(|s| s.message.as_deref())
+        {
+            for l in wrap(m, width.saturating_sub(6)).into_iter().take(3) {
+                lines.push(Line::styled(format!("      {l}"), dim));
+            }
+        }
+    }
+    lines
+}
+
 fn activity_lines(state: &AppState) -> Vec<Line<'static>> {
     let dim = Style::default().add_modifier(Modifier::DIM);
     let Some(h) = state.hub.as_ref() else {
@@ -222,7 +282,7 @@ pub fn draw(f: &mut Frame<'_>, area: Rect, state: &AppState, v: &OrchView) {
         Tab::Board => board_lines(state, v, body.width as usize),
         Tab::Activity => activity_lines(state),
         Tab::Requests => vec![Line::styled("No requests.", dim)],
-        Tab::Queue => vec![Line::styled("No tasks or events.", dim)],
+        Tab::Queue => queue_lines(state, v, body.width as usize),
         Tab::Permissions => vec![Line::styled("No standing permissions.", dim)],
     };
     // Board: newest at the bottom, scrolled up by `scroll`. Activity: newest on top.

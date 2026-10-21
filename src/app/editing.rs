@@ -81,6 +81,11 @@ pub enum PromptKind {
         crate::orchestration::board::BoardId,
         crate::ui::orchestration::OrchView,
     ),
+    /// 003: signal an event as the user: "name [message]".
+    SignalEvent(
+        crate::orchestration::board::BoardId,
+        crate::ui::orchestration::OrchView,
+    ),
 }
 
 impl PromptKind {
@@ -95,6 +100,7 @@ impl PromptKind {
             PromptKind::RenameProject(_) => "Project name",
             PromptKind::RelocateProject(_) => "New folder for this project",
             PromptKind::BoardPost(..) => "Write on the board (as you)",
+            PromptKind::SignalEvent(..) => "Signal an event as you: name [message]",
         }
     }
 }
@@ -408,6 +414,33 @@ impl AppState {
             PromptKind::SearchSession => self.search_session(text),
             PromptKind::RenameProject(id) => self.rename_project(*id, text),
             PromptKind::RelocateProject(id) => self.relocate_project(*id, text),
+            PromptKind::SignalEvent(scope, view) => {
+                let hub = self
+                    .hub
+                    .as_mut()
+                    .ok_or("Start an agent session with orchestration first")?;
+                let text = text.trim();
+                let (name, message) = match text.split_once(char::is_whitespace) {
+                    Some((n, m)) => (n, Some(m.trim().to_string()).filter(|m| !m.is_empty())),
+                    None => (text, None),
+                };
+                if !crate::orchestration::events::valid_name(name) {
+                    return Err("Event names: letters, digits and . _ : / # - (up to 64)".into());
+                }
+                if message
+                    .as_ref()
+                    .is_some_and(|m| m.len() > crate::orchestration::events::MESSAGE_MAX)
+                {
+                    return Err("The message is longer than 2 KiB".into());
+                }
+                hub.signal(
+                    &(*scope, name.to_string()),
+                    crate::orchestration::Party::User,
+                    message,
+                )?;
+                self.overlay = Overlay::Orch(view.clone());
+                Ok(())
+            }
             PromptKind::BoardPost(board, view) => {
                 let hub = self
                     .hub

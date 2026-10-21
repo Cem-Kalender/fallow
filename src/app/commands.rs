@@ -542,6 +542,13 @@ pub const COMMANDS: &[Command] = &[
         "b",
         "Shared/project",
     )),
+    on(cmd("orch.signal", "Signal an event", Orchestration, "v")),
+    on(cmd(
+        "orch.clear",
+        "Clear the selected event",
+        Orchestration,
+        "c",
+    )),
     on(cmd("orch.up", "Scroll up / previous", Orchestration, "↑")),
     on(cmd("orch.down", "Scroll down / next", Orchestration, "↓")),
     on(cmd("orch.page_up", "Page up", Orchestration, "PgUp")),

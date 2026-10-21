@@ -210,6 +210,22 @@ pub struct Hub {
     /// Messages for the engineer (shown as notices by the app, then cleared).
     pub notices: Vec<String>,
     pub boards: board::Boards,
+    pub events: events::Events,
+    /// The request being handled (for tools that answer later).
+    ctx: CallCtx,
+    /// Answers to calls made without a connection (tests drive the hub through `call`).
+    pub answered: Vec<(Value, Reply)>,
+    /// Sessions to wake because an event they asked for arrived while they were not waiting
+    /// (turned into deliveries, US3).
+    pub wakes: Vec<(u32, events::Key)>,
+}
+
+/// Where the call being handled came from.
+#[derive(Debug, Clone, Default)]
+pub struct CallCtx {
+    pub conn: Option<ConnId>,
+    pub id: Value,
+    pub progress: Option<Value>,
 }
 
 /// All text the hub stores (board messages, and later notes and task text), at most; the
@@ -231,6 +247,10 @@ impl Hub {
         Hub {
             activity: Activity::new(settings.activity_entries as usize),
             boards: board::Boards::new(settings.board_messages as usize),
+            events: events::Events::default(),
+            ctx: CallCtx::default(),
+            answered: Vec::new(),
+            wakes: Vec::new(),
             settings,
             channel: None,
             conns: HashMap::new(),
@@ -353,17 +373,28 @@ impl Hub {
                 id,
                 name,
                 arguments,
-                progress: _,
+                progress,
             } => {
                 let Some(session) = self.conns.get(&conn).map(|c| c.session) else {
                     return false;
                 };
-                let reply = self.call(sessions, session, &name, arguments, now);
-                self.answer(conn, &id, &reply);
+                self.ctx = CallCtx {
+                    conn: Some(conn),
+                    id: id.clone(),
+                    progress,
+                };
+                let reply = tools::call(self, sessions, session, &name, arguments, now);
+                self.answer(Some(conn), &id, &reply);
                 true
             }
-            Incoming::Cancelled { .. } => false,
+            Incoming::Cancelled { conn, id } => {
+                // The client gave up: the wait ends without a reply.
+                self.events
+                    .drop_where(|w| w.conn == Some(conn) && w.id == id)
+                    > 0
+            }
             Incoming::Closed { conn } => {
+                self.events.drop_where(|w| w.conn == Some(conn));
                 if let Some(c) = self.conns.remove(&conn) {
                     if let Some(l) = self.links.get_mut(&c.session) {
                         if l.conn == Some(conn) {
@@ -376,7 +407,15 @@ impl Hub {
         }
     }
 
-    fn answer(&self, conn: ConnId, id: &Value, reply: &Reply) {
+    /// Sends the answer to a call; calls made without a connection are kept in `answered`.
+    pub(crate) fn answer(&mut self, conn: Option<ConnId>, id: &Value, reply: &Reply) {
+        if matches!(reply, Reply::Parked) {
+            return;
+        }
+        let Some(conn) = conn else {
+            self.answered.push((id.clone(), reply.clone()));
+            return;
+        };
         let Some(c) = self.conns.get(&conn) else {
             return;
         };
@@ -389,7 +428,26 @@ impl Hub {
     }
 
     /// Runs tool `name` for session `caller` (the identity of the connection, never an
-    /// argument).
+    /// argument), with no connection: a call that answers later (a wait) returns `Parked`, and
+    /// its answer lands in `answered` under request id `id`.
+    pub fn call_as(
+        &mut self,
+        sessions: &dyn Sessions,
+        caller: u32,
+        id: u64,
+        name: &str,
+        args: Value,
+        now: Instant,
+    ) -> Reply {
+        self.ctx = CallCtx {
+            conn: None,
+            id: Value::from(id),
+            progress: None,
+        };
+        tools::call(self, sessions, caller, name, args, now)
+    }
+
+    /// `call_as` with request id 0.
     pub fn call(
         &mut self,
         sessions: &dyn Sessions,
@@ -398,7 +456,73 @@ impl Hub {
         args: Value,
         now: Instant,
     ) -> Reply {
-        tools::call(self, sessions, caller, name, args, now)
+        self.call_as(sessions, caller, 0, name, args, now)
+    }
+
+    pub(crate) fn ctx(&self) -> &CallCtx {
+        &self.ctx
+    }
+
+    /// Signals an event as `from`: ends the waits on it and records wake candidates. Returns
+    /// how many waits it ended.
+    pub fn signal(
+        &mut self,
+        key: &events::Key,
+        from: Party,
+        message: Option<String>,
+    ) -> Result<usize, String> {
+        let sig = events::Signal {
+            from: from.clone(),
+            at: std::time::SystemTime::now(),
+            message,
+        };
+        let (ended, wake) = self.events.signal(key, sig.clone())?;
+        let n = ended.len();
+        for w in ended {
+            let reply = Reply::Done(tools::signalled(&sig));
+            self.answer(w.conn, &w.id, &reply);
+        }
+        for s in wake {
+            self.wakes.push((s, key.clone()));
+        }
+        self.activity.add(
+            from,
+            Action::Signal,
+            &format!("{} ({})", key.1, board_name(key.0)),
+            Some(format!("{n} waiting")),
+        );
+        Ok(n)
+    }
+
+    /// The engineer clears an event: it is no longer signalled.
+    pub fn clear_event(&mut self, key: &events::Key) {
+        if let Some(e) = self.events.map.get_mut(key) {
+            e.signal = None;
+        }
+    }
+
+    /// Events of a project's scope and the shared scope, sorted by scope then name.
+    pub fn event_list(&self, project: Option<ProjectId>) -> Vec<events::Key> {
+        let mut v: Vec<events::Key> = self
+            .events
+            .map
+            .keys()
+            .filter(|(s, _)| match s {
+                board::BoardId::Shared => true,
+                board::BoardId::Project(p) => Some(*p) == project,
+            })
+            .cloned()
+            .collect();
+        v.sort_by(|a, b| {
+            (matches!(a.0, board::BoardId::Shared), &a.1)
+                .cmp(&(matches!(b.0, board::BoardId::Shared), &b.1))
+        });
+        v
+    }
+
+    /// The event session `id` waits for, and since when (FR-010).
+    pub fn waiting(&self, id: u32, now: Instant) -> Option<(&str, Instant)> {
+        self.events.waiting(id, now)
     }
 
     /// Takes one call from the session's rate budget (FR-008). Over the limit, the engineer is
@@ -433,14 +557,50 @@ impl Hub {
         }
     }
 
-    /// Periodic work: expiries, waits and the queue (later stories). Returns true when
-    /// something visible changed.
-    pub fn tick(&mut self, _sessions: &dyn Sessions, _now: Instant) -> bool {
-        false
+    /// Periodic work: waits that reached their limit, progress for parked waits, and (later
+    /// stories) expiries and the queue. Returns true when something visible changed.
+    pub fn tick(&mut self, sessions: &dyn Sessions, now: Instant) -> bool {
+        let _ = sessions;
+        let mut changed = false;
+        for (w, end) in self.events.due(now) {
+            changed = true;
+            let reply = match end {
+                events::WaitEnd::TimedOut => {
+                    let party = sessions.info(w.session).map_or(Party::User, |i| i.party());
+                    self.activity
+                        .add(party, Action::WaitEnded, &w.key.1, Some("timed out".into()));
+                    Reply::Done(serde_json::json!({ "status": "timed_out" }))
+                }
+                events::WaitEnd::StillWaiting(d) => Reply::Done(
+                    serde_json::json!({ "status": "still_waiting", "waited_s": d.as_secs() }),
+                ),
+                events::WaitEnd::Signalled(s) => Reply::Done(tools::signalled(&s)),
+            };
+            self.answer(w.conn, &w.id, &reply);
+        }
+        let mut progress = Vec::new();
+        for w in &mut self.events.waits {
+            if let (Some(token), Some(conn)) = (&w.progress, w.conn) {
+                if now.saturating_duration_since(w.last_progress) >= events::PROGRESS_EVERY {
+                    w.last_progress = now;
+                    let secs = now.saturating_duration_since(w.since).as_secs_f64();
+                    progress.push((conn, rpc::progress_line(token, secs)));
+                }
+            }
+        }
+        for (conn, line) in progress {
+            if let Some(c) = self.conns.get(&conn) {
+                let _ = c.out.send(Outgoing::Line(line));
+            }
+        }
+        changed
     }
 
-    /// A session ended: its link closes.
+    /// A session ended: its link closes and its waits and interests go.
     pub fn session_ended(&mut self, id: u32) {
+        self.events.drop_where(|w| w.session == id);
+        self.events.recent.remove(&id);
+        self.events.interests.remove(&id);
         if let Some(l) = self.links.get_mut(&id) {
             if let Some(conn) = l.conn.take() {
                 if let Some(c) = self.conns.remove(&conn) {

@@ -174,9 +174,33 @@ impl AppState {
                 v.shared = !v.shared;
                 v.scroll = 0;
             }
+            // Lists: Up/Down move the selection.
+            "orch.up" if v.tab == Tab::Queue => v.selected = v.selected.saturating_sub(1),
+            "orch.down" if v.tab == Tab::Queue => v.selected += 1,
             // Board: newest at the bottom, so "up" scrolls back in time.
             "orch.up" => v.scroll += 1,
             "orch.down" => v.scroll = v.scroll.saturating_sub(1),
+            "orch.signal" => {
+                let view = v.clone();
+                let scope = self
+                    .projects
+                    .selected()
+                    .map_or(crate::orchestration::board::BoardId::Shared, |p| {
+                        crate::orchestration::board::BoardId::Project(p.id)
+                    });
+                self.overlay = Overlay::Prompt {
+                    kind: PromptKind::SignalEvent(scope, view),
+                    input: LineInput::default(),
+                    error: None,
+                };
+            }
+            "orch.clear" if v.tab == Tab::Queue => {
+                let i = v.selected;
+                let keys = crate::ui::orchestration::events_shown(self);
+                if let (Some(k), Some(h)) = (keys.get(i), self.hub.as_mut()) {
+                    h.clear_event(k);
+                }
+            }
             "orch.page_up" => v.scroll += page,
             "orch.page_down" => v.scroll = v.scroll.saturating_sub(page),
             "orch.write" => {

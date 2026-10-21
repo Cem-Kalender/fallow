@@ -212,7 +212,7 @@ deliveries, US5 on US4's queue.
 
 **Independent Test**: B waits for `pr-123-merged`, A signals it, and B's wait ends with A as sender. A wait with a time limit ends `timed_out`. The overview shows "waiting for …".
 
-- [ ] T025 [P] [US2] Write the event tests in `tests/orch_hub.rs`:
+- [X] T025 [P] [US2] Write the event tests in `tests/orch_hub.rs`:
   - name `[A-Za-z0-9._:/#-]{1,64}`, case-sensitive;
   - signal message "≤ 2 KiB";
   - sticky: a wait on a signalled event ends at once;
@@ -225,19 +225,19 @@ deliveries, US5 on US4's queue.
     - a session exiting removes its waits;
   - interests "max 16" per link;
   - a user signal is labelled user.
-- [ ] T026 [US2] Implement `src/orchestration/events.rs`:
+- [X] T026 [US2] Implement `src/orchestration/events.rs`:
   - `Event`, `Signal`, `Wait`, and interests per data-model.md;
   - parked replies held by the hub and answered on signal, deadline or block limit from `hub.tick`;
   - `notifications/progress` every 15 s while parked, when the request carried a `progressToken`;
   - activity `Signal`/`Wait`/`WaitEnded`.
-- [ ] T027 [US2] Add the tools `event_signal`, `event_wait` (with `wake_when_idle`, default true, recording an interest) and `event_status` to `src/orchestration/tools.rs`.
-- [ ] T028 [US2] UI:
+- [X] T027 [US2] Add the tools `event_signal`, `event_wait` (with `wake_when_idle`, default true, recording an interest) and `event_status` to `src/orchestration/tools.rs`.
+- [X] T028 [US2] UI:
   - the sessions list and overview state column show `waiting for <event> m:ss` (FR-010) in `src/ui/sessions.rs`;
   - the Queue tab's events section lists signal, sender and waiters, with `v` to signal as the user (name and message prompts) and `c` to clear;
   - palette "Signal an event".
 
   Add render tests.
-- [ ] T029 [US2] Extend `xtask orchestration` with a wait/signal scenario: B waits; A signals after 2 s; B reports `signalled` with A as sender; a second wait with `timeout_s = 3` reports `timed_out`; a wait with `wait_block_s` at 5 returns `still_waiting` and is repeated.
+- [X] T029 [US2] Extend `xtask orchestration` with a wait/signal scenario: B waits; A signals after 2 s; B reports `signalled` with A as sender; a second wait with `timeout_s = 3` reports `timed_out`; a wait with `wait_block_s` at 5 returns `still_waiting` and is repeated.
 
 **Checkpoint**: quickstart M3 passes.
 
