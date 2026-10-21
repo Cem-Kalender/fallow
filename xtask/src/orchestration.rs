@@ -67,7 +67,7 @@ pub fn run(args: &[String]) -> i32 {
 fn delivery_script(f: &dyn Fn(&str) -> String) -> String {
     let deliver = |t: &str| format!("call deliver {{\"session\":2,\"text\":\"{t}\"}}\n");
     format!(
-        "sleep 1000\n{}sleep 4000\ncall inbox {{}}\nwrite {}\n{}sleep 4000\n{}sleep 4000\n{}sleep 7000\n{}write {}\nprint a-all-sent\n",
+        "sleep 1000\n{}sleep 4000\ncall inbox {{}}\nwrite {}\n{}sleep 4000\n{}sleep 4000\n{}sleep 7000\n{}write {}\nprint a-all-sent\nsleep 3000\ncall event_signal {{\"name\":\"pr-merge-x\",\"message\":\"PR merged\"}}\nsleep 15000\ncall task_list {{\"mine\":false}}\nwrite {}\n",
         deliver("zz-first"),
         f("a-inbox"),
         deliver("zz-second"),
@@ -75,6 +75,7 @@ fn delivery_script(f: &dyn Fn(&str) -> String) -> String {
         deliver("zz-fourth"),
         deliver("zz-fifth"),
         f("a-fifth"),
+        f("a-tasks"),
     )
 }
 
@@ -127,6 +128,20 @@ fn deliveries(s: &mut Session) -> Result<(), String> {
     s.send(b"X");
     std::thread::sleep(Duration::from_millis(300));
     s.send(ESC);
+    std::thread::sleep(Duration::from_millis(300));
+    // US4 (SC-001): queue "merge feature/x" for B after pr-merge-x, from the palette. A signals
+    // the event; the engineer's task goes to B without any approval; B reports it done.
+    s.send(b"\x10");
+    std::thread::sleep(Duration::from_millis(300));
+    s.send(b"new task");
+    std::thread::sleep(Duration::from_millis(300));
+    s.send(b"\r");
+    std::thread::sleep(Duration::from_millis(300));
+    s.send(b"#2 merge feature/x after:pr-merge-x");
+    std::thread::sleep(Duration::from_millis(200));
+    s.send(b"\r");
+    std::thread::sleep(Duration::from_millis(300));
+    s.send(ESC);
     Ok(())
 }
 
@@ -175,8 +190,9 @@ fn run_all(bin: &Path, base: &Path) -> Result<i32, String> {
         delivery_script(&f),
     );
     let script_b = format!(
-        "echo-to {}\ncall whoami {{}}\nbridge-from {}\nwrite {}\nprint b-measuring\nmeasure-reads {POSTS} project {}\nwait-loop pr-123-merged - {}\nwait-loop never 8 {}\n",
+        "echo-to {}\nreport-tasks {}\ncall whoami {{}}\nbridge-from {}\nwrite {}\nprint b-measuring\nmeasure-reads {POSTS} project {}\nwait-loop pr-123-merged - {}\nwait-loop never 8 {}\n",
         f("b-typed"),
+        f("b-tasks"),
         f("bridge-a.json"),
         f("b-verdict"),
         f("b-latency"),
@@ -256,7 +272,10 @@ fn run_all(bin: &Path, base: &Path) -> Result<i32, String> {
     let latency = wait_file(&base.join("b-latency"), Duration::from_secs(60));
     let fifth = wait_file(&base.join("a-fifth"), Duration::from_secs(60)).unwrap_or_default();
     let inbox = std::fs::read_to_string(base.join("a-inbox")).unwrap_or_default();
+    // A writes its task list last; read B's typed lines after it.
+    let tasks = wait_file(&base.join("a-tasks"), Duration::from_secs(60)).unwrap_or_default();
     let typed = std::fs::read_to_string(base.join("b-typed")).unwrap_or_default();
+    let b_tasks = std::fs::read_to_string(base.join("b-tasks")).unwrap_or_default();
     // B then waits for A's signal, and for an event nobody signals (8 s limit, 5 s blocks).
     let wait_signal =
         wait_file(&base.join("b-wait-signal"), Duration::from_secs(30)).unwrap_or_default();
@@ -319,7 +338,14 @@ fn run_all(bin: &Path, base: &Path) -> Result<i32, String> {
         && !typed.contains("zz-fifth")
         && inbox.contains("rejected")
         && fifth.contains("pending");
-    let pass = delivery_ok
+    // US4 / SC-001: the queued task waited for the event, went to B with no approval, and B's
+    // report made it done.
+    let queue_ok = b_tasks.trim() == "T1 done"
+        && tasks.contains("\"state\":\"done\"")
+        && tasks.contains("merge feature/x")
+        && typed.contains("[Fallow: task T1 from the user's queue.] merge feature/x");
+    let pass = queue_ok
+        && delivery_ok
         && latency_ok
         && shown_ok
         && inside_refused
@@ -329,7 +355,7 @@ fn run_all(bin: &Path, base: &Path) -> Result<i32, String> {
         && timeout_ok;
     let result = if pass { "PASS" } else { "FAIL" };
     println!(
-        "os={} posts={POSTS} reads={n} post_read_p95_ms={p95:.0} post_read_max_ms={max:.0} on_screen_ms={shown_ms:.0} budget_ms={BUDGET_MS} other_session_token={} outside_bridge={:?} wrong_token={:?} wait_signal={:?} wait_timeout={:?} deliveries={} result={result}",
+        "os={} posts={POSTS} reads={n} post_read_p95_ms={p95:.0} post_read_max_ms={max:.0} on_screen_ms={shown_ms:.0} budget_ms={BUDGET_MS} other_session_token={} outside_bridge={:?} wrong_token={:?} wait_signal={:?} wait_timeout={:?} deliveries={} queue={} result={result}",
         std::env::consts::OS,
         if inside_refused {
             "refused"
@@ -341,12 +367,18 @@ fn run_all(bin: &Path, base: &Path) -> Result<i32, String> {
         wait_signal.trim(),
         wait_timeout.trim(),
         if delivery_ok { "ok" } else { "WRONG" },
+        if queue_ok { "ok" } else { "WRONG" },
     );
+    if !queue_ok {
+        println!(
+            "B's task reports: {b_tasks:?}; A's task_list: {tasks:?}; typed into B: {typed:?}"
+        );
+    }
     if !delivery_ok {
         println!("typed into B: {typed:?}; A's inbox: {inbox:?}; fifth: {fifth:?}");
     }
     pty::step_summary(&format!(
-        "### Orchestration ({})\n\n| check | result | budget |\n|---|---|---|\n| post → read by another agent, p95 of {POSTS} | {p95:.0} ms | < {BUDGET_MS} ms |\n| post → on the engineer's screen | {shown_ms:.0} ms | < {BUDGET_MS} ms |\n| another session's token, from inside a session | {} | refused |\n| bridge run outside every session | exit {:?} | exit 3 |\n| wrong token | exit {:?} | exit 3 |\n| wait, then A signals | {} | signalled by #1 |\n| wait with an 8 s limit (5 s blocks) | {} | timed out after one repeat |\n| deliveries: rejected, approved, granted, covered, revoked | {} | only approved or covered ones typed, labelled |\n\n**{result}**\n",
+        "### Orchestration ({})\n\n| check | result | budget |\n|---|---|---|\n| post → read by another agent, p95 of {POSTS} | {p95:.0} ms | < {BUDGET_MS} ms |\n| post → on the engineer's screen | {shown_ms:.0} ms | < {BUDGET_MS} ms |\n| another session's token, from inside a session | {} | refused |\n| bridge run outside every session | exit {:?} | exit 3 |\n| wrong token | exit {:?} | exit 3 |\n| wait, then A signals | {} | signalled by #1 |\n| wait with an 8 s limit (5 s blocks) | {} | timed out after one repeat |\n| deliveries: rejected, approved, granted, covered, revoked | {} | only approved or covered ones typed, labelled |\n| PR scenario: queued task after pr-merge-x, done by B | {} | no approval, done |\n\n**{result}**\n",
         std::env::consts::OS,
         if inside_refused {
             "refused"
@@ -358,6 +390,7 @@ fn run_all(bin: &Path, base: &Path) -> Result<i32, String> {
         wait_signal.trim(),
         wait_timeout.trim(),
         if delivery_ok { "ok" } else { "WRONG" },
+        if queue_ok { "ok" } else { "WRONG" },
     ));
     Ok(if pass { 0 } else { 1 })
 }

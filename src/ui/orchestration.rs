@@ -125,11 +125,30 @@ pub fn time_left(d: std::time::Duration) -> String {
 }
 
 /// The requests the Requests tab lists, oldest first: pending deliveries.
-pub fn requests_shown(state: &AppState) -> Vec<u64> {
+/// One entry of the Requests tab.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RequestRef {
+    Delivery(u64),
+    Task(u32),
+}
+
+/// The requests the Requests tab lists: pending deliveries, then tasks agents created.
+pub fn requests_shown(state: &AppState) -> Vec<RequestRef> {
+    state.hub.as_ref().map_or_else(Vec::new, |h| {
+        h.deliveries
+            .pending()
+            .map(|d| RequestRef::Delivery(d.id))
+            .chain(h.pending_tasks().map(|t| RequestRef::Task(t.id)))
+            .collect()
+    })
+}
+
+/// The tasks the Queue tab lists, in queue order.
+pub fn tasks_shown(state: &AppState) -> Vec<u32> {
     state
         .hub
         .as_ref()
-        .map_or_else(Vec::new, |h| h.deliveries.pending().map(|d| d.id).collect())
+        .map_or_else(Vec::new, |h| h.tasks.list.iter().map(|t| t.id).collect())
 }
 
 fn session_name(state: &AppState, id: u32) -> String {
@@ -155,7 +174,42 @@ fn requests_lines(state: &AppState, v: &OrchView, width: usize) -> Vec<Line<'sta
     let now = std::time::Instant::now();
     let mut lines = Vec::new();
     let selected = v.selected.min(ids.len() - 1);
-    for (i, id) in ids.iter().enumerate() {
+    for (i, r) in ids.iter().enumerate() {
+        let id = match r {
+            RequestRef::Delivery(id) => id,
+            RequestRef::Task(t) => {
+                let Some(t) = h.tasks.get(*t) else { continue };
+                let left = std::time::Duration::from_secs(h.settings.request_timeout_s)
+                    .saturating_sub(now.saturating_duration_since(t.created_at));
+                let row = format!(
+                    "{}  →  {}   new task T{}   expires in {}",
+                    t.created_by.label(),
+                    t.target.label(),
+                    t.id,
+                    time_left(left)
+                );
+                lines.push(Line::styled(
+                    row,
+                    if i == selected { sel } else { Style::default() },
+                ));
+                if i == selected {
+                    lines.push(Line::styled("  task text:", dim));
+                    for l in wrap(&t.text, width.saturating_sub(4)) {
+                        lines.push(Line::raw(format!("  {l}")));
+                    }
+                    if !t.preconditions.is_empty() {
+                        let names: Vec<&str> =
+                            t.preconditions.iter().map(|k| k.1.as_str()).collect();
+                        lines.push(Line::styled(format!("  after: {}", names.join(", ")), dim));
+                    }
+                    lines.push(Line::styled(
+                        "  y Approve   e Edit   x Reject   g Grant permission…   ↑↓ Next request",
+                        dim,
+                    ));
+                }
+                continue;
+            }
+        };
         let Some(d) = h.deliveries.get(*id) else {
             continue;
         };
@@ -309,11 +363,61 @@ fn queue_lines(state: &AppState, v: &OrchView, width: usize) -> Vec<Line<'static
     let bold = Style::default().add_modifier(Modifier::BOLD);
     let dim = Style::default().add_modifier(Modifier::DIM);
     let sel = Style::default().add_modifier(Modifier::REVERSED);
-    let mut lines = vec![Line::styled("Events · v signal as you · c clear", bold)];
+    let mut lines = vec![Line::styled(
+        "Tasks · n new · e edit · Shift-↑↓ move · Space pause · Delete cancel",
+        bold,
+    )];
     let Some(h) = state.hub.as_ref() else {
+        lines.push(Line::styled("  No tasks. n queues one.", dim));
+        lines.push(Line::raw(""));
+        lines.push(Line::styled("Events · v signal as you · c clear", bold));
         lines.push(Line::styled("  No events.", dim));
         return lines;
     };
+    let tasks = tasks_shown(state);
+    if tasks.is_empty() {
+        lines.push(Line::styled("  No tasks. n queues one.", dim));
+    }
+    for (i, id) in tasks.iter().enumerate() {
+        let Some(t) = h.tasks.get(*id) else { continue };
+        let mut text = format!(
+            "T{}  {:<20} {}  {}",
+            t.id,
+            t.state.label(),
+            t.assigned
+                .map_or_else(|| t.target.label(), |a| format!("#{a}")),
+            t.text.lines().next().unwrap_or("")
+        );
+        if t.state == crate::orchestration::tasks::State::Blocked {
+            let unmet: Vec<&str> = t
+                .preconditions
+                .iter()
+                .filter(|k| {
+                    h.events
+                        .map
+                        .get(*k)
+                        .and_then(|e| e.signal.as_ref())
+                        .is_none()
+                })
+                .map(|k| k.1.as_str())
+                .collect();
+            text.push_str(&format!("  (blocked: {})", unmet.join(", ")));
+        }
+        if t.paused {
+            text.push_str("  [paused]");
+        }
+        if let Some(n) = &t.note {
+            text.push_str(&format!("  — {}", n.lines().next().unwrap_or("")));
+        }
+        let style = if i == v.selected {
+            sel
+        } else {
+            Style::default()
+        };
+        lines.push(Line::styled(text, style));
+    }
+    lines.push(Line::raw(""));
+    lines.push(Line::styled("Events · v signal as you · c clear", bold));
     let keys = events_shown(state);
     if keys.is_empty() {
         lines.push(Line::styled("  No events. v signals one as you.", dim));
@@ -337,7 +441,7 @@ fn queue_lines(state: &AppState, v: &OrchView, width: usize) -> Vec<Line<'static
             let ids: Vec<String> = waiters.iter().map(|w| format!("#{w}")).collect();
             text.push_str(&format!("  · waiting: {}", ids.join(", ")));
         }
-        let style = if i == v.selected {
+        let style = if i + tasks.len() == v.selected {
             sel
         } else {
             Style::default()
@@ -478,7 +582,7 @@ pub struct GrantForm {
     /// The field with focus: 0 from, 1 to, 2 deliver, 3 tasks, 4 starts, 5 minutes.
     pub field: usize,
     /// The request to approve once granted.
-    pub request: Option<u64>,
+    pub request: Option<RequestRef>,
     pub back: OrchView,
     pub error: Option<String>,
 }

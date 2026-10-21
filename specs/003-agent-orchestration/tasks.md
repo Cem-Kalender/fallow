@@ -320,7 +320,7 @@ deliveries, US5 on US4's queue.
 
 **Independent Test**: three tasks for B, the second with precondition `deploy-ok`. T1 is handed over; T2 stays blocked until the event; reports move the queue; the Queue tab shows every state.
 
-- [ ] T039 [P] [US4] Write `tests/orch_queue.rs`:
+- [X] T039 [P] [US4] Write `tests/orch_queue.rs`:
   - **States**: Queued ⇄ Blocked → InProgress → Done / Failed(note); any non-final state → Cancelled, which is never handed over; paused tasks are skipped.
   - **Free target**: running, connected, `NeedsAttention`, not waiting, no own task `InProgress`; one task per target at a time.
   - **Preconditions**: "max 8", all must be signalled.
@@ -329,13 +329,13 @@ deliveries, US5 on US4's queue.
   - **Reports**: only the assigned session may report (`not_allowed`); note "≤ 2 KiB"; text "1..=8 KiB".
   - **Approval**: agent-created tasks need approval unless a `CreateTask` permission covers them (US4.5).
   - **Limits**: "500" tasks.
-- [ ] T040 [US4] Implement `src/orchestration/tasks.rs`:
+- [X] T040 [US4] Implement `src/orchestration/tasks.rs`:
   - `Task` per data-model.md;
   - queue advancement in vector order, on every hub change and on 002 attention changes (called from `src/app/state.rs`);
   - hand-over through a `Delivery { purpose: Task }`, under the US3 rules;
   - activity `TaskChanged`.
-- [ ] T041 [US4] Add the tools `task_create` (target `{"session": n}` or `{"profile", "project"}`, `preconditions`), `task_list` (`mine`, default true) and `task_report` to `src/orchestration/tools.rs`. Agent-created tasks enter the queue as `pending_approval` and show on the Requests tab.
-- [ ] T042 [US4] Build the Queue tab editing in `src/ui/orchestration.rs` and `src/app/orchestration.rs`:
+- [X] T041 [US4] Add the tools `task_create` (target `{"session": n}` or `{"profile", "project"}`, `preconditions`), `task_list` (`mine`, default true) and `task_report` to `src/orchestration/tools.rs`. Agent-created tasks enter the queue as `pending_approval` and show on the Requests tab.
+- [X] T042 [US4] Build the Queue tab editing in `src/ui/orchestration.rs` and `src/app/orchestration.rs`:
   - `n` new task (text, target, preconditions);
   - `e` edit;
   - `Shift-↑`/`Shift-↓` reorder;
@@ -343,7 +343,7 @@ deliveries, US5 on US4's queue.
   - `Delete` cancel;
   - state, target, preconditions ("blocked: deploy-ok") and note per task;
   - palette "New task".
-- [ ] T043 [US4] Extend `xtask orchestration` with the PR scenario end to end (SC-001, without a real model):
+- [X] T043 [US4] Extend `xtask orchestration` with the PR scenario end to end (SC-001, without a real model):
   - the engineer queues "merge feature/x" for B with precondition `pr-123-merged`;
   - B waits; A signals `pr-123-merged`;
   - the task is handed over with one approval key press;

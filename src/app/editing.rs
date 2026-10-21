@@ -81,6 +81,10 @@ pub enum PromptKind {
         crate::orchestration::board::BoardId,
         crate::ui::orchestration::OrchView,
     ),
+    /// 003: a new task as the user: `#2 text after:e1,e2` or `profile@project text`.
+    NewTask(crate::ui::orchestration::OrchView),
+    /// 003: edit a task's text (and approve it, for an agent's request).
+    EditTask(u32, bool, crate::ui::orchestration::OrchView),
     /// 003: edit a delivery's text, then approve it.
     EditDelivery(u64, crate::ui::orchestration::OrchView),
     /// 003: signal an event as the user: "name [message]".
@@ -104,6 +108,10 @@ impl PromptKind {
             PromptKind::BoardPost(..) => "Write on the board (as you)",
             PromptKind::SignalEvent(..) => "Signal an event as you: name [message]",
             PromptKind::EditDelivery(..) => "Text to deliver (Enter approves)",
+            PromptKind::NewTask(..) => {
+                "New task: #2 or claude@api, then the text; after:event waits for it"
+            }
+            PromptKind::EditTask(..) => "Task text",
         }
     }
 }
@@ -418,6 +426,26 @@ impl AppState {
             PromptKind::SearchSession => self.search_session(text),
             PromptKind::RenameProject(id) => self.rename_project(*id, text),
             PromptKind::RelocateProject(id) => self.relocate_project(*id, text),
+            PromptKind::NewTask(view) => {
+                let id = self.submit_new_task(text)?;
+                self.overlay = Overlay::Orch(view.clone());
+                self.say(format!("Queued T{id}"));
+                Ok(())
+            }
+            PromptKind::EditTask(id, approve, view) => {
+                let hub = self.hub.as_mut().ok_or("No orchestration")?;
+                let text = crate::orchestration::board::clean_text(
+                    text,
+                    crate::orchestration::tasks::TEXT_MAX,
+                )
+                .map_err(|(_, m)| m)?;
+                hub.edit_task(*id, text)?;
+                if *approve {
+                    hub.decide_task(*id, true);
+                }
+                self.overlay = Overlay::Orch(view.clone());
+                Ok(())
+            }
             PromptKind::EditDelivery(id, view) => {
                 let hub = self.hub.as_mut().ok_or("No orchestration")?;
                 let text = crate::orchestration::board::clean_text(

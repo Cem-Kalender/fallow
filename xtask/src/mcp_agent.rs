@@ -21,6 +21,8 @@
 //! - `save-bridge <file>`: writes the bridge's command line (JSON array) to `file`.
 //! - `bridge-from <file>`: runs the bridge saved in `file` and prints `accepted` or `refused`.
 //! - `echo-to <file>`: after the script, typed lines are also appended to `file`.
+//! - `report-tasks <file>`: after the script, a typed task (`[Fallow: task T<n> …`) is reported
+//!   done with `task_report`, and `T<n> done` is appended to `file`.
 //! - `print <text>`
 //!
 //! After the script it prints `script done` and echoes every typed line as `got <line>`.
@@ -183,6 +185,7 @@ pub fn run(args: &[String]) -> ! {
     };
     let mut last = String::new();
     let mut echo_file: Option<String> = None;
+    let mut task_file: Option<String> = None;
     for (n, line) in script.lines().enumerate() {
         let n = n + 1;
         let line = line.trim();
@@ -230,6 +233,7 @@ pub fn run(args: &[String]) -> ! {
                 out(&line);
             }
             ("echo-to", _) => echo_file = Some(rest.to_string()),
+            ("report-tasks", _) => task_file = Some(rest.to_string()),
             ("write", _) => {
                 let _ = std::fs::write(rest, &last);
                 out(&format!("ok {n}"));
@@ -360,6 +364,30 @@ pub fn run(args: &[String]) -> ! {
                     }
                 }
                 out(&format!("got {l}"));
+                let task = l
+                    .split("[Fallow: task T")
+                    .nth(1)
+                    .and_then(|r| r.split(' ').next())
+                    .and_then(|n| n.parse::<u64>().ok());
+                if let (Some(n), Some(f), Some((c, _))) = (task, &task_file, &mut client) {
+                    let r = c.call(
+                        "task_report",
+                        json!({"task": n, "outcome": "done", "note": "merged"}),
+                    );
+                    let line = match r {
+                        Ok(_) => format!("T{n} done\n"),
+                        Err(e) => format!("T{n} report failed: {e}\n"),
+                    };
+                    use std::io::Write as _;
+                    if let Ok(mut file) = std::fs::OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open(f)
+                    {
+                        let _ = file.write_all(line.as_bytes());
+                    }
+                    out(line.trim_end());
+                }
             }
             Err(_) => loop {
                 std::thread::sleep(Duration::from_secs(3600));

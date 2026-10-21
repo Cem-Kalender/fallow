@@ -580,10 +580,29 @@ pub const COMMANDS: &[Command] = &[
         "g",
     )),
     on(cmd(
-        "orch.revoke",
-        "Revoke the permission",
+        "orch.delete",
+        "Revoke the permission / cancel the task",
         Orchestration,
         "Delete",
+    )),
+    on(cmd("orch.task_new", "New task", Orchestration, "n")),
+    on(cmd(
+        "orch.move_up",
+        "Move the task up",
+        Orchestration,
+        "Shift-↑",
+    )),
+    on(cmd(
+        "orch.move_down",
+        "Move the task down",
+        Orchestration,
+        "Shift-↓",
+    )),
+    on(cmd(
+        "orch.pause",
+        "Pause / resume the task",
+        Orchestration,
+        "Space",
     )),
     on(cmd("orch.signal", "Signal an event", Orchestration, "v")),
     on(cmd(

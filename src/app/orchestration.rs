@@ -64,6 +64,31 @@ impl Sessions for SessionManager {
     }
 }
 
+/// The hub's view of the app: the sessions, plus the project list for tools that name a project.
+pub struct AppView<'a> {
+    pub sessions: &'a SessionManager,
+    pub projects: &'a crate::projects::ProjectList,
+}
+
+impl Sessions for AppView<'_> {
+    fn info(&self, id: u32) -> Option<SessionInfo> {
+        self.sessions.info(id)
+    }
+    fn all(&self) -> Vec<SessionInfo> {
+        self.sessions.all()
+    }
+    fn verify(&self, id: u32, token: &str, peer: Peer) -> Result<(), String> {
+        self.sessions.verify(id, token, peer)
+    }
+    fn projects(&self) -> Vec<(crate::projects::ProjectId, String, bool)> {
+        self.projects
+            .projects
+            .iter()
+            .map(|p| (p.id, p.name.clone(), p.present))
+            .collect()
+    }
+}
+
 impl AppState {
     /// Creates the hub and opens the channel when the first session that would use them is
     /// about to start (FR-005, constitution II). Problems are remembered and shown once; the
@@ -123,7 +148,11 @@ impl AppState {
             }
             return false;
         };
-        let changed = hub.handle(ev, &self.sessions, Instant::now());
+        let view = AppView {
+            sessions: &self.sessions,
+            projects: &self.projects,
+        };
+        let changed = hub.handle(ev, &view, Instant::now());
         self.take_hub_notices();
         changed
     }
@@ -133,7 +162,11 @@ impl AppState {
         let Some(hub) = self.hub.as_mut() else {
             return false;
         };
-        let mut changed = hub.tick(&self.sessions, Instant::now());
+        let view = AppView {
+            sessions: &self.sessions,
+            projects: &self.projects,
+        };
+        let mut changed = hub.tick(&view, Instant::now());
         changed |= self.type_deliveries();
         self.take_hub_notices();
         changed
@@ -210,6 +243,12 @@ impl AppState {
                 ));
                 return Some(true);
             }
+            "orch.task_new" if !matches!(self.overlay, Overlay::Orch(_)) => {
+                return Some(self.new_task_prompt(OrchView {
+                    tab: Tab::Queue,
+                    ..OrchView::default()
+                }));
+            }
             "orch.grant_new" if !matches!(self.overlay, Overlay::Orch(_)) => {
                 self.overlay = Overlay::Orch(OrchView {
                     tab: Tab::Permissions,
@@ -247,23 +286,29 @@ impl AppState {
             {
                 let (sel, view) = (v.selected, v.clone());
                 let ids = crate::ui::orchestration::requests_shown(self);
-                let Some(&rid) = ids.get(sel.min(ids.len().saturating_sub(1))) else {
+                let Some(&r) = ids.get(sel.min(ids.len().saturating_sub(1))) else {
                     return Some(false);
                 };
-                match id {
-                    "orch.approve" => {
+                use crate::ui::orchestration::RequestRef;
+                match (id, r) {
+                    ("orch.approve", RequestRef::Delivery(rid)) => {
                         if let Some(h) = self.hub.as_mut() {
                             if let Err(e) = h.approve(rid, None) {
                                 self.say(e);
                             }
                         }
                     }
-                    "orch.reject" => {
+                    ("orch.approve" | "orch.reject", RequestRef::Task(t)) => {
+                        if let Some(h) = self.hub.as_mut() {
+                            h.decide_task(t, id == "orch.approve");
+                        }
+                    }
+                    ("orch.reject", RequestRef::Delivery(rid)) => {
                         if let Some(h) = self.hub.as_mut() {
                             h.reject(rid);
                         }
                     }
-                    "orch.edit" => {
+                    ("orch.edit", RequestRef::Delivery(rid)) => {
                         let text = self
                             .hub
                             .as_ref()
@@ -276,11 +321,57 @@ impl AppState {
                             error: None,
                         };
                     }
-                    _ => return Some(self.open_grant(Some(rid))),
+                    ("orch.edit", RequestRef::Task(t)) => {
+                        return Some(self.edit_task_prompt(t, true, view));
+                    }
+                    (_, r) => return Some(self.open_grant(Some(r))),
+                }
+            }
+            "orch.edit" if v.tab == Tab::Queue => {
+                let (sel, view) = (v.selected, v.clone());
+                let tasks = crate::ui::orchestration::tasks_shown(self);
+                let Some(&t) = tasks.get(sel) else {
+                    return Some(false);
+                };
+                return Some(self.edit_task_prompt(t, false, view));
+            }
+            "orch.task_new" => {
+                let view = OrchView {
+                    tab: Tab::Queue,
+                    ..v.clone()
+                };
+                return Some(self.new_task_prompt(view));
+            }
+            "orch.move_up" | "orch.move_down" | "orch.pause" if v.tab == Tab::Queue => {
+                let sel = v.selected;
+                let tasks = crate::ui::orchestration::tasks_shown(self);
+                let Some(&t) = tasks.get(sel) else {
+                    return Some(false);
+                };
+                if let Some(h) = self.hub.as_mut() {
+                    match id {
+                        "orch.pause" => h.toggle_pause(t),
+                        _ => {
+                            let step = if id == "orch.move_up" { -1 } else { 1 };
+                            h.tasks.move_by(t, step);
+                            if let Overlay::Orch(v) = &mut self.overlay {
+                                v.selected = (sel as isize + step)
+                                    .clamp(0, tasks.len() as isize - 1)
+                                    as usize;
+                            }
+                        }
+                    }
+                }
+            }
+            "orch.delete" if v.tab == Tab::Queue => {
+                let sel = v.selected;
+                let tasks = crate::ui::orchestration::tasks_shown(self);
+                if let (Some(&t), Some(h)) = (tasks.get(sel), self.hub.as_mut()) {
+                    h.cancel_task(t);
                 }
             }
             "orch.grant_new" => return Some(self.open_grant(None)),
-            "orch.revoke" if v.tab == Tab::Permissions => {
+            "orch.delete" if v.tab == Tab::Permissions => {
                 let i = v.selected;
                 if let Some(h) = self.hub.as_mut() {
                     if let Some(p) = h.permissions.list.get(i).map(|p| p.id) {
@@ -306,9 +397,11 @@ impl AppState {
                 };
             }
             "orch.clear" if v.tab == Tab::Queue => {
-                let i = v.selected;
+                let i = v
+                    .selected
+                    .checked_sub(crate::ui::orchestration::tasks_shown(self).len());
                 let keys = crate::ui::orchestration::events_shown(self);
-                if let (Some(k), Some(h)) = (keys.get(i), self.hub.as_mut()) {
+                if let (Some(k), Some(h)) = (i.and_then(|i| keys.get(i)), self.hub.as_mut()) {
                     h.clear_event(k);
                 }
             }
@@ -375,9 +468,117 @@ impl AppState {
 }
 
 impl AppState {
+    fn new_task_prompt(&mut self, view: OrchView) -> bool {
+        self.overlay = Overlay::Prompt {
+            kind: PromptKind::NewTask(view),
+            input: LineInput::default(),
+            error: None,
+        };
+        true
+    }
+
+    fn edit_task_prompt(&mut self, t: u32, approve: bool, view: OrchView) -> bool {
+        let text = self
+            .hub
+            .as_ref()
+            .and_then(|h| h.tasks.get(t))
+            .map(|t| t.text.clone())
+            .unwrap_or_default();
+        self.overlay = Overlay::Prompt {
+            kind: PromptKind::EditTask(t, approve, view),
+            input: LineInput::selected(&text),
+            error: None,
+        };
+        true
+    }
+
+    /// The engineer's new task: `#2 text…` or `claude@api text…`, with optional `after:a,b`
+    /// (events of the target's project).
+    pub(crate) fn submit_new_task(&mut self, line: &str) -> Result<u32, String> {
+        use crate::orchestration::tasks::Target;
+        let mut words: Vec<&str> = line.split_whitespace().collect();
+        if words.len() < 2 {
+            return Err("Type the target, then the task: #2 merge feature/x after:pr-1".into());
+        }
+        let target_word = words.remove(0);
+        let mut after = Vec::new();
+        words.retain(|w| match w.strip_prefix("after:") {
+            Some(list) => {
+                after.extend(
+                    list.split(',')
+                        .filter(|n| !n.is_empty())
+                        .map(str::to_string),
+                );
+                false
+            }
+            None => true,
+        });
+        let text = words.join(" ");
+        let (target, project) = if let Some(n) = target_word.strip_prefix('#') {
+            let id: u32 = n
+                .parse()
+                .map_err(|_| format!("{target_word}: not a session"))?;
+            let s = self
+                .sessions
+                .get(id)
+                .filter(|s| s.state.running())
+                .ok_or(format!("session #{id} is not running"))?;
+            (Target::Session(id), s.project)
+        } else if let Some((profile, project)) = target_word.split_once('@') {
+            let p = self
+                .projects
+                .projects
+                .iter()
+                .find(|p| p.name.eq_ignore_ascii_case(project))
+                .ok_or(format!("no project named {project}"))?;
+            (
+                Target::NextFree {
+                    profile: profile.to_string(),
+                    project: p.id,
+                    project_name: p.name.clone(),
+                },
+                p.id,
+            )
+        } else {
+            return Err(format!(
+                "{target_word}: a session (#2) or profile@project (claude@api)"
+            ));
+        };
+        for n in &after {
+            if !crate::orchestration::events::valid_name(n) {
+                return Err(format!("after:{n}: letters, digits and . _ : / # - only"));
+            }
+        }
+        let text =
+            crate::orchestration::board::clean_text(&text, crate::orchestration::tasks::TEXT_MAX)
+                .map_err(|(_, m)| m)?;
+        let pre = after
+            .into_iter()
+            .map(|n| (crate::orchestration::board::BoardId::Project(project), n))
+            .collect();
+        let view = AppView {
+            sessions: &self.sessions,
+            projects: &self.projects,
+        };
+        let hub = self
+            .hub
+            .as_mut()
+            .ok_or("Start an agent session with orchestration first")?;
+        let (id, _) = hub.create_task(
+            &view,
+            crate::orchestration::Party::User,
+            text,
+            target,
+            pre,
+            Instant::now(),
+        )?;
+        Ok(id)
+    }
+
     /// Opens the grant dialog, pre-filled from a request or from the first running sessions.
-    fn open_grant(&mut self, request: Option<u64>) -> bool {
+    fn open_grant(&mut self, request: Option<crate::ui::orchestration::RequestRef>) -> bool {
         use crate::ui::orchestration::GrantForm;
+        use crate::ui::orchestration::RequestRef;
         let back = match &self.overlay {
             Overlay::Orch(v) => v.clone(),
             _ => OrchView::default(),
@@ -389,13 +590,28 @@ impl AppState {
             .filter(|s| s.state.running())
             .map(|s| s.id)
             .collect();
-        let d = request.and_then(|r| self.hub.as_ref()?.deliveries.get(r).cloned());
-        let (from, to, tasks) = match &d {
-            Some(d) => (
-                d.from.session().unwrap_or(d.to),
-                d.to,
-                matches!(d.purpose, crate::orchestration::delivery::Purpose::Task(_)),
-            ),
+        let from_request = match request {
+            Some(RequestRef::Delivery(r)) => self.hub.as_ref().and_then(|h| {
+                let d = h.deliveries.get(r)?;
+                Some((d.from.session().unwrap_or(d.to), d.to, false))
+            }),
+            Some(RequestRef::Task(t)) => self.hub.as_ref().and_then(|h| {
+                let t = h.tasks.get(t)?;
+                let from = t.created_by.session()?;
+                let to = match &t.target {
+                    crate::orchestration::tasks::Target::Session(id) => *id,
+                    crate::orchestration::tasks::Target::NextFree { project, .. } => running
+                        .iter()
+                        .copied()
+                        .find(|s| self.sessions.get(*s).is_some_and(|s| s.project == *project))
+                        .unwrap_or(from),
+                };
+                Some((from, to, true))
+            }),
+            None => None,
+        };
+        let (from, to, tasks) = match from_request {
+            Some(v) => v,
             None => {
                 let Some(&a) = running.first() else {
                     self.say("Start agent sessions first");
@@ -493,14 +709,21 @@ impl AppState {
                     duration: std::time::Duration::from_secs(g.minutes * 60),
                 };
                 let (request, back) = (g.request, g.back.clone());
+                let request: Option<crate::ui::orchestration::RequestRef> = request;
                 let Some(hub) = self.hub.as_mut() else {
                     self.overlay = Overlay::Orch(back);
                     return true;
                 };
                 match hub.grant(&grant, Instant::now()) {
                     Ok(p) => {
-                        if let Some(r) = request {
-                            let _ = hub.approve(r, None);
+                        match request {
+                            Some(crate::ui::orchestration::RequestRef::Delivery(r)) => {
+                                let _ = hub.approve(r, None);
+                            }
+                            Some(crate::ui::orchestration::RequestRef::Task(t)) => {
+                                hub.decide_task(t, true);
+                            }
+                            None => {}
                         }
                         self.overlay = Overlay::Orch(back);
                         self.say(format!("Granted P{p}"));

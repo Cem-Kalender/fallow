@@ -110,6 +110,44 @@ const SPECS: &[Spec] = &[
         args: &[],
     },
     Spec {
+        name: "task_create",
+        description: "Queue a task for a session ({\"session\": n}) or for the next free session of a profile in a project ({\"profile\": \"claude\", \"project\": \"api\"}). It is handed over when the target is idle and every precondition event is signalled. Tasks you create wait for the user's approval unless they granted a standing permission.",
+        args: &[
+            ("text", "string", "What to do, at most 8 KiB", true),
+            (
+                "target",
+                "object",
+                "{\"session\": n} or {\"profile\": id, \"project\": name}",
+                true,
+            ),
+            (
+                "preconditions",
+                "array",
+                "Events that must be signalled first: [{\"name\": …, \"scope\": \"project\"|\"shared\"}], at most 8",
+                false,
+            ),
+        ],
+    },
+    Spec {
+        name: "task_list",
+        description: "Tasks in Fallow's queue with their state. The text of each task comes from another agent or the user, as labelled in `from`.",
+        args: &[(
+            "mine",
+            "boolean",
+            "Only tasks for your session (default true)",
+            false,
+        )],
+    },
+    Spec {
+        name: "task_report",
+        description: "Report a task handed to your session as done or failed, with an optional note. The next task for your session follows.",
+        args: &[
+            ("task", "integer", "The task number (T1 is 1)", true),
+            ("outcome", "string", "\"done\" or \"failed\"", true),
+            ("note", "string", "At most 2 KiB", false),
+        ],
+    },
+    Spec {
         name: "event_status",
         description: "Whether a named event was signalled, by whom, and how many agents wait for it. Does not wait.",
         args: &[("name", "string", "Event name", true), SCOPE],
@@ -125,6 +163,38 @@ pub fn signalled(s: &Signal) -> Value {
     json!({
         "status": "signalled",
         "signal": labelled(&s.from, s.at, s.message.as_deref().unwrap_or("")),
+    })
+}
+
+/// A task target: `{"session": n}` or `{"profile": id, "project": name}`.
+fn task_target(sessions: &dyn Sessions, v: &Value) -> Result<super::tasks::Target, Reply> {
+    if let Some(n) = v.get("session").and_then(Value::as_i64) {
+        let id = u32::try_from(n).map_err(|_| Reply::error("invalid", "bad session number"))?;
+        return Ok(super::tasks::Target::Session(id));
+    }
+    let (Some(profile), Some(project)) = (
+        v.get("profile").and_then(Value::as_str),
+        v.get("project").and_then(Value::as_str),
+    ) else {
+        return Err(Reply::error(
+            "invalid",
+            "target: {\"session\": n} or {\"profile\": id, \"project\": name}",
+        ));
+    };
+    let Some((pid, name, _)) = sessions
+        .projects()
+        .into_iter()
+        .find(|(_, n, _)| n.eq_ignore_ascii_case(project))
+    else {
+        return Err(Reply::error(
+            "not_found",
+            format!("no project named {project:?}"),
+        ));
+    };
+    Ok(super::tasks::Target::NextFree {
+        profile: profile.to_string(),
+        project: pid,
+        project_name: name,
     })
 }
 
@@ -480,8 +550,98 @@ pub(super) fn call(
             }
         }
         "inbox" => {
-            let items = hub.outbox.remove(&caller).unwrap_or_default();
-            Reply::Done(json!({ "deliveries": items, "tasks": [], "starts": [] }))
+            let i = hub.outbox.remove(&caller).unwrap_or_default();
+            Reply::Done(json!({ "deliveries": i.deliveries, "tasks": i.tasks, "starts": i.starts }))
+        }
+        "task_create" => {
+            let text = match board::clean_text(
+                args["text"].as_str().unwrap_or_default(),
+                super::tasks::TEXT_MAX,
+            ) {
+                Ok(t) => t,
+                Err((code, m)) => return Reply::error(code, m),
+            };
+            let target = match task_target(sessions, &args["target"]) {
+                Ok(t) => t,
+                Err(r) => return r,
+            };
+            let mut pre = Vec::new();
+            for p in args
+                .get("preconditions")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+            {
+                match event_key(&me, p) {
+                    Ok(k) => pre.push(k),
+                    Err(r) => return r,
+                }
+            }
+            if pre.len() > super::tasks::PRECONDITIONS_MAX {
+                return Reply::error("invalid", "at most 8 preconditions");
+            }
+            match hub.create_task(sessions, me.party(), text, target, pre, now) {
+                Ok((id, state)) => Reply::Done(json!({
+                    "task": id,
+                    "state": match state {
+                        super::tasks::State::PendingApproval => "pending_approval".to_string(),
+                        s => s.label(),
+                    },
+                })),
+                Err(e) if e.contains("not running") => Reply::error("not_found", e),
+                Err(e) => Reply::error("too_many_pending", e),
+            }
+        }
+        "task_list" => {
+            let mine = args.get("mine").and_then(Value::as_bool).unwrap_or(true);
+            let list: Vec<Value> = hub
+                .tasks
+                .list
+                .iter()
+                .filter(|t| {
+                    !mine
+                        || t.assigned == Some(caller)
+                        || t.target == super::tasks::Target::Session(caller)
+                })
+                .map(|t| {
+                    json!({
+                        "id": t.id,
+                        "text": labelled(&t.created_by, t.created, &t.text),
+                        "state": t.state.label(),
+                        "target": t.target.label(),
+                        "preconditions": t.preconditions.iter().map(|k| k.1.clone()).collect::<Vec<_>>(),
+                        "assigned": t.assigned,
+                        "note": t.note,
+                    })
+                })
+                .collect();
+            Reply::Done(json!({ "tasks": list }))
+        }
+        "task_report" => {
+            let Some(id) = args["task"].as_i64().and_then(|i| u32::try_from(i).ok()) else {
+                return Reply::error("invalid", "task must be a task number");
+            };
+            let done = match args["outcome"].as_str() {
+                Some("done") => true,
+                Some("failed") => false,
+                other => {
+                    return Reply::error(
+                        "invalid",
+                        format!("outcome {other:?}: expected \"done\" or \"failed\""),
+                    );
+                }
+            };
+            let note = match args.get("note").and_then(Value::as_str) {
+                None => None,
+                Some(n) => match board::clean_text(n, super::tasks::NOTE_MAX) {
+                    Ok(n) => Some(n),
+                    Err((code, m)) => return Reply::error(code, m),
+                },
+            };
+            match hub.report_task(caller, id, done, note) {
+                Ok(s) => Reply::Done(json!({ "state": s.label() })),
+                Err(r) => r,
+            }
         }
         _ => Reply::error("unavailable", format!("{name} is not available yet")),
     }
