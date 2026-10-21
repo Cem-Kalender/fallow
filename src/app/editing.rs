@@ -108,7 +108,9 @@ impl PromptKind {
             PromptKind::RenameProject(_) => "Project name",
             PromptKind::RelocateProject(_) => "New folder for this project",
             PromptKind::BoardPost(..) => "Write on the board (as you)",
-            PromptKind::SignalEvent(..) => "Signal an event as you: name [message]",
+            PromptKind::SignalEvent(..) => {
+                "Signal an event: type its name (and an optional message), then Enter"
+            }
             PromptKind::EditDelivery(..) => "Text to deliver (Enter approves)",
             PromptKind::NewTask(..) => {
                 "New task: #2 or claude@api, then the text; after:event waits for it"

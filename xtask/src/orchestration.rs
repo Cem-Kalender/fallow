@@ -370,7 +370,10 @@ fn run_all(bin: &Path, base: &Path) -> Result<i32, String> {
     let queue_ok = b_tasks.trim() == "T1 done"
         && tasks.contains("\"state\":\"done\"")
         && tasks.contains("merge feature/x")
-        && typed.contains("[Fallow: task T1 from the user's queue.] merge feature/x");
+        && typed.lines().any(|l| {
+            l.starts_with("[Fallow: task T1 from the user's queue.")
+                && l.ends_with("merge feature/x")
+        });
     // US5: the approved start became session #3, whose first task was handed over without
     // another prompt and reported done.
     let start_ok = a_start.contains("started as #3") && c_tasks.trim() == "T2 done";

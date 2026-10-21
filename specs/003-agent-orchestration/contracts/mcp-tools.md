@@ -28,7 +28,7 @@ shows the tools as `mcp__fallow__<tool>` and Gemini shows them as `mcp_fallow_<t
 | Tool | Arguments | Result | Spec |
 |---|---|---|---|
 | `whoami` | — | `{session, profile, project, boards: ["project","shared"]}` | FR-003 |
-| `session_list` | `scope?` | Sessions with `{session, profile, project, state, waiting_for?, connected}`; the caller is marked `"self": true` | US4, US5 |
+| `session_list` | `scope?` | Sessions with `{session, profile, project, state, connected}`, `state` one of `"starting"`, `"working"`, `"idle"` (at its prompt, waiting for input), `"exited"`; the caller is marked `"self": true` | US4, US5 |
 | `board_post` | `text`, `scope?` | `{id}` | FR-006, FR-007 |
 | `board_read` | `scope?`, `since_id?` (default 0), `limit?` (1..=100, default 20) | `{messages: [labelled + id], newest_id}`, oldest first | FR-006 |
 | `event_signal` | `name`, `scope?`, `message?` | `{signalled: true, waiters_woken: n}` | FR-009 |

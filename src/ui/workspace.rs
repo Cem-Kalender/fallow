@@ -946,4 +946,34 @@ mod tests {
             "{screen}"
         );
     }
+
+    #[test]
+    fn the_whole_label_is_readable_in_narrow_terminals() {
+        // 003 T055: the label wraps like the text below it.
+        use crate::session::profiles::builtins;
+        let mut s = AppState::new(None, Vec::new());
+        for id in [1, 2] {
+            s.sessions.sessions.push(crate::session::Session::detached(
+                id,
+                1,
+                builtins().remove(0),
+            ));
+        }
+        let mut h = crate::orchestration::Hub::new(Default::default());
+        h.call(
+            &s.sessions,
+            1,
+            "deliver",
+            serde_json::json!({"session": 2, "text": "hi"}),
+            std::time::Instant::now(),
+        );
+        s.hub = Some(h);
+        s.handle_key(key('o'));
+        let screen = render(100, 40, &mut s);
+        // The label's end is on screen (wrapped onto the next line), not cut off.
+        assert!(
+            screen.contains("Another agent wrote this") && screen.contains("user.]"),
+            "{screen}"
+        );
+    }
 }

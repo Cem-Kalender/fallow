@@ -268,10 +268,13 @@ fn requests_lines(state: &AppState, v: &OrchView, width: usize) -> Vec<Line<'sta
         ));
         if i == selected {
             lines.push(Line::styled("  text that would be typed:", dim));
-            lines.push(Line::styled(
-                format!("  {}", crate::orchestration::delivery::label(d)),
-                bold,
-            ));
+            // The label wraps like the text: it is part of what is typed (T055, FR-012).
+            for l in wrap(
+                &crate::orchestration::delivery::label(d),
+                width.saturating_sub(4),
+            ) {
+                lines.push(Line::styled(format!("  {l}"), bold));
+            }
             for l in wrap(&d.text, width.saturating_sub(4)) {
                 lines.push(Line::raw(format!("  {l}")));
             }

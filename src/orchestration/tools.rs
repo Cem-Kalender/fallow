@@ -346,6 +346,20 @@ pub fn rfc3339(t: SystemTime) -> String {
     )
 }
 
+/// A session's state in agents' words (T056): 002's "needs attention" means idle at its
+/// prompt, which agents read as a problem.
+pub fn agent_state(s: &SessionInfo) -> &'static str {
+    if !s.running {
+        "exited"
+    } else if s.idle {
+        "idle"
+    } else if s.state == "starting" {
+        "starting"
+    } else {
+        "working"
+    }
+}
+
 /// The labelled form of an item from `from` (research R-8).
 pub fn labelled(from: &Party, at: SystemTime, text: &str) -> Value {
     json!({ "from": from.json(), "at": rfc3339(at), "text": text, "note": NOTE })
@@ -404,7 +418,7 @@ pub(super) fn call(
                         "session": s.id,
                         "profile": s.profile,
                         "project": s.project_name,
-                        "state": s.state,
+                        "state": agent_state(&s),
                         "connected": hub.connected(s.id),
                         "self": s.id == caller,
                     })
