@@ -165,6 +165,13 @@ releases is a follow-up for tasks (R-12, product implication).
 
 Items that don't block planning or tasks, but block a release or a release label.
 
+### Findings of the manual runs (OPEN)
+
+Fixes found in the 003 manual run on Windows (2026-10-21) that block the next release:
+- 003 T055: the Requests tab cuts off the delivery label;
+- 003 T056: agents misread the session state "needs attention";
+- 002 T062: a git repository without commits offers a worktree that cannot be created.
+
 ### macOS hardware verification (OPEN)
 
 macOS ships labeled **"beta"** until it has been verified on a **physical Apple Silicon Mac** (M1

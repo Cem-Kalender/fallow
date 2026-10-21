@@ -358,6 +358,7 @@ folder; a dirty worktree can't be removed.
   - Partly done: the macOS and Linux runs are on the 001 checklist (plan.md, Release blockers,
     item 5), and quickstart.md "Results" maps each scenario to its automated evidence. **The
     Windows manual run itself is still open**: it needs a person at the terminal.
+- [ ] T062 [US6] Found in the 003 manual run (2026-10-21): in a git repository **without commits**, the start menu still offers "new worktree" first, and choosing it fails with git's "ambiguous argument 'HEAD'". Detect an unborn `HEAD` in `src/session/worktree.rs` (`git rev-parse --verify -q HEAD` fails), then in `src/app/workspace.rs` offer only "project folder" with the note "make a first commit to use worktrees", and keep the error message readable if `create` fails anyway. Test in `tests/worktree.rs` with `git init` and no commit. Blocks the next release.
 
 ---
 

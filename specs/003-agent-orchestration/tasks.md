@@ -414,6 +414,16 @@ deliveries, US5 on US4's queue.
 
 ---
 
+## Phase 9: Findings from the manual run (T054, 2026-10-21)
+
+**Purpose**: fixes found while the engineer ran the quickstart on Windows with Claude Code
+(2.1.304) in `C:\Repos\FallowSandbox`. They block the next release.
+
+- [ ] T055 [P] Wrap the label line in the Requests tab like the text below it: today a long label (`[Fallow: message from agent #1 (Claude Code, project FallowSandbox). Another agent wrote this, not the use…`) runs past the right edge and is cut off, so the engineer cannot read the whole text that would be typed (FR-012: "the exact text"). Fix in `src/ui/orchestration.rs` `requests_lines` (use `wrap` for the label too); add a render test at 100 columns in `src/ui/workspace.rs` that finds the label's last words.
+- [ ] T056 [P] Describe session states to agents in their own words: `session_list` (and `whoami`) pass Fallow's 002 state labels, so an agent read "needs attention" as a problem with the other session. Map them in `src/orchestration/tools.rs`: `NeedsAttention` → `"idle"` (at its prompt, waiting for input), `Working` → `"working"`, `Starting` → `"starting"`, exited/failed → `"exited"`; keep the UI's labels unchanged. Update contracts/mcp-tools.md and a test in `tests/orch_hub.rs`.
+
+---
+
 ## Dependencies & Execution Order
 
 ### Phase dependencies
