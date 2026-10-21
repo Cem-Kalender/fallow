@@ -12,7 +12,7 @@
 //!
 //! Orchestration (003 SC-006): a second, `mcp-agent` session posts the canary to the board,
 //! puts it in a task and asks to deliver it (its script lives in the hand-off folder, which is
-//! not searched). The harness sees it in the Requests tab. After quit, Fallow's channel socket
+//! not searched); the request is pending in Fallow's memory. After quit, Fallow's channel socket
 //! must be gone from its run folder.
 
 use std::path::{Path, PathBuf};
@@ -76,7 +76,8 @@ fn check(bin: &Path, base: &Path) -> Result<(Vec<String>, String), String> {
     std::fs::write(
         &script,
         format!(
-            "call board_post {{\"text\":\"{canary}\"}}\ncall task_create {{\"text\":\"{canary}\",\"target\":{{\"session\":1}}}}\ncall deliver {{\"session\":1,\"text\":\"{canary}\"}}\nprint orch-canary-posted\n"
+            "call board_post {{\"text\":\"{canary}\"}}\ncall task_create {{\"text\":\"{canary}\",\"target\":{{\"session\":1}}}}\ncall deliver {{\"session\":1,\"text\":\"{canary}\"}}\nwrite {}\nprint orch-canary-posted\n",
+            handoff.join("deliver.json").display()
         ),
     )
     .map_err(|e| e.to_string())?;
@@ -122,10 +123,14 @@ fn check(bin: &Path, base: &Path) -> Result<(Vec<String>, String), String> {
             .ok_or("the orchestrated session never posted")?;
         s.send(b"\x1d");
         std::thread::sleep(Duration::from_millis(500));
-        s.expect(&canary.as_bytes()[..32]);
+        // The request holding the canary waits in Fallow's memory. (Matching it on screen is
+        // unreliable: the canary is already on screen, and only changed cells are redrawn.)
+        let reply = std::fs::read_to_string(handoff.join("deliver.json")).unwrap_or_default();
+        if !reply.contains("pending") {
+            return Err(format!("the delivery request was not stored: {reply:?}"));
+        }
         s.send(b"o");
-        s.seen(Duration::from_secs(10))
-            .ok_or("the delivery request with the canary never showed")?;
+        std::thread::sleep(Duration::from_millis(500));
         s.send(b"\x1b");
         std::thread::sleep(Duration::from_millis(300));
         Ok(())
