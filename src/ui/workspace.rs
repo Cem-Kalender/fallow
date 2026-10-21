@@ -839,4 +839,59 @@ mod tests {
         s.handle_key(KeyEvent::new(KeyCode::Char('X'), KeyModifiers::SHIFT));
         assert!(render(140, 40, &mut s).contains("No standing permissions"));
     }
+
+    #[test]
+    fn tasks_are_queued_paused_cancelled_and_approved_in_the_view() {
+        // 003 US4 scenarios 1, 3, 5, 6; contracts/ui-commands.md "Queue".
+        use crate::session::profiles::builtins;
+        let mut s = AppState::new(None, Vec::new());
+        for id in [1, 2] {
+            s.sessions.sessions.push(crate::session::Session::detached(
+                id,
+                1,
+                builtins().remove(0),
+            ));
+        }
+        s.hub = Some(crate::orchestration::Hub::new(Default::default()));
+        s.handle_key(key('o'));
+        s.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+        assert!(render(140, 40, &mut s).contains("No tasks"));
+        s.handle_key(key('n'));
+        for c in "#1 merge feature/x after:pr-9".chars() {
+            s.handle_key(key(c));
+        }
+        s.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        let screen = render(140, 40, &mut s);
+        assert!(screen.contains("T1  queued"), "{screen}");
+        // A tick evaluates preconditions: blocked.
+        s.tick_hub();
+        let screen = render(140, 40, &mut s);
+        assert!(screen.contains("(blocked: pr-9)"), "{screen}");
+        s.handle_key(key(' '));
+        assert!(render(140, 40, &mut s).contains("[paused]"));
+        s.handle_key(KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE));
+        assert!(render(140, 40, &mut s).contains("cancelled (by the user)"));
+        // An agent's task waits in Requests; y approves it.
+        let mut h = s.hub.take().unwrap();
+        let r = h.call(
+            &s.sessions,
+            2,
+            "task_create",
+            serde_json::json!({"text": "write the changelog", "target": {"session": 1}}),
+            std::time::Instant::now(),
+        );
+        s.hub = Some(h);
+        assert!(matches!(r, crate::orchestration::Reply::Done(_)), "{r:?}");
+        s.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        s.handle_key(key('o'));
+        let screen = render(140, 40, &mut s);
+        assert!(screen.contains("new task T2"), "{screen}");
+        assert!(screen.contains("write the changelog"), "{screen}");
+        s.handle_key(key('y'));
+        let h = s.hub.as_ref().unwrap();
+        assert_eq!(
+            h.tasks.get(2).unwrap().state,
+            crate::orchestration::tasks::State::Queued
+        );
+    }
 }

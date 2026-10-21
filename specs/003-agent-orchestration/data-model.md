@@ -158,8 +158,11 @@ InProgress ──agent reports done──▶ Done
 any non-final ──engineer cancels──▶ Cancelled (never handed over)
 ```
 
-- "Free" for a target session: running, link connected, state `NeedsAttention` (002), not waiting
-  for an event, and no task of its own `InProgress`.
+- "Free" for a target session: running, state `NeedsAttention` (002), not waiting for an event,
+  and no task of its own `InProgress`. The link need not be connected: the task text is typed
+  like any delivery, and an agent without the tools can still do the work; it just cannot report.
+- A rejected or expired hand-over pauses the task (so it is not offered again at once); Space
+  resumes it.
 - The queue advances on every hub change and on 002 attention changes, in vector order; one task per
   target at a time.
 

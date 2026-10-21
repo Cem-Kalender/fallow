@@ -126,6 +126,25 @@ pub trait Sessions {
     /// Whether a connecting bridge really belongs to session `id`'s current run: its token
     /// matches and the kernel-reported peer is part of the session (research R-3).
     fn verify(&self, id: u32, token: &str, peer: Peer) -> Result<(), String>;
+    /// The projects agents may name (tasks for "next free session", session starts): id, name
+    /// and whether the folder is present. By default, the projects of the sessions.
+    fn projects(&self) -> Vec<(ProjectId, String, bool)> {
+        let mut v: Vec<(ProjectId, String, bool)> = Vec::new();
+        for s in self.all() {
+            if !v.iter().any(|(p, ..)| *p == s.project) {
+                v.push((s.project, s.project_name, true));
+            }
+        }
+        v
+    }
+}
+
+/// What a session is told through `inbox` (contracts/mcp-tools.md).
+#[derive(Debug, Clone, Default)]
+pub struct Inbox {
+    pub deliveries: Vec<Value>,
+    pub tasks: Vec<Value>,
+    pub starts: Vec<Value>,
 }
 
 /// A per-session token bucket (FR-008).
@@ -229,7 +248,8 @@ pub struct Hub {
     pub deliveries: delivery::Deliveries,
     pub permissions: permissions::Permissions,
     /// Outcomes for each requesting session, returned by its next `inbox` call.
-    pub outbox: HashMap<u32, Vec<Value>>,
+    pub outbox: HashMap<u32, Inbox>,
+    pub tasks: tasks::Tasks,
 }
 
 /// Where the call being handled came from.
@@ -266,6 +286,7 @@ impl Hub {
             deliveries: delivery::Deliveries::default(),
             permissions: permissions::Permissions::default(),
             outbox: HashMap::new(),
+            tasks: tasks::Tasks::default(),
             settings,
             channel: None,
             conns: HashMap::new(),
@@ -509,14 +530,357 @@ impl Hub {
         Ok(n)
     }
 
-    /// Queued and blocked tasks (counts line; the queue arrives with US4).
+    /// Queued (including blocked) and blocked tasks, for the counts line.
     pub fn queue_counts(&self) -> (usize, usize) {
-        (0, 0)
+        let open =
+            |t: &&tasks::Task| matches!(t.state, tasks::State::Queued | tasks::State::Blocked);
+        let queued = self.tasks.list.iter().filter(open).count();
+        let blocked = self
+            .tasks
+            .list
+            .iter()
+            .filter(|t| t.state == tasks::State::Blocked)
+            .count();
+        (queued, blocked)
+    }
+
+    /// Requests waiting for the engineer: tasks agents created.
+    pub fn pending_tasks(&self) -> impl Iterator<Item = &tasks::Task> {
+        self.tasks
+            .list
+            .iter()
+            .filter(|t| t.state == tasks::State::PendingApproval)
+    }
+
+    fn tell_task(&mut self, session: Option<u32>, t: &tasks::Task) {
+        if let Some(s) = session {
+            let mut v = serde_json::json!({ "task": t.id, "state": t.state.label() });
+            if let Some(n) = &t.note {
+                v["note"] = Value::from(n.clone());
+            }
+            self.outbox.entry(s).or_default().tasks.push(v);
+        }
+    }
+
+    fn task_changed(&mut self, id: u32, what: &str) {
+        let Some(t) = self.tasks.get(id).cloned() else {
+            return;
+        };
+        self.activity.add(
+            t.created_by.clone(),
+            Action::TaskChanged,
+            &format!("T{id} {}: {}", t.target.label(), t.text),
+            Some(what.to_string()),
+        );
+    }
+
+    /// Creates a task (FR-018). The engineer's tasks are queued at once; an agent's need the
+    /// engineer's approval unless a `CreateTask` permission covers them (US4 scenario 5).
+    pub fn create_task(
+        &mut self,
+        sessions: &dyn Sessions,
+        from: Party,
+        text: String,
+        target: tasks::Target,
+        preconditions: Vec<events::Key>,
+        now: Instant,
+    ) -> Result<(u32, tasks::State), String> {
+        let target_info = match &target {
+            tasks::Target::Session(id) => sessions
+                .info(*id)
+                .filter(|s| s.running)
+                .ok_or_else(|| format!("session #{id} is not running"))?,
+            tasks::Target::NextFree {
+                profile,
+                project,
+                project_name,
+            } => SessionInfo {
+                id: 0,
+                project: *project,
+                project_name: project_name.clone(),
+                profile_id: profile.clone(),
+                profile: profile.clone(),
+                state: String::new(),
+                running: false,
+                idle: false,
+            },
+        };
+        let approved = match from.session().and_then(|s| sessions.info(s)) {
+            None => true,
+            Some(src) => {
+                let p =
+                    self.permissions
+                        .cover(&src, &target_info, permissions::Act::CreateTask, now);
+                if let Some(p) = p {
+                    self.notices
+                        .push(format!("P{p} used: {} created a task", from.label()));
+                }
+                p.is_some()
+            }
+        };
+        let id = self
+            .tasks
+            .add(text, target, preconditions, from.clone(), approved, now)?;
+        if !approved {
+            self.notices.push(format!(
+                "{} asks to queue a task (o to review)",
+                from.label()
+            ));
+        }
+        self.task_changed(
+            id,
+            if approved {
+                "queued"
+            } else {
+                "waiting for approval"
+            },
+        );
+        let state = self
+            .tasks
+            .get(id)
+            .map_or(tasks::State::Queued, |t| t.state.clone());
+        Ok((id, state))
+    }
+
+    /// The engineer approves or rejects an agent's task.
+    pub fn decide_task(&mut self, id: u32, approve: bool) {
+        let creator = self.tasks.get(id).and_then(|t| t.created_by.session());
+        match self.tasks.get_mut(id) {
+            Some(t) if t.state == tasks::State::PendingApproval => {
+                if approve {
+                    t.state = tasks::State::Queued;
+                } else {
+                    t.state = tasks::State::Cancelled("rejected".into());
+                    t.finished = Some(std::time::SystemTime::now());
+                }
+            }
+            _ => return,
+        }
+        self.task_changed(id, if approve { "approved" } else { "rejected" });
+        if let Some(t) = self.tasks.get(id).cloned() {
+            self.tell_task(creator, &t);
+        }
+    }
+
+    /// The engineer pauses or resumes a task (paused tasks are skipped by the queue).
+    pub fn toggle_pause(&mut self, id: u32) {
+        if let Some(t) = self.tasks.get_mut(id) {
+            if !t.state.finished() {
+                t.paused = !t.paused;
+                let what = if t.paused { "paused" } else { "resumed" };
+                self.task_changed(id, what);
+            }
+        }
+    }
+
+    /// The engineer cancels a task: it is never handed over (US4 scenario 6). A hand-over still
+    /// waiting for approval is rejected with it.
+    pub fn cancel_task(&mut self, id: u32) {
+        let Some(t) = self.tasks.get(id).cloned() else {
+            return;
+        };
+        if t.state.finished() {
+            return;
+        }
+        if let Some(d) = t.delivery {
+            if self
+                .deliveries
+                .finish(d, delivery::State::Rejected)
+                .is_some()
+            {
+                self.activity.add(
+                    Party::User,
+                    Action::DeliveryOutcome,
+                    &format!("T{id} hand-over"),
+                    Some("cancelled with the task".into()),
+                );
+            }
+        }
+        self.tasks
+            .finish(id, tasks::State::Cancelled("by the user".into()));
+        self.task_changed(id, "cancelled");
+        if let Some(t) = self.tasks.get(id).cloned() {
+            self.tell_task(t.created_by.session(), &t);
+        }
+    }
+
+    /// The engineer edits a task's text (before it is handed over).
+    pub fn edit_task(&mut self, id: u32, text: String) -> Result<(), String> {
+        let t = self.tasks.get_mut(id).ok_or("no such task")?;
+        if !matches!(
+            t.state,
+            tasks::State::Queued | tasks::State::Blocked | tasks::State::PendingApproval
+        ) {
+            return Err(format!("T{id} is {}", t.state.label()));
+        }
+        t.text = text;
+        self.task_changed(id, "edited");
+        Ok(())
+    }
+
+    /// The assigned agent reports a task done or failed (FR-020).
+    pub fn report_task(
+        &mut self,
+        caller: u32,
+        id: u32,
+        done: bool,
+        note: Option<String>,
+    ) -> Result<tasks::State, Reply> {
+        let t = self
+            .tasks
+            .get_mut(id)
+            .ok_or_else(|| Reply::error("not_found", format!("no task T{id}")))?;
+        if t.assigned != Some(caller) || t.state != tasks::State::InProgress {
+            return Err(Reply::error(
+                "not_allowed",
+                format!("T{id} is not in progress in your session"),
+            ));
+        }
+        t.note = note.clone();
+        let state = if done {
+            tasks::State::Done
+        } else {
+            tasks::State::Failed(note.unwrap_or_default())
+        };
+        self.tasks.finish(id, state.clone());
+        self.task_changed(id, if done { "done" } else { "failed" });
+        if let Some(t) = self.tasks.get(id).cloned() {
+            self.tell_task(t.created_by.session(), &t);
+        }
+        Ok(state)
+    }
+
+    /// A hand-over delivery ended: delivered keeps the task in progress; rejected or expired
+    /// pauses it (so it is not offered again at once); a target that exited puts a "next free"
+    /// task back in the queue and fails a task for that session.
+    fn task_handover_ended(&mut self, id: u32, state: &delivery::State) {
+        let Some(t) = self.tasks.get_mut(id) else {
+            return;
+        };
+        if t.state.finished() {
+            return;
+        }
+        let what = match state {
+            delivery::State::Delivered => {
+                t.delivery = None;
+                return;
+            }
+            delivery::State::Rejected | delivery::State::Expired => {
+                t.state = tasks::State::Queued;
+                t.paused = true;
+                t.assigned = None;
+                t.delivery = None;
+                t.note = Some(format!("hand-over {}; Space resumes", state.label()));
+                "paused (hand-over not approved)"
+            }
+            delivery::State::Failed(_) => {
+                if matches!(t.target, tasks::Target::NextFree { .. }) {
+                    t.state = tasks::State::Queued;
+                    t.assigned = None;
+                    t.delivery = None;
+                    "back in the queue (target exited)"
+                } else {
+                    t.state = tasks::State::Failed("target exited".into());
+                    t.delivery = None;
+                    "failed (target exited)"
+                }
+            }
+            _ => return,
+        };
+        self.task_changed(id, what);
+    }
+
+    /// Hands over every task whose target is free and whose preconditions are met, in queue
+    /// order, one task per session at a time (FR-019).
+    pub fn advance(&mut self, sessions: &dyn Sessions, now: Instant) -> bool {
+        let mut changed = false;
+        let mut busy: Vec<u32> = self
+            .tasks
+            .list
+            .iter()
+            .filter(|t| t.state == tasks::State::InProgress)
+            .filter_map(|t| t.assigned)
+            .collect();
+        let all = sessions.all();
+        let ids: Vec<u32> = self.tasks.list.iter().map(|t| t.id).collect();
+        for id in ids {
+            let Some(t) = self.tasks.get(id).cloned() else {
+                continue;
+            };
+            if t.paused || !matches!(t.state, tasks::State::Queued | tasks::State::Blocked) {
+                continue;
+            }
+            let unmet = t.preconditions.iter().any(|k| {
+                self.events
+                    .map
+                    .get(k)
+                    .and_then(|e| e.signal.as_ref())
+                    .is_none()
+            });
+            let want = if unmet {
+                tasks::State::Blocked
+            } else {
+                tasks::State::Queued
+            };
+            if t.state != want {
+                if let Some(m) = self.tasks.get_mut(id) {
+                    m.state = want.clone();
+                }
+                changed = true;
+            }
+            if unmet {
+                continue;
+            }
+            let free = |s: &SessionInfo| {
+                s.running
+                    && s.idle
+                    && !busy.contains(&s.id)
+                    && self.events.waiting(s.id, now).is_none()
+            };
+            let pick = match &t.target {
+                tasks::Target::Session(sid) => all.iter().find(|s| s.id == *sid && free(s)),
+                tasks::Target::NextFree {
+                    profile, project, ..
+                } => all
+                    .iter()
+                    .find(|s| &s.profile_id == profile && s.project == *project && free(s)),
+            }
+            .map(|s| s.id);
+            let Some(to) = pick else {
+                continue;
+            };
+            let by_user = t.created_by == Party::User;
+            if let Ok((did, _)) = self.request_delivery(
+                sessions,
+                t.created_by.clone(),
+                to,
+                t.text.clone(),
+                delivery::Purpose::Task(id),
+                by_user,
+                now,
+            ) {
+                busy.push(to);
+                if let Some(m) = self.tasks.get_mut(id) {
+                    m.state = tasks::State::InProgress;
+                    m.assigned = Some(to);
+                    m.delivery = Some(did);
+                    m.started = Some(std::time::SystemTime::now());
+                }
+                self.task_changed(id, &format!("handed to #{to}"));
+                if let Some(t) = self.tasks.get(id).cloned() {
+                    let mut v = serde_json::json!({ "task": id, "state": "in progress" });
+                    v["text"] = tools::labelled(&t.created_by, t.created, &t.text);
+                    self.outbox.entry(to).or_default().tasks.push(v);
+                }
+                changed = true;
+            }
+        }
+        changed
     }
 
     /// Requests waiting for the engineer (hint bar, counts line).
     pub fn pending_requests(&self) -> usize {
-        self.deliveries.pending().count()
+        self.deliveries.pending().count() + self.pending_tasks().count()
     }
 
     /// Records a finished delivery's outcome for its requester and the log.
@@ -525,12 +889,16 @@ impl Hub {
             return;
         };
         let outcome = d.state.label();
+        // A task's hand-over decides the task's fate (US4).
+        if let delivery::Purpose::Task(t) = d.purpose {
+            self.task_handover_ended(t, &d.state);
+        }
         if let (Some(s), delivery::Purpose::Message) = (d.from.session(), &d.purpose) {
             let mut v = serde_json::json!({ "id": d.id, "to": d.to, "state": outcome });
             if d.edited {
                 v["edited"] = Value::Bool(true);
             }
-            self.outbox.entry(s).or_default().push(v);
+            self.outbox.entry(s).or_default().deliveries.push(v);
         }
         self.activity.add(
             d.from.clone(),
@@ -815,6 +1183,23 @@ impl Hub {
             );
             changed = true;
         }
+        // Agents' tasks nobody approved in time.
+        let timeout = std::time::Duration::from_secs(self.settings.request_timeout_s);
+        let stale: Vec<u32> = self
+            .pending_tasks()
+            .filter(|t| now.saturating_duration_since(t.created_at) >= timeout)
+            .map(|t| t.id)
+            .collect();
+        for id in stale {
+            self.tasks
+                .finish(id, tasks::State::Cancelled("expired".into()));
+            self.task_changed(id, "expired");
+            if let Some(t) = self.tasks.get(id).cloned() {
+                self.tell_task(t.created_by.session(), &t);
+            }
+            changed = true;
+        }
+        changed |= self.advance(sessions, now);
         let mut progress = Vec::new();
         for w in &mut self.events.waits {
             if let (Some(token), Some(conn)) = (&w.progress, w.conn) {
@@ -849,6 +1234,17 @@ impl Hub {
             self.deliveries
                 .finish(d, delivery::State::Failed("target exited".into()));
             self.delivery_outcome(d);
+        }
+        // Tasks in progress there whose hand-over was already typed.
+        let running: Vec<u32> = self
+            .tasks
+            .list
+            .iter()
+            .filter(|t| t.assigned == Some(id) && t.state == tasks::State::InProgress)
+            .map(|t| t.id)
+            .collect();
+        for t in running {
+            self.task_handover_ended(t, &delivery::State::Failed("target exited".into()));
         }
         if let Some(l) = self.links.get_mut(&id) {
             if let Some(conn) = l.conn.take() {
