@@ -95,6 +95,7 @@ pub fn run(
                 }
                 AppEvent::SessionExited(id, code) => state.session_exited(id, code),
                 AppEvent::Wake => true,
+                AppEvent::Hub(i) => state.hub_event(i),
             };
             if state.quit {
                 break;
@@ -112,6 +113,7 @@ pub fn run(
         dirty |= state.poll_background();
         dirty |= state.tick_sessions();
         dirty |= state.tick();
+        dirty |= state.tick_hub();
     }
     super::diag::flush();
     Ok(())

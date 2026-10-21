@@ -6,6 +6,7 @@ pub mod editing;
 pub mod event_loop;
 pub mod events;
 pub mod keymap;
+pub mod orchestration;
 pub mod project_list;
 pub mod state;
 pub mod workspace;
@@ -117,6 +118,7 @@ pub fn run(opts: &Options) -> (ExitCode, RunStats) {
         attention_delay: std::time::Duration::from_millis(cfg.settings.sessions.attention_delay_ms),
         worktree_root: cfg.settings.sessions.worktree_root.clone(),
     };
+    state.orch_settings = cfg.settings.orchestration.clone();
     let profiles_text = paths.dir.as_ref().and_then(|d| {
         std::fs::read_to_string(d.join(crate::session::profiles::PROFILES_FILE)).ok()
     });

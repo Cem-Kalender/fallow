@@ -250,3 +250,65 @@ fn a_failing_command_shows_its_error_in_the_session_only() {
     assert_eq!(s.sessions.sessions.len(), 1);
     let _ = std::fs::remove_dir_all(&d);
 }
+
+#[test]
+fn orchestration_style_per_profile() {
+    // 003 T005, contracts/config.md "profiles.toml: orchestration".
+    use fallow::session::profiles::Style;
+    let styles: Vec<Style> = builtins().into_iter().map(|p| p.orchestration).collect();
+    assert_eq!(
+        styles,
+        [
+            Style::Claude,
+            Style::Codex,
+            Style::Gemini,
+            Style::None,
+            Style::None
+        ]
+    );
+    let text = r#"
+[[profile]]
+id = "claude"
+name = "Claude (opus)"
+command = "claude"
+
+[[profile]]
+id = "wrapped"
+name = "Wrapped Codex"
+command = "my-codex"
+orchestration = "codex"
+
+[[profile]]
+id = "plain"
+name = "Plain"
+command = "plain"
+
+[[profile]]
+id = "bad"
+name = "Bad"
+command = "bad"
+orchestration = "telepathy"
+"#;
+    let (profiles, notices) = load(Some(("profiles.toml", text)));
+    let get = |id: &str| {
+        profiles
+            .iter()
+            .find(|p| p.id == id)
+            .map(|p| p.orchestration)
+    };
+    assert_eq!(
+        get("claude"),
+        Some(Style::Claude),
+        "a replaced built-in keeps its style"
+    );
+    assert_eq!(get("wrapped"), Some(Style::Codex));
+    assert_eq!(
+        get("plain"),
+        Some(Style::None),
+        "user profiles default to none"
+    );
+    assert_eq!(get("bad"), None, "an invalid value drops the entry");
+    assert_eq!(notices.len(), 1, "{notices:?}");
+    assert_eq!(notices[0].line, Some(22));
+    assert!(notices[0].message.contains("telepathy"));
+}

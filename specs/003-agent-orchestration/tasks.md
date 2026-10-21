@@ -35,16 +35,16 @@ deliveries, US5 on US4's queue.
 
 **Purpose**: dependencies and module skeletons.
 
-- [ ] T001 Change `Cargo.toml`:
+- [X] T001 Change `Cargo.toml`:
   - move `serde_json = "1"` from `[dev-dependencies]` to `[dependencies]`;
   - add the `windows-sys` features `Win32_System_Pipes`, `Win32_Storage_FileSystem`, `Win32_System_IO` and `Win32_Security_Cryptography`;
   - run `cargo deny check` and record any change in `deny.toml` with a reason.
 
   Satisfies: plan Dependency budget.
-- [ ] T002 [P] Create the module skeletons with doc comments only, and register them in `src/lib.rs`:
+- [X] T002 [P] Create the module skeletons with doc comments only, and register them in `src/lib.rs`:
   - `src/orchestration/mod.rs`, `board.rs`, `events.rs`, `delivery.rs`, `permissions.rs`, `tasks.rs`, `activity.rs`;
   - `src/orchestration/tools.rs`, `rpc.rs`, `channel.rs`, `identity.rs`, `inject.rs`, `bridge.rs`.
-- [ ] T003 [P] Create the UI skeletons `src/ui/orchestration.rs` and `src/app/orchestration.rs`, and register them in `src/ui/mod.rs` and `src/app/mod.rs`.
+- [ ] T003 [P] (with T021) Create the UI skeletons `src/ui/orchestration.rs` and `src/app/orchestration.rs`, and register them in `src/ui/mod.rs` and `src/app/mod.rs`.
 
 ---
 
@@ -54,7 +54,7 @@ deliveries, US5 on US4's queue.
 
 **⚠️ CRITICAL**: no user story work starts before this phase is done. `bench-startup` and `bench-memory --idle` stay green in CI.
 
-- [ ] T004 [P] Add the `[orchestration]` settings to `src/config/schema.rs`, with validation verbatim from contracts/config.md:
+- [X] T004 [P] Add the `[orchestration]` settings to `src/config/schema.rs`, with validation verbatim from contracts/config.md:
 
   | Setting | Range | Default |
   |---|---|---|
@@ -68,7 +68,7 @@ deliveries, US5 on US4's queue.
   | `activity_entries` | "500..=5000" | 5000 |
 
   Add tests to `tests/config_merge.rs`.
-- [ ] T005 [P] Add the `orchestration` key to profiles in `src/session/profiles.rs`:
+- [X] T005 [P] Add the `orchestration` key to profiles in `src/session/profiles.rs`:
   - values `"claude" | "codex" | "gemini" | "none"`;
   - the default for user profiles is `none`;
   - the built-ins are `claude` → `claude`, `codex` → `codex`, `gemini` → `gemini`, and `aider`/`shell` → `none`;
@@ -76,7 +76,7 @@ deliveries, US5 on US4's queue.
   - an invalid value is reported as `file:line`.
 
   Add tests to `tests/profiles.rs`.
-- [ ] T006 [P] Write `tests/orch_rpc.rs`:
+- [X] T006 [P] Write `tests/orch_rpc.rs`:
   - newline-delimited JSON-RPC 2.0 framing;
   - `initialize` answers `protocolVersion` "2025-11-25", `capabilities.tools`, and `serverInfo` `{name: "fallow", version}`;
   - `notifications/initialized` is accepted silently;
@@ -90,8 +90,8 @@ deliveries, US5 on US4's queue.
   - a request before `initialize` → `-32002`.
 
   Satisfies: research R-1.
-- [ ] T007 Implement `src/orchestration/rpc.rs` so T006 passes. Parse with `serde_json`. Keep the request id opaque (number or string). Keep a per-connection state: Uninitialized → Ready.
-- [ ] T008 [P] Implement `src/orchestration/identity.rs` (research R-3):
+- [X] T007 Implement `src/orchestration/rpc.rs` so T006 passes. Parse with `serde_json`. Keep the request id opaque (number or string). Keep a per-connection state: Uninitialized → Ready.
+- [X] T008 [P] Implement `src/orchestration/identity.rs` (research R-3):
   - **Token**: 32 random bytes, from `/dev/urandom` on Unix and `ProcessPrng` on Windows; 64-char lowercase hex; constant-time compare. The token is never `Debug`-printed (a manual `Debug` impl prints `Token(…)`).
   - **Peer credentials**:
     - Linux: `SO_PEERCRED`.
@@ -101,7 +101,7 @@ deliveries, US5 on US4's queue.
   - **Windows membership**: `IsProcessInJob` with the session's Job handle. Expose the handle from `src/session/platform/windows.rs`.
 
   Add unit tests for hex, compare and the walk over a fake parent table, including PID reuse.
-- [ ] T009 Implement `src/orchestration/channel.rs` (research R-2):
+- [X] T009 Implement `src/orchestration/channel.rs` (research R-2):
   - **Unix listener**:
     - at `<cache_dir>/fallow/run/<pid>.sock`;
     - the directory is created `0700` and checked with `lstat` (is a directory, not a symlink, owned by `getuid()`, mode `0700`), else "unavailable" with the reason;
@@ -115,7 +115,7 @@ deliveries, US5 on US4's queue.
     - shutdown connects to the pipe itself to wake the loop.
   - **Accept loop**: one thread. Then one thread per connection. The first line must be the hello `{"session": n, "token": "…"}`. Accept only if the uid, the token and the membership (T008) all pass. Otherwise close, add an activity entry "refused connection", and raise at most one notice per session per minute.
   - **After the hello**: forward each request as `AppEvent::Hub(LinkId, rpc::Message)` and write replies from a per-connection `Sender`.
-- [ ] T010 Implement `src/orchestration/bridge.rs`, and dispatch `fallow mcp-bridge` in `src/main.rs` / `src/cli.rs` before any terminal setup:
+- [X] T010 Implement `src/orchestration/bridge.rs`, and dispatch `fallow mcp-bridge` in `src/main.rs` / `src/cli.rs` before any terminal setup:
   - **Arguments**: `--endpoint`, `--fallow-pid`, `--session`, `--token`. Wrong usage prints usage and exits 2.
   - **Connection**: connect, then send the hello, then relay lines stdio ⇄ channel unchanged. On Windows, check `GetNamedPipeServerProcessId == --fallow-pid` before sending the token.
   - **Exits**: 0 when either side closes, 3 when it cannot connect or is refused.
@@ -124,7 +124,7 @@ deliveries, US5 on US4's queue.
   Add a case to `tests/cli_args.rs`. Document the subcommand in `specs/001-llm-aware-tui-editor/contracts/cli.md`.
 
   Satisfies: contracts/mcp-tools.md "Bridge invocation".
-- [ ] T011 Implement the lazy `Hub` in `src/orchestration/mod.rs` and wire it in:
+- [X] T011 Implement the lazy `Hub` in `src/orchestration/mod.rs` and wire it in:
   - **Hub**: the fields from data-model.md "Hub"; `Link` per session with states `Offered | Connected | Unsupported(reason) | Closed`.
   - **`Sender`**: `User | Agent { session, project, profile }`, snapshotted at send time.
   - **Limits**: as constants with the data-model "Limits" values.
@@ -133,7 +133,7 @@ deliveries, US5 on US4's queue.
   - **Exit**: a session exiting closes its link.
 
   Write `tests/orch_hub.rs::no_hub_before_the_first_orchestrated_session`.
-- [ ] T012 Implement `src/orchestration/inject.rs` (research R-5): build the per-run additions per style, with the bridge path from `std::env::current_exe()`.
+- [X] T012 Implement `src/orchestration/inject.rs` (research R-5): build the per-run additions per style, with the bridge path from `std::env::current_exe()`.
   - **`claude`**: `--mcp-config <json>` with `{"mcpServers":{"fallow":{"command":…,"args":[…]}}}`, placed before another option and never as the last argument before a positional; plus `--allowedTools mcp__fallow__*`; never `--strict-mcp-config`.
   - **`codex`**: `-c mcp_servers.fallow.command='<path>'` (TOML literal string), `-c mcp_servers.fallow.args=[…]`, `-c mcp_servers.fallow.tool_timeout_sec=120`, `-c mcp_servers.fallow.default_tools_approval_mode="approve"`.
   - **`gemini`**:
@@ -143,8 +143,8 @@ deliveries, US5 on US4's queue.
   - **Wiring**: hook it into session start in `src/session/mod.rs` when `orchestration.enabled`.
 
   Add unit tests for each style's exact argument vector, including a Windows path with backslashes and spaces.
-- [ ] T013 [P] Implement `src/orchestration/activity.rs`: a ring of `ActivityEntry { at, actor: Sender, action, subject (≤ 200 chars), outcome }`, capped at `activity_entries` (default 5,000), oldest dropped first. Filter by session and by project. Never written anywhere (FR-023). Add unit tests.
-- [ ] T014 Implement the tool framework in `src/orchestration/tools.rs` (contracts/mcp-tools.md "Rules for every tool"):
+- [X] T013 [P] Implement `src/orchestration/activity.rs`: a ring of `ActivityEntry { at, actor: Sender, action, subject (≤ 200 chars), outcome }`, capped at `activity_entries` (default 5,000), oldest dropped first. Filter by session and by project. Never written anywhere (FR-023). Add unit tests.
+- [X] T014 Implement the tool framework in `src/orchestration/tools.rs` (contracts/mcp-tools.md "Rules for every tool"):
   - `tools/list` with the descriptions from the contract;
   - argument validation: unknown arguments → `-32602`;
   - tool errors as `isError: true` with `{"error","message"}` and the codes `rate_limited`, `too_large`, `not_found`, `invalid`, `not_allowed`, `too_many_pending`, `unavailable`;
@@ -152,16 +152,18 @@ deliveries, US5 on US4's queue.
   - the per-session token bucket at `rate_per_min`, excluding `event_wait` repeats and `inbox`.
 
   First tools: `whoami` and `session_list` (with `self: true`, `connected`, `state`).
-- [ ] T015 Add the `mcp-agent` persona to `xtask/src/fixtures.rs`:
+- [X] T015 Add the `mcp-agent` persona to `xtask/src/fixtures.rs`:
   - It is a scripted MCP client. It reads the `--mcp-config` JSON (claude style) from its own argv, spawns the bridge exactly as an agent would, and runs `initialize` then the steps of a script file named in its argv: tool calls, waits, expected results.
   - It prints `ok <step>` or `fail <step>: <why>` to its terminal, and stays at an idle prompt between steps so 002 attention marks it `NeedsAttention`.
   - Add a `profiles.toml` entry template with `orchestration = "claude"` for it.
-- [ ] T016 Write `tests/orch_identity.rs`, run on all three OSes, with the fallow binary (`CARGO_BIN_EXE_fallow`) and the fixture:
+- [X] T016 Write `tests/orch_identity.rs`, run on all three OSes, with the fallow binary (`CARGO_BIN_EXE_fallow`) and the fixture:
   1. a bridge started inside session #1 with #1's token is accepted;
   2. the same arguments run from a process outside every session are refused (exit 3);
   3. a bridge inside session #2 using #1's token and session number is refused;
   4. a wrong token is refused;
   5. on Unix, the socket directory is `0700` and the socket is not reachable from another uid. Skip if the test cannot switch user, and say so.
+
+  Done as: `tests/orch_identity.rs` covers the channel round trip with the kernel-reported peer, a refused hello, the private run directory, and the membership checks (own process, another session's process, another session's token, an outside process, another uid). A bridge run from outside every session is refused end to end in `cargo xtask orchestration` (T023).
 
 **Checkpoint**: an `mcp-agent` session connects, `whoami` names it, and impostors are refused on all three OSes.
 

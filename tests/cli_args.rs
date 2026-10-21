@@ -232,3 +232,51 @@ fn snapshot_hold_stays_alive() {
     assert!(started.elapsed() >= std::time::Duration::from_secs(1));
     assert!(serde_json::from_str::<serde_json::Value>(stdout(&o).trim()).is_ok());
 }
+
+#[test]
+fn mcp_bridge_is_internal_and_never_starts_the_tui() {
+    // 003 T010, contracts/mcp-tools.md "Bridge invocation".
+    let o = fallow(&["mcp-bridge"]);
+    assert_eq!(code(&o), 2, "{}", stderr(&o));
+    assert!(stderr(&o).contains("--endpoint"));
+    assert!(
+        stdout(&o).is_empty(),
+        "stdout carries only relayed messages"
+    );
+    let o = fallow(&[
+        "mcp-bridge",
+        "--endpoint",
+        "x",
+        "--fallow-pid",
+        "1",
+        "--session",
+        "1",
+        "--token",
+        "zz",
+    ]);
+    assert_eq!(code(&o), 2);
+    // Nothing listens there: exit 3 (cannot connect).
+    let t = "ab".repeat(32);
+    let endpoint = if cfg!(windows) {
+        r"\.\pipe\fallow-nobody-here".to_string()
+    } else {
+        temp_dir("bridge")
+            .join("none.sock")
+            .to_string_lossy()
+            .into_owned()
+    };
+    let o = fallow(&[
+        "mcp-bridge",
+        "--endpoint",
+        &endpoint,
+        "--fallow-pid",
+        "1",
+        "--session",
+        "1",
+        "--token",
+        &t,
+    ]);
+    assert_eq!(code(&o), 3, "{}", stderr(&o));
+    assert!(stdout(&o).is_empty());
+    assert!(!stderr(&o).contains(&t), "the token is never printed");
+}

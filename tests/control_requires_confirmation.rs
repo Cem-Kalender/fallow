@@ -34,6 +34,7 @@ fn long_running(m: &mut SessionManager) -> u32 {
             args: vec!["-n".into(), "120".into(), "127.0.0.1".into()],
             env: vec![],
             builtin: false,
+            orchestration: Default::default(),
         }
     } else {
         AgentProfile {
@@ -43,6 +44,7 @@ fn long_running(m: &mut SessionManager) -> u32 {
             args: vec!["120".into()],
             env: vec![],
             builtin: false,
+            orchestration: Default::default(),
         }
     };
     m.start(

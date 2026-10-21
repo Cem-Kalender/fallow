@@ -120,6 +120,40 @@ pub fn config_dir_for(
     }
 }
 
+/// The platform cache directory (without the `fallow` component), by the same rules as
+/// `config_dir_for`: `%LOCALAPPDATA%`, `~/Library/Caches`, or `$XDG_CACHE_HOME` (absolute) else
+/// `~/.cache`. Fallow keeps only transient run files there (003 contracts/config.md).
+pub fn cache_dir_for(
+    os: Os,
+    home: Option<OsString>,
+    xdg_cache_home: Option<OsString>,
+    localappdata: Option<OsString>,
+) -> Option<PathBuf> {
+    let set = |v: Option<OsString>| v.filter(|v| !v.is_empty()).map(PathBuf::from);
+    match os {
+        Os::Windows => set(localappdata),
+        Os::MacOs => set(home).map(|h| h.join("Library").join("Caches")),
+        Os::Linux => set(xdg_cache_home)
+            .filter(|p| p.as_os_str().as_encoded_bytes().first() == Some(&b'/'))
+            .or_else(|| set(home).map(|h| h.join(".cache"))),
+    }
+}
+
+/// `<platform cache dir>/fallow/run/`: the orchestration channel and per-run agent files live
+/// here while Fallow runs (003 research R-2).
+pub fn run_dir() -> Option<PathBuf> {
+    let os = if cfg!(windows) {
+        Os::Windows
+    } else if cfg!(target_os = "macos") {
+        Os::MacOs
+    } else {
+        Os::Linux
+    };
+    let var = std::env::var_os;
+    cache_dir_for(os, var("HOME"), var("XDG_CACHE_HOME"), var("LOCALAPPDATA"))
+        .map(|d| d.join("fallow").join("run"))
+}
+
 /// The merged configuration plus every problem found while loading it.
 #[derive(Debug, Clone)]
 pub struct Config {

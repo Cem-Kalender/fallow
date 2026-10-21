@@ -24,6 +24,36 @@ use profiles::AgentProfile;
 use pty::{Pty, SpawnSpec};
 use term::{Signal, Term};
 
+/// A session's part in orchestration (003): how it was connected for this run.
+#[derive(Debug, Clone, Default)]
+pub struct OrchLink {
+    /// The bridge token of the current run; `None` when the session runs without orchestration.
+    pub token: Option<crate::orchestration::identity::Token>,
+    /// Why the session runs without orchestration ("profile", "disabled", …).
+    pub unsupported: Option<String>,
+    /// The agent's start time as `identity::proc_info` reports it (Unix membership check).
+    pub agent_start: Option<u64>,
+    /// A per-run file to remove when the agent exits (Gemini settings).
+    pub file: Option<PathBuf>,
+}
+
+impl OrchLink {
+    fn cleanup(&mut self) {
+        if let Some(f) = self.file.take() {
+            let _ = std::fs::remove_file(f);
+        }
+        self.token = None;
+    }
+}
+
+impl Drop for OrchLink {
+    fn drop(&mut self) {
+        if let Some(f) = self.file.take() {
+            let _ = std::fs::remove_file(f);
+        }
+    }
+}
+
 /// data-model.md "SessionState" (the US2 states `NeedsAttention` and `Stopping` are driven by
 /// the attention and control logic).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -108,9 +138,35 @@ pub struct Session {
     /// Signals from the reader thread (bell, notifications, titles), kept apart from the
     /// terminal so collecting them never waits on parsing.
     signals: Arc<Mutex<Vec<Signal>>>,
+    /// Orchestration (003).
+    pub orch: OrchLink,
+    /// When the user last sent a key or paste to this session (003 FR-014).
+    pub last_key: Option<Instant>,
 }
 
 impl Session {
+    /// Whether process `pid` (a bridge that connected) belongs to this session's current run
+    /// (003 research R-3). Unix: the agent's POSIX session or its descendants; Windows: its Job.
+    pub fn contains(&self, pid: u32) -> bool {
+        let Some(p) = &self.pty else {
+            return false;
+        };
+        #[cfg(windows)]
+        {
+            p.contains(pid)
+        }
+        #[cfg(unix)]
+        {
+            let _ = p;
+            match (self.pid, self.orch.agent_start) {
+                (Some(agent), Some(start)) => {
+                    crate::orchestration::identity::in_session(pid, (agent, start))
+                }
+                _ => false,
+            }
+        }
+    }
+
     pub fn label(&self) -> String {
         match self.workdir.branch() {
             Some(b) => format!(
@@ -156,6 +212,8 @@ impl Session {
             selection: None,
             output_pending: None,
             signals: Arc::new(Mutex::new(Vec::new())),
+            orch: OrchLink::default(),
+            last_key: None,
         }
     }
 
@@ -240,6 +298,11 @@ pub struct SessionManager {
     pub limits: Limits,
     /// Sessions started in this run (for `--bench-stats`).
     pub started: u64,
+    /// How agents reach the orchestration channel (003); `None` until the hub exists.
+    pub bridge: Option<crate::orchestration::inject::Bridge>,
+    /// Why sessions run without orchestration when `bridge` is `None` (disabled, or the
+    /// channel could not be opened).
+    pub orch_unavailable: Option<String>,
 }
 
 /// Where and how big to start.
@@ -311,6 +374,8 @@ impl SessionManager {
             selection: None,
             output_pending: None,
             signals: Arc::new(Mutex::new(Vec::new())),
+            orch: OrchLink::default(),
+            last_key: None,
         };
         self.spawn_into(&mut s, req.rows, req.cols, events);
         self.sessions.push(s);
@@ -328,11 +393,15 @@ impl SessionManager {
         };
         let mut args = resolved.prefix_args;
         args.extend(s.profile.args.iter().cloned());
+        let mut env = s.profile.env.clone();
+        s.orch.cleanup();
+        s.orch.unsupported = None;
+        self.orchestrate(s, &mut args, &mut env);
         let spec = SpawnSpec {
             program: resolved.program,
             args,
             cwd: s.cwd.clone(),
-            env: s.profile.env.clone(),
+            env,
             rows,
             cols,
         };
@@ -348,11 +417,70 @@ impl SessionManager {
         ) {
             Ok(p) => {
                 s.pid = p.pid;
+                #[cfg(unix)]
+                {
+                    s.orch.agent_start = p
+                        .pid
+                        .and_then(crate::orchestration::identity::proc_info)
+                        .map(|i| i.start);
+                }
                 s.pty = Some(p);
                 s.attention = None;
                 s.set_state(SessionState::Starting);
             }
             Err(e) => s.set_state(SessionState::Failed(e)),
+        }
+    }
+
+    /// Adds the per-run MCP configuration for the session's profile (003 research R-5), or
+    /// records why it runs without orchestration.
+    fn orchestrate(
+        &self,
+        s: &mut Session,
+        args: &mut Vec<String>,
+        env: &mut Vec<(String, String)>,
+    ) {
+        use crate::orchestration::{identity::Token, inject};
+        use profiles::Style;
+        if s.profile.orchestration == Style::None {
+            s.orch.unsupported = Some("profile".into());
+            return;
+        }
+        let Some(b) = &self.bridge else {
+            s.orch.unsupported = Some(
+                self.orch_unavailable
+                    .clone()
+                    .unwrap_or_else(|| "disabled".into()),
+            );
+            return;
+        };
+        let token = match Token::new() {
+            Ok(t) => t,
+            Err(e) => {
+                s.orch.unsupported = Some(format!("no random token: {e}"));
+                return;
+            }
+        };
+        match inject::additions(
+            s.profile.orchestration,
+            b,
+            s.id,
+            &token,
+            &inject::gemini_system_settings_exist,
+        ) {
+            Ok(a) => {
+                if let Some((path, text)) = &a.file {
+                    if let Err(e) = inject::write_private(path, text) {
+                        s.orch.unsupported = Some(format!("cannot write {}: {e}", path.display()));
+                        return;
+                    }
+                    s.orch.file = Some(path.clone());
+                }
+                args.extend(a.args);
+                env.extend(a.env);
+                s.orch.token = Some(token);
+            }
+            Err(reason) => s.orch.unsupported = Some(reason),
         }
     }
 
@@ -424,6 +552,7 @@ impl SessionManager {
         let s = self.get_mut(id)?;
         let pid = s.pid.take();
         s.attention = None;
+        s.orch.cleanup();
         {
             s.set_state(SessionState::Exited(code));
             // Keep the terminal (last output); release the pseudo-terminal.

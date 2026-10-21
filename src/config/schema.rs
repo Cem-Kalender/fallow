@@ -27,6 +27,36 @@ pub struct Settings {
     pub editor: EditorSettings,
     pub ui: UiSettings,
     pub sessions: SessionSettings,
+    pub orchestration: OrchestrationSettings,
+}
+
+/// `[orchestration]` (003 contracts/config.md).
+#[derive(Debug, Clone, PartialEq)]
+pub struct OrchestrationSettings {
+    /// False: no session is started with the bridge and no channel is ever opened.
+    pub enabled: bool,
+    pub request_timeout_s: u64,
+    pub delivery_delay_ms: u64,
+    pub permission_default_min: u64,
+    pub wait_block_s: u64,
+    pub rate_per_min: u64,
+    pub board_messages: u64,
+    pub activity_entries: u64,
+}
+
+impl Default for OrchestrationSettings {
+    fn default() -> Self {
+        OrchestrationSettings {
+            enabled: true,
+            request_timeout_s: 600,
+            delivery_delay_ms: 3000,
+            permission_default_min: 30,
+            wait_block_s: 45,
+            rate_per_min: 30,
+            board_messages: 1000,
+            activity_entries: 5000,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -105,6 +135,7 @@ impl Default for Settings {
                 worktrees: true,
                 worktree_root: None,
             },
+            orchestration: OrchestrationSettings::default(),
         }
     }
 }
@@ -222,6 +253,19 @@ pub(crate) struct RawSettings {
     editor: Option<RawEditor>,
     ui: Option<RawUi>,
     sessions: Option<RawSessions>,
+    orchestration: Option<RawOrchestration>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct RawOrchestration {
+    enabled: Option<bool>,
+    request_timeout_s: Option<Spanned<i64>>,
+    delivery_delay_ms: Option<Spanned<i64>>,
+    permission_default_min: Option<Spanned<i64>>,
+    wait_block_s: Option<Spanned<i64>>,
+    rate_per_min: Option<Spanned<i64>>,
+    board_messages: Option<Spanned<i64>>,
+    activity_entries: Option<Spanned<i64>>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -348,6 +392,19 @@ pub(crate) const SETTINGS_SHAPE: Shape = Shape::Table(&[
             ("worktree_root", Shape::Leaf),
         ]),
     ),
+    (
+        "orchestration",
+        Shape::Table(&[
+            ("enabled", Shape::Leaf),
+            ("request_timeout_s", Shape::Leaf),
+            ("delivery_delay_ms", Shape::Leaf),
+            ("permission_default_min", Shape::Leaf),
+            ("wait_block_s", Shape::Leaf),
+            ("rate_per_min", Shape::Leaf),
+            ("board_messages", Shape::Leaf),
+            ("activity_entries", Shape::Leaf),
+        ]),
+    ),
 ]);
 
 pub(crate) const SIGNATURES_SHAPE: Shape = Shape::Table(&[(
@@ -451,6 +508,49 @@ pub(crate) fn apply_settings(base: &mut Settings, raw: RawSettings) -> Vec<Inval
         if let Some(b) = u.mouse {
             base.ui.mouse = b;
         }
+    }
+    if let Some(o) = raw.orchestration {
+        let b = &mut base.orchestration;
+        if let Some(e) = o.enabled {
+            b.enabled = e;
+        }
+        int(
+            o.request_timeout_s,
+            60,
+            3600,
+            "60..=3600",
+            &mut b.request_timeout_s,
+        );
+        int(
+            o.delivery_delay_ms,
+            500,
+            30_000,
+            "500..=30000",
+            &mut b.delivery_delay_ms,
+        );
+        int(
+            o.permission_default_min,
+            1,
+            480,
+            "1..=480",
+            &mut b.permission_default_min,
+        );
+        int(o.wait_block_s, 5, 55, "5..=55", &mut b.wait_block_s);
+        int(o.rate_per_min, 1, 600, "1..=600", &mut b.rate_per_min);
+        int(
+            o.board_messages,
+            100,
+            1000,
+            "100..=1000",
+            &mut b.board_messages,
+        );
+        int(
+            o.activity_entries,
+            500,
+            5000,
+            "500..=5000",
+            &mut b.activity_entries,
+        );
     }
     if let Some(sx) = raw.sessions {
         int(
