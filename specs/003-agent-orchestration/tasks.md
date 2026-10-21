@@ -410,7 +410,7 @@ deliveries, US5 on US4's queue.
   - Gemini's timeout behaviour;
   - the Unix ancestry walk through wrappers that exit (`npx`, shell shims); if it fails, fall back to process-group membership in `src/orchestration/identity.rs`;
   - whether Claude Code shows any trust prompt for `--mcp-config` servers.
-- [ ] T054 Run the quickstart manual scenarios M1–M13 on Windows with Claude Code (and Codex if installed). Record the results in `specs/003-agent-orchestration/quickstart.md` "Results", with the CI run numbers of the automated gates. Needs the engineer at the terminal.
+- [X] T054 Run the quickstart manual scenarios M1–M13 on Windows with Claude Code (and Codex if installed). Record the results in `specs/003-agent-orchestration/quickstart.md` "Results", with the CI run numbers of the automated gates. Needs the engineer at the terminal.
 
 ---
 

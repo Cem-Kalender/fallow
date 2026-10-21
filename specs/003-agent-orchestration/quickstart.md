@@ -41,7 +41,7 @@ cargo xtask bench-startup         # unchanged, < 100 ms; no hub before the first
 
 ## Results
 
-### Windows (T054), 2026-10-21, Claude Code 2.1.304, in progress
+### Windows (T054), 2026-10-21, Claude Code 2.1.304–2.1.306, done
 
 Run by the engineer in `C:\Repos\FallowSandbox` with two Claude Code sessions (#1 in the project
 folder, #3 in the worktree `FallowSandbox.worktrees\claude-1`), release build of `8d27fc8`.
@@ -56,6 +56,9 @@ folder, #3 in the worktree `FallowSandbox.worktrees\claude-1`), release build of
 
 | M8 | pass | `#3 write a hello.txt file after:deploy-ok` stayed blocked until `deploy-ok` was signalled with `v`, then was typed into #3 with the label "task T1 from the user's queue"; #3 wrote `hello.txt` in its worktree only (checked from outside), reported T1 done, and the Queue tab showed `done` with its note. Finding: the `v` prompt was read as a confirmation (T059). |
 | M10 | pass | #1 asked to start a Claude Code session with the first task "say hi"; after `y`, #4 started in a new worktree `fallow/claude-2` without taking focus, connected, and got T2 with its label without a second approval. Finding: #4 did the task but did not report it (T058). |
+
+| M13 | pass | After `Ctrl-Q` with three sessions running, Fallow, all three agents and all three bridges were gone and the pipe closed (checked from outside); the restarted Fallow had empty board, queue, permissions and activity, the same project list, and no pipe until an orchestrated session starts (FR-005). |
+| M2, M4, M6, M9, M12 | not run by hand | covered by automated tests: forged senders (`sender_cannot_be_forged`), wake-ups (`a_wake_up_from_an_agent_needs_approval_too`), the typing guard (`deliveries_wait_while_the_engineer_types_in_the_target`), agents' tasks (`agents_tasks_need_approval_or_a_create_task_permission`), unsupported profiles (`sessions_say_when_they_run_without_orchestration`) |
 
 Also found: a repository with no commits offers a worktree by default and fails (002 T062).
 
