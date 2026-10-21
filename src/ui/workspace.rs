@@ -323,6 +323,10 @@ fn draw_sessions(f: &mut Frame<'_>, state: &AppState, area: Rect) {
                     Style::default().add_modifier(Modifier::DIM),
                 ),
                 Span::styled(metrics, Style::default().add_modifier(Modifier::DIM)),
+                Span::styled(
+                    orch_mark(state, s),
+                    Style::default().add_modifier(Modifier::DIM),
+                ),
             ]))
         })
         .collect();
@@ -341,6 +345,21 @@ fn draw_sessions(f: &mut Frame<'_>, state: &AppState, area: Rect) {
 }
 
 /// The start menu overlay (contracts/ui-commands.md "Start menu").
+/// A running session's part in orchestration (003 contracts/ui-commands.md "Elsewhere"):
+/// `⇄` when its agent is connected, or why it runs without orchestration.
+fn orch_mark(state: &AppState, s: &crate::session::Session) -> String {
+    if !s.state.running() {
+        return String::new();
+    }
+    if state.hub.as_ref().is_some_and(|h| h.connected(s.id)) {
+        return "  ⇄".into();
+    }
+    match &s.orch.unsupported {
+        Some(why) => format!("  no orchestration ({why})"),
+        None => String::new(),
+    }
+}
+
 pub fn draw_menu(f: &mut Frame<'_>, area: Rect, m: &StartMenu) {
     let width = 76.min(area.width.saturating_sub(2)).max(24);
     let details = m.agents.get(m.agent).map_or(0, |a| a.details.len());
@@ -605,5 +624,81 @@ mod tests {
         assert_eq!(g.session.width, 80);
         assert_eq!(g.projects.width, 0);
         assert_eq!(g.procs.width, 0);
+    }
+
+    fn key(c: char) -> KeyEvent {
+        KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE)
+    }
+
+    #[test]
+    fn o_opens_the_orchestration_view_and_w_writes_as_the_user() {
+        // 003 contracts/ui-commands.md "Orchestration view".
+        let mut s = AppState::new(None, Vec::new());
+        s.handle_key(key('o'));
+        let screen = render(120, 40, &mut s);
+        assert!(screen.contains("Orchestration"), "{screen}");
+        for tab in ["Requests", "Board", "Queue", "Permissions", "Activity"] {
+            assert!(
+                screen.contains(tab),
+                "missing tab {tab}
+{screen}"
+            );
+        }
+        assert!(screen.contains("no session uses orchestration yet"));
+        // Writing needs a hub; it says so instead of failing silently.
+        s.handle_key(key('w'));
+        for c in "hi".chars() {
+            s.handle_key(key(c));
+        }
+        s.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(render(120, 40, &mut s).contains("Start an agent session"));
+        s.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        // With a hub, the message appears on the shared board (no project selected).
+        s.hub = Some(crate::orchestration::Hub::new(Default::default()));
+        s.handle_key(key('o'));
+        s.handle_key(key('w'));
+        for c in "hold deploys".chars() {
+            s.handle_key(key(c));
+        }
+        s.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        let screen = render(120, 40, &mut s);
+        assert!(screen.contains("hold deploys"), "{screen}");
+        assert!(
+            screen.contains("you"),
+            "labelled as the user
+{screen}"
+        );
+        // Tab cycles to Activity, which logged the post.
+        for _ in 0..3 {
+            s.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+        }
+        let screen = render(120, 40, &mut s);
+        assert!(screen.contains("post"), "{screen}");
+        s.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert!(matches!(s.overlay, crate::app::state::Overlay::None));
+    }
+
+    #[test]
+    fn sessions_say_when_they_run_without_orchestration() {
+        use crate::session::profiles::builtins;
+        let mut s = AppState::new(None, Vec::new());
+        let mut sess = crate::session::Session::detached(1, 1, builtins().remove(4));
+        sess.orch.unsupported = Some("profile".into());
+        s.sessions.sessions.push(sess);
+        let s1 = s.sessions.get(1).unwrap();
+        assert_eq!(super::orch_mark(&s, s1), "  no orchestration (profile)");
+        s.workspace.active = Some(1);
+        s.workspace.focus = AgentsFocus::Sessions;
+        s.handle_key(key('i'));
+        let screen = render(120, 40, &mut s);
+        assert!(
+            screen.contains("Orchestration: no orchestration (profile)"),
+            "{screen}"
+        );
+        s.handle_key(key('x'));
+        assert!(
+            matches!(s.overlay, crate::app::state::Overlay::None),
+            "any key closes"
+        );
     }
 }

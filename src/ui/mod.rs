@@ -8,6 +8,7 @@ pub mod goto;
 pub mod help;
 pub mod hints;
 pub mod layout;
+pub mod orchestration;
 pub mod palette;
 pub mod processes;
 pub mod prompt;

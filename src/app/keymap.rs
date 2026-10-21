@@ -145,6 +145,7 @@ fn own(key: &KeyEvent, context: Context) -> Option<&'static str> {
             KeyCode::Char('r') if plain => Some("project.rename"),
             KeyCode::Char('e') if plain => Some("project.edit"),
             KeyCode::Char('f') if plain => Some("project.filter"),
+            KeyCode::Char('o') if plain => Some("orch.open"),
             _ => None,
         },
         Context::Sessions => match key.code {
@@ -162,6 +163,20 @@ fn own(key: &KeyEvent, context: Context) -> Option<&'static str> {
             KeyCode::Char('f' | 'F') if ctrl && !alt => Some("session.search"),
             KeyCode::Char('c' | 'C') if ctrl && !alt => Some("session.copy"),
             KeyCode::Esc | KeyCode::Left => Some("sessions.back"),
+            KeyCode::Char('o') if plain => Some("orch.open"),
+            KeyCode::Char('i') if plain => Some("session.details"),
+            _ => None,
+        },
+        Context::Orchestration => match key.code {
+            KeyCode::Esc => Some("orch.close"),
+            KeyCode::Tab => Some("orch.tab_next"),
+            KeyCode::BackTab => Some("orch.tab_prev"),
+            KeyCode::Char('w') if plain => Some("orch.write"),
+            KeyCode::Char('b') if plain => Some("orch.board_toggle"),
+            KeyCode::Up if plain => Some("orch.up"),
+            KeyCode::Down if plain => Some("orch.down"),
+            KeyCode::PageUp => Some("orch.page_up"),
+            KeyCode::PageDown => Some("orch.page_down"),
             _ => None,
         },
         // A focused session handles its own keys (only the leave key is Fallow's).

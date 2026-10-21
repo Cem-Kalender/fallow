@@ -1,0 +1,271 @@
+//! `cargo xtask orchestration` (003 T023; SC-002, FR-003, research R-9).
+//!
+//! Fallow runs in the PTY harness with two `mcp-agent` sessions (A, B) whose profiles use the
+//! "claude" orchestration style, so Fallow starts each with its own bridge.
+//! - **Board latency (SC-002)**: A posts 50 timestamped messages; B polls the board and
+//!   measures post-to-read. p95 < 1,000 ms.
+//! - **Engineer's view (SC-002)**: with the orchestration view open on the project board, the
+//!   time from A's last post to the message on Fallow's screen. < 1,000 ms.
+//! - **Identity (FR-003)**: B runs A's bridge command (A's session number and token) from inside
+//!   session B; Fallow refuses it. The same command run by this harness (outside every session),
+//!   and with a wrong token, exits 3.
+//!
+//! A run where a session never starts or A never connects is INVALID.
+
+use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant, SystemTime};
+
+use crate::pty::{self, Session};
+
+const POSTS: usize = 50;
+const BUDGET_MS: f64 = 1000.0;
+const LEAVE: &[u8] = b"\x1d";
+const CTRL_B: &[u8] = b"\x02";
+const DOWN: &[u8] = b"\x1b[B";
+const ESC: &[u8] = b"\x1b";
+
+pub fn run(args: &[String]) -> i32 {
+    let mut bin = pty::default_binary();
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--bin" => match it.next() {
+                Some(b) => bin = PathBuf::from(b),
+                None => {
+                    eprintln!("--bin needs a value");
+                    return 2;
+                }
+            },
+            other => {
+                eprintln!("orchestration: unknown argument {other:?}");
+                return 2;
+            }
+        }
+    }
+    let base = std::env::temp_dir().join(format!("fallow-orch-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    let result = run_all(&bin, &base);
+    let _ = std::fs::remove_dir_all(&base);
+    match result {
+        Ok(code) => code,
+        Err(e) => {
+            println!("invalid: {e}");
+            println!("os={} orchestration result=INVALID", std::env::consts::OS);
+            pty::step_summary(&format!(
+                "### Orchestration ({})\n\nINVALID: {e}\n",
+                std::env::consts::OS
+            ));
+            2
+        }
+    }
+}
+
+fn epoch_ms(t: SystemTime) -> u128 {
+    t.duration_since(SystemTime::UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis())
+}
+
+/// Waits up to `limit` for `path` to exist with content.
+fn wait_file(path: &Path, limit: Duration) -> Option<String> {
+    let until = Instant::now() + limit;
+    while Instant::now() < until {
+        if let Ok(t) = std::fs::read_to_string(path) {
+            if !t.is_empty() {
+                return Some(t);
+            }
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    None
+}
+
+/// Runs a bridge command outside every session; its exit code (or `None` if it hung).
+fn outside_bridge(cmd: &[String]) -> Option<i32> {
+    let (exe, args) = cmd.split_first()?;
+    let mut child = Command::new(exe)
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+    if let Some(mut i) = child.stdin.take() {
+        let _ = writeln!(
+            i,
+            r#"{{"jsonrpc":"2.0","id":1,"method":"initialize","params":{{"protocolVersion":"2025-11-25","capabilities":{{}},"clientInfo":{{"name":"outside","version":"1"}}}}}}"#
+        );
+        // Keep stdin open: only Fallow closing the channel may end the bridge.
+        std::mem::forget(i);
+    }
+    let until = Instant::now() + Duration::from_secs(15);
+    while Instant::now() < until {
+        if let Ok(Some(st)) = child.try_wait() {
+            return st.code();
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let _ = child.kill();
+    None
+}
+
+fn run_all(bin: &Path, base: &Path) -> Result<i32, String> {
+    let config = base.join("config");
+    let project = base.join("project");
+    for d in [&config, &project] {
+        std::fs::create_dir_all(d).map_err(|e| format!("{}: {e}", d.display()))?;
+    }
+    let me = std::env::current_exe().map_err(|e| e.to_string())?;
+    let f = |name: &str| base.join(name).display().to_string();
+    let script_a = format!(
+        "call whoami {{}}\nwrite {}\nsave-bridge {}\nprint a-ready\nuntil go\npost-timed {POSTS} 100 project\nsleep 1500\npost-stamped {} zz-visible-now\nprint a-done\n",
+        f("a-whoami"),
+        f("bridge-a.json"),
+        f("a-stamp"),
+    );
+    let script_b = format!(
+        "call whoami {{}}\nbridge-from {}\nwrite {}\nprint b-measuring\nmeasure-reads {POSTS} project {}\n",
+        f("bridge-a.json"),
+        f("b-verdict"),
+        f("b-latency"),
+    );
+    std::fs::write(base.join("a.script"), script_a).map_err(|e| e.to_string())?;
+    std::fs::write(base.join("b.script"), script_b).map_err(|e| e.to_string())?;
+    let mut profiles = String::new();
+    for id in ["claude", "codex", "gemini", "aider", "shell"] {
+        profiles.push_str(&format!("[[profile]]\nid = \"{id}\"\nenabled = false\n\n"));
+    }
+    for id in ["a", "b"] {
+        profiles.push_str(&format!(
+            "[[profile]]\nid = \"{id}\"\nname = \"{id}\"\ncommand = {:?}\nargs = [\"mcp-agent\", {:?}]\norchestration = \"claude\"\n\n",
+            me.display().to_string(),
+            f(&format!("{id}.script")),
+        ));
+    }
+    std::fs::write(config.join("profiles.toml"), profiles).map_err(|e| e.to_string())?;
+    // The latency run posts faster than the default 30 per minute.
+    std::fs::write(
+        config.join("settings.toml"),
+        "[orchestration]\nrate_per_min = 600\n",
+    )
+    .map_err(|e| e.to_string())?;
+    println!(
+        "orchestration: {} (post-to-read p95 < {BUDGET_MS} ms, on screen < {BUDGET_MS} ms, identity refusals)",
+        bin.display()
+    );
+    let cfg = config.display().to_string();
+    let proj = project.display().to_string();
+    let mut s = Session::spawn(bin, &["--config-dir", &cfg, &proj], Duration::from_secs(1))?;
+    let flow = (|| -> Result<f64, String> {
+        if s.wait_frame(Duration::from_secs(10)).is_none() {
+            return Err("no first frame".into());
+        }
+        // A (#1): connects, saves its bridge command, waits for "go".
+        s.expect(b"a-ready");
+        s.send(b"n");
+        std::thread::sleep(Duration::from_millis(300));
+        s.send(b"\r");
+        s.seen(Duration::from_secs(30))
+            .ok_or("session A never connected (no a-ready)")?;
+        s.send(LEAVE);
+        std::thread::sleep(Duration::from_millis(300));
+        // B (#2): tries A's bridge from inside B, then measures reads.
+        s.expect(b"b-measuring");
+        s.send(b"n");
+        std::thread::sleep(Duration::from_millis(300));
+        s.send(DOWN);
+        std::thread::sleep(Duration::from_millis(100));
+        s.send(b"\r");
+        s.seen(Duration::from_secs(30))
+            .ok_or("session B never started measuring")?;
+        s.send(LEAVE);
+        std::thread::sleep(Duration::from_millis(300));
+        // To A, start the posts, leave, and watch the board in the orchestration view.
+        s.send(CTRL_B);
+        std::thread::sleep(Duration::from_millis(500));
+        s.send(b"go\r");
+        std::thread::sleep(Duration::from_millis(300));
+        s.send(LEAVE);
+        std::thread::sleep(Duration::from_millis(300));
+        s.expect(b"zz-visible-now");
+        s.send(b"o");
+        s.seen(Duration::from_secs(60))
+            .ok_or("the last post never showed in the orchestration view")?;
+        let shown = SystemTime::now();
+        s.send(ESC);
+        let stamp: u128 = wait_file(&base.join("a-stamp"), Duration::from_secs(10))
+            .and_then(|t| t.trim().parse().ok())
+            .ok_or("A did not record its post time")?;
+        Ok(epoch_ms(shown).saturating_sub(stamp) as f64)
+    })();
+    let latency = wait_file(&base.join("b-latency"), Duration::from_secs(60));
+    let cmd: Option<Vec<String>> = std::fs::read_to_string(base.join("bridge-a.json"))
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok());
+    let outside = cmd.as_deref().map(outside_bridge);
+    let wrong_token = cmd.clone().map(|mut c| {
+        if let Some(last) = c.last_mut() {
+            *last = "00".repeat(32);
+        }
+        outside_bridge(&c)
+    });
+    s.quit_with_sessions();
+    let outcome = s.finish();
+    let mut problems = outcome.problems(None);
+    println!("evidence: {}", outcome.evidence());
+    let shown_ms = match flow {
+        Ok(v) => v,
+        Err(e) => {
+            problems.push(e);
+            f64::NAN
+        }
+    };
+    let whoami = std::fs::read_to_string(base.join("a-whoami")).unwrap_or_default();
+    if !whoami.contains("\"session\":1") {
+        problems.push(format!("A's whoami did not name session 1: {whoami:?}"));
+    }
+    if !problems.is_empty() {
+        return Err(problems.join("; "));
+    }
+    let latency = latency.unwrap_or_default();
+    let field = |k: &str| -> f64 {
+        latency
+            .split_whitespace()
+            .find_map(|w| w.strip_prefix(k))
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(f64::NAN)
+    };
+    let (p95, max, n) = (field("p95_ms="), field("max_ms="), field("n="));
+    let verdict = std::fs::read_to_string(base.join("b-verdict")).unwrap_or_default();
+    let inside_refused = verdict.trim() == "refused";
+    let outside_refused = outside == Some(Some(3));
+    let wrong_refused = wrong_token == Some(Some(3));
+    let latency_ok = n as usize == POSTS && p95 < BUDGET_MS;
+    let shown_ok = shown_ms < BUDGET_MS;
+    let pass = latency_ok && shown_ok && inside_refused && outside_refused && wrong_refused;
+    let result = if pass { "PASS" } else { "FAIL" };
+    println!(
+        "os={} posts={POSTS} reads={n} post_read_p95_ms={p95:.0} post_read_max_ms={max:.0} on_screen_ms={shown_ms:.0} budget_ms={BUDGET_MS} other_session_token={} outside_bridge={:?} wrong_token={:?} result={result}",
+        std::env::consts::OS,
+        if inside_refused {
+            "refused"
+        } else {
+            "ACCEPTED"
+        },
+        outside.flatten(),
+        wrong_token.flatten(),
+    );
+    pty::step_summary(&format!(
+        "### Orchestration ({})\n\n| check | result | budget |\n|---|---|---|\n| post → read by another agent, p95 of {POSTS} | {p95:.0} ms | < {BUDGET_MS} ms |\n| post → on the engineer's screen | {shown_ms:.0} ms | < {BUDGET_MS} ms |\n| another session's token, from inside a session | {} | refused |\n| bridge run outside every session | exit {:?} | exit 3 |\n| wrong token | exit {:?} | exit 3 |\n\n**{result}**\n",
+        std::env::consts::OS,
+        if inside_refused {
+            "refused"
+        } else {
+            "ACCEPTED"
+        },
+        outside.flatten(),
+        wrong_token.flatten(),
+    ));
+    Ok(if pass { 0 } else { 1 })
+}

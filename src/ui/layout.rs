@@ -196,6 +196,8 @@ fn overlays(f: &mut Frame<'_>, state: &AppState, area: Rect) {
             prompt::draw(f, area, kind, input, error.as_deref())
         }
         Overlay::Menu(m) => super::workspace::draw_menu(f, area, m),
+        Overlay::Orch(v) => super::orchestration::draw(f, area, state, v),
+        Overlay::Info { title, lines } => super::orchestration::draw_info(f, area, title, lines),
     }
 }
 
