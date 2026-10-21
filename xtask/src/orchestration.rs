@@ -67,7 +67,7 @@ pub fn run(args: &[String]) -> i32 {
 fn delivery_script(f: &dyn Fn(&str) -> String) -> String {
     let deliver = |t: &str| format!("call deliver {{\"session\":2,\"text\":\"{t}\"}}\n");
     format!(
-        "sleep 1000\n{}sleep 4000\ncall inbox {{}}\nwrite {}\n{}sleep 4000\n{}sleep 4000\n{}sleep 7000\n{}write {}\nprint a-all-sent\nsleep 3000\ncall event_signal {{\"name\":\"pr-merge-x\",\"message\":\"PR merged\"}}\nsleep 15000\ncall task_list {{\"mine\":false}}\nwrite {}\n",
+        "sleep 1000\n{}sleep 4000\ncall inbox {{}}\nwrite {}\n{}sleep 4000\n{}sleep 4000\n{}sleep 7000\n{}write {}\nprint a-all-sent\nsleep 3000\ncall event_signal {{\"name\":\"pr-merge-x\",\"message\":\"PR merged\"}}\nsleep 15000\ncall task_list {{\"mine\":false}}\nwrite {}\ncall session_start {{\"profile\":\"c\",\"project\":\"project\",\"first_task\":\"say hello\"}}\nsleep 25000\ncall inbox {{}}\nwrite {}\n",
         deliver("zz-first"),
         f("a-inbox"),
         deliver("zz-second"),
@@ -76,6 +76,7 @@ fn delivery_script(f: &dyn Fn(&str) -> String) -> String {
         deliver("zz-fifth"),
         f("a-fifth"),
         f("a-tasks"),
+        f("a-start"),
     )
 }
 
@@ -142,6 +143,23 @@ fn deliveries(s: &mut Session) -> Result<(), String> {
     s.send(b"\r");
     std::thread::sleep(Duration::from_millis(300));
     s.send(ESC);
+    std::thread::sleep(Duration::from_millis(300));
+    // US5: A asks to start "c" with a first task. Review requests (palette), reject the fifth
+    // delivery still waiting at the top, then approve the start.
+    s.expect(b"start c in project");
+    s.send(b"\x10");
+    std::thread::sleep(Duration::from_millis(300));
+    s.send(b"review requests");
+    std::thread::sleep(Duration::from_millis(300));
+    s.send(b"\r");
+    s.seen(Duration::from_secs(90))
+        .ok_or("A's start request never showed")?;
+    std::thread::sleep(Duration::from_millis(300));
+    s.send(b"x");
+    std::thread::sleep(Duration::from_millis(300));
+    s.send(b"y");
+    std::thread::sleep(Duration::from_millis(300));
+    s.send(ESC);
     Ok(())
 }
 
@@ -199,13 +217,20 @@ fn run_all(bin: &Path, base: &Path) -> Result<i32, String> {
         f("b-wait-signal"),
         f("b-wait-timeout"),
     );
+    // C is started by A's request (US5); its first task is reported done.
+    let script_c = format!(
+        "report-tasks {}\ncall whoami {{}}\nwrite {}\n",
+        f("c-tasks"),
+        f("c-whoami"),
+    );
+    std::fs::write(base.join("c.script"), script_c).map_err(|e| e.to_string())?;
     std::fs::write(base.join("a.script"), script_a).map_err(|e| e.to_string())?;
     std::fs::write(base.join("b.script"), script_b).map_err(|e| e.to_string())?;
     let mut profiles = String::new();
     for id in ["claude", "codex", "gemini", "aider", "shell"] {
         profiles.push_str(&format!("[[profile]]\nid = \"{id}\"\nenabled = false\n\n"));
     }
-    for id in ["a", "b"] {
+    for id in ["a", "b", "c"] {
         profiles.push_str(&format!(
             "[[profile]]\nid = \"{id}\"\nname = \"{id}\"\ncommand = {:?}\nargs = [\"mcp-agent\", {:?}]\norchestration = \"claude\"\n\n",
             me.display().to_string(),
@@ -276,6 +301,8 @@ fn run_all(bin: &Path, base: &Path) -> Result<i32, String> {
     let tasks = wait_file(&base.join("a-tasks"), Duration::from_secs(60)).unwrap_or_default();
     let typed = std::fs::read_to_string(base.join("b-typed")).unwrap_or_default();
     let b_tasks = std::fs::read_to_string(base.join("b-tasks")).unwrap_or_default();
+    let a_start = wait_file(&base.join("a-start"), Duration::from_secs(60)).unwrap_or_default();
+    let c_tasks = wait_file(&base.join("c-tasks"), Duration::from_secs(30)).unwrap_or_default();
     // B then waits for A's signal, and for an event nobody signals (8 s limit, 5 s blocks).
     let wait_signal =
         wait_file(&base.join("b-wait-signal"), Duration::from_secs(30)).unwrap_or_default();
@@ -344,7 +371,14 @@ fn run_all(bin: &Path, base: &Path) -> Result<i32, String> {
         && tasks.contains("\"state\":\"done\"")
         && tasks.contains("merge feature/x")
         && typed.contains("[Fallow: task T1 from the user's queue.] merge feature/x");
-    let pass = queue_ok
+    // US5: the approved start became session #3, whose first task was handed over without
+    // another prompt and reported done.
+    let start_ok = a_start.contains("started as #3") && c_tasks.trim() == "T2 done";
+    if !start_ok {
+        println!("A's inbox after the start: {a_start:?}; C's task reports: {c_tasks:?}");
+    }
+    let pass = start_ok
+        && queue_ok
         && delivery_ok
         && latency_ok
         && shown_ok
@@ -355,7 +389,7 @@ fn run_all(bin: &Path, base: &Path) -> Result<i32, String> {
         && timeout_ok;
     let result = if pass { "PASS" } else { "FAIL" };
     println!(
-        "os={} posts={POSTS} reads={n} post_read_p95_ms={p95:.0} post_read_max_ms={max:.0} on_screen_ms={shown_ms:.0} budget_ms={BUDGET_MS} other_session_token={} outside_bridge={:?} wrong_token={:?} wait_signal={:?} wait_timeout={:?} deliveries={} queue={} result={result}",
+        "os={} posts={POSTS} reads={n} post_read_p95_ms={p95:.0} post_read_max_ms={max:.0} on_screen_ms={shown_ms:.0} budget_ms={BUDGET_MS} other_session_token={} outside_bridge={:?} wrong_token={:?} wait_signal={:?} wait_timeout={:?} deliveries={} queue={} start={} result={result}",
         std::env::consts::OS,
         if inside_refused {
             "refused"
@@ -368,6 +402,7 @@ fn run_all(bin: &Path, base: &Path) -> Result<i32, String> {
         wait_timeout.trim(),
         if delivery_ok { "ok" } else { "WRONG" },
         if queue_ok { "ok" } else { "WRONG" },
+        if start_ok { "ok" } else { "WRONG" },
     );
     if !queue_ok {
         println!(
@@ -378,7 +413,7 @@ fn run_all(bin: &Path, base: &Path) -> Result<i32, String> {
         println!("typed into B: {typed:?}; A's inbox: {inbox:?}; fifth: {fifth:?}");
     }
     pty::step_summary(&format!(
-        "### Orchestration ({})\n\n| check | result | budget |\n|---|---|---|\n| post → read by another agent, p95 of {POSTS} | {p95:.0} ms | < {BUDGET_MS} ms |\n| post → on the engineer's screen | {shown_ms:.0} ms | < {BUDGET_MS} ms |\n| another session's token, from inside a session | {} | refused |\n| bridge run outside every session | exit {:?} | exit 3 |\n| wrong token | exit {:?} | exit 3 |\n| wait, then A signals | {} | signalled by #1 |\n| wait with an 8 s limit (5 s blocks) | {} | timed out after one repeat |\n| deliveries: rejected, approved, granted, covered, revoked | {} | only approved or covered ones typed, labelled |\n| PR scenario: queued task after pr-merge-x, done by B | {} | no approval, done |\n\n**{result}**\n",
+        "### Orchestration ({})\n\n| check | result | budget |\n|---|---|---|\n| post → read by another agent, p95 of {POSTS} | {p95:.0} ms | < {BUDGET_MS} ms |\n| post → on the engineer's screen | {shown_ms:.0} ms | < {BUDGET_MS} ms |\n| another session's token, from inside a session | {} | refused |\n| bridge run outside every session | exit {:?} | exit 3 |\n| wrong token | exit {:?} | exit 3 |\n| wait, then A signals | {} | signalled by #1 |\n| wait with an 8 s limit (5 s blocks) | {} | timed out after one repeat |\n| deliveries: rejected, approved, granted, covered, revoked | {} | only approved or covered ones typed, labelled |\n| PR scenario: queued task after pr-merge-x, done by B | {} | no approval, done |\n| A asks to start a session with a first task; approved | {} | started, task done |\n\n**{result}**\n",
         std::env::consts::OS,
         if inside_refused {
             "refused"
@@ -391,6 +426,7 @@ fn run_all(bin: &Path, base: &Path) -> Result<i32, String> {
         wait_timeout.trim(),
         if delivery_ok { "ok" } else { "WRONG" },
         if queue_ok { "ok" } else { "WRONG" },
+        if start_ok { "ok" } else { "WRONG" },
     ));
     Ok(if pass { 0 } else { 1 })
 }

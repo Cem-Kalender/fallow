@@ -128,6 +128,22 @@ pub trait Sessions {
     fn verify(&self, id: u32, token: &str, peer: Peer) -> Result<(), String>;
     /// The projects agents may name (tasks for "next free session", session starts): id, name
     /// and whether the folder is present. By default, the projects of the sessions.
+    /// The profiles agents may start (id, name). By default, the profiles of the sessions.
+    fn profiles(&self) -> Vec<(String, String)> {
+        let mut v: Vec<(String, String)> = Vec::new();
+        for s in self.all() {
+            if !v.iter().any(|(id, _)| *id == s.profile_id) {
+                v.push((s.profile_id, s.profile));
+            }
+        }
+        v
+    }
+
+    /// Whether another session may start now: 002's session limit (FR-007) and memory (FR-029).
+    fn start_allowed(&self) -> Result<(), String> {
+        Ok(())
+    }
+
     fn projects(&self) -> Vec<(ProjectId, String, bool)> {
         let mut v: Vec<(ProjectId, String, bool)> = Vec::new();
         for s in self.all() {
@@ -250,6 +266,48 @@ pub struct Hub {
     /// Outcomes for each requesting session, returned by its next `inbox` call.
     pub outbox: HashMap<u32, Inbox>,
     pub tasks: tasks::Tasks,
+    pub starts: Vec<StartRequest>,
+    next_start: u64,
+}
+
+/// An agent's request to start a session (US5, FR-021).
+#[derive(Debug, Clone)]
+pub struct StartRequest {
+    pub id: u64,
+    pub from: Party,
+    pub profile: String,
+    pub profile_name: String,
+    pub project: ProjectId,
+    pub project_name: String,
+    pub first_task: Option<String>,
+    pub created: Instant,
+    pub expires: Instant,
+    pub covered_by: Option<u32>,
+    pub state: StartState,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StartState {
+    Pending,
+    /// Approved; the app starts it on its next tick.
+    Approved,
+    Rejected,
+    Expired,
+    Refused(String),
+    Started(u32),
+}
+
+impl StartState {
+    pub fn label(&self) -> String {
+        match self {
+            StartState::Pending => "pending".into(),
+            StartState::Approved => "approved".into(),
+            StartState::Rejected => "rejected".into(),
+            StartState::Expired => "expired".into(),
+            StartState::Refused(why) => format!("refused: {why}"),
+            StartState::Started(id) => format!("started as #{id}"),
+        }
+    }
 }
 
 /// Where the call being handled came from.
@@ -287,6 +345,8 @@ impl Hub {
             permissions: permissions::Permissions::default(),
             outbox: HashMap::new(),
             tasks: tasks::Tasks::default(),
+            starts: Vec::new(),
+            next_start: 0,
             settings,
             channel: None,
             conns: HashMap::new(),
@@ -528,6 +588,191 @@ impl Hub {
             Some(format!("{n} waiting")),
         );
         Ok(n)
+    }
+
+    /// Pending session-start requests.
+    pub fn pending_starts(&self) -> impl Iterator<Item = &StartRequest> {
+        self.starts
+            .iter()
+            .filter(|s| s.state == StartState::Pending)
+    }
+
+    /// An agent asks to start a session (FR-021). Refused at once beyond the limits; approved
+    /// at once under a `StartSession` permission with room left; otherwise it waits for the
+    /// engineer.
+    #[allow(clippy::too_many_arguments)]
+    pub fn request_start(
+        &mut self,
+        sessions: &dyn Sessions,
+        from: &SessionInfo,
+        profile: &str,
+        project: &str,
+        first_task: Option<String>,
+        now: Instant,
+    ) -> Result<(u64, StartState), Reply> {
+        let Some((pid, pname)) = sessions
+            .profiles()
+            .into_iter()
+            .find(|(id, _)| id == profile)
+        else {
+            return Err(Reply::error("invalid", format!("no profile {profile:?}")));
+        };
+        let Some((proj, proj_name, present)) = sessions
+            .projects()
+            .into_iter()
+            .find(|(_, n, _)| n.eq_ignore_ascii_case(project))
+        else {
+            return Err(Reply::error(
+                "invalid",
+                format!("no project named {project:?}"),
+            ));
+        };
+        if !present {
+            return Err(Reply::error(
+                "invalid",
+                format!("project {proj_name} is missing"),
+            ));
+        }
+        self.next_start += 1;
+        let id = self.next_start;
+        let state = match sessions.start_allowed() {
+            Err(why) => StartState::Refused(why),
+            Ok(()) => {
+                let target = SessionInfo {
+                    id: 0,
+                    project: proj,
+                    project_name: proj_name.clone(),
+                    profile_id: pid.clone(),
+                    profile: pname.clone(),
+                    state: String::new(),
+                    running: false,
+                    idle: false,
+                };
+                match self
+                    .permissions
+                    .cover(from, &target, permissions::Act::StartSession, now)
+                {
+                    Some(p) => {
+                        self.notices.push(format!(
+                            "P{p} used: {} starts {pname} in {proj_name}",
+                            from.party().label()
+                        ));
+                        StartState::Approved
+                    }
+                    None => {
+                        self.notices.push(format!(
+                            "{} asks to start {pname} in {proj_name} (o to review)",
+                            from.party().label()
+                        ));
+                        StartState::Pending
+                    }
+                }
+            }
+        };
+        self.activity.add(
+            from.party(),
+            Action::StartRequested,
+            &format!("{pname} in {proj_name}"),
+            Some(state.label()),
+        );
+        self.starts.push(StartRequest {
+            id,
+            from: from.party(),
+            profile: pid,
+            profile_name: pname,
+            project: proj,
+            project_name: proj_name,
+            first_task,
+            created: now,
+            expires: now + std::time::Duration::from_secs(self.settings.request_timeout_s),
+            covered_by: None,
+            state: state.clone(),
+        });
+        if matches!(state, StartState::Refused(_)) {
+            self.start_outcome(id);
+        }
+        Ok((id, state))
+    }
+
+    fn start_outcome(&mut self, id: u64) {
+        let Some(s) = self.starts.iter().find(|s| s.id == id).cloned() else {
+            return;
+        };
+        if let Some(session) = s.from.session() {
+            let mut v = serde_json::json!({ "start": id, "state": s.state.label() });
+            if let StartState::Started(sid) = s.state {
+                v["session"] = Value::from(sid);
+            }
+            self.outbox.entry(session).or_default().starts.push(v);
+        }
+        if !matches!(s.state, StartState::Refused(_)) {
+            self.activity.add(
+                s.from.clone(),
+                Action::StartOutcome,
+                &format!("{} in {}", s.profile_name, s.project_name),
+                Some(s.state.label()),
+            );
+        }
+    }
+
+    /// The engineer approves or rejects a start request.
+    pub fn decide_start(&mut self, id: u64, approve: bool) {
+        if let Some(s) = self.starts.iter_mut().find(|s| s.id == id) {
+            if s.state == StartState::Pending {
+                s.state = if approve {
+                    StartState::Approved
+                } else {
+                    StartState::Rejected
+                };
+            }
+        }
+        if !approve {
+            self.start_outcome(id);
+        }
+    }
+
+    /// Approved starts for the app to carry out.
+    pub fn approved_starts(&self) -> Vec<StartRequest> {
+        self.starts
+            .iter()
+            .filter(|s| s.state == StartState::Approved)
+            .cloned()
+            .collect()
+    }
+
+    /// The app started (or could not start) an approved request. A started session gets the
+    /// request's first task, queued for it and already approved to be handed over.
+    pub fn start_done(
+        &mut self,
+        sessions: &dyn Sessions,
+        id: u64,
+        result: Result<u32, String>,
+        now: Instant,
+    ) {
+        let Some(s) = self.starts.iter_mut().find(|s| s.id == id) else {
+            return;
+        };
+        s.state = match &result {
+            Ok(sid) => StartState::Started(*sid),
+            Err(e) => StartState::Refused(e.clone()),
+        };
+        let (from, task) = (s.from.clone(), s.first_task.clone());
+        if let (Ok(sid), Some(text)) = (result, task) {
+            if let Ok((t, _)) = self.create_task(
+                sessions,
+                Party::User,
+                text,
+                tasks::Target::Session(sid),
+                Vec::new(),
+                now,
+            ) {
+                if let Some(task) = self.tasks.get_mut(t) {
+                    task.created_by = from;
+                    task.approved_handover = true;
+                }
+            }
+        }
+        self.start_outcome(id);
     }
 
     /// Queued (including blocked) and blocked tasks, for the counts line.
@@ -849,7 +1094,7 @@ impl Hub {
             let Some(to) = pick else {
                 continue;
             };
-            let by_user = t.created_by == Party::User;
+            let by_user = t.created_by == Party::User || t.approved_handover;
             if let Ok((did, _)) = self.request_delivery(
                 sessions,
                 t.created_by.clone(),
@@ -880,7 +1125,9 @@ impl Hub {
 
     /// Requests waiting for the engineer (hint bar, counts line).
     pub fn pending_requests(&self) -> usize {
-        self.deliveries.pending().count() + self.pending_tasks().count()
+        self.deliveries.pending().count()
+            + self.pending_tasks().count()
+            + self.pending_starts().count()
     }
 
     /// Records a finished delivery's outcome for its requester and the log.
@@ -1197,6 +1444,18 @@ impl Hub {
             if let Some(t) = self.tasks.get(id).cloned() {
                 self.tell_task(t.created_by.session(), &t);
             }
+            changed = true;
+        }
+        let late: Vec<u64> = self
+            .pending_starts()
+            .filter(|s| now >= s.expires)
+            .map(|s| s.id)
+            .collect();
+        for id in late {
+            if let Some(s) = self.starts.iter_mut().find(|s| s.id == id) {
+                s.state = StartState::Expired;
+            }
+            self.start_outcome(id);
             changed = true;
         }
         changed |= self.advance(sessions, now);

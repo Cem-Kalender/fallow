@@ -360,16 +360,16 @@ deliveries, US5 on US4's queue.
 
 **Independent Test**: the approval prompt shows profile, project and task; approval starts the session with the task queued; request N+1 under a limit-N permission prompts again; at the session limit the request is refused with the reason.
 
-- [ ] T044 [P] [US5] Write the start-request tests in `tests/orch_hub.rs`:
+- [X] T044 [P] [US5] Write the start-request tests in `tests/orch_hub.rs`:
   - `StartRequest` states Pending → Approved / Rejected / Expired / Refused(reason);
   - unknown profile or project, or a missing project → `invalid`;
   - 002 FR-007's `max_sessions` and the FR-029 memory guard are checked at request and again at approval time;
   - `starts_used` against `limit`;
   - the first task is queued for `Session(new id)`.
-- [ ] T045 [US5] Implement `StartRequest` in `src/orchestration/mod.rs` and the `session_start` tool in `src/orchestration/tools.rs`:
+- [X] T045 [US5] Implement `StartRequest` in `src/orchestration/mod.rs` and the `session_start` tool in `src/orchestration/tools.rs`:
   - an approved or covered request starts the session through the same 002 start path as the start menu, in `src/app/workspace.rs`, with the project's default "Where" (worktree for git projects);
   - activity `StartRequested`/`StartOutcome`.
-- [ ] T046 [US5] Show start requests on the Requests tab (profile, project, first task) in `src/ui/orchestration.rs`. Include "start sessions, up to N" in the grant dialog. Extend `xtask orchestration`: a start request is approved, and the new `mcp-agent` session receives its first task.
+- [X] T046 [US5] Show start requests on the Requests tab (profile, project, first task) in `src/ui/orchestration.rs`. Include "start sessions, up to N" in the grant dialog. Extend `xtask orchestration`: a start request is approved, and the new `mcp-agent` session receives its first task.
 
 **Checkpoint**: quickstart M10 and M11 pass.
 

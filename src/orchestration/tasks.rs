@@ -81,6 +81,9 @@ pub struct Task {
     pub assigned: Option<u32>,
     /// The hand-over delivery, while it is pending or being typed.
     pub delivery: Option<u64>,
+    /// The engineer already approved handing it over (the first task of a session they let an
+    /// agent start).
+    pub approved_handover: bool,
     pub note: Option<String>,
     pub created_by: Party,
     pub created: SystemTime,
@@ -122,6 +125,7 @@ impl Tasks {
             paused: false,
             assigned: None,
             delivery: None,
+            approved_handover: false,
             note: None,
             created_by,
             created: SystemTime::now(),

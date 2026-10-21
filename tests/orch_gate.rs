@@ -334,3 +334,43 @@ fn deliveries_wait_while_the_engineer_types_in_the_target() {
         s.sessions.stop_all_confirmed(t);
     }
 }
+
+#[test]
+fn a_start_request_and_its_first_task_need_approval() {
+    // The start path of SC-003: nothing starts and nothing is typed before the engineer
+    // approves (or a StartSession permission with room covers it).
+    let f = Fake::new();
+    let mut h = hub();
+    let now = Instant::now();
+    let r = h.call(
+        &f,
+        1,
+        "session_start",
+        json!({"profile": "claude", "project": "api", "first_task": "rm -rf build"}),
+        now,
+    );
+    assert!(
+        matches!(r, Reply::Done(ref v) if v["state"] == "pending"),
+        "{r:?}"
+    );
+    h.tick(&f, now);
+    assert!(h.approved_starts().is_empty(), "nothing to start");
+    assert!(
+        h.tasks.list.is_empty(),
+        "the first task waits with the request"
+    );
+    assert!(typed(&h).is_empty());
+    // A task an agent asks to hand over is a delivery like any other.
+    let r = h.call(
+        &f,
+        1,
+        "task_create",
+        json!({"text": "deploy", "target": {"session": 2}}),
+        now,
+    );
+    let Reply::Done(v) = r else { panic!("{r:?}") };
+    let t = v["task"].as_u64().unwrap() as u32;
+    h.decide_task(t, true);
+    h.tick(&f, now);
+    assert!(typed(&h).is_empty(), "the hand-over waits for approval");
+}

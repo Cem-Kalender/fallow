@@ -130,6 +130,7 @@ pub fn time_left(d: std::time::Duration) -> String {
 pub enum RequestRef {
     Delivery(u64),
     Task(u32),
+    Start(u64),
 }
 
 /// The requests the Requests tab lists: pending deliveries, then tasks agents created.
@@ -139,6 +140,7 @@ pub fn requests_shown(state: &AppState) -> Vec<RequestRef> {
             .pending()
             .map(|d| RequestRef::Delivery(d.id))
             .chain(h.pending_tasks().map(|t| RequestRef::Task(t.id)))
+            .chain(h.pending_starts().map(|s| RequestRef::Start(s.id)))
             .collect()
     })
 }
@@ -177,6 +179,38 @@ fn requests_lines(state: &AppState, v: &OrchView, width: usize) -> Vec<Line<'sta
     for (i, r) in ids.iter().enumerate() {
         let id = match r {
             RequestRef::Delivery(id) => id,
+            RequestRef::Start(sid) => {
+                let Some(s) = h.starts.iter().find(|s| s.id == *sid) else {
+                    continue;
+                };
+                let row = format!(
+                    "{}  →  start {} in {}   expires in {}",
+                    s.from.label(),
+                    s.profile_name,
+                    s.project_name,
+                    time_left(s.expires.saturating_duration_since(now))
+                );
+                lines.push(Line::styled(
+                    row,
+                    if i == selected { sel } else { Style::default() },
+                ));
+                if i == selected {
+                    match &s.first_task {
+                        Some(t) => {
+                            lines.push(Line::styled("  first task:", dim));
+                            for l in wrap(t, width.saturating_sub(4)) {
+                                lines.push(Line::raw(format!("  {l}")));
+                            }
+                        }
+                        None => lines.push(Line::styled("  no first task", dim)),
+                    }
+                    lines.push(Line::styled(
+                        "  y Start   x Reject   g Grant permission (start up to N)…   ↑↓ Next request",
+                        dim,
+                    ));
+                }
+                continue;
+            }
             RequestRef::Task(t) => {
                 let Some(t) = h.tasks.get(*t) else { continue };
                 let left = std::time::Duration::from_secs(h.settings.request_timeout_s)
