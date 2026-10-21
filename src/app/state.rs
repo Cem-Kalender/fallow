@@ -179,6 +179,9 @@ pub struct AppState {
     pub requests: Option<Sender<Request>>,
     /// Where the project list is saved (002 FR-015).
     pub store: super::project_list::ProjectStore,
+    /// Orchestration (003): created with the first orchestrated session, never at startup.
+    pub hub: Option<crate::orchestration::Hub>,
+    pub orch_settings: crate::config::schema::OrchestrationSettings,
 }
 
 impl AppState {
@@ -228,6 +231,8 @@ impl AppState {
             drag: None,
             requests: None,
             store: Default::default(),
+            hub: None,
+            orch_settings: Default::default(),
         }
     }
 

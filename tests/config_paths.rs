@@ -95,3 +95,31 @@ fn default_dir_ends_in_fallow() {
         assert_eq!(dir.file_name().unwrap(), "fallow");
     }
 }
+
+#[test]
+fn cache_dir_per_platform() {
+    // 003 contracts/config.md "Files Fallow creates outside the config directory".
+    use fallow::config::cache_dir_for;
+    let s = |v: &str| Some(std::ffi::OsString::from(v));
+    assert_eq!(
+        cache_dir_for(Os::Linux, s("/home/u"), s("/xdg/cache"), None),
+        Some("/xdg/cache".into())
+    );
+    assert_eq!(
+        cache_dir_for(Os::Linux, s("/home/u"), s("rel"), None),
+        Some(std::path::Path::new("/home/u").join(".cache"))
+    );
+    assert_eq!(
+        cache_dir_for(Os::MacOs, s("/Users/u"), None, None),
+        Some(
+            std::path::Path::new("/Users/u")
+                .join("Library")
+                .join("Caches")
+        )
+    );
+    assert_eq!(
+        cache_dir_for(Os::Windows, None, None, s(r"C:\Users\u\AppData\Local")),
+        Some(r"C:\Users\u\AppData\Local".into())
+    );
+    assert_eq!(cache_dir_for(Os::Windows, s("/x"), None, None), None);
+}

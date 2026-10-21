@@ -66,6 +66,24 @@ impl Group {
         if ok == 0 { Err(e) } else { Ok(()) }
     }
 
+    /// Whether process `pid` is in this session's job (003 research R-3: a bridge that
+    /// connects must belong to the session it names).
+    pub fn contains(&self, pid: u32) -> bool {
+        use windows_sys::Win32::System::JobObjects::IsProcessInJob;
+        use windows_sys::Win32::System::Threading::PROCESS_QUERY_LIMITED_INFORMATION;
+        // SAFETY: OpenProcess with a PID; the handle is closed below.
+        let h = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+        if h.is_null() {
+            return false;
+        }
+        let mut result = 0;
+        // SAFETY: both handles are valid; `result` is writable.
+        let ok = unsafe { IsProcessInJob(h, self.job, &mut result) };
+        // SAFETY: `h` is ours.
+        unsafe { CloseHandle(h) };
+        ok != 0 && result != 0
+    }
+
     /// Graceful stop on Windows is closing the pseudoconsole (CTRL_CLOSE_EVENT), done by the
     /// caller; nothing to signal here.
     pub fn terminate(&self) {}

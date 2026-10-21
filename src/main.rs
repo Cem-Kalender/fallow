@@ -12,6 +12,20 @@ fn main() -> ExitCode {
             print!("{}", cli::USAGE);
             return ExitCode::SUCCESS;
         }
+        Ok(cli::Action::Bridge(args)) => {
+            return match fallow::orchestration::bridge::parse(args) {
+                Ok(a) => fallow::orchestration::bridge::run(&a),
+                Err(e) => {
+                    eprintln!(
+                        "fallow mcp-bridge: {e}
+
+{}",
+                        fallow::orchestration::bridge::USAGE
+                    );
+                    ExitCode::from(2)
+                }
+            };
+        }
         Ok(cli::Action::Version) => {
             println!("fallow {}", env!("CARGO_PKG_VERSION"));
             return ExitCode::SUCCESS;

@@ -58,6 +58,8 @@ pub enum Action {
     Run(Options),
     Help,
     Version,
+    /// `fallow mcp-bridge …`: the stdio MCP server agents start (003). Internal.
+    Bridge(Vec<OsString>),
 }
 
 /// Parses the arguments after the program name. `Err` carries a one-line message; the caller
@@ -67,7 +69,17 @@ where
     I: IntoIterator<Item = OsString>,
 {
     let mut opts = Options::default();
-    let mut args = args.into_iter();
+    let all: Vec<OsString> = args.into_iter().collect();
+    // `mcp-bridge` as the first argument followed by options (or nothing) is the bridge; a
+    // folder of that name is still opened with `fallow ./mcp-bridge`.
+    if all.first().is_some_and(|a| a == "mcp-bridge")
+        && all
+            .get(1)
+            .is_none_or(|a| a.to_string_lossy().starts_with("--"))
+    {
+        return Ok(Action::Bridge(all[1..].to_vec()));
+    }
+    let mut args = all.into_iter();
     let mut only_positional = false;
     while let Some(arg) = args.next() {
         let text = arg.to_string_lossy().into_owned();

@@ -45,6 +45,9 @@ starts (FR-005). Hand-written on std, libc and windows-sys; no new crate.
     `ECONNREFUSED`, at listener creation. Fallow's own socket is removed on exit.
   - Abstract-namespace sockets are rejected: they have no file permissions.
 - **Windows**: a named pipe `\\.\pipe\fallow-<pid>-<16 random hex>`.
+  - Opened for overlapped I/O on both ends. A pipe handle opened for blocking I/O runs one
+    operation at a time, so a reader thread waiting for the next line would hold up every reply
+    (found by `tests/orch_identity.rs`).
   - Created with `PIPE_REJECT_REMOTE_CLIENTS` and `FILE_FLAG_FIRST_PIPE_INSTANCE` on the first
     instance.
   - Its security descriptor is `D:P(A;;GA;;;<current user SID>)`.
@@ -76,9 +79,12 @@ starts (FR-005). Hand-written on std, libc and windows-sys; no new crate.
 2. **Peer process belongs to the claimed session**:
    - Windows: `OpenProcess(GetNamedPipeClientProcessId)` and `IsProcessInJob(handle, session job)`,
      using 002's per-session Job Object.
-   - Linux and macOS: the peer PID (`SO_PEERCRED` / `LOCAL_PEERPID`) walks up its parents to the
-     session's agent PID. At each step, the start time must be at or after the agent's start time,
-     and it is checked again after the walk (PID reuse).
+   - Linux and macOS: the peer PID (`SO_PEERCRED` / `LOCAL_PEERPID`) must be in the agent's POSIX
+     session. The agent runs under `setsid`, so its session id is its PID, and descendants keep it
+     even when a wrapper in between exits and they are reparented. The peer must not be older
+     than the agent. Failing that, its parents are walked up to the agent's PID. At each step, the
+     start time must be at or after the agent's, and the peer is read again after the walk (PID
+     reuse).
 3. **Token**: the first line the bridge sends is `{"session":n,"token":"<64 hex>"}`. It must match
    that session's 32-byte random token, compared in constant time.
 
@@ -151,7 +157,7 @@ On Windows the bridge checks `GetNamedPipeServerProcessId == <P>` before sending
 
 | Profile | How (one run, no user file touched) | Tool approval inside the agent | Confidence |
 |---|---|---|---|
-| `claude` | Adds `--mcp-config <json>` with `{"mcpServers":{"fallow":{"command":…,"args":[…]}}}` (the option takes several values, so Fallow places it before another option, never last before a positional argument) and `--allowedTools mcp__fallow__*`. User servers stay; `--strict-mcp-config` is never passed. | Pre-allowed: Fallow's own gate (approval, permissions) decides what reaches another session. | high (flag checked locally, 2.1.304) |
+| `claude` | Adds `--mcp-config <json>` with `{"mcpServers":{"fallow":{"command":…,"args":[…]}}}` (the option takes several values, so Fallow appends its flags at the end of the argument list: nothing positional may follow them) and `--allowedTools mcp__fallow__*`. User servers stay; `--strict-mcp-config` is never passed. | Pre-allowed: Fallow's own gate (approval, permissions) decides what reaches another session. | high (flag checked locally, 2.1.304) |
 | `codex` | `-c mcp_servers.fallow.command='<path>'` with TOML literal strings for Windows paths; `-c mcp_servers.fallow.args=[…]`; `-c mcp_servers.fallow.tool_timeout_sec=120`; `-c mcp_servers.fallow.default_tools_approval_mode="approve"` | Pre-allowed (**verify** the mode name) | medium |
 | `gemini` | `GEMINI_CLI_SYSTEM_SETTINGS_PATH=<run dir>/gemini-<n>.json` (0600, removed when the session ends) with the `fallow` server, `"trust": true`, `"timeout": 120000`. `mcpServers` merges shallowly, so user servers stay. Done **only if no system settings file exists** at the platform's path: replacing an administrator's policy file is not acceptable, so otherwise the link is `Unsupported` with that reason. Fallow checks only that the file exists and never reads it. | Trusted for this server only | medium |
 | `aider` | No MCP support (checked up to v0.86.1). The link is `Unsupported`. | — | medium |

@@ -24,6 +24,43 @@ pub struct AgentProfile {
     /// Environment additions: (name, value). Values are never shown.
     pub env: Vec<(String, String)>,
     pub builtin: bool,
+    /// How Fallow connects the agent to its coordination tools for one run (003 research R-5).
+    pub orchestration: Style,
+}
+
+/// How an agent is pointed at Fallow's MCP server for one run (003 contracts/config.md).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Style {
+    /// Claude Code's `--mcp-config`.
+    Claude,
+    /// Codex CLI's `-c mcp_servers.…` overrides.
+    Codex,
+    /// Gemini CLI's system settings path.
+    Gemini,
+    /// No way to add a tool server: the session runs without orchestration.
+    #[default]
+    None,
+}
+
+impl Style {
+    pub fn parse(s: &str) -> Option<Style> {
+        Some(match s {
+            "claude" => Style::Claude,
+            "codex" => Style::Codex,
+            "gemini" => Style::Gemini,
+            "none" => Style::None,
+            _ => return None,
+        })
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Style::Claude => "claude",
+            Style::Codex => "codex",
+            Style::Gemini => "gemini",
+            Style::None => "none",
+        }
+    }
 }
 
 impl std::fmt::Debug for AgentProfile {
@@ -35,6 +72,7 @@ impl std::fmt::Debug for AgentProfile {
             .field("args", &self.args)
             .field("env", &self.env_names())
             .field("builtin", &self.builtin)
+            .field("orchestration", &self.orchestration)
             .finish()
     }
 }
@@ -46,7 +84,7 @@ impl AgentProfile {
     }
 }
 
-fn builtin(id: &str, name: &str, command: &str, args: &[&str]) -> AgentProfile {
+fn builtin(id: &str, name: &str, command: &str, args: &[&str], style: Style) -> AgentProfile {
     AgentProfile {
         id: id.into(),
         name: name.into(),
@@ -54,6 +92,7 @@ fn builtin(id: &str, name: &str, command: &str, args: &[&str]) -> AgentProfile {
         args: args.iter().map(|a| (*a).to_string()).collect(),
         env: Vec::new(),
         builtin: true,
+        orchestration: style,
     }
 }
 
@@ -89,11 +128,23 @@ pub fn shell_command() -> String {
 /// `id` removes its flags.
 pub fn builtins() -> Vec<AgentProfile> {
     vec![
-        builtin("claude", "Claude Code", "claude", &CLAUDE_NOTIFY_ARGS),
-        builtin("codex", "Codex CLI", "codex", &CODEX_NOTIFY_ARGS),
-        builtin("gemini", "Gemini CLI", "gemini", &[]),
-        builtin("aider", "Aider", "aider", &[]),
-        builtin("shell", "Shell", &shell_command(), &[]),
+        builtin(
+            "claude",
+            "Claude Code",
+            "claude",
+            &CLAUDE_NOTIFY_ARGS,
+            Style::Claude,
+        ),
+        builtin(
+            "codex",
+            "Codex CLI",
+            "codex",
+            &CODEX_NOTIFY_ARGS,
+            Style::Codex,
+        ),
+        builtin("gemini", "Gemini CLI", "gemini", &[], Style::Gemini),
+        builtin("aider", "Aider", "aider", &[], Style::None),
+        builtin("shell", "Shell", &shell_command(), &[], Style::None),
     ]
 }
 
@@ -110,6 +161,9 @@ impl AgentProfile {
                 "env: {} (values hidden)",
                 self.env_names().join(", ")
             ));
+        }
+        if self.orchestration != Style::None {
+            out.push(format!("orchestration: {}", self.orchestration.as_str()));
         }
         out.push(if self.builtin {
             "built-in; override by id in profiles.toml".into()
@@ -134,6 +188,7 @@ struct RawProfile {
     #[serde(default)]
     args: Vec<String>,
     enabled: Option<bool>,
+    orchestration: Option<Spanned<String>>,
     #[serde(default)]
     env: toml::Table,
 }
@@ -245,6 +300,23 @@ pub fn load(file: Option<(&str, &str)>) -> (Vec<AgentProfile>, Vec<Notice>) {
         if bad_env {
             continue;
         }
+        // A user profile replacing a built-in keeps the built-in's style unless it names one.
+        let orchestration = match p.orchestration {
+            None => base.as_ref().map_or(Style::None, |b| b.orchestration),
+            Some(s) => match Style::parse(s.get_ref()) {
+                Some(st) => st,
+                None => {
+                    notices.push(err(
+                        Some(line_of(text, s.span().start)),
+                        format!(
+                            "profile {id:?}: orchestration = {:?}: expected \"claude\", \"codex\", \"gemini\" or \"none\"",
+                            s.get_ref()
+                        ),
+                    ));
+                    continue;
+                }
+            },
+        };
         let profile = AgentProfile {
             id: id.clone(),
             name: name_v,
@@ -252,6 +324,7 @@ pub fn load(file: Option<(&str, &str)>) -> (Vec<AgentProfile>, Vec<Notice>) {
             args: p.args,
             env,
             builtin: false,
+            orchestration,
         };
         match out.iter_mut().find(|q| q.id == id) {
             Some(q) => *q = profile,

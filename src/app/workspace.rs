@@ -633,6 +633,9 @@ impl AppState {
         let Some(tx) = self.events.clone() else {
             return false;
         };
+        if let Some(style) = self.sessions.get(id).map(|s| s.profile.orchestration) {
+            self.ensure_hub(style);
+        }
         if let Err(e) = self.sessions.restart(id, &tx) {
             self.say(e);
         } else {
@@ -892,6 +895,7 @@ impl AppState {
             rows: area.height.max(1),
             cols: area.width.max(1),
         };
+        self.ensure_hub(req.profile.orchestration);
         let sid = self.sessions.start(req, &tx)?;
         self.track(sid);
         self.overlay = Overlay::None;
@@ -986,6 +990,9 @@ impl AppState {
     }
 
     pub fn session_exited(&mut self, id: SessionId, code: Option<u32>) -> bool {
+        if let Some(hub) = self.hub.as_mut() {
+            hub.session_ended(id);
+        }
         if let Some(pid) = self.sessions.exited(id, code) {
             if let Some(tx) = &self.requests {
                 let _ = tx.send(crate::procmon::worker::Request::Untrack { pid });

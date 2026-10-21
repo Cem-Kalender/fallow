@@ -1,0 +1,422 @@
+//! Agent orchestration (feature 003): boards, events, deliveries, permissions, a task queue and
+//! session-start requests, offered to agents in Fallow sessions as MCP tools.
+//!
+//! Everything lives in one in-memory `Hub`, owned by the main loop and created when the first
+//! session with orchestration starts (FR-005). Nothing here is ever written to disk or logged
+//! (FR-023, constitution VII).
+
+pub mod activity;
+pub mod board;
+pub mod bridge;
+pub mod channel;
+pub mod delivery;
+pub mod events;
+pub mod identity;
+pub mod inject;
+pub mod permissions;
+pub mod rpc;
+pub mod tasks;
+pub mod tools;
+
+use std::collections::HashMap;
+use std::sync::mpsc;
+use std::time::Instant;
+
+use serde_json::{Value, json};
+
+use crate::config::schema::OrchestrationSettings;
+use crate::projects::ProjectId;
+use activity::{Action, Activity};
+use channel::{Channel, ConnId, Incoming, Outgoing};
+use identity::Peer;
+
+/// Who did something: the engineer, or an agent in a session. Always set by Fallow from the
+/// connection, never from tool arguments (FR-003, FR-007, SC-004). The project and profile are
+/// a snapshot at the time of the action.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Party {
+    User,
+    Agent {
+        session: u32,
+        profile: String,
+        project: String,
+    },
+}
+
+impl Party {
+    /// `#3 Claude Code · api`, or `you`.
+    pub fn label(&self) -> String {
+        match self {
+            Party::User => "you".into(),
+            Party::Agent {
+                session,
+                profile,
+                project,
+            } => format!("#{session} {profile} · {project}"),
+        }
+    }
+
+    /// The `from` object agents receive (research R-8).
+    pub fn json(&self) -> Value {
+        match self {
+            Party::User => json!({ "kind": "user" }),
+            Party::Agent {
+                session,
+                profile,
+                project,
+            } => {
+                json!({ "kind": "agent", "session": session, "profile": profile, "project": project })
+            }
+        }
+    }
+
+    pub fn session(&self) -> Option<u32> {
+        match self {
+            Party::Agent { session, .. } => Some(*session),
+            Party::User => None,
+        }
+    }
+}
+
+/// What the hub needs to know about a session.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionInfo {
+    pub id: u32,
+    pub project: ProjectId,
+    pub project_name: String,
+    pub profile_id: String,
+    pub profile: String,
+    /// The 002 state label ("working", "needs attention", …).
+    pub state: String,
+    pub running: bool,
+    /// Idle at its prompt (002 `NeedsAttention`).
+    pub idle: bool,
+}
+
+impl SessionInfo {
+    pub fn party(&self) -> Party {
+        Party::Agent {
+            session: self.id,
+            profile: self.profile.clone(),
+            project: self.project_name.clone(),
+        }
+    }
+}
+
+/// The hub's view of the sessions (the app's `SessionManager`, or a fake in tests).
+pub trait Sessions {
+    fn info(&self, id: u32) -> Option<SessionInfo>;
+    fn all(&self) -> Vec<SessionInfo>;
+    /// Whether a connecting bridge really belongs to session `id`'s current run: its token
+    /// matches and the kernel-reported peer is part of the session (research R-3).
+    fn verify(&self, id: u32, token: &str, peer: Peer) -> Result<(), String>;
+}
+
+/// A per-session token bucket (FR-008).
+#[derive(Debug, Clone)]
+pub struct Rate {
+    tokens: f64,
+    last: Instant,
+}
+
+impl Rate {
+    pub fn new(now: Instant, per_min: u64) -> Rate {
+        Rate {
+            tokens: per_min as f64,
+            last: now,
+        }
+    }
+
+    /// Takes one call; `Err(seconds until the next one)` when over the limit.
+    pub fn take(&mut self, now: Instant, per_min: u64) -> Result<(), u64> {
+        let cap = per_min.max(1) as f64;
+        let rate = cap / 60.0;
+        let dt = now.saturating_duration_since(self.last).as_secs_f64();
+        self.last = now;
+        self.tokens = (self.tokens + dt * rate).min(cap);
+        if self.tokens >= 1.0 {
+            self.tokens -= 1.0;
+            Ok(())
+        } else {
+            Err(((1.0 - self.tokens) / rate).ceil() as u64)
+        }
+    }
+}
+
+/// One session's connection state.
+#[derive(Debug, Clone)]
+pub struct Link {
+    pub conn: Option<ConnId>,
+    pub client: Option<(String, String)>,
+    pub rate: Rate,
+    /// When the engineer was last told this session is posting too fast.
+    pub slow_notice: Option<Instant>,
+}
+
+struct Conn {
+    session: u32,
+    out: mpsc::Sender<Outgoing>,
+}
+
+/// The result of a tool call.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Reply {
+    /// A successful tool result (the `structuredContent`).
+    Done(Value),
+    /// A tool error (`isError: true`) with a code from contracts/mcp-tools.md.
+    Error(&'static str, String),
+    /// A protocol error (invalid arguments: `-32602`).
+    Rpc(i64, String),
+    /// Answered later (a wait).
+    Parked,
+}
+
+impl Reply {
+    pub fn error(code: &'static str, message: impl Into<String>) -> Reply {
+        Reply::Error(code, message.into())
+    }
+
+    /// The JSON-RPC `result` of a `tools/call`.
+    pub fn result(&self) -> Option<Value> {
+        let (body, is_error) = match self {
+            Reply::Done(v) => (v.clone(), false),
+            Reply::Error(code, message) => (json!({ "error": code, "message": message }), true),
+            Reply::Rpc(..) | Reply::Parked => return None,
+        };
+        Some(json!({
+            "content": [{ "type": "text", "text": body.to_string() }],
+            "structuredContent": body,
+            "isError": is_error,
+        }))
+    }
+}
+
+/// All orchestration state.
+pub struct Hub {
+    pub settings: OrchestrationSettings,
+    channel: Option<Channel>,
+    conns: HashMap<ConnId, Conn>,
+    pub links: HashMap<u32, Link>,
+    pub activity: Activity,
+    refusals: HashMap<u32, Instant>,
+    /// Messages for the engineer (shown as notices by the app, then cleared).
+    pub notices: Vec<String>,
+}
+
+impl std::fmt::Debug for Hub {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Hub")
+            .field("channel", &self.channel)
+            .field("links", &self.links.len())
+            .finish_non_exhaustive()
+    }
+}
+
+impl Hub {
+    /// A hub with no channel (tests drive it through `call`).
+    pub fn new(settings: OrchestrationSettings) -> Hub {
+        Hub {
+            activity: Activity::new(settings.activity_entries as usize),
+            settings,
+            channel: None,
+            conns: HashMap::new(),
+            links: HashMap::new(),
+            refusals: HashMap::new(),
+            notices: Vec::new(),
+        }
+    }
+
+    pub fn with_channel(settings: OrchestrationSettings, channel: Channel) -> Hub {
+        let mut h = Hub::new(settings);
+        h.channel = Some(channel);
+        h
+    }
+
+    pub fn endpoint(&self) -> Option<&str> {
+        self.channel.as_ref().map(Channel::endpoint)
+    }
+
+    pub fn set_settings(&mut self, settings: OrchestrationSettings) {
+        self.activity.set_cap(settings.activity_entries as usize);
+        self.settings = settings;
+    }
+
+    /// Whether session `id`'s bridge is connected.
+    pub fn connected(&self, id: u32) -> bool {
+        self.links.get(&id).is_some_and(|l| l.conn.is_some())
+    }
+
+    fn link(&mut self, id: u32, now: Instant) -> &mut Link {
+        let per_min = self.settings.rate_per_min;
+        self.links.entry(id).or_insert_with(|| Link {
+            conn: None,
+            client: None,
+            rate: Rate::new(now, per_min),
+            slow_notice: None,
+        })
+    }
+
+    /// Handles one event from the channel. Returns true when something visible changed.
+    pub fn handle(&mut self, ev: Incoming, sessions: &dyn Sessions, now: Instant) -> bool {
+        match ev {
+            Incoming::Hello {
+                conn,
+                session,
+                token,
+                peer,
+                verdict,
+                out,
+            } => {
+                let party = sessions.info(session).map_or(Party::User, |i| i.party());
+                match sessions.verify(session, &token, peer) {
+                    Ok(()) => {
+                        // A new run of the same session replaces an older connection.
+                        if let Some(old) = self.links.get(&session).and_then(|l| l.conn) {
+                            if let Some(c) = self.conns.remove(&old) {
+                                let _ = c.out.send(Outgoing::Close);
+                            }
+                        }
+                        self.conns.insert(conn, Conn { session, out });
+                        self.link(session, now).conn = Some(conn);
+                        self.activity.add(
+                            party,
+                            Action::Connected,
+                            &format!("session #{session}"),
+                            None,
+                        );
+                        let _ = verdict.send(Ok(()));
+                    }
+                    Err(why) => {
+                        self.activity.add(
+                            Party::User,
+                            Action::RefusedConnection,
+                            &format!("claimed session #{session}, process {}", peer.pid),
+                            Some(why.clone()),
+                        );
+                        let recent = self
+                            .refusals
+                            .get(&session)
+                            .is_some_and(|t| now.saturating_duration_since(*t).as_secs() < 60);
+                        if !recent {
+                            self.refusals.insert(session, now);
+                            self.notices.push(format!(
+                                "Refused a tool connection claiming session #{session}: {why}"
+                            ));
+                        }
+                        let _ = verdict.send(Err(why));
+                    }
+                }
+                true
+            }
+            Incoming::Client {
+                conn,
+                name,
+                version,
+            } => {
+                if let Some(s) = self.conns.get(&conn).map(|c| c.session) {
+                    self.link(s, now).client = Some((name, version));
+                }
+                true
+            }
+            Incoming::Call {
+                conn,
+                id,
+                name,
+                arguments,
+                progress: _,
+            } => {
+                let Some(session) = self.conns.get(&conn).map(|c| c.session) else {
+                    return false;
+                };
+                let reply = self.call(sessions, session, &name, arguments, now);
+                self.answer(conn, &id, &reply);
+                true
+            }
+            Incoming::Cancelled { .. } => false,
+            Incoming::Closed { conn } => {
+                if let Some(c) = self.conns.remove(&conn) {
+                    if let Some(l) = self.links.get_mut(&c.session) {
+                        if l.conn == Some(conn) {
+                            l.conn = None;
+                        }
+                    }
+                }
+                true
+            }
+        }
+    }
+
+    fn answer(&self, conn: ConnId, id: &Value, reply: &Reply) {
+        let Some(c) = self.conns.get(&conn) else {
+            return;
+        };
+        let line = match reply {
+            Reply::Rpc(code, msg) => rpc::error_line(id, *code, msg),
+            Reply::Parked => return,
+            r => rpc::result_line(id, r.result().unwrap_or(Value::Null)),
+        };
+        let _ = c.out.send(Outgoing::Line(line));
+    }
+
+    /// Runs tool `name` for session `caller` (the identity of the connection, never an
+    /// argument).
+    pub fn call(
+        &mut self,
+        sessions: &dyn Sessions,
+        caller: u32,
+        name: &str,
+        args: Value,
+        now: Instant,
+    ) -> Reply {
+        tools::call(self, sessions, caller, name, args, now)
+    }
+
+    /// Takes one call from the session's rate budget (FR-008). Over the limit, the engineer is
+    /// told at most once a minute.
+    pub(crate) fn charge(
+        &mut self,
+        caller: u32,
+        sessions: &dyn Sessions,
+        now: Instant,
+    ) -> Result<(), Reply> {
+        let per_min = self.settings.rate_per_min;
+        let link = self.link(caller, now);
+        match link.rate.take(now, per_min) {
+            Ok(()) => Ok(()),
+            Err(after) => {
+                let tell = link
+                    .slow_notice
+                    .is_none_or(|t| now.saturating_duration_since(t).as_secs() >= 60);
+                if tell {
+                    link.slow_notice = Some(now);
+                    let who = sessions
+                        .info(caller)
+                        .map_or(format!("#{caller}"), |i| i.party().label());
+                    self.notices
+                        .push(format!("{who} is calling Fallow's tools too fast"));
+                }
+                Err(Reply::Error(
+                    "rate_limited",
+                    format!("more than {per_min} calls per minute; retry after {after} s"),
+                ))
+            }
+        }
+    }
+
+    /// Periodic work: expiries, waits and the queue (later stories). Returns true when
+    /// something visible changed.
+    pub fn tick(&mut self, _sessions: &dyn Sessions, _now: Instant) -> bool {
+        false
+    }
+
+    /// A session ended: its link closes.
+    pub fn session_ended(&mut self, id: u32) {
+        if let Some(l) = self.links.get_mut(&id) {
+            if let Some(conn) = l.conn.take() {
+                if let Some(c) = self.conns.remove(&conn) {
+                    let _ = c.out.send(Outgoing::Close);
+                }
+            }
+        }
+    }
+}

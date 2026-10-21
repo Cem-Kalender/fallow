@@ -28,6 +28,7 @@ fn profile(command: &str, args: &[&str], env: &[(&str, &str)]) -> AgentProfile {
             .map(|(k, v)| (k.to_string(), v.to_string()))
             .collect(),
         builtin: false,
+        orchestration: Default::default(),
     }
 }
 

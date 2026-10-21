@@ -12,6 +12,7 @@ mod diag;
 mod egress;
 mod fixtures;
 mod gen_fixture;
+mod mcp_agent;
 mod projects;
 mod pty;
 mod record;

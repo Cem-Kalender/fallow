@@ -9,6 +9,7 @@ pub mod clipboard;
 pub mod config;
 pub mod dns;
 pub mod editor;
+pub mod orchestration;
 pub mod procmon;
 pub mod projects;
 pub mod session;

@@ -314,6 +314,48 @@ fn sessions_settings_defaults_and_ranges() {
 }
 
 #[test]
+fn orchestration_settings_defaults_and_ranges() {
+    // 003 contracts/config.md "[orchestration]".
+    let d = settings("");
+    let o = &d.settings.orchestration;
+    assert!(o.enabled);
+    assert_eq!(
+        (
+            o.request_timeout_s,
+            o.delivery_delay_ms,
+            o.permission_default_min,
+            o.wait_block_s,
+            o.rate_per_min,
+            o.board_messages,
+            o.activity_entries
+        ),
+        (600, 3000, 30, 45, 30, 1000, 5000)
+    );
+    for (key, bad, good, rule) in [
+        ("request_timeout_s", 59, 3600, "60..=3600"),
+        ("delivery_delay_ms", 499, 30_000, "500..=30000"),
+        ("permission_default_min", 481, 1, "1..=480"),
+        ("wait_block_s", 56, 5, "5..=55"),
+        ("rate_per_min", 0, 600, "1..=600"),
+        ("board_messages", 1001, 100, "100..=1000"),
+        ("activity_entries", 499, 5000, "500..=5000"),
+    ] {
+        let c = settings(&format!("[orchestration]\n{key} = {bad}\n"));
+        assert!(
+            has(&errors(&c), "settings.toml:2:"),
+            "{key}={bad}: {:?}",
+            c.notices
+        );
+        assert!(has(&errors(&c), rule));
+        let c = settings(&format!("[orchestration]\n{key} = {good}\n"));
+        assert!(c.notices.is_empty(), "{key}={good}: {:?}", c.notices);
+    }
+    let c = settings("[orchestration]\nenabled = false\n");
+    assert!(c.notices.is_empty());
+    assert!(!c.settings.orchestration.enabled);
+}
+
+#[test]
 fn partial_settings_keep_other_defaults() {
     let c = settings("[ui]\nmouse = false\n[windows]\nread_working_directory = \"never\"\n");
     assert!(c.notices.is_empty(), "{:?}", c.notices);

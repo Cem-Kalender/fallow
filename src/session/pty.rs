@@ -41,6 +41,14 @@ pub struct Pty {
     group: Group,
 }
 
+impl Pty {
+    /// Whether process `pid` belongs to this session (003 research R-3): in its Job Object.
+    #[cfg(windows)]
+    pub fn contains(&self, pid: u32) -> bool {
+        self.group.contains(pid)
+    }
+}
+
 impl std::fmt::Debug for Pty {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "Pty(pid {:?})", self.pid)

@@ -29,6 +29,8 @@ pub enum AppEvent {
     SessionExited(SessionId, Option<u32>),
     /// Something else wants a redraw.
     Wake,
+    /// The orchestration channel (003): a hello, a tool call, a cancellation or a close.
+    Hub(crate::orchestration::channel::Incoming),
 }
 
 /// Sends `SessionOutput` at most once until the main loop has drawn: a session printing a
