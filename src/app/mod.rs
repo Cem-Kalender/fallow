@@ -119,6 +119,12 @@ pub fn run(opts: &Options) -> (ExitCode, RunStats) {
         worktree_root: cfg.settings.sessions.worktree_root.clone(),
     };
     state.orch_settings = cfg.settings.orchestration.clone();
+    state.pending_coordinate = opts.coordinate.map(|d| {
+        (
+            d,
+            opts.path.as_ref().and_then(|p| std::path::absolute(p).ok()),
+        )
+    });
     let profiles_text = paths.dir.as_ref().and_then(|d| {
         std::fs::read_to_string(d.join(crate::session::profiles::PROFILES_FILE)).ok()
     });

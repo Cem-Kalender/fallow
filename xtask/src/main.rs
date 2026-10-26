@@ -18,6 +18,7 @@ mod projects;
 mod pty;
 mod record;
 mod rss;
+mod squad;
 mod unprivileged;
 
 use std::process::ExitCode;
@@ -36,6 +37,7 @@ const TASKS: &[&str] = &[
     "unprivileged",
     "bench-sessions",
     "orchestration",
+    "squad",
     "record-transcript",
     "diag-sessions",
 ];
@@ -64,6 +66,7 @@ fn main() -> ExitCode {
         "bench-search" => ExitCode::from(bench_search::run(rest) as u8),
         "bench-sessions" => ExitCode::from(bench_sessions::run(rest) as u8),
         "orchestration" => ExitCode::from(orchestration::run(rest) as u8),
+        "squad" => ExitCode::from(squad::run(rest) as u8),
         "record-transcript" => ExitCode::from(record::run(rest) as u8),
         "diag-sessions" => ExitCode::from(diag::run(rest) as u8),
         t if fixtures::subcommand(t, rest).is_some() => ExitCode::from(3),

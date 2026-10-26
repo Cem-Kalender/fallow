@@ -34,11 +34,13 @@ impl ProjectEntry {
 pub struct ProjectList {
     pub projects: Vec<ProjectEntry>,
     pub selected: Option<usize>,
+    /// 004: projects that should not be offered coordination when their first session starts.
+    pub no_coordinate_offer: Vec<PathBuf>,
     next_id: ProjectId,
 }
 
 /// Paths compare case-insensitively where the file system usually is (Windows, macOS).
-pub(crate) fn same_path(a: &Path, b: &Path) -> bool {
+pub fn same_path(a: &Path, b: &Path) -> bool {
     if cfg!(any(windows, target_os = "macos")) {
         a.to_string_lossy().to_lowercase() == b.to_string_lossy().to_lowercase()
     } else {

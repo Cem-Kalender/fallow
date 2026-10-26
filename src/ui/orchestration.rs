@@ -16,6 +16,7 @@ use crate::orchestration::board::BoardId;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Tab {
+    Squad,
     Requests,
     #[default]
     Board,
@@ -25,7 +26,8 @@ pub enum Tab {
 }
 
 impl Tab {
-    pub const ALL: [Tab; 5] = [
+    pub const ALL: [Tab; 6] = [
+        Tab::Squad,
         Tab::Requests,
         Tab::Board,
         Tab::Queue,
@@ -35,6 +37,7 @@ impl Tab {
 
     pub fn title(self) -> &'static str {
         match self {
+            Tab::Squad => "Squad",
             Tab::Requests => "Requests",
             Tab::Board => "Board",
             Tab::Queue => "Queue",
@@ -599,6 +602,7 @@ pub fn draw(f: &mut Frame<'_>, area: Rect, state: &AppState, v: &OrchView) {
     let lines = match v.tab {
         Tab::Board => board_lines(state, v, body.width as usize),
         Tab::Activity => activity_lines(state, v),
+        Tab::Squad => squad_lines(state, v),
         Tab::Requests => requests_lines(state, v, body.width as usize),
         Tab::Queue => queue_lines(state, v, body.width as usize),
         Tab::Permissions => permissions_lines(state, v),
@@ -731,4 +735,181 @@ pub fn draw_grant(f: &mut Frame<'_>, area: Rect, state: &AppState, g: &GrantForm
         ));
     }
     f.render_widget(Paragraph::new(lines), inner);
+}
+
+/// The coordination dialog (004 contracts/ui-commands.md "Starting a burst").
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BurstForm {
+    pub project: crate::projects::ProjectId,
+    pub project_name: String,
+    pub lead: u32,
+    pub lead_label: String,
+    /// Duration in minutes, 30..=480 in steps of 30.
+    pub minutes: u64,
+    pub allowance: u8,
+    pub max_allowance: u8,
+    /// One line describing the squad in force, or its problems.
+    pub squad: Result<String, Vec<String>>,
+    pub publish: String,
+    /// The project has no `.specify` folder: offer to let the lead set Spec Kit up.
+    pub offer_spec_kit: bool,
+    pub setup_spec_kit: bool,
+    /// Shown because the project's first session started (adds "don't ask again").
+    pub offer: bool,
+    pub field: usize,
+    pub error: Option<String>,
+}
+
+pub fn draw_burst(f: &mut Frame<'_>, area: Rect, b: &BurstForm) {
+    let width = 86.min(area.width.saturating_sub(2));
+    let problems = b.squad.as_ref().err().map_or(0, Vec::len) as u16;
+    let height = (16 + problems + u16::from(b.error.is_some())).min(area.height.saturating_sub(2));
+    let [v] = Layout::vertical([Constraint::Length(height)])
+        .flex(Flex::Center)
+        .areas(area);
+    let [r] = Layout::horizontal([Constraint::Length(width)])
+        .flex(Flex::Center)
+        .areas(v);
+    f.render_widget(Clear, r);
+    let mut bottom = String::from(" ↑↓ field · ←→ change · Enter start · Esc cancel ");
+    if b.offer {
+        bottom = " ↑↓ field · ←→ change · Enter start · d don't ask again · Esc not now ".into();
+    }
+    let block = Block::bordered()
+        .title(format!(" Coordinate {} ", b.project_name))
+        .title_bottom(bottom);
+    let inner = block.inner(r);
+    f.render_widget(block, r);
+    let sel = |i: usize| {
+        if b.field == i {
+            Style::default().add_modifier(Modifier::REVERSED)
+        } else {
+            Style::default()
+        }
+    };
+    let dim = Style::default().add_modifier(Modifier::DIM);
+    let mut lines = vec![
+        Line::raw(format!(" Lead:      {}", b.lead_label)),
+        match &b.squad {
+            Ok(s) => Line::raw(format!(" Squad:     {s}")),
+            Err(_) => Line::styled(
+                " Squad:     problems in .fallow/squad.toml (fix them to start):",
+                Style::default().fg(ratatui::style::Color::Red),
+            ),
+        },
+    ];
+    if let Err(ps) = &b.squad {
+        for p in ps {
+            lines.push(Line::styled(format!("   {p}"), dim));
+        }
+    }
+    lines.push(Line::styled(
+        format!(
+            " For:       [{}] (max 8 h)",
+            crate::orchestration::burst::hm(std::time::Duration::from_secs(b.minutes * 60))
+        ),
+        sel(0),
+    ));
+    lines.push(Line::styled(
+        format!(
+            " Sessions:  up to [{}] new sessions (max {})",
+            b.allowance, b.max_allowance
+        ),
+        sel(1),
+    ));
+    lines.push(Line::styled(
+        "            Each runs its own agent and uses its own plan or API usage.",
+        dim,
+    ));
+    lines.push(Line::raw(format!(" Publish:   {}", b.publish)));
+    if b.offer_spec_kit {
+        lines.push(Line::styled(
+            format!(
+                " {} Set up Spec Kit: the lead runs the official installer in its session",
+                if b.setup_spec_kit { "[x]" } else { "[ ]" }
+            ),
+            sel(2),
+        ));
+    }
+    lines.push(Line::raw(""));
+    lines.push(Line::raw(
+        " During the burst, agents in this project deliver, create tasks and start",
+    ));
+    lines.push(Line::raw(
+        " sessions without asking. They can never stop a session. Shift-X ends it.",
+    ));
+    if let Some(e) = &b.error {
+        lines.push(Line::styled(
+            format!(" {e}"),
+            Style::default().fg(ratatui::style::Color::Red),
+        ));
+    }
+    f.render_widget(Paragraph::new(lines), inner);
+}
+
+/// The Squad tab: the burst in the selected project (004).
+pub fn squad_lines(state: &AppState, v: &OrchView) -> Vec<Line<'static>> {
+    let dim = Style::default().add_modifier(Modifier::DIM);
+    let bold = Style::default().add_modifier(Modifier::BOLD);
+    let sel = Style::default().add_modifier(Modifier::REVERSED);
+    let project = state.projects.selected().map(|p| p.id);
+    let Some(b) = state
+        .hub
+        .as_ref()
+        .and_then(|h| project.and_then(|p| h.burst_of(p)))
+    else {
+        return vec![Line::styled(
+            "No coordination in this project. Palette: \"Coordinate this project…\" (from a session).",
+            dim,
+        )];
+    };
+    let now = std::time::Instant::now();
+    let used = state
+        .hub
+        .as_ref()
+        .and_then(|h| h.permissions.list.iter().find(|p| p.id == b.permission))
+        .map_or(0, |p| p.starts_used);
+    let mut lines = vec![
+        Line::styled(
+            format!(
+                "Coordinating {} · lead #{} · {} left · sessions started {used}/{} · squad {}",
+                b.project_name,
+                b.lead,
+                time_left(b.ends.saturating_duration_since(now)),
+                b.allowance,
+                b.squad.name
+            ),
+            bold,
+        ),
+        Line::styled(
+            "+ extend · L make the selected session lead · Shift-X end",
+            dim,
+        ),
+        Line::raw(""),
+    ];
+    for (i, id) in squad_sessions(state).iter().enumerate() {
+        let role = b.roles.get(id).map_or("—", String::as_str);
+        let style = if i == v.selected {
+            sel
+        } else {
+            Style::default()
+        };
+        lines.push(Line::styled(
+            format!("{:<10} {}", role, session_name(state, *id)),
+            style,
+        ));
+    }
+    lines
+}
+
+/// The running sessions of the selected project, for the Squad tab's selection.
+pub fn squad_sessions(state: &AppState) -> Vec<u32> {
+    let project = state.projects.selected().map(|p| p.id);
+    state
+        .sessions
+        .sessions
+        .iter()
+        .filter(|s| Some(s.project) == project && s.state.running())
+        .map(|s| s.id)
+        .collect()
 }

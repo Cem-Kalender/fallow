@@ -607,6 +607,30 @@ pub const COMMANDS: &[Command] = &[
     on(cmd("orch.signal", "Signal an event", Orchestration, "v")),
     on(cmd("orch.activity", "Activity log", Global, "")),
     on(cmd(
+        "orch.coordinate",
+        "Coordinate this project… (agents work together without asking)",
+        Global,
+        "",
+    )),
+    on(cmd(
+        "orch.end",
+        "End coordination in this project",
+        Global,
+        "",
+    )),
+    on(cmd(
+        "orch.extend",
+        "Extend coordination…",
+        Orchestration,
+        "+",
+    )),
+    on(cmd(
+        "orch.make_lead",
+        "Make the selected session the lead",
+        Orchestration,
+        "L",
+    )),
+    on(cmd(
         "orch.filter",
         "Activity: filter to the session / project",
         Orchestration,

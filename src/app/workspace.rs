@@ -882,6 +882,7 @@ impl AppState {
         if let Some(SessionState::Failed(e)) = self.sessions.get(sid).map(|s| s.state.clone()) {
             self.say(e);
         }
+        self.after_first_session(project, sid);
         Ok(())
     }
 

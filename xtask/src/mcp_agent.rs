@@ -10,6 +10,7 @@
 //! - `expect <text>`: the last result contains `text`, else `fail`.
 //! - `sleep <ms>`
 //! - `until <text>`: reads lines typed into the terminal until one contains `text`.
+//! - `until-file <path>`: waits until `path` exists (the harness's signal, 004).
 //! - `post-timed <count> <interval ms> <scope>`: posts `t=<epoch ms> i=<n>` messages.
 //! - `measure-reads <count> <scope> [file]`: polls `board_read` until `count` timed messages
 //!   arrived and prints (and writes to `file`) `latency p95_ms=… max_ms=… n=…`.
@@ -222,6 +223,12 @@ pub fn run(args: &[String]) -> ! {
         match (cmd, &mut client) {
             ("print", _) => out(rest),
             ("sleep", _) => std::thread::sleep(Duration::from_millis(rest.parse().unwrap_or(0))),
+            ("until-file", _) => {
+                while !std::path::Path::new(rest).exists() {
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+                out(&format!("got {rest}"));
+            }
             ("until", _) => loop {
                 match typed.recv() {
                     Ok(l) if l.contains(rest) => {

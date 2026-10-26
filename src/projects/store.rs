@@ -22,6 +22,8 @@ pub struct Loaded {
     /// Path and name (if the user renamed the project), in the file's order.
     pub entries: Vec<(PathBuf, Option<String>)>,
     pub selected: Option<usize>,
+    /// 004: projects whose engineer chose "don't ask again" for the coordination offer.
+    pub no_coordinate_offer: Vec<PathBuf>,
     pub notices: Vec<Notice>,
     /// False when the file could not be read or parsed at all. The list is then not written
     /// until the file is fixed, so a typo never wipes the user's list.
@@ -93,6 +95,9 @@ pub fn parse(file: &str, text: &str) -> Loaded {
                 ),
             ));
             continue;
+        }
+        if t.get("coordinate_offer").and_then(toml::Value::as_bool) == Some(false) {
+            out.no_coordinate_offer.push(path.clone());
         }
         let name = match t.get("name") {
             None => None,
@@ -194,6 +199,13 @@ pub fn render(list: &ProjectList) -> String {
         out.push_str(&format!("\n[[project]]\npath = {}\n", quote(path)));
         if p.name != folder_name(&p.path) {
             out.push_str(&format!("name = {}\n", quote(&p.name)));
+        }
+        if list
+            .no_coordinate_offer
+            .iter()
+            .any(|q| same_path(q, &p.path))
+        {
+            out.push_str("coordinate_offer = false\n");
         }
     }
     out

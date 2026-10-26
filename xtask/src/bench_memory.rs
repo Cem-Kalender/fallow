@@ -133,8 +133,10 @@ pub fn run(args: &[String]) -> i32 {
         std::env::temp_dir().join(format!("fallow-bench-memory-{}", std::process::id()));
     let config_arg = config_dir.display().to_string();
     let mut args: Vec<&str> = Vec::new();
-    if a.loaded.is_some() {
-        if let Err(e) = write_flood_profile(&config_dir) {
+    if let Some(fixture) = &a.loaded {
+        if let Err(e) = write_flood_profile(&config_dir)
+            .and_then(|()| crate::pty::no_coordinate_offer(&config_dir, fixture))
+        {
             eprintln!("bench-memory: INVALID: {e}");
             return 2;
         }

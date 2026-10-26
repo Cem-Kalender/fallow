@@ -43,6 +43,7 @@ impl AppState {
         }
         self.notices
             .extend(loaded.notices.iter().map(ToString::to_string));
+        self.projects.no_coordinate_offer = loaded.no_coordinate_offer;
         let changed = self.projects.restore(loaded.entries, loaded.selected);
         self.store.saved_selected = self.projects.selected;
         if changed {

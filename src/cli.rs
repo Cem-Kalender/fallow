@@ -20,6 +20,8 @@ Options:
       --all-users           Show all users' processes (only when already running elevated)
       --no-dns              Don't resolve provider hostnames for this run
       --config-dir <DIR>    Use DIR instead of the platform config directory
+      --coordinate <TIME>   Let PATH's agents coordinate without asking for TIME (e.g. 4h,
+                            2h30m; at most 8h), led by its first session
       --print-config-paths  Print the resolved config file paths and exit
   -V, --version             Print the version and exit
   -h, --help                Print this help and exit
@@ -46,6 +48,8 @@ pub struct Options {
     pub snapshot_stream: Option<u64>,
     /// Hidden: on exit, write `pid=… ticks=… cycles=…` to this file (benchmarks, R-12).
     pub bench_stats: Option<PathBuf>,
+    /// 004: start a coordination burst of this length with the project's first session.
+    pub coordinate: Option<std::time::Duration>,
 }
 
 impl Options {
@@ -117,6 +121,10 @@ where
             "--print-config-paths" => opts.print_config_paths = flag(&inline)?,
             "--snapshot-json" => opts.snapshot_json = flag(&inline)?,
             "--config-dir" => opts.config_dir = Some(PathBuf::from(value("DIR")?)),
+            "--coordinate" => {
+                let v = value("TIME, e.g. 4h")?;
+                opts.coordinate = Some(duration(&v.to_string_lossy())?);
+            }
             "--bench-stats" => opts.bench_stats = Some(PathBuf::from(value("PATH")?)),
             "--snapshot-hold" => opts.snapshot_hold = Some(seconds(&name, value("SECS")?)?),
             "--snapshot-stream" => opts.snapshot_stream = Some(seconds(&name, value("SECS")?)?),
@@ -145,6 +153,36 @@ fn set_path(opts: &mut Options, arg: OsString) -> Result<(), String> {
     }
     opts.path = Some(PathBuf::from(arg));
     Ok(())
+}
+
+/// `30m`, `4h`, `2h30m`: at least one minute, at most 8 hours (004 contracts/ui-commands.md).
+pub fn duration(s: &str) -> Result<std::time::Duration, String> {
+    let bad = || format!("--coordinate {s:?}: expected a time like 30m, 4h or 2h30m");
+    let mut total = 0u64;
+    let mut num = String::new();
+    let mut any = false;
+    for c in s.trim().chars() {
+        match c {
+            '0'..='9' => num.push(c),
+            'h' | 'm' => {
+                let n: u64 = num.parse().map_err(|_| bad())?;
+                total += if c == 'h' { n * 3600 } else { n * 60 };
+                num.clear();
+                any = true;
+            }
+            _ => return Err(bad()),
+        }
+    }
+    if !num.is_empty() || !any {
+        return Err(bad());
+    }
+    if total < 60 {
+        return Err("--coordinate: at least 1m".into());
+    }
+    if total > 8 * 3600 {
+        return Err("--coordinate: at most 8h".into());
+    }
+    Ok(std::time::Duration::from_secs(total))
 }
 
 fn seconds(name: &str, v: OsString) -> Result<u64, String> {

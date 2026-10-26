@@ -36,7 +36,7 @@ pub enum Incoming {
         session: u32,
         token: String,
         peer: Peer,
-        verdict: SyncSender<Result<(), String>>,
+        verdict: SyncSender<Result<Accepted, String>>,
         out: Sender<Outgoing>,
     },
     /// The client finished `initialize`.
@@ -59,6 +59,14 @@ pub enum Incoming {
     Closed {
         conn: ConnId,
     },
+}
+
+/// What the main loop answers to an accepted hello: the session's own briefing and tool list
+/// (004), when it has a role in a burst.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Accepted {
+    pub instructions: Option<String>,
+    pub tools: Option<Value>,
 }
 
 /// What the main loop sends to a connection.
@@ -137,14 +145,15 @@ where
         let _ = out_tx.send(Outgoing::Close);
         return;
     }
-    match vrx.recv_timeout(Duration::from_secs(10)) {
-        Ok(Ok(())) => {}
+    let accepted = match vrx.recv_timeout(Duration::from_secs(10)) {
+        Ok(Ok(a)) => a,
         _ => {
             let _ = out_tx.send(Outgoing::Close);
             return;
         }
-    }
-    let mut server = rpc::Server::new(tools);
+    };
+    let mut server =
+        rpc::Server::new(accepted.tools.unwrap_or(tools)).with_instructions(accepted.instructions);
     let mut announced = false;
     while let Ok(true) = read_line(&mut reader, &mut line) {
         if line.len() > MAX_LINE {

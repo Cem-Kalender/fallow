@@ -441,6 +441,21 @@ pub fn ms(d: Duration) -> f64 {
 }
 
 /// Appends Markdown to the GitHub Actions job summary when running in CI.
+/// Keeps Fallow from offering coordination (004) when the harness's first session starts in
+/// `project`: the offer is a dialog that would take the harness's next keys.
+pub fn no_coordinate_offer(config: &Path, project: &Path) -> Result<(), String> {
+    let abs = std::path::absolute(project).map_err(|e| e.to_string())?;
+    let text = format!(
+        "[[project]]
+path = {:?}
+coordinate_offer = false
+",
+        abs.display().to_string()
+    );
+    std::fs::create_dir_all(config).map_err(|e| e.to_string())?;
+    std::fs::write(config.join("projects.toml"), text).map_err(|e| e.to_string())
+}
+
 pub fn step_summary(markdown: &str) {
     if let Ok(path) = std::env::var("GITHUB_STEP_SUMMARY") {
         if let Ok(mut f) = std::fs::OpenOptions::new()

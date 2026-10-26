@@ -280,3 +280,23 @@ fn mcp_bridge_is_internal_and_never_starts_the_tui() {
     assert!(stdout(&o).is_empty());
     assert!(!stderr(&o).contains(&t), "the token is never printed");
 }
+
+#[test]
+fn coordinate_takes_a_time_of_at_most_eight_hours() {
+    // 004 contracts/ui-commands.md "Command line".
+    use fallow::cli::{Action, duration, parse};
+    use std::time::Duration;
+    assert_eq!(duration("4h"), Ok(Duration::from_secs(4 * 3600)));
+    assert_eq!(duration("2h30m"), Ok(Duration::from_secs(9000)));
+    assert_eq!(duration("45m"), Ok(Duration::from_secs(2700)));
+    assert!(duration("9h").unwrap_err().contains("at most 8h"));
+    assert!(duration("4").is_err());
+    assert!(duration("four hours").is_err());
+    match parse(["--coordinate", "1h", "proj"].map(std::ffi::OsString::from)) {
+        Ok(Action::Run(o)) => assert_eq!(o.coordinate, Some(Duration::from_secs(3600))),
+        other => panic!("{other:?}"),
+    }
+    let o = fallow(&["--coordinate", "9h", "."]);
+    assert_eq!(code(&o), 2);
+    assert!(stderr(&o).contains("at most 8h"), "{}", stderr(&o));
+}

@@ -232,6 +232,7 @@ fn setup(base: &Path) -> Result<PathBuf, String> {
         script.display().to_string()
     ));
     std::fs::write(config.join("profiles.toml"), profiles).map_err(|e| e.to_string())?;
+    crate::pty::no_coordinate_offer(&config, &base.join("project"))?;
     Ok(config)
 }
 

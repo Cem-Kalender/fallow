@@ -310,7 +310,12 @@ fn draw_sessions(f: &mut Frame<'_>, state: &AppState, area: Rect) {
                 String::new()
             };
             ListItem::new(Line::from(vec![
-                Span::raw(format!("#{} {}  {project}", s.id, s.profile.name)),
+                Span::raw(format!("#{} {}  ", s.id, s.profile.name)),
+                Span::styled(
+                    s.role.as_ref().map_or(String::new(), |r| format!("{r}  ")),
+                    Style::default().fg(Color::Cyan),
+                ),
+                Span::raw(project),
                 Span::styled(
                     s.workdir
                         .branch()
@@ -684,6 +689,122 @@ mod tests {
         assert!(screen.contains("post"), "{screen}");
         s.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
         assert!(matches!(s.overlay, crate::app::state::Overlay::None));
+    }
+
+    #[test]
+    fn coordination_starts_from_the_palette_and_shows_in_the_squad_tab() {
+        // 004 US1, contracts/ui-commands.md "Starting a burst" and "During a burst".
+        use crate::app::state::Overlay;
+        use crate::session::profiles::builtins;
+        let d = temp_project("burst");
+        let mut s = AppState::new(Some(d.clone()), Vec::new());
+        let project = s.projects.selected().unwrap().id;
+        for id in [1, 2] {
+            s.sessions.sessions.push(crate::session::Session::detached(
+                id,
+                project,
+                builtins().remove(0),
+            ));
+        }
+        // Without a hub it says why instead of opening.
+        s.workspace.active = Some(1);
+        s.run("orch.coordinate");
+        assert!(matches!(s.overlay, Overlay::None));
+        s.hub = Some(crate::orchestration::Hub::new(Default::default()));
+        s.run("orch.coordinate");
+        let screen = render(140, 40, &mut s);
+        assert!(screen.contains("Coordinate"), "{screen}");
+        assert!(
+            screen.contains("built-in (lead, builder, reviewer)"),
+            "{screen}"
+        );
+        assert!(screen.contains("[4 h] (max 8 h)"), "{screen}");
+        assert!(screen.contains("up to [3] new sessions"), "{screen}");
+        assert!(screen.contains("its own plan or API usage"), "{screen}");
+        assert!(
+            screen.contains("a local merge by Fallow, after your approval"),
+            "{screen}"
+        );
+        assert!(
+            screen.contains("[ ] Set up Spec Kit"),
+            "no .specify: offered\n{screen}"
+        );
+        // Right on the duration field: 4 h 30 min; Enter starts.
+        s.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE));
+        assert!(render(140, 40, &mut s).contains("[4 h 30 min]"));
+        s.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(matches!(s.overlay, Overlay::None));
+        let hub = s.hub.as_ref().unwrap();
+        assert_eq!(hub.role_of(1), Some("lead"));
+        assert!(
+            s.message
+                .as_ref()
+                .is_some_and(|(m, _)| m.contains("Coordinating"))
+        );
+        s.message = None;
+        let bar = render(140, 40, &mut s).lines().last().unwrap().to_string();
+        assert!(
+            bar.contains("● coordinating 4:29:5") || bar.contains("● coordinating 4:30:00"),
+            "{bar:?}"
+        );
+        // Also while a session has focus.
+        s.workspace.focus = AgentsFocus::Session;
+        let bar = render(140, 40, &mut s).lines().last().unwrap().to_string();
+        assert!(bar.contains("● coordinating 4:"), "{bar:?}");
+        s.workspace.focus = AgentsFocus::Sessions;
+        // The Squad tab is first: roles, lead, time left, allowance.
+        s.overlay = Overlay::Orch(crate::ui::orchestration::OrchView {
+            tab: crate::ui::orchestration::Tab::Squad,
+            ..Default::default()
+        });
+        let screen = render(140, 40, &mut s);
+        assert!(screen.contains("lead #1"), "{screen}");
+        assert!(screen.contains("sessions started 0/3"), "{screen}");
+        assert!(screen.contains("lead       #1"), "{screen}");
+        // L makes the selected session the lead.
+        s.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        s.handle_key(KeyEvent::new(KeyCode::Char('L'), KeyModifiers::SHIFT));
+        assert_eq!(s.hub.as_ref().unwrap().role_of(2), Some("lead"));
+        assert!(render(140, 40, &mut s).contains("lead #2"));
+        // Shift-X ends it; the countdown goes.
+        s.handle_key(KeyEvent::new(KeyCode::Char('X'), KeyModifiers::SHIFT));
+        assert!(s.hub.as_ref().unwrap().bursts.is_empty());
+        s.overlay = Overlay::None;
+        let bar = render(140, 40, &mut s).lines().last().unwrap().to_string();
+        assert!(!bar.contains("coordinating"), "{bar:?}");
+        let _ = std::fs::remove_dir_all(d);
+    }
+
+    #[test]
+    fn the_first_session_offers_coordination_once_and_d_stops_it() {
+        // 004 FR-002: once per project per run; "don't ask again" is kept per project.
+        use crate::app::state::Overlay;
+        use crate::session::profiles::builtins;
+        let d = temp_project("offer");
+        let mut s = AppState::new(Some(d.clone()), Vec::new());
+        let project = s.projects.selected().unwrap().id;
+        let mut sess = crate::session::Session::detached(1, project, builtins().remove(0));
+        sess.orch.token = crate::orchestration::identity::Token::new().ok();
+        s.sessions.sessions.push(sess);
+        s.hub = Some(crate::orchestration::Hub::new(Default::default()));
+        s.after_first_session(project, 1);
+        let screen = render(140, 40, &mut s);
+        assert!(screen.contains("d don't ask again"), "{screen}");
+        s.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        s.after_first_session(project, 1);
+        assert!(matches!(s.overlay, Overlay::None), "once per run");
+        s.coordinate_offered.clear();
+        s.after_first_session(project, 1);
+        s.handle_key(key('d'));
+        assert!(matches!(s.overlay, Overlay::None));
+        assert_eq!(s.projects.no_coordinate_offer.len(), 1);
+        s.coordinate_offered.clear();
+        s.after_first_session(project, 1);
+        assert!(
+            matches!(s.overlay, Overlay::None),
+            "declined for this project"
+        );
+        let _ = std::fs::remove_dir_all(d);
     }
 
     #[test]

@@ -94,6 +94,8 @@ pub enum PromptKind {
         crate::orchestration::board::BoardId,
         crate::ui::orchestration::OrchView,
     ),
+    /// 004: extend a project's burst by a new duration (at most 8 h).
+    ExtendBurst(crate::projects::ProjectId),
 }
 
 impl PromptKind {
@@ -112,6 +114,9 @@ impl PromptKind {
                 "Signal an event: type its name (and an optional message), then Enter"
             }
             PromptKind::EditDelivery(..) => "Text to deliver (Enter approves)",
+            PromptKind::ExtendBurst(_) => {
+                "Coordinate for another (30m, 2h, 4h30m; at most 8h from now)"
+            }
             PromptKind::NewTask(..) => {
                 "New task: #2 or claude@api, then the text; after:event waits for it"
             }
@@ -169,6 +174,7 @@ impl AppState {
             | Overlay::Menu(_)
             | Overlay::Orch(_)
             | Overlay::Grant(_)
+            | Overlay::Burst(_)
             | Overlay::Info { .. } => false,
             Overlay::None if self.workspace.view == super::workspace::View::Agents => {
                 self.workspace.focus == super::workspace::AgentsFocus::Session
@@ -468,6 +474,12 @@ impl AppState {
                 hub.approve(*id, Some(text))?;
                 self.overlay = Overlay::Orch(view.clone());
                 Ok(())
+            }
+            PromptKind::ExtendBurst(project) => {
+                let d = crate::cli::duration(text.trim())
+                    .map_err(|e| e.replace("--coordinate: ", ""))?;
+                let hub = self.hub.as_mut().ok_or("No coordination is running")?;
+                hub.extend_burst(*project, d, std::time::Instant::now())
             }
             PromptKind::SignalEvent(scope, view) => {
                 let hub = self
@@ -979,6 +991,7 @@ impl AppState {
             | Overlay::Menu(_)
             | Overlay::Orch(_)
             | Overlay::Grant(_)
+            | Overlay::Burst(_)
             | Overlay::Info { .. } => return false,
             Overlay::None => {}
         }

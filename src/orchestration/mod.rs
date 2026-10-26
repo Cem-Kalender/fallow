@@ -301,6 +301,8 @@ pub struct Hub {
     pub outbox: HashMap<u32, Inbox>,
     pub tasks: tasks::Tasks,
     pub starts: Vec<StartRequest>,
+    /// Coordination bursts, at most one per project (004).
+    pub bursts: Vec<burst::Burst>,
     next_start: u64,
 }
 
@@ -380,6 +382,7 @@ impl Hub {
             outbox: HashMap::new(),
             tasks: tasks::Tasks::default(),
             starts: Vec::new(),
+            bursts: Vec::new(),
             next_start: 0,
             settings,
             channel: None,
@@ -464,7 +467,7 @@ impl Hub {
                             &format!("session #{session}"),
                             None,
                         );
-                        let _ = verdict.send(Ok(()));
+                        let _ = verdict.send(Ok(self.accepted(session)));
                     }
                     Err(why) => {
                         self.activity.add(
@@ -534,6 +537,18 @@ impl Hub {
                 }
                 true
             }
+        }
+    }
+
+    /// A session's briefing and tool list for its connection, when it has a role in a burst.
+    pub fn accepted(&self, session: u32) -> channel::Accepted {
+        let Some(b) = self.burst_for(session) else {
+            return channel::Accepted::default();
+        };
+        let role = b.roles.get(&session).and_then(|r| b.squad.role(r));
+        channel::Accepted {
+            instructions: role.map(|r| briefing::short(b, r, session)),
+            tools: role.map(|r| tools::list_for(Some(r))),
         }
     }
 
@@ -1323,6 +1338,11 @@ impl Hub {
 
     /// Revokes every permission at once (SC-005): requests handled after this prompt again.
     pub fn revoke_all(&mut self) -> usize {
+        // A burst is a permission: revoking all ends every burst too (004 FR-004).
+        let projects: Vec<ProjectId> = self.bursts.iter().map(|b| b.project).collect();
+        for p in projects {
+            self.end_burst(p, "ended by you");
+        }
         let n = self.permissions.revoke_all().len();
         if n > 0 {
             self.activity.add(
@@ -1402,7 +1422,7 @@ impl Hub {
     /// stories) expiries and the queue. Returns true when something visible changed.
     pub fn tick(&mut self, sessions: &dyn Sessions, now: Instant) -> bool {
         let _ = sessions;
-        let mut changed = false;
+        let mut changed = self.tick_bursts(now);
         for (w, end) in self.events.due(now) {
             changed = true;
             let reply = match end {

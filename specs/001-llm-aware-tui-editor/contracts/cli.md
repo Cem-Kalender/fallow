@@ -10,6 +10,7 @@ fallow [OPTIONS] [PATH]
 | `--all-users` | Show all users' processes (FR-031). Takes effect only when Fallow already runs elevated (root/Administrator). Otherwise Fallow starts normally and shows a notice. Fallow never requests elevation. |
 | `--no-dns` | Disable provider hostname resolution for this run (same as `dns.enabled = false`). |
 | `--config-dir <DIR>` | Use this directory instead of the platform config dir. |
+| `--coordinate <TIME>` | 004: coordinate the project (`PATH`, or the first project to start a session) for `TIME` (`30m`, `4h`, `2h30m`; at most `8h`, else exit 2 with "--coordinate: at most 8h"). Nothing is created at startup: the burst starts with the first session of that project, which becomes the lead. |
 | `--print-config-paths` | Print the resolved config file paths and exit. |
 | `--version`, `-V` | Print the version and exit. |
 | `--help`, `-h` | Print usage and exit. |

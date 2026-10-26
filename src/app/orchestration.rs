@@ -10,13 +10,15 @@ use super::editing::PromptKind;
 use super::keymap;
 use super::state::{AppState, Overlay};
 use crate::editor::selection::LineInput;
+use crate::orchestration::burst::{BurstRequest, DEFAULT_ALLOWANCE};
 use crate::orchestration::channel::{self, Incoming};
 use crate::orchestration::identity::Peer;
 use crate::orchestration::inject::Bridge;
 use crate::orchestration::{Hub, SessionInfo, Sessions, tools};
+use crate::orchestration::{git, squad};
 use crate::session::profiles::Style;
 use crate::session::{SessionManager, SessionState};
-use crate::ui::orchestration::{OrchView, Tab};
+use crate::ui::orchestration::{BurstForm, OrchView, Tab};
 
 impl Sessions for SessionManager {
     fn info(&self, id: u32) -> Option<SessionInfo> {
@@ -193,6 +195,14 @@ impl AppState {
             guard,
         };
         let mut changed = hub.tick(&view, Instant::now());
+        // Roles live in the hub's bursts; sessions show them (004 FR-009).
+        for s in &mut self.sessions.sessions {
+            let role = hub.role_of(s.id).map(str::to_string);
+            if s.role != role {
+                s.role = role;
+                changed = true;
+            }
+        }
         changed |= self.carry_out_starts();
         changed |= self.type_deliveries();
         self.take_hub_notices();
@@ -315,6 +325,45 @@ impl AppState {
                     tab: Tab::Activity,
                     ..OrchView::default()
                 });
+                return Some(true);
+            }
+            "orch.coordinate" => return Some(self.open_burst()),
+            "orch.end" => {
+                let project = self
+                    .workspace
+                    .active
+                    .and_then(|id| self.sessions.get(id))
+                    .map(|s| s.project)
+                    .or(self.projects.selected().map(|p| p.id));
+                let ended = match (project, self.hub.as_mut()) {
+                    (Some(p), Some(h)) => h.end_burst(p, "ended by you"),
+                    _ => false,
+                };
+                if ended {
+                    self.take_hub_notices();
+                } else {
+                    self.say("No coordination in this project");
+                }
+                return Some(true);
+            }
+            "orch.extend" => {
+                let project = self
+                    .workspace
+                    .active
+                    .and_then(|id| self.sessions.get(id))
+                    .map(|s| s.project)
+                    .or(self.projects.selected().map(|p| p.id));
+                let coordinating =
+                    project.filter(|p| self.hub.as_ref().is_some_and(|h| h.burst_of(*p).is_some()));
+                let Some(p) = coordinating else {
+                    self.say("No coordination in this project");
+                    return Some(true);
+                };
+                self.overlay = Overlay::Prompt {
+                    kind: PromptKind::ExtendBurst(p),
+                    input: LineInput::selected("4h"),
+                    error: None,
+                };
                 return Some(true);
             }
             "orch.task_new" if !matches!(self.overlay, Overlay::Orch(_)) => {
@@ -453,6 +502,22 @@ impl AppState {
                 }
             }
             "orch.grant_new" => return Some(self.open_grant(None)),
+            "orch.make_lead" if v.tab == Tab::Squad => {
+                let sel = v.selected;
+                let ids = crate::ui::orchestration::squad_sessions(self);
+                let Some(&id) = ids.get(sel) else {
+                    return Some(false);
+                };
+                let Some(project) = self.sessions.get(id).map(|s| s.project) else {
+                    return Some(false);
+                };
+                if let Some(h) = self.hub.as_mut() {
+                    match h.set_lead(project, id) {
+                        Ok(()) => self.say(format!("#{id} is now the lead")),
+                        Err(e) => self.say(e),
+                    }
+                }
+            }
             "orch.filter" if v.tab == Tab::Activity => {
                 v.filter = (v.filter + 1) % 3;
                 v.scroll = 0;
@@ -888,4 +953,272 @@ pub fn start_guard(
         ));
     }
     None
+}
+
+/// The installer the lead runs when the engineer agrees to set Spec Kit up (004 R-6). Fallow
+/// itself downloads nothing and writes nothing into the project.
+fn spec_kit_installer(style: Style) -> String {
+    let integration = match style {
+        Style::Codex => "codex",
+        Style::Gemini => "gemini",
+        Style::Claude | Style::None => "claude",
+    };
+    format!(
+        "The user agreed to set up Spec Kit in this project for the coordination burst. Run its official installer here: `uvx --from git+https://github.com/github/spec-kit.git specify init --here --force --non-interactive --integration {integration}` (check first that uv is installed with `uv --version`; if it is missing, ask the user how to proceed instead of installing it). Then commit the files it added and post on the board that Spec Kit is set up."
+    )
+}
+
+impl AppState {
+    /// The coordination dialog for `lead`'s project (004 contracts/ui-commands.md).
+    fn burst_form(&self, lead: u32, offer: bool) -> Result<BurstForm, String> {
+        let s = self
+            .sessions
+            .get(lead)
+            .filter(|s| s.state.running())
+            .ok_or("Select or focus a running session first: it becomes the lead")?;
+        let path = self
+            .projects
+            .get(s.project)
+            .map(|p| p.path.clone())
+            .ok_or("The session's project is not in the list")?;
+        let loaded = squad::load(&path, self.store.dir.as_deref());
+        let has_remote = git::has_remote(&path);
+        let (publish, merge) = match &loaded {
+            Ok(q) => (q.publish, q.merge),
+            Err(_) => (squad::Publish::Auto, squad::Merge::OnApproval),
+        };
+        let mut publish = match (publish, has_remote) {
+            (squad::Publish::DraftPr, _) | (squad::Publish::Auto, true) => {
+                "a draft pull request by Fallow".to_string()
+            }
+            _ => "a local merge by Fallow".to_string(),
+        };
+        publish.push_str(match merge {
+            squad::Merge::OnApproval => ", after your approval",
+            squad::Merge::Automatic => ", when the squad's conditions are met",
+        });
+        let max = self.sessions.limits.max_sessions.clamp(1, 255) as u8;
+        Ok(BurstForm {
+            project: s.project,
+            project_name: s.project_name.clone(),
+            lead,
+            lead_label: s.label(),
+            minutes: 240,
+            allowance: DEFAULT_ALLOWANCE.min(max),
+            max_allowance: max,
+            squad: loaded.map(|q| {
+                let roles: Vec<&str> = q.roles.iter().map(|r| r.name.as_str()).collect();
+                format!("{} ({})", q.name, roles.join(", "))
+            }),
+            publish,
+            offer_spec_kit: !path.join(".specify").is_dir(),
+            setup_spec_kit: false,
+            offer,
+            field: 0,
+            error: None,
+        })
+    }
+
+    /// "Coordinate this project…" from the palette: the active session is the lead (FR-002).
+    fn open_burst(&mut self) -> bool {
+        if self.hub.is_none() {
+            self.say("Coordination needs orchestration: start an agent session with it first");
+            return true;
+        }
+        let Some(lead) = self.workspace.active else {
+            self.say("Select or focus a session first: it becomes the lead");
+            return true;
+        };
+        if let Some(p) = self.sessions.get(lead).map(|s| s.project) {
+            if let Some(b) = self.hub.as_ref().and_then(|h| h.burst_of(p)) {
+                let name = b.project_name.clone();
+                self.say(format!(
+                    "{name} is already coordinating (+ extends, Shift-X ends)"
+                ));
+                return true;
+            }
+        }
+        match self.burst_form(lead, false) {
+            Ok(f) => self.overlay = Overlay::Burst(f),
+            Err(e) => self.say(e),
+        }
+        true
+    }
+
+    /// Starts a burst in `project` with `lead` (FR-001), reading the squad and git state now.
+    fn start_burst_now(
+        &mut self,
+        project: crate::projects::ProjectId,
+        lead: u32,
+        duration: std::time::Duration,
+        allowance: Option<u8>,
+        setup_spec_kit: bool,
+    ) -> Result<(), String> {
+        let path = self
+            .projects
+            .get(project)
+            .map(|p| p.path.clone())
+            .ok_or("The project is not in the list")?;
+        let squad = squad::load(&path, self.store.dir.as_deref())
+            .map_err(|p| format!("Fix {} first: {}", squad::SQUAD_FILE, p.join("; ")))?;
+        let request = BurstRequest {
+            lead,
+            duration,
+            allowance,
+            squad,
+            start_commit: git::head(&path).ok(),
+            target_branch: git::branch(&path),
+            has_remote: git::has_remote(&path),
+            spec_kit: path.join(".specify").is_dir(),
+            max_sessions: self.sessions.limits.max_sessions.clamp(1, 255) as u8,
+        };
+        let style = self
+            .sessions
+            .get(lead)
+            .map_or(Style::None, |s| s.profile.orchestration);
+        let hub = self
+            .hub
+            .as_mut()
+            .ok_or("Coordination needs orchestration: start an agent session with it first")?;
+        let view = AppView {
+            sessions: &self.sessions,
+            projects: &self.projects,
+            profiles: &self.profiles,
+            guard: None,
+        };
+        let now = Instant::now();
+        hub.start_burst(&view, request, now)?;
+        if setup_spec_kit {
+            hub.request_delivery(
+                &view,
+                crate::orchestration::Party::User,
+                lead,
+                spec_kit_installer(style),
+                crate::orchestration::delivery::Purpose::Message,
+                true,
+                now,
+            )?;
+        }
+        if let Some(s) = self.sessions.get_mut(lead) {
+            s.role = Some("lead".into());
+        }
+        self.take_hub_notices();
+        Ok(())
+    }
+
+    /// After a session started: `--coordinate` starts the burst with it, or the first session of
+    /// a project offers coordination once per run (FR-002).
+    pub(crate) fn after_first_session(&mut self, project: crate::projects::ProjectId, sid: u32) {
+        let path = self.projects.get(project).map(|p| p.path.clone());
+        if let Some((d, want)) = self.pending_coordinate.clone() {
+            let ours = match (&want, &path) {
+                (None, _) => true,
+                (Some(w), Some(p)) => crate::projects::same_path(w, p),
+                _ => false,
+            };
+            if ours {
+                self.pending_coordinate = None;
+                if let Err(e) = self.start_burst_now(project, sid, d, None, false) {
+                    self.say(format!("--coordinate: {e}"));
+                }
+                return;
+            }
+        }
+        let Some(hub) = self.hub.as_ref() else {
+            return;
+        };
+        if hub.burst_of(project).is_some()
+            || self.coordinate_offered.contains(&project)
+            || !matches!(self.overlay, Overlay::None)
+        {
+            return;
+        }
+        let connected = self
+            .sessions
+            .get(sid)
+            .is_some_and(|s| s.state.running() && s.orch.token.is_some());
+        let running = self
+            .sessions
+            .sessions
+            .iter()
+            .filter(|s| s.project == project && s.state.running())
+            .count();
+        let declined = path.as_ref().is_some_and(|p| {
+            self.projects
+                .no_coordinate_offer
+                .iter()
+                .any(|q| crate::projects::same_path(q, p))
+        });
+        if !connected || running != 1 || declined {
+            return;
+        }
+        self.coordinate_offered.push(project);
+        if let Ok(f) = self.burst_form(sid, true) {
+            self.overlay = Overlay::Burst(f);
+        }
+    }
+
+    /// Keys in the coordination dialog.
+    pub(crate) fn burst_key(&mut self, key: KeyEvent) -> bool {
+        use crossterm::event::KeyCode;
+        let Overlay::Burst(b) = &mut self.overlay else {
+            return false;
+        };
+        b.error = None;
+        let fields = if b.offer_spec_kit { 3 } else { 2 };
+        match key.code {
+            KeyCode::Esc => self.overlay = Overlay::None,
+            KeyCode::Up => b.field = b.field.saturating_sub(1),
+            KeyCode::Down | KeyCode::Tab => b.field = (b.field + 1).min(fields - 1),
+            KeyCode::Left | KeyCode::Right => {
+                let step: i64 = if key.code == KeyCode::Left { -1 } else { 1 };
+                match b.field {
+                    0 => b.minutes = (b.minutes as i64 + step * 30).clamp(30, 480) as u64,
+                    1 => {
+                        b.allowance = (i64::from(b.allowance) + step)
+                            .clamp(1, i64::from(b.max_allowance))
+                            as u8
+                    }
+                    _ => b.setup_spec_kit = !b.setup_spec_kit,
+                }
+            }
+            KeyCode::Char(' ') if b.field == 2 => b.setup_spec_kit = !b.setup_spec_kit,
+            KeyCode::Char('d' | 'D') if b.offer => {
+                let project = b.project;
+                self.overlay = Overlay::None;
+                if let Some(p) = self.projects.get(project).map(|p| p.path.clone()) {
+                    self.projects.no_coordinate_offer.push(p);
+                    self.save_projects();
+                    self.say("Fallow won't offer coordination for this project again");
+                }
+            }
+            KeyCode::Enter => {
+                if b.squad.is_err() {
+                    b.error = Some(format!(
+                        "Fix {} first, or remove it to use the built-in squad",
+                        squad::SQUAD_FILE
+                    ));
+                    return true;
+                }
+                let (project, lead, minutes, allowance, setup) = (
+                    b.project,
+                    b.lead,
+                    b.minutes,
+                    b.allowance,
+                    b.offer_spec_kit && b.setup_spec_kit,
+                );
+                let d = std::time::Duration::from_secs(minutes * 60);
+                match self.start_burst_now(project, lead, d, Some(allowance), setup) {
+                    Ok(()) => self.overlay = Overlay::None,
+                    Err(e) => {
+                        if let Overlay::Burst(b) = &mut self.overlay {
+                            b.error = Some(e);
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+        true
+    }
 }

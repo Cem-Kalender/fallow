@@ -88,6 +88,7 @@ fn check(bin: &Path, base: &Path) -> Result<(Vec<String>, String), String> {
     ));
     std::fs::write(config.join("profiles.toml"), profiles).map_err(|e| e.to_string())?;
 
+    crate::pty::no_coordinate_offer(&config, &project)?;
     let cfg = config.display().to_string();
     let proj = project.display().to_string();
     let mut s = Session::spawn(bin, &["--config-dir", &cfg, &proj], Duration::from_secs(1))?;

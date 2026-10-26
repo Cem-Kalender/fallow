@@ -119,6 +119,8 @@ pub enum Overlay {
     Orch(crate::ui::orchestration::OrchView),
     /// The grant dialog (003).
     Grant(crate::ui::orchestration::GrantForm),
+    /// The coordination dialog (004).
+    Burst(crate::ui::orchestration::BurstForm),
     /// A read-only text popup (session details, 003).
     Info {
         title: String,
@@ -191,6 +193,10 @@ pub struct AppState {
     /// Orchestration (003): created with the first orchestrated session, never at startup.
     pub hub: Option<crate::orchestration::Hub>,
     pub orch_settings: crate::config::schema::OrchestrationSettings,
+    /// 004: `--coordinate`: a burst to start with the first session of this project.
+    pub pending_coordinate: Option<(std::time::Duration, Option<PathBuf>)>,
+    /// 004: projects offered coordination in this run.
+    pub coordinate_offered: Vec<crate::projects::ProjectId>,
 }
 
 impl AppState {
@@ -242,6 +248,8 @@ impl AppState {
             store: Default::default(),
             hub: None,
             orch_settings: Default::default(),
+            pending_coordinate: None,
+            coordinate_offered: Vec::new(),
         }
     }
 
@@ -293,6 +301,7 @@ impl AppState {
             Overlay::Menu(_) => return self.menu_key(key),
             Overlay::Orch(_) => return self.orch_key(key),
             Overlay::Grant(_) => return self.grant_key(key),
+            Overlay::Burst(_) => return self.burst_key(key),
             Overlay::Info { .. } => {
                 self.overlay = Overlay::None;
                 return true;

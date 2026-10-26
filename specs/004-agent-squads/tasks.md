@@ -90,7 +90,7 @@ squad, US4–US6 add gates, evidence and publishing to the squad.
 
 **Independent Test**: start a burst from a session for one hour; it starts a second session and hands it a task with no prompt; every use is announced; after the burst ends, the next request prompts again.
 
-- [ ] T009 [P] [US1] Write `tests/squad_burst.rs`:
+- [X] T009 [P] [US1] Write `tests/squad_burst.rs`:
   - Start, with a Fake session table:
     - grants a 003 permission with source and target `Project(p)`, deliver + create tasks + start up to the allowance;
     - allowance default 3, at most `sessions.max_sessions`;
@@ -103,38 +103,38 @@ squad, US4–US6 add gates, evidence and publishing to the squad.
   - A burst for project 1 leaves project 2's sessions untouched.
   - One burst per project.
   - The engineer can name another lead.
-- [ ] T010 [US1] Implement `src/orchestration/burst.rs` (data-model "Burst", research R-1) and wire it into `Hub`: `start_burst`, `end_burst`, `extend_burst`, `set_lead`, and expiry in `tick`, with "ends in 10 min" and "ended" notices.
-- [ ] T011 [P] [US1] Implement `src/orchestration/briefing.rs`.
+- [X] T010 [US1] Implement `src/orchestration/burst.rs` (data-model "Burst", research R-1) and wire it into `Hub`: `start_burst`, `end_burst`, `extend_burst`, `set_lead`, and expiry in `tick`, with "ends in 10 min" and "ended" notices.
+- [X] T011 [P] [US1] Implement `src/orchestration/briefing.rs`.
   - Short text per role, under 3,500 characters (research R-3).
   - Full text per role covering FR-005's list: tools, rules, roles, gates, the check-in convention, sessions versus subagents, and the end time.
   - The Spec Kit pipeline when the project has `.specify/` (FR-006); otherwise plain steps.
   - The common board note.
   - Unit tests: lengths, and each FR-005 item present.
-- [ ] T012 [US1] Deliver briefings, in `src/orchestration/channel.rs`, `rpc.rs` and `tools.rs`:
+- [X] T012 [US1] Deliver briefings, in `src/orchestration/channel.rs`, `rpc.rs` and `tools.rs`:
   - after the hello, the connection asks the hub for the session's short briefing, which becomes the `initialize` `instructions`;
   - `whoami` adds `role`, `role_description`, `burst {ends_at, lead, allowance_left}` and `briefing`;
   - starting a burst posts the common note;
   - sessions connected before the burst get a delivery, approved by the burst, asking them to call `whoami`.
-- [ ] T013 [P] [US1] Add `--coordinate <DURATION> [PATH]` to `src/cli.rs`.
+- [X] T013 [P] [US1] Add `--coordinate <DURATION> [PATH]` to `src/cli.rs`.
   - Duration format: `30m`, `4h`, `2h30m`. Over `8h`, exit 2 with "--coordinate: at most 8h".
   - The app keeps it as a pending burst. Nothing is created before the first session of that project (test: no hub after startup).
   - Tests go in `tests/cli_args.rs`.
   - Document it in `specs/001-llm-aware-tui-editor/contracts/cli.md`.
-- [ ] T014 [US1] Add the ways in to `src/app/orchestration.rs` and `src/ui/orchestration.rs` (contracts/ui-commands.md "Starting a burst"):
+- [X] T014 [US1] Add the ways in to `src/app/orchestration.rs` and `src/ui/orchestration.rs` (contracts/ui-commands.md "Starting a burst"):
   - The palette command "Coordinate this project…" opens the dialog: lead, squad summary, hours (max 8), the sessions allowance with the usage-cost note, publish mode.
   - The offer when the first session of a project starts: once per project per run; `d` stores "don't ask again for this project" in `projects.toml` (`src/projects/store.rs`).
   - The pending `--coordinate` burst starts with the first session as lead.
-- [ ] T015 [US1] Add the Spec Kit offer (FR-007, research R-8). When a burst starts in a project without `.specify/`:
+- [X] T015 [US1] Add the Spec Kit offer (FR-007, research R-8). When a burst starts in a project without `.specify/`:
   - the dialog asks "Set up Spec Kit? The lead will run the official installer";
   - yes: a delivery to the lead (approved by the engineer's answer) with the installer command, saying to check for `uv` first and ask the engineer if it is missing;
   - Fallow downloads and writes nothing.
-- [ ] T016 [US1] Build the burst UI, in `src/ui/hints.rs`, `src/ui/orchestration.rs` and `src/app/orchestration.rs`:
+- [X] T016 [US1] Build the burst UI, in `src/ui/hints.rs`, `src/ui/orchestration.rs` and `src/app/orchestration.rs`:
   - `● coordinating H:MM:SS left` in the hint bar in both views, also with a session focused;
   - a new first tab **Squad**: lead, sessions, time left, allowance used;
   - keys `+` (extend), `L` (make the selected session lead), `Shift-X` (end the burst);
   - palette entries;
   - render tests in `src/ui/workspace.rs`.
-- [ ] T017 [US1] Create `xtask/src/squad.rs` and register `cargo xtask squad` in `xtask/src/main.rs`:
+- [X] T017 [US1] Create `xtask/src/squad.rs` and register `cargo xtask squad` in `xtask/src/main.rs`:
   - Fallow in the PTY harness; the lead is an `mcp-agent` session that starts a builder with a first task;
   - the harness starts the burst from the palette;
   - check: no prompt appears, the builder receives the task, and after `Shift-X` the next request is pending.

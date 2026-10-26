@@ -60,9 +60,16 @@ pub fn draw(f: &mut Frame<'_>, state: &AppState, area: Rect) {
     let pending = state.hub.as_ref().map_or(0, |h| h.pending_requests());
     let requests = format!("{pending} request{}", if pending == 1 { "" } else { "s" });
     let mut hints = commands::hints(context, text_input);
+    let coordinating = coordinating(state);
     // Requests waiting for the engineer, in both views (contracts/ui-commands.md "Elsewhere").
     if pending > 0 && matches!(state.overlay, Overlay::None) && hints.len() >= 2 {
         hints.insert(2, ("o", requests.as_str()));
+    }
+    // A running burst, in both views (004 contracts/ui-commands.md "During a burst").
+    if let Some(c) = &coordinating {
+        if hints.len() >= 2 {
+            hints.insert(2, ("●", c.as_str()));
+        }
     }
     // The editor view: the way back to the agent workspace (002 FR-020).
     if state.workspace.view == crate::app::workspace::View::Editor
@@ -84,7 +91,11 @@ pub fn draw(f: &mut Frame<'_>, state: &AppState, area: Rect) {
             ("Esc", "Cancel"),
         ]),
         Overlay::Info { .. } => hints.push(("any key", "Close")),
-        Overlay::Confirm { .. } | Overlay::Orch(_) | Overlay::Grant(_) | Overlay::None => {}
+        Overlay::Confirm { .. }
+        | Overlay::Orch(_)
+        | Overlay::Grant(_)
+        | Overlay::Burst(_)
+        | Overlay::None => {}
     }
     // A focused session: every key but the leave key goes to the agent, so only that is shown.
     if matches!(state.overlay, Overlay::None)
@@ -96,6 +107,13 @@ pub fn draw(f: &mut Frame<'_>, state: &AppState, area: Rect) {
             Span::styled(leave, Style::default().add_modifier(Modifier::BOLD)),
             Span::raw(" Leave session (keys go to the agent until then)"),
         ]);
+        if let Some(c) = &coordinating {
+            line.spans.push(Span::raw(SEPARATOR));
+            line.spans.push(Span::styled(
+                format!("● {c}"),
+                Style::default().fg(Color::Cyan),
+            ));
+        }
         // Only the count: the overlay never opens by itself over a focused session.
         if pending > 0 {
             line.spans.push(Span::raw(SEPARATOR));
@@ -117,6 +135,29 @@ pub fn draw(f: &mut Frame<'_>, state: &AppState, area: Rect) {
     }
     let msg = state.message.as_ref().map(|(m, _)| m.as_str());
     f.render_widget(Paragraph::new(line(&hints, msg, area.width)), area);
+}
+
+/// "coordinating 3:12:05 left" for the burst of the active session's (or the selected)
+/// project, else for any burst.
+pub fn coordinating(state: &AppState) -> Option<String> {
+    let hub = state.hub.as_ref()?;
+    let project = state
+        .workspace
+        .active
+        .and_then(|id| state.sessions.get(id))
+        .map(|s| s.project)
+        .or(state.projects.selected().map(|p| p.id));
+    let b = project
+        .and_then(|p| hub.burst_of(p))
+        .or(hub.bursts.first())?;
+    let left = b.ends.saturating_duration_since(std::time::Instant::now());
+    let s = left.as_secs();
+    Some(format!(
+        "coordinating {}:{:02}:{:02} left",
+        s / 3600,
+        s % 3600 / 60,
+        s % 60
+    ))
 }
 
 #[cfg(test)]

@@ -248,6 +248,7 @@ fn run_all(bin: &Path, base: &Path) -> Result<i32, String> {
         "orchestration: {} (post-to-read p95 < {BUDGET_MS} ms, on screen < {BUDGET_MS} ms, identity refusals)",
         bin.display()
     );
+    pty::no_coordinate_offer(&config, &project)?;
     let cfg = config.display().to_string();
     let proj = project.display().to_string();
     let mut s = Session::spawn(bin, &["--config-dir", &cfg, &proj], Duration::from_secs(1))?;

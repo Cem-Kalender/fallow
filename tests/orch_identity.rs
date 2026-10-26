@@ -79,7 +79,7 @@ fn a_connection_carries_the_kernel_reported_peer_and_mcp_lines() {
     assert_eq!(peer.pid, std::process::id(), "the peer is this process");
     #[cfg(unix)]
     assert_eq!(peer.uid, Some(fallow::orchestration::identity::my_uid()));
-    verdict.send(Ok(())).unwrap();
+    verdict.send(Ok(Default::default())).unwrap();
     assert!(matches!(recv_hub(&rx), Incoming::Client { ref name, .. } if name == "t"));
     let Incoming::Call { id, name, .. } = recv_hub(&rx) else {
         panic!("expected the tool call");

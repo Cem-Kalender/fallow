@@ -254,6 +254,40 @@ fn board_label(b: BoardId, me: &SessionInfo) -> String {
     }
 }
 
+/// The `tools/list` array for a role (004 FR-011); `None`: every tool (outside a burst).
+pub fn list_for(role: Option<&super::squad::Role>) -> Value {
+    let Value::Array(all) = list() else {
+        return list();
+    };
+    match role {
+        None => Value::Array(all),
+        Some(r) => Value::Array(
+            all.into_iter()
+                .filter(|t| tool_allowed(r, t["name"].as_str().unwrap_or("")))
+                .collect(),
+        ),
+    }
+}
+
+/// Which squad tool group an MCP tool belongs to (contracts/mcp-tools.md "Tool list per role").
+pub fn tool_allowed(role: &super::squad::Role, name: &str) -> bool {
+    use super::squad::Tool;
+    let groups: &[Tool] = match name {
+        "whoami" | "session_list" | "squad_status" => &[Tool::Sessions],
+        "board_post" | "board_read" => &[Tool::Board],
+        "event_signal" | "event_wait" | "event_status" => &[Tool::Events],
+        "deliver" => &[Tool::Deliver],
+        "inbox" => &[Tool::Deliver, Tool::Report],
+        "task_create" => &[Tool::Tasks],
+        "task_list" => &[Tool::Tasks, Tool::Report],
+        "task_report" | "review_verdict" => &[Tool::Report],
+        "session_start" => &[Tool::Start],
+        "publish" => &[Tool::Start],
+        _ => &[],
+    };
+    groups.iter().any(|g| role.tools.allows(*g))
+}
+
 /// The `tools/list` array.
 pub fn list() -> Value {
     Value::Array(
@@ -379,9 +413,11 @@ pub(super) fn call(
     if let Err(r) = check(spec, &args) {
         return r;
     }
-    let Some(me) = sessions.info(caller) else {
+    let Some(mut me) = sessions.info(caller) else {
         return Reply::error("unavailable", "your session is not known to Fallow");
     };
+    // The role Fallow assigned is authoritative (004 FR-009).
+    me.role = hub.role_of(caller).map(str::to_string);
     let repeat = name == "event_wait"
         && hub.events.recent.get(&caller).is_some_and(|(k, _, _)| {
             Some(k.1.as_str()) == args.get("name").and_then(Value::as_str)
@@ -392,12 +428,34 @@ pub(super) fn call(
         }
     }
     match name {
-        "whoami" => Reply::Done(json!({
-            "session": me.id,
-            "profile": me.profile,
-            "project": me.project_name,
-            "boards": ["project", "shared"],
-        })),
+        "whoami" => {
+            let mut v = json!({
+                "session": me.id,
+                "profile": me.profile,
+                "project": me.project_name,
+                "boards": ["project", "shared"],
+                "role": me.role,
+            });
+            if let Some(b) = hub.burst_for(caller) {
+                let role = me.role.as_deref().and_then(|r| b.squad.role(r));
+                let used = hub
+                    .permissions
+                    .list
+                    .iter()
+                    .find(|p| p.id == b.permission)
+                    .map_or(0, |p| p.starts_used);
+                v["role_description"] = json!(role.map(|r| r.description.clone()));
+                v["burst"] = json!({
+                    "ends_in_min": b.ends.saturating_duration_since(now).as_secs() / 60,
+                    "lead": b.lead,
+                    "allowance_left": b.allowance.saturating_sub(used),
+                });
+                if let Some(r) = role {
+                    v["briefing"] = json!(super::briefing::full(b, r, caller));
+                }
+            }
+            Reply::Done(v)
+        }
         "session_list" => {
             let shared = match args.get("scope").and_then(Value::as_str) {
                 None | Some("project") => false,

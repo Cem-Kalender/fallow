@@ -81,6 +81,10 @@ jobs:
         timeout-minutes: 10
         run: cargo xtask orchestration
 
+      - name: Squads (004 SC-009)
+        timeout-minutes: 15
+        run: cargo xtask squad
+
       # The macOS run also dumps Fallow's memory with lldb, which needs sudo (as the canary).
       - name: Session canary (002 FR-026, output never leaves memory)
         run: cargo xtask canary --sessions
