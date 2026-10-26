@@ -950,6 +950,35 @@ pub fn squad_lines(state: &AppState, v: &OrchView) -> Vec<Line<'static>> {
             style,
         ));
     }
+    // Repair loops follow the sessions in the selection (r / t / Delete decide stopped ones).
+    let n = squad_sessions(state).len();
+    if !b.repairs.is_empty() {
+        lines.push(Line::raw(""));
+        lines.push(Line::styled(
+            format!("Repairs (cap {})", b.squad.repair_cap),
+            bold,
+        ));
+        for (j, l) in b.repairs.iter().enumerate() {
+            let state = match (&l.closed, l.stopped) {
+                (Some(c), _) => c.clone(),
+                (None, true) => "cap reached: r once more · t take over · Delete cancel".into(),
+                (None, false) => "in progress".into(),
+            };
+            lines.push(Line::styled(
+                format!(
+                    "  {} → #{}  round {}  {state}",
+                    l.label(),
+                    l.owner,
+                    l.rounds
+                ),
+                if v.selected == n + j {
+                    sel
+                } else {
+                    Style::default()
+                },
+            ));
+        }
+    }
     if !b.gate_runs.is_empty() {
         lines.push(Line::raw(""));
         lines.push(Line::styled("Gates", bold));

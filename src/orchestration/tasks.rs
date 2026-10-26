@@ -78,6 +78,12 @@ pub struct Task {
     pub preconditions: Vec<Key>,
     /// Preconditions that must be signalled by a session in a given role (004 FR-012).
     pub role_conditions: Vec<(Key, String)>,
+    /// 004: the part of the work this task is (repairs go to its owner, FR-025a).
+    pub part: Option<String>,
+    /// 004: the evidence of its done report (FR-023).
+    pub evidence: Option<super::evidence::Evidence>,
+    /// 004: the repair round this task is, 0 for ordinary tasks.
+    pub repair_round: u8,
     pub state: State,
     pub paused: bool,
     pub assigned: Option<u32>,
@@ -120,6 +126,9 @@ impl Tasks {
             target,
             preconditions,
             role_conditions: Vec::new(),
+            part: None,
+            evidence: None,
+            repair_round: 0,
             state: if approved {
                 State::Queued
             } else {

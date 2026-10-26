@@ -175,6 +175,9 @@ mod tests {
             tainted: HashMap::new(),
             gate_runs: Vec::new(),
             signed: HashMap::new(),
+            repairs: Vec::new(),
+            waiting_since: None,
+            deadlock_notice: None,
             warned: false,
         }
     }

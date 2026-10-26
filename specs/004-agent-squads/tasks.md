@@ -231,7 +231,7 @@ squad, US4–US6 add gates, evidence and publishing to the squad.
 
 **Independent Test**: a report naming a commit not on the session's branch is refused; a third repair round with cap 2 goes to the engineer.
 
-- [ ] T029 [P] [US5] Write `tests/squad_evidence.rs` against a real temporary repository:
+- [X] T029 [P] [US5] Write `tests/squad_evidence.rs` against a real temporary repository:
   - Reports:
     - `task_report done` during a burst without evidence is refused;
     - a commit not on the session's branch is refused (`merge-base --is-ancestor`);
@@ -244,8 +244,8 @@ squad, US4–US6 add gates, evidence and publishing to the squad.
     - a failure not tied to one part goes to the lead;
     - rounds count, and the round after `repair_cap` asks the engineer.
   - The deadlock notice: every session waiting for `wait_notice_min` gives one notice listing who waits for what, repeated at most every 30 minutes.
-- [ ] T030 [US5] Implement `src/orchestration/evidence.rs` and the `task_report` changes in `src/orchestration/tools.rs`: evidence fields, git checks through the worker, `verified` facts in the result, evidence carried into dependent hand-overs.
-- [ ] T031 [US5] Implement `src/orchestration/repair.rs` and wire it in: owners recorded at hand-over (`Task.owner`, `Task.part`), repair tasks on failures, the cap, and the deadlock check in `tick`. The Squad tab shows decisions for stopped loops: `r` hand back once more, `t` take over, `Delete` cancel the part.
+- [X] T030 [US5] Implement `src/orchestration/evidence.rs` and the `task_report` changes in `src/orchestration/tools.rs`: evidence fields, git checks through the worker, `verified` facts in the result, evidence carried into dependent hand-overs.
+- [X] T031 [US5] Implement `src/orchestration/repair.rs` and wire it in: owners recorded at hand-over (`Task.owner`, `Task.part`), repair tasks on failures, the cap, and the deadlock check in `tick`. The Squad tab shows decisions for stopped loops: `r` hand back once more, `t` take over, `Delete` cancel the part.
 
 **Checkpoint**: quickstart Q7 passes.
 

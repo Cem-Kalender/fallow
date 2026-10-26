@@ -496,10 +496,22 @@ pub fn run(args: &[String]) -> ! {
                     .and_then(|r| r.split(' ').next())
                     .and_then(|n| n.parse::<u64>().ok());
                 if let (Some(n), Some(f), Some((c, _))) = (task, &task_file, &mut client) {
-                    let r = c.call(
-                        "task_report",
-                        json!({"task": n, "outcome": "done", "note": "merged"}),
-                    );
+                    // In a git folder the report carries evidence (004): the folder's commit.
+                    let head = std::process::Command::new("git")
+                        .args(["rev-parse", "HEAD"])
+                        .output()
+                        .ok()
+                        .filter(|o| o.status.success())
+                        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
+                    let mut a = json!({"task": n, "outcome": "done", "note": "merged"});
+                    if let Some(h) = head {
+                        a["evidence"] = json!({
+                            "commit": h,
+                            "commands": [{"command": "scripted", "result": "ok"}],
+                            "files": [],
+                        });
+                    }
+                    let r = c.call("task_report", a);
                     let line = match r {
                         Ok(_) => format!("T{n} done\n"),
                         Err(e) => format!("T{n} report failed: {e}\n"),

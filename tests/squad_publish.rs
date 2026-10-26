@@ -132,7 +132,7 @@ fn done(h: &mut Hub, f: &Fake, who: u32, task: u64, now: Instant) {
         f,
         who,
         "task_report",
-        json!({"task": task, "outcome": "done"}),
+        json!({"task": task, "outcome": "done", "evidence": {"commit": "abc1234", "files": []}}),
         now,
     );
     assert!(matches!(r, Reply::Done(_)), "{r:?}");

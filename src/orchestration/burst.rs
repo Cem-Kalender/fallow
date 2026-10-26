@@ -53,6 +53,11 @@ pub struct Burst {
     pub gate_runs: Vec<super::gates::GateRun>,
     /// Who signalled which event during the burst, for `signal:` merge conditions.
     pub signed: HashMap<String, BTreeSet<u32>>,
+    /// Repair loops per part (FR-025).
+    pub repairs: Vec<super::repair::RepairLoop>,
+    /// Since when every session has waited, and when the engineer was last told (FR-026).
+    pub waiting_since: Option<Instant>,
+    pub deadlock_notice: Option<Instant>,
     pub(crate) warned: bool,
 }
 
@@ -131,6 +136,9 @@ impl Hub {
             tainted: HashMap::new(),
             gate_runs: Vec::new(),
             signed: HashMap::new(),
+            repairs: Vec::new(),
+            waiting_since: None,
+            deadlock_notice: None,
             warned: false,
         };
         let note = super::briefing::common_note(&burst);

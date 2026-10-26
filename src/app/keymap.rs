@@ -187,6 +187,8 @@ fn own(key: &KeyEvent, context: Context) -> Option<&'static str> {
             KeyCode::Down if shift && !ctrl && !alt => Some("orch.move_down"),
             KeyCode::Char('c') if plain => Some("orch.clear"),
             KeyCode::Char('+') => Some("orch.extend"),
+            KeyCode::Char('r') if plain => Some("orch.repair_again"),
+            KeyCode::Char('t') if plain => Some("orch.take_over"),
             KeyCode::Char('L') if !ctrl && !alt => Some("orch.make_lead"),
             KeyCode::Char('f') if plain => Some("orch.filter"),
             KeyCode::Char('/') => Some("orch.search"),

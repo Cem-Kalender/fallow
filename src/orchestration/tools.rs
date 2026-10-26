@@ -121,6 +121,12 @@ const SPECS: &[Spec] = &[
                 true,
             ),
             (
+                "part",
+                "string",
+                "During coordination: the part of the work this task is (a short name such as \"api\"); a failure in it goes back to the session it was handed to",
+                false,
+            ),
+            (
                 "preconditions",
                 "array",
                 "Events that must be signalled first: [{\"name\": …, \"scope\": \"project\"|\"shared\", \"role\": optional role that must signal it}], at most 8",
@@ -145,6 +151,12 @@ const SPECS: &[Spec] = &[
             ("task", "integer", "The task number (T1 is 1)", true),
             ("outcome", "string", "\"done\" or \"failed\"", true),
             ("note", "string", "At most 2 KiB", false),
+            (
+                "evidence",
+                "object",
+                "Required for done while the project coordinates: {\"commit\": the commit with your work, \"commands\": [{\"command\": …, \"result\": …}] (at most 20), \"files\": [changed paths] (at most 200)}. Fallow checks the commit is on your branch.",
+                false,
+            ),
         ],
     },
     Spec {
@@ -669,6 +681,20 @@ pub(super) fn call(
                 Ok(n) => {
                     if key.0 == BoardId::Project(me.project) {
                         hub.record_signal(caller, &key.1);
+                        // A counting reviewer asks for changes: a repair (FR-025). Without a
+                        // part (review_verdict names one), it goes to the lead.
+                        if key.1 == "review-changes-requested" && role.is_some() {
+                            hub.pending_repairs.push((
+                                me.project,
+                                None,
+                                format!(
+                                    "#{caller} asked for changes: {}",
+                                    args.get("message")
+                                        .and_then(Value::as_str)
+                                        .unwrap_or("(no notes)")
+                                ),
+                            ));
+                        }
                     }
                     Reply::Done(json!({ "signalled": true, "waiters_woken": n }))
                 }
@@ -794,6 +820,16 @@ pub(super) fn call(
                 Ok(t) => t,
                 Err(r) => return r,
             };
+            let part = match args.get("part").and_then(Value::as_str) {
+                None => None,
+                Some(p) if events::valid_name(p) => Some(p.to_string()),
+                Some(p) => {
+                    return Reply::error(
+                        "invalid",
+                        format!("part {p:?}: letters, digits and . _ : / # -, up to 64"),
+                    );
+                }
+            };
             let mut pre = Vec::new();
             let mut role_pre = Vec::new();
             for p in args
@@ -828,6 +864,7 @@ pub(super) fn call(
                 Ok((id, state)) => {
                     if let Some(t) = hub.tasks.get_mut(id) {
                         t.role_conditions = role_pre;
+                        t.part = part;
                     }
                     Reply::Done(json!({
                     "task": id,
@@ -860,6 +897,10 @@ pub(super) fn call(
                         "target": t.target.label(),
                         "preconditions": t.preconditions.iter().map(|k| k.1.clone()).collect::<Vec<_>>(),
                         "assigned": t.assigned,
+                        "owner": t.assigned,
+                        "part": t.part,
+                        "evidence": t.evidence.as_ref().map(super::evidence::Evidence::json),
+                        "repair_round": t.repair_round,
                         "note": t.note,
                     })
                 })
@@ -922,8 +963,52 @@ pub(super) fn call(
                     Err((code, m)) => return Reply::error(code, m),
                 },
             };
-            match hub.report_task(caller, id, done, note) {
-                Ok(s) => Reply::Done(json!({ "state": s.label() })),
+            // During a burst a done report carries evidence Fallow checks (FR-023, FR-024).
+            let mut ev = match args.get("evidence") {
+                None => None,
+                Some(v) => match super::evidence::parse(v) {
+                    Ok(e) => Some(e),
+                    Err(why) => return Reply::error("invalid", why),
+                },
+            };
+            if let Some(b) = hub.burst_for(caller) {
+                if done {
+                    let Some(e) = ev.as_mut() else {
+                        return Reply::error(
+                            "invalid",
+                            "while the project coordinates, a done report needs evidence: {\"commit\", \"commands\", \"files\"}",
+                        );
+                    };
+                    let edits = role
+                        .as_ref()
+                        .is_none_or(|r| r.level != super::squad::Level::ReadOnly);
+                    match sessions.workdir(caller) {
+                        Some((dir, branch)) => {
+                            if let Err(why) = super::evidence::check(
+                                &dir,
+                                branch.as_deref(),
+                                b.start_commit.as_deref(),
+                                edits,
+                                e,
+                            ) {
+                                return Reply::error("invalid", why);
+                            }
+                        }
+                        None => e
+                            .verified
+                            .push("not checked: Fallow does not know this session's folder".into()),
+                    }
+                }
+            }
+            let verified = ev.as_ref().map(|e| e.verified.clone());
+            match hub.report_task(caller, id, done, note, ev) {
+                Ok(s) => {
+                    let mut v = json!({ "state": s.label() });
+                    if let Some(f) = verified {
+                        v["verified"] = json!(f);
+                    }
+                    Reply::Done(v)
+                }
                 Err(r) => r,
             }
         }

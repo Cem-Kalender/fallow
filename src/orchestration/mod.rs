@@ -180,6 +180,12 @@ pub trait Sessions {
         None
     }
 
+    /// A session's folder and branch, for checking evidence (004 FR-024). `None`: unknown here.
+    fn workdir(&self, id: u32) -> Option<(std::path::PathBuf, Option<String>)> {
+        let _ = id;
+        None
+    }
+
     /// Whether another session may start now: 002's session limit (FR-007) and memory (FR-029).
     fn start_allowed(&self) -> Result<(), String> {
         Ok(())
@@ -314,6 +320,8 @@ pub struct Hub {
     pub check_worktrees: Vec<u32>,
     /// Gate sessions past their time limit, for the app to end (004 FR-022).
     pub end_gates: Vec<u32>,
+    /// Failures to turn into repair tasks on the next tick: project, part, reason (FR-025).
+    pub pending_repairs: Vec<(ProjectId, Option<String>, String)>,
     next_start: u64,
 }
 
@@ -402,6 +410,7 @@ impl Hub {
             bursts: Vec::new(),
             check_worktrees: Vec::new(),
             end_gates: Vec::new(),
+            pending_repairs: Vec::new(),
             next_start: 0,
             settings,
             channel: None,
@@ -1066,6 +1075,7 @@ impl Hub {
         id: u32,
         done: bool,
         note: Option<String>,
+        evidence: Option<evidence::Evidence>,
     ) -> Result<tasks::State, Reply> {
         let t = self
             .tasks
@@ -1078,6 +1088,9 @@ impl Hub {
             ));
         }
         t.note = note.clone();
+        if evidence.is_some() {
+            t.evidence = evidence;
+        }
         let state = if done {
             tasks::State::Done
         } else {
@@ -1189,11 +1202,27 @@ impl Hub {
                 continue;
             }
             let by_user = t.created_by == Party::User || t.approved_handover;
+            // The next role receives the evidence of the part's done tasks (004 FR-023).
+            let mut text = t.text.clone();
+            if let Some(part) = &t.part {
+                for d in self.tasks.list.iter().filter(|d| {
+                    d.id != t.id && d.part.as_ref() == Some(part) && d.state == tasks::State::Done
+                }) {
+                    if let Some(e) = &d.evidence {
+                        text.push_str(&format!(
+                            "\n\nEvidence from T{} ({}): {}",
+                            d.id,
+                            d.assigned.map_or("?".into(), |a| format!("#{a}")),
+                            e.summary()
+                        ));
+                    }
+                }
+            }
             if let Ok((did, _)) = self.request_delivery(
                 sessions,
                 t.created_by.clone(),
                 to,
-                t.text.clone(),
+                text,
                 delivery::Purpose::Task(id),
                 by_user,
                 now,
@@ -1472,6 +1501,11 @@ impl Hub {
         let _ = sessions;
         let mut changed = self.tick_bursts(now);
         changed |= self.tick_gates(now);
+        for (project, part, why) in std::mem::take(&mut self.pending_repairs) {
+            self.repair(sessions, project, part, &why, now);
+            changed = true;
+        }
+        changed |= self.tick_deadlock(sessions, now);
         for (w, end) in self.events.due(now) {
             changed = true;
             let reply = match end {

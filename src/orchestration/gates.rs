@@ -339,6 +339,10 @@ impl Hub {
         }
         if run.kind == Kind::Final {
             let ok = run.class.is_some_and(Class::opens);
+            // A failed gate is not tied to one part: it goes back to the lead (FR-025).
+            if !ok {
+                self.pending_repairs.push((project, None, text.clone()));
+            }
             let board = BoardId::Project(project);
             let (yes, no) = (
                 format!("gate-{}-passed", run.gate),

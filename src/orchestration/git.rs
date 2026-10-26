@@ -55,6 +55,15 @@ pub fn commits_between(dir: &Path, from: &str, to: &str) -> Result<Vec<String>, 
         .collect())
 }
 
+/// Whether `commit` names a commit in this repository.
+pub fn commit_exists(dir: &Path, commit: &str) -> bool {
+    Command::new("git")
+        .current_dir(dir)
+        .args(["cat-file", "-e", &format!("{commit}^{{commit}}")])
+        .output()
+        .is_ok_and(|o| o.status.success())
+}
+
 /// Whether `commit` is on `branch` (an ancestor of its tip, or the tip).
 pub fn on_branch(dir: &Path, commit: &str, branch: &str) -> bool {
     Command::new("git")

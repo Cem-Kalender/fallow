@@ -625,6 +625,18 @@ pub const COMMANDS: &[Command] = &[
         "+",
     )),
     on(cmd(
+        "orch.repair_again",
+        "Hand the stopped repair back once more",
+        Orchestration,
+        "r",
+    )),
+    on(cmd(
+        "orch.take_over",
+        "Take the stopped repair over yourself",
+        Orchestration,
+        "t",
+    )),
+    on(cmd(
         "orch.make_lead",
         "Make the selected session the lead",
         Orchestration,

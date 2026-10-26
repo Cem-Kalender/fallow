@@ -122,6 +122,11 @@ impl Sessions for AppView<'_> {
     fn profile(&self, id: &str) -> Option<crate::session::profiles::AgentProfile> {
         self.profiles.iter().find(|p| p.id == id).cloned()
     }
+    fn workdir(&self, id: u32) -> Option<(std::path::PathBuf, Option<String>)> {
+        self.sessions
+            .get(id)
+            .map(|s| (s.cwd.clone(), s.workdir.branch().map(str::to_string)))
+    }
     fn projects(&self) -> Vec<(crate::projects::ProjectId, String, bool)> {
         self.projects
             .projects
@@ -723,6 +728,36 @@ impl AppState {
                 }
             }
             "orch.grant_new" => return Some(self.open_grant(None)),
+            "orch.repair_again" | "orch.take_over" | "orch.delete" if v.tab == Tab::Squad => {
+                use crate::orchestration::repair::Decision;
+                let sel = v.selected;
+                let sessions = crate::ui::orchestration::squad_sessions(self).len();
+                let Some(i) = sel.checked_sub(sessions) else {
+                    self.say("Select a stopped repair loop (below the sessions)");
+                    return Some(true);
+                };
+                let Some(project) = self.projects.selected().map(|p| p.id) else {
+                    return Some(false);
+                };
+                let d = match id {
+                    "orch.repair_again" => Decision::Again,
+                    "orch.take_over" => Decision::TakeOver,
+                    _ => Decision::Cancel,
+                };
+                let guard = start_guard(&self.sessions, self.snapshot.as_deref());
+                let view = AppView {
+                    sessions: &self.sessions,
+                    projects: &self.projects,
+                    profiles: &self.profiles,
+                    guard,
+                };
+                if let Some(h) = self.hub.as_mut() {
+                    if let Err(e) = h.repair_decide(&view, project, i, d, Instant::now()) {
+                        self.say(e);
+                    }
+                }
+                self.take_hub_notices();
+            }
             "orch.make_lead" if v.tab == Tab::Squad => {
                 let sel = v.selected;
                 let ids = crate::ui::orchestration::squad_sessions(self);

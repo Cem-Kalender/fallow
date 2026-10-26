@@ -244,7 +244,7 @@ fn baseline_first_then_a_final_run_fallow_signals_itself() {
         &f,
         2,
         "task_report",
-        json!({"task": task, "outcome": "done"}),
+        json!({"task": task, "outcome": "done", "evidence": {"commit": "abc1234", "files": []}}),
         now,
     );
     let jobs = h.gates_due();
