@@ -55,6 +55,14 @@ pub fn commits_between(dir: &Path, from: &str, to: &str) -> Result<Vec<String>, 
         .collect())
 }
 
+/// The files git tracks in `dir`.
+pub fn tracked_files(dir: &Path) -> Result<Vec<String>, String> {
+    Ok(git(dir, &["ls-files"])?
+        .lines()
+        .map(str::to_string)
+        .collect())
+}
+
 /// Whether `commit` names a commit in this repository.
 pub fn commit_exists(dir: &Path, commit: &str) -> bool {
     Command::new("git")

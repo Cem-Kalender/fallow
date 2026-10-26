@@ -277,6 +277,8 @@ besides the spec, the merge, and decisions brought to them by the lead).
 - **The squad file is invalid**: the burst is not started; problems are shown by file and line.
 - **A gate command hangs**: a gate has a time limit (from the squad, default 30 minutes); past it,
   the gate fails with "timed out".
+- **The baseline finds no tests** (a new project): it is shown as "no tests ran: nothing to
+  compare", builders begin, and final results are classified only as pass or fail.
 - **The baseline gate cannot run** (for example the project does not build at the starting commit):
   the engineer is told; the burst may continue with no baseline, and final results are then
   classified only as pass or fail.
@@ -360,6 +362,12 @@ besides the spec, the merge, and decisions brought to them by the lead).
   writes. It lists roles (by name, built-in or defined there), gates (which role's signals open which
   tasks), what may run in parallel, the repair cap, gate commands and time limits, and the merge
   conditions.
+- **FR-016a**: Fallow MUST offer a command that creates a commented squad file in the project, on the
+  engineer's explicit request only: the built-in squad written out, a gate with the test command
+  guessed from the project's files (or a commented placeholder), and a baseline only when the
+  project already has code. It opens the file in the editor, never overwrites an existing one and
+  never commits it. (Added after the first manual run: without a starting point the format had to
+  be known by heart.)
 - **FR-017**: Problems in a squad file MUST be reported by file and line, and a burst with an invalid
   squad MUST NOT start.
 - **FR-018**: A running burst MUST keep the squad rules it started with; agents MUST NOT be able to

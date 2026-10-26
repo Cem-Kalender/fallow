@@ -642,6 +642,89 @@ fn finish(
     }
 }
 
+/// The test command a project's files suggest, if any.
+pub fn guess_test_command(project: &Path) -> Option<&'static str> {
+    let has = |f: &str| project.join(f).exists();
+    let any_ext = |ext: &str| {
+        std::fs::read_dir(project).is_ok_and(|d| {
+            d.flatten()
+                .any(|e| e.path().extension().is_some_and(|x| x == ext))
+        })
+    };
+    if has("Cargo.toml") {
+        Some("cargo test")
+    } else if has("package.json") {
+        Some("npm test")
+    } else if has("go.mod") {
+        Some("go test ./...")
+    } else if has("pyproject.toml") || has("pytest.ini") || has("setup.py") {
+        Some("python -m pytest")
+    } else if any_ext("sln") || any_ext("csproj") {
+        Some("dotnet test")
+    } else {
+        None
+    }
+}
+
+/// A commented squad file to start from (FR-016a): the built-in squad written out, a gate with
+/// the guessed test command (or a placeholder), and a baseline only when the project already
+/// has code (`has_code`).
+pub fn template(test_command: Option<&str>, has_code: bool) -> String {
+    let gate = match test_command {
+        Some(c) => format!(
+            "[[gate]]\nname = \"tests\"\ncommand = \"{c}\"            # guessed from the project's files; check it\n# windows = \"\"   # optional per-OS overrides\n# macos = \"\"\n# linux = \"\"\ntimeout_min = 30\nbaseline = {has_code}             # run once on the starting commit{}\nfailures = \"auto\"\n",
+            if has_code { "" } else { " (off: no code yet, nothing to compare)" }
+        ),
+        None => "# No test command could be guessed. Uncomment and fill in to let Fallow run it:\n# [[gate]]\n# name = \"tests\"\n# command = \"your test command\"\n# timeout_min = 30\n# baseline = true\n# failures = \"auto\"\n".to_string(),
+    };
+    let requires = if test_command.is_some() {
+        "\"gate:tests\", \"done:builder\", \"signal:review-approved@reviewer\""
+    } else {
+        "\"done:builder\", \"signal:review-approved@reviewer\""
+    };
+    format!(
+        "# Fallow squad: roles, gates and merge rules for coordination bursts in this project.
+# Fallow reads this file when a burst starts and never writes it; commit it with your code.
+name = \"default\"
+publish = \"auto\"          # \"auto\": a draft pull request with a remote, else Fallow's local merge
+repair_cap = 2             # repair rounds per part before the lead brings it to you
+wait_notice_min = 10       # everyone waiting this long: the lead is told
+
+[[role]]
+name = \"lead\"
+description = \"Plans the work with the user, starts sessions, hands out tasks and publishes.\"
+level = \"edit-run\"
+tools = \"all\"
+signals = [\"*\"]
+max = 1
+
+[[role]]
+name = \"builder\"
+description = \"Implements its assigned tasks in its own worktree and reports them with evidence.\"
+level = \"edit-run\"         # \"read-only\" | \"edit\" | \"edit-run\"
+agent = \"claude\"           # a profile id
+# model = \"\"               # optional
+tools = [\"board\", \"events\", \"deliver\", \"report\", \"sessions\"]
+signals = [\"*-ready\", \"*-done\", \"*-blocked\"]
+max = 3
+
+[[role]]
+name = \"reviewer\"
+description = \"Reviews the builders' work against the spec, plan and tasks. Read-only.\"
+level = \"read-only\"
+agent = \"claude\"
+tools = [\"board\", \"events\", \"report\", \"sessions\"]
+signals = [\"review-*\"]
+max = 2
+
+{gate}
+[merge]
+mode = \"on-approval\"       # local merge: you press m in the Squad tab (or \"automatic\")
+requires = [{requires}]
+"
+    )
+}
+
 /// The squad for a project: `.fallow/squad.toml` if present, else the built-in squad; roles from
 /// `<config_dir>/roles.toml` are added either way.
 pub fn load(project: &Path, config_dir: Option<&Path>) -> Result<Squad, Vec<String>> {
@@ -674,5 +757,54 @@ pub fn load(project: &Path, config_dir: Option<&Path>) -> Result<Squad, Vec<Stri
             Ok(s)
         }
         Err(e) => Err(vec![format!("{}: {e}", path.display())]),
+    }
+}
+
+#[cfg(test)]
+mod template_tests {
+    use super::*;
+
+    #[test]
+    fn every_template_parses_and_matches_the_project() {
+        // FR-016a: the template is a valid squad file in every variant.
+        for (cmd, code) in [
+            (Some("cargo test"), true),
+            (Some("python -m pytest"), false),
+            (None, true),
+            (None, false),
+        ] {
+            let text = template(cmd, code);
+            let s = parse(".fallow/squad.toml", &text, &[])
+                .unwrap_or_else(|e| panic!("{cmd:?} {code}: {e:?}\n{text}"));
+            assert_eq!(
+                s.roles.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(),
+                ["lead", "builder", "reviewer"]
+            );
+            match cmd {
+                Some(c) => {
+                    assert_eq!(s.gates.len(), 1);
+                    assert_eq!(s.gates[0].command, c);
+                    assert_eq!(s.gates[0].baseline, code, "baseline only with code");
+                    assert!(s.merge_requires.contains(&Condition::Gate("tests".into())));
+                }
+                None => {
+                    assert!(s.gates.is_empty());
+                    assert!(!s.merge_requires.contains(&Condition::Gate("tests".into())));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_test_command_is_guessed_from_the_projects_files() {
+        let d = std::env::temp_dir().join(format!("fallow-guess-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        assert_eq!(guess_test_command(&d), None);
+        std::fs::write(d.join("pyproject.toml"), "").unwrap();
+        assert_eq!(guess_test_command(&d), Some("python -m pytest"));
+        std::fs::write(d.join("Cargo.toml"), "").unwrap();
+        assert_eq!(guess_test_command(&d), Some("cargo test"));
+        let _ = std::fs::remove_dir_all(&d);
     }
 }

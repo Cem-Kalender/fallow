@@ -314,6 +314,11 @@ is ready by evidence Fallow checks.
 - [X] T048 [US7] Manual run (SC-011, quickstart Q10): agree a small spec with the lead in
   FallowSandbox, then count interventions until merge ready. Needs the engineer at the terminal.
 
+- [X] T049 [US3] "Create squad file" (FR-016a) in `src/orchestration/squad.rs` (`template`,
+  `guess_test_command`) and `src/app/orchestration.rs`; a baseline that finds no tests is
+  "nothing to compare" (`RunState::NoTests` in `src/orchestration/gates.rs`). Tests in
+  `squad.rs` and `tests/squad_gates.rs`.
+
 **Checkpoint**: quickstart Q10 passes with no interventions besides the spec and the merge.
 
 ---

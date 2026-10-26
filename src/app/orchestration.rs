@@ -772,6 +772,7 @@ impl AppState {
                 return Some(true);
             }
             "orch.coordinate" => return Some(self.open_burst()),
+            "squad.create" => return Some(self.create_squad_file()),
             "orch.end" => {
                 let project = self
                     .workspace
@@ -1517,6 +1518,43 @@ impl AppState {
             field: 0,
             error: None,
         })
+    }
+
+    /// "Create squad file": a commented template in the selected project, opened in the editor
+    /// (FR-016a). An existing file is opened, never overwritten; nothing is committed.
+    fn create_squad_file(&mut self) -> bool {
+        let Some(path) = self.projects.selected().map(|p| p.path.clone()) else {
+            self.say("Select a project first");
+            return true;
+        };
+        let file = path.join(".fallow").join("squad.toml");
+        if file.exists() {
+            self.say("This project already has a squad file: opened it");
+            return self.open_file(&file);
+        }
+        let ignore = |f: &str| {
+            let low = f.to_ascii_lowercase();
+            low.starts_with(".fallow/")
+                || low.starts_with("readme")
+                || low.starts_with("license")
+                || low == ".gitignore"
+                || low == ".gitattributes"
+        };
+        let has_code =
+            git::tracked_files(&path).is_ok_and(|files| files.iter().any(|f| !ignore(f)));
+        let text = squad::template(squad::guess_test_command(&path), has_code);
+        let written = std::fs::create_dir_all(path.join(".fallow"))
+            .and_then(|()| std::fs::write(&file, text));
+        match written {
+            Ok(()) => {
+                self.say("Created .fallow/squad.toml: check it, then commit it with your code");
+                self.open_file(&file)
+            }
+            Err(e) => {
+                self.say(format!("{}: {e}", file.display()));
+                true
+            }
+        }
     }
 
     /// "Coordinate this project…" from the palette: the active session is the lead (FR-002).

@@ -46,6 +46,8 @@ pub enum RunState {
     Passed,
     Failed(Option<i32>),
     TimedOut,
+    /// A baseline that found no tests (a new project): nothing to compare with.
+    NoTests,
 }
 
 impl RunState {
@@ -56,6 +58,7 @@ impl RunState {
             RunState::Failed(Some(c)) => format!("failed (exit {c})"),
             RunState::Failed(None) => "failed".into(),
             RunState::TimedOut => "failed (timed out)".into(),
+            RunState::NoTests => "no tests ran: nothing to compare".into(),
         }
     }
 
@@ -307,8 +310,15 @@ impl Hub {
                 .map_or(Failures::ExitCode, |g| g.failures.clone());
             Some((b.project, i, how))
         })?;
+        let baseline = self
+            .bursts
+            .iter()
+            .find(|b| b.project == project)
+            .is_some_and(|b| b.gate_runs[i].kind == Kind::Baseline);
         let state = if exit == Some(0) {
             RunState::Passed
+        } else if baseline && no_tests(output) {
+            RunState::NoTests
         } else {
             RunState::Failed(exit)
         };
@@ -461,12 +471,28 @@ pub fn failing_names(output: &str, how: &Failures) -> BTreeSet<String> {
     out
 }
 
+/// Whether a run's output says no tests ran (unittest, pytest, cargo, Jest, Go, .NET).
+pub fn no_tests(output: &str) -> bool {
+    const SAYS: &[&str] = &[
+        "Ran 0 tests",
+        "NO TESTS RAN",
+        "no tests ran",
+        "collected 0 items",
+        "running 0 tests",
+        "No tests found",
+        "no test files",
+        "No test is available",
+    ];
+    SAYS.iter().any(|s| output.contains(s))
+}
+
 /// Classifies a finished final run against the baseline's run (research R-5).
 pub fn classify(final_run: &GateRun, baseline: Option<&GateRun>) -> Class {
     if final_run.state.passed() {
         return Class::Pass;
     }
-    let Some(b) = baseline.filter(|b| b.state != RunState::Running) else {
+    let Some(b) = baseline.filter(|b| !matches!(b.state, RunState::Running | RunState::NoTests))
+    else {
         return Class::Fail;
     };
     if final_run.failing.is_empty() || b.state.passed() || b.failing.is_empty() {

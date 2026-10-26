@@ -339,3 +339,48 @@ fn a_gate_past_its_time_limit_fails_and_its_session_is_ended() {
     assert!(h2.gates_due(&|_, _| None).is_empty());
     assert!(!h2.baseline_pending(1));
 }
+
+#[test]
+fn a_baseline_without_tests_is_nothing_to_compare() {
+    // A new project: the baseline finds no tests; that is not a failure to report.
+    for out in [
+        "\nRan 0 tests in 0.000s\n\nNO TESTS RAN\n",
+        "collected 0 items\n",
+        "running 0 tests\n",
+        "ok  \tx\t[no test files]\n",
+    ] {
+        assert!(gates::no_tests(out), "{out:?}");
+    }
+    assert!(!gates::no_tests("test a ... FAILED\n"));
+    let s = squad::parse(".fallow/squad.toml", SQUAD, &squad::builtin().roles).unwrap();
+    let mut h = Hub::new(OrchestrationSettings::default());
+    let f = Fake(vec![info(1)]);
+    let now = Instant::now();
+    h.start_burst(
+        &f,
+        BurstRequest {
+            lead: 1,
+            duration: Duration::from_secs(3600),
+            allowance: None,
+            squad: s,
+            start_commit: Some("c0ffee0".into()),
+            target_branch: None,
+            has_remote: false,
+            spec_kit: false,
+            max_sessions: 8,
+        },
+        now,
+    )
+    .unwrap();
+    let job = h.gates_due(&|_, _| None).remove(0);
+    h.gate_started(&job, Ok(7), None, None, now);
+    let run = h.gate_finished(7, Some(5), "NO TESTS RAN\n").unwrap();
+    assert_eq!(run.state, RunState::NoTests);
+    assert!(!h.baseline_pending(1), "builders may begin");
+    // A failing final run against it is a plain failure, not a regression.
+    let mut fin = run.clone();
+    fin.kind = Kind::Final;
+    fin.state = RunState::Failed(Some(1));
+    fin.failing = names(&["a"]);
+    assert_eq!(gates::classify(&fin, Some(&run)), Class::Fail);
+}

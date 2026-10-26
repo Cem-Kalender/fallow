@@ -97,7 +97,8 @@ at once.
 - **Squads.** A squad declares roles, gates and merge conditions in `.fallow/squad.toml` in the
   project, versioned with your code (Fallow only reads it). Without the file, a built-in squad is
   used: a lead, up to three builders and up to two read-only reviewers. Roles for all projects
-  can live in `roles.toml` in Fallow's config directory.
+  can live in `roles.toml` in Fallow's config directory. The palette's "Create squad file" writes a commented
+  starting point with the test command guessed from the project, and never commits it.
 - **Roles.** Fallow fixes each session's role at its start and stamps it on everything the
   others receive. A role decides which of Fallow's tools the session sees and which events it may
   signal (only reviewers approve a review; no role signals a gate). A role's level (`read-only`,

@@ -613,6 +613,12 @@ pub const COMMANDS: &[Command] = &[
         "",
     )),
     on(cmd(
+        "squad.create",
+        "Create squad file (.fallow/squad.toml) for this project",
+        Global,
+        "",
+    )),
+    on(cmd(
         "orch.end",
         "End coordination in this project",
         Global,
