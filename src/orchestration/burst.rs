@@ -66,6 +66,8 @@ pub struct Burst {
     /// Since when every session has waited, and when the engineer was last told (FR-026).
     pub waiting_since: Option<Instant>,
     pub deadlock_notice: Option<Instant>,
+    /// The commit each session started from (its worktree's base), for evidence checks.
+    pub bases: HashMap<u32, String>,
     /// Lines for the lead's next squad update (US7, FR-032).
     pub lead_updates: Vec<String>,
     /// When the lead was last given an update or status, and when one was last typed.
@@ -161,6 +163,7 @@ impl Hub {
             repairs: Vec::new(),
             waiting_since: None,
             deadlock_notice: None,
+            bases: HashMap::new(),
             lead_updates: Vec::new(),
             last_update: now,
             last_sent: now.checked_sub(super::lead::GROUP_EVERY).unwrap_or(now),
@@ -279,6 +282,17 @@ impl Hub {
         self.notices
             .push(format!("Coordination extended by {}", hm(d)));
         Ok(())
+    }
+
+    /// Records the commit a session of the burst started from (its worktree's base).
+    pub fn set_base(&mut self, session: u32, commit: String) {
+        if let Some(b) = self
+            .bursts
+            .iter_mut()
+            .find(|b| b.roles.contains_key(&session))
+        {
+            b.bases.insert(session, commit);
+        }
     }
 
     /// The engineer names another lead (FR-003).

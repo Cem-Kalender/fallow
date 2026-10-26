@@ -28,10 +28,28 @@ pub fn level_flags(style: Style, level: Level) -> Option<Vec<String>> {
         // In a squad nobody waits for the user (004 US7, research R-10): `dontAsk` denies what
         // the level does not allow instead of asking, and AskUserQuestion is left out (questions
         // go to the lead). Claude Code runs commands with Bash, or PowerShell on Windows.
+        // Reviewers read other sessions' commits with git (004 run 2: ls-tree was refused).
         (Style::Claude, Level::ReadOnly) => v(&[
             "--permission-mode",
             "dontAsk",
+            "--allowedTools",
+            "Bash(git show *)",
+            "Bash(git diff *)",
+            "Bash(git log *)",
+            "Bash(git ls-tree *)",
+            "PowerShell(git show *)",
+            "PowerShell(git diff *)",
+            "PowerShell(git log *)",
+            "PowerShell(git ls-tree *)",
+            // git can write files (--output) or run programs (external diff, textconv):
+            // denied, and deny rules win over allow rules (review).
             "--disallowedTools",
+            "Bash(*--output*)",
+            "Bash(*--ext-diff*)",
+            "Bash(*--textconv*)",
+            "PowerShell(*--output*)",
+            "PowerShell(*--ext-diff*)",
+            "PowerShell(*--textconv*)",
             "Edit",
             "Write",
             "NotebookEdit",
@@ -235,7 +253,22 @@ mod tests {
             [
                 "--permission-mode",
                 "dontAsk",
+                "--allowedTools",
+                "Bash(git show *)",
+                "Bash(git diff *)",
+                "Bash(git log *)",
+                "Bash(git ls-tree *)",
+                "PowerShell(git show *)",
+                "PowerShell(git diff *)",
+                "PowerShell(git log *)",
+                "PowerShell(git ls-tree *)",
                 "--disallowedTools",
+                "Bash(*--output*)",
+                "Bash(*--ext-diff*)",
+                "Bash(*--textconv*)",
+                "PowerShell(*--output*)",
+                "PowerShell(*--ext-diff*)",
+                "PowerShell(*--textconv*)",
                 "Edit",
                 "Write",
                 "NotebookEdit",

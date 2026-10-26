@@ -69,6 +69,7 @@ fn run(kind: Kind, state: RunState, failing: &[&str]) -> GateRun {
         deadline: now,
         after_tasks: 0,
         dir: None,
+        start_failed: false,
     }
 }
 
@@ -336,8 +337,20 @@ fn a_gate_past_its_time_limit_fails_and_its_session_is_ended() {
     .unwrap();
     let job = h2.gates_due(&|_, _| None).remove(0);
     h2.gate_started(&job, Err("limit".into()), None, None, now);
-    assert!(h2.gates_due(&|_, _| None).is_empty());
+    assert!(
+        h2.gates_due(&|_, _| None).is_empty(),
+        "retried after a minute, not at once"
+    );
+    assert!(
+        h2.baseline_pending(1),
+        "builders wait while the baseline is retried"
+    );
+    // After three failed starts the burst goes on without a baseline.
+    for _ in 1..gates::BASELINE_TRIES {
+        h2.gate_started(&job, Err("limit".into()), None, None, now);
+    }
     assert!(!h2.baseline_pending(1));
+    assert!(h2.burst_of(1).unwrap().repairs.is_empty());
 }
 
 #[test]
@@ -347,7 +360,7 @@ fn a_baseline_without_tests_is_nothing_to_compare() {
         "\nRan 0 tests in 0.000s\n\nNO TESTS RAN\n",
         "collected 0 items\n",
         "running 0 tests\n",
-        "ok  \tx\t[no test files]\n",
+        "?   \texample.com/x\t[no test files]\n",
     ] {
         assert!(gates::no_tests(out), "{out:?}");
     }
@@ -383,4 +396,89 @@ fn a_baseline_without_tests_is_nothing_to_compare() {
     fin.state = RunState::Failed(Some(1));
     fin.failing = names(&["a"]);
     assert_eq!(gates::classify(&fin, Some(&run)), Class::Fail);
+}
+
+#[test]
+fn a_cargo_baseline_with_old_failures_is_not_no_tests() {
+    // Review: cargo prints "running 0 tests" for targets without tests even when others fail.
+    let out = "running 3 tests\ntest a::old ... FAILED\ntest result: FAILED\n\nrunning 0 tests\n";
+    assert!(!gates::no_tests(out));
+    assert!(gates::no_tests(
+        "\nrunning 0 tests\n\ntest result: ok. 0 passed\n"
+    ));
+    assert!(!gates::no_tests(
+        "Ran 4 tests in 0.1s\n\nFAILED (failures=1)\nNO TESTS RAN\n"
+    ));
+}
+
+#[test]
+fn a_gate_that_cannot_start_is_retried_and_costs_no_repair_round() {
+    let s = squad::parse(".fallow/squad.toml", SQUAD, &squad::builtin().roles).unwrap();
+    let mut h = Hub::new(OrchestrationSettings::default());
+    let f = Fake(vec![info(1)]);
+    let now = Instant::now();
+    h.start_burst(
+        &f,
+        BurstRequest {
+            lead: 1,
+            duration: Duration::from_secs(3600),
+            allowance: None,
+            squad: s,
+            start_commit: None,
+            target_branch: None,
+            has_remote: false,
+            spec_kit: false,
+            max_sessions: 8,
+        },
+        now,
+    )
+    .unwrap();
+    // No baseline (no starting commit). A builder's task done makes the final run due.
+    let r = h.call(
+        &f,
+        1,
+        "session_start",
+        json!({"profile": "claude", "project": "api", "role": "builder", "first_task": "x"}),
+        now,
+    );
+    let Reply::Done(v) = r else { panic!("{r:?}") };
+    let mut f = f;
+    f.0.push(info(2));
+    h.start_done(&f, v["start"].as_u64().unwrap(), Ok(2), now);
+    h.tick(&f, now);
+    let t = h.tasks.list.last().unwrap().id;
+    h.call(
+        &f,
+        2,
+        "task_report",
+        json!({"task": t, "outcome": "done", "evidence": {"commit": "abc1234", "files": []}}),
+        now,
+    );
+    let job = h.gates_due(&|_, _| Some("abc1234".into())).remove(0);
+    h.gate_started(
+        &job,
+        Err("the session limit".into()),
+        Some("abc1234".into()),
+        None,
+        now,
+    );
+    h.tick(&f, now);
+    let b = h.burst_of(1).unwrap();
+    assert!(
+        b.repairs.is_empty(),
+        "no repair round for a gate that never ran"
+    );
+    assert!(b.gate_runs[0].commit.is_none());
+    assert!(
+        h.gates_due(&|_, _| Some("abc1234".into())).is_empty(),
+        "not at once"
+    );
+    let told = b.lead_updates.join(" ")
+        + &h.deliveries
+            .list
+            .iter()
+            .map(|d| d.text.clone())
+            .collect::<Vec<_>>()
+            .join(" ");
+    assert!(told.contains("could not start"), "{told}");
 }

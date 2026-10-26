@@ -202,14 +202,14 @@ impl Hub {
         };
         b.verdicts
             .insert(session, (v.to_string(), notes.to_string()));
-        b.lead_updates.push(format!(
+        b.lead_updates.push(super::lead::one_line(&format!(
             "#{session} reviewer {}: {notes}",
             if approve {
                 "approved"
             } else {
                 "asks for changes"
             }
-        ));
+        )));
         let counting: Vec<(u32, String, String)> = b
             .verdicts
             .iter()
@@ -225,6 +225,14 @@ impl Hub {
                 .collect();
             parts.sort();
             let text = format!("Reviewers disagree: {}", parts.join(" | "));
+            let short: Vec<String> = counting
+                .iter()
+                .map(|(id, v, _)| format!("#{id} {v}"))
+                .collect();
+            let lead_line = format!(
+                "Reviewers disagree: {} (their notes are in their verdict lines); rule on it or bring it to the user.",
+                short.join(", ")
+            );
             let project = b.project;
             self.boards.post(
                 super::board::BoardId::Project(project),
@@ -233,8 +241,8 @@ impl Hub {
                 std::time::SystemTime::now(),
                 super::TEXT_BUDGET,
             );
-            self.tell_lead(project, text.clone());
-            self.alerts.push(text);
+            self.tell_lead(project, lead_line);
+            self.alerts.push(text.chars().take(1500).collect());
         }
     }
 

@@ -154,27 +154,32 @@ pub fn check(
         ev.verified
             .push(format!("commit {} exists", short(&ev.commit)));
     }
-    if let Some(start) = start {
+    // Files: compared with what changed since the session started (004 run 2: comparing with
+    // the burst's start listed the lead's and the others' work). Only listed files that did not
+    // change are named; other changes (merged work included) are a count.
+    if let (true, Some(start)) = (edits, start) {
         if let Ok(changed) = git::files_between(dir, start, &ev.commit) {
             let claimed: std::collections::BTreeSet<&str> =
                 ev.files.iter().map(String::as_str).collect();
             let actual: std::collections::BTreeSet<&str> =
                 changed.iter().map(String::as_str).collect();
-            if claimed == actual {
-                ev.verified
-                    .push(format!("{} file(s) match git", actual.len()));
-            } else {
-                let extra: Vec<&str> = claimed.difference(&actual).copied().collect();
-                let missing: Vec<&str> = actual.difference(&claimed).copied().collect();
-                let mut n = String::from("files differ from git");
-                if !extra.is_empty() {
-                    n.push_str(&format!(", not changed: {}", extra.join(", ")));
-                }
-                if !missing.is_empty() {
-                    n.push_str(&format!(", changed but not listed: {}", missing.join(", ")));
-                }
-                ev.verified.push(n);
+            let not_changed: Vec<&str> = claimed.difference(&actual).copied().collect();
+            let unlisted = actual.difference(&claimed).count();
+            let mut n = format!(
+                "{} of {} listed file(s) changed since your start",
+                claimed.len() - not_changed.len(),
+                claimed.len()
+            );
+            if !not_changed.is_empty() {
+                let shown: Vec<&str> = not_changed.iter().take(10).copied().collect();
+                n.push_str(&format!("; listed but not changed: {}", shown.join(", ")));
             }
+            if unlisted > 0 {
+                n.push_str(&format!(
+                    "; {unlisted} other changed file(s), merged work included"
+                ));
+            }
+            ev.verified.push(n);
         }
     }
     Ok(())

@@ -40,16 +40,16 @@ session_start"), and the refusal is logged.
 | `session_list` | Each session adds `role`; the result adds `roles` (name, description, level, max) of the squad in force. |
 | `session_start` | Adds required `role` during a burst; the role's level, model and flags decide the command line. Refused beyond the role's `max`, the burst's allowance, or for an agent without flags for the role's level. |
 | `event_signal` | Refused (`not_allowed`) for a restricted event outside the role's `signals`, and always for `gate-*`. |
-| `task_create` | Preconditions accept `{"name": "review-approved", "role": "reviewer"}` (FR-012). Tasks can carry `part` (a short name) used for repairs. |
-| `task_report` | During a burst, `outcome: "done"` requires `evidence: {commit, commands: [{command, result}], files: []}` (FR-023). Refused if `commit` is not on the session's branch. The result lists what Fallow verified. |
+| `task_create` | Preconditions accept `{"name": "review-approved", "role": "reviewer"}` (FR-012). Tasks can carry `part` (a short name); a task for a part with a counted failure is that round's repair, and past the repair cap it is refused until the user decides (FR-025). |
+| `task_report` | During a burst, `outcome: "done"` requires `evidence: {commit, commands: [{command, result}], files: []}` (FR-023), except for read-only roles (their verdict completes their task). Refused if `commit` is not on the session's branch; listed files are compared with the changes since the session started. `outcome: "cancelled"` withdraws a task the caller created. The result lists what Fallow verified. |
 | `task_list` | Each task adds `owner` (the session it was handed to), `part`, `evidence` (when reported) and `repair_round`. |
 
 ## New tools
 
 | Tool | Role | Arguments | Result |
 |---|---|---|---|
-| `consult_lead` | every role but the lead | `question` | Delivers the question to the lead, labelled as a question from this session; the lead answers with `deliver`. For a decision outside the session's task and the spec (US7, FR-034). |
-| `review_verdict` | reviewer roles | `part?` (task), `verdict` (`"approved"` \| `"changes-requested"`), `notes` | Signals `review-approved` or `review-changes-requested` for the part, with the notes, from this session; a changes-requested verdict creates the repair task (FR-025). |
+| `consult_lead` | every role but the lead | `question` | Delivers the question to the lead (on one line), labelled as a question from this session; the lead answers with `deliver`. For clarifying questions (US7, FR-034). |
+| `review_verdict` | reviewer roles | `part?` (name or task), `verdict` (`"approved"` \| `"changes-requested"`), `notes` (at most 8 KiB) | Signals `review-approved` or `review-changes-requested` for the part, from this session, and completes its open review task for that part; a changes-requested verdict counts a repair round and is told to the lead, who hands out the repair (FR-025). |
 | `squad_status` | all | — | The squad in force: roles and their sessions, gates and their latest runs with classification, merge conditions met or not, repair rounds, time left. |
 | `publish` | lead | `title`, `body` | Draft-PR mode: tells Fallow the pull request address after the lead opened it (`url`); Fallow records it. Local-merge mode: refused; the engineer merges. |
 

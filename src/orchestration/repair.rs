@@ -1,8 +1,10 @@
 //! Capped repair loops and the "everyone waits" notice (004 US5, FR-025 to FR-026, research R-7).
 //!
-//! A failure goes back to the session the part was handed to (FR-025a), or to the lead when it is
-//! not tied to one part, as a task Fallow creates. After the squad's `repair_cap` rounds, Fallow
-//! stops the loop and asks the engineer.
+//! A failure (a review asking for changes, a failed final gate) counts a round for its part and
+//! goes to the lead, who rules on what the reviewer left open and hands the repair to the part's
+//! owner with `task_create` (004 run 2: repairs Fallow handed out itself crossed the lead's
+//! rulings). After the squad's `repair_cap` rounds, Fallow stops the loop: tasks for that part are
+//! refused until the engineer decides.
 
 use std::time::{Duration, Instant};
 
@@ -24,6 +26,8 @@ pub struct RepairLoop {
     /// The engineer took it over or cancelled the part: no more repair tasks.
     pub closed: Option<String>,
     pub last_reason: String,
+    /// A round was counted and its repair task is not created yet.
+    pub pending: bool,
 }
 
 impl RepairLoop {
@@ -40,13 +44,6 @@ pub enum Decision {
     Cancel,
 }
 
-/// The repair task's text: what failed, and how to report the fix.
-fn repair_text(part: &str, round: u8, cap: u8, reason: &str) -> String {
-    format!(
-        "Repair round {round} of {cap} for {part}: {reason}\nFix it in your worktree, commit, and report this task done with evidence (the commit, the commands you ran, the files changed)."
-    )
-}
-
 const DEADLOCK_REPEAT: Duration = Duration::from_secs(30 * 60);
 
 impl Hub {
@@ -60,21 +57,21 @@ impl Hub {
             .find_map(|t| t.assigned)
     }
 
-    /// A failure in a burst (a review asking for changes, a failed gate): a repair task for the
-    /// owner, or the engineer's decision after the cap (FR-025).
+    /// A failure in a burst: a round for its part, told to the lead, or the engineer's decision
+    /// after the cap (FR-025).
     pub fn repair(
         &mut self,
-        sessions: &dyn Sessions,
+        _sessions: &dyn Sessions,
         project: ProjectId,
         part: Option<String>,
         reason: &str,
-        now: Instant,
+        _now: Instant,
     ) {
         let owner = part.as_deref().and_then(|p| self.owner_of(project, p));
         let Some(b) = self.bursts.iter_mut().find(|b| b.project == project) else {
             return;
         };
-        // A part nobody was handed goes to the lead, as a failure of the whole work.
+        // A part nobody was handed is a failure of the whole work.
         let part = part.filter(|_| owner.is_some());
         let owner = owner.unwrap_or(b.lead);
         let cap = b.squad.repair_cap;
@@ -89,20 +86,27 @@ impl Hub {
                     stopped: false,
                     closed: None,
                     last_reason: String::new(),
+                    pending: false,
                 });
                 b.repairs.len() - 1
             }
         };
         let l = &mut b.repairs[i];
-        l.last_reason = reason.to_string();
+        l.last_reason = super::lead::one_line(reason).chars().take(300).collect();
         if l.closed.is_some() {
             return;
         }
         let label = l.label();
+        // A failure while a repair is still to be handed out (a second reviewer, a repeated
+        // verdict) belongs to the same round; checked before the cap (verification A).
+        if l.pending {
+            return;
+        }
         if l.rounds >= cap.saturating_add(l.extra) {
             l.stopped = true;
+            l.pending = false;
             let text = format!(
-                "Repair cap reached for {label} ({} rounds): your decision in the Squad tab (r hand it back once more, t take it over, Delete cancel the part). Last failure: {reason}",
+                "Repair cap reached for {label} ({} rounds): the user decides in the Squad tab (r once more, t take it over, Delete cancel the part); tasks for it wait until then. Last failure: {reason}",
                 l.rounds
             );
             self.boards.post(
@@ -112,42 +116,77 @@ impl Hub {
                 std::time::SystemTime::now(),
                 TEXT_BUDGET,
             );
-            // The user's decision: the lead brings it to them, and the Squad tab shows it.
             self.tell_lead(project, text.clone());
             self.alerts.push(text);
             return;
         }
         l.rounds += 1;
-        let (round, owner, part) = (l.rounds, l.owner, l.part.clone());
-        let text = repair_text(&label, round, cap.saturating_add(l.extra), reason);
-        if let Ok((id, _)) = self.create_task(
-            sessions,
-            Party::Fallow,
-            text,
-            tasks::Target::Session(owner),
-            Vec::new(),
-            now,
-        ) {
-            if let Some(t) = self.tasks.get_mut(id) {
-                t.approved_handover = true;
-                t.part = part;
-                t.repair_round = round;
-            }
-            self.tell_lead(
-                project,
-                format!("Repair round {round} for {label} goes to #{owner} (T{id}): {reason}"),
-            );
+        l.pending = true;
+        let (round, of) = (l.rounds, cap.saturating_add(l.extra));
+        let how = match &l.part {
+            Some(p) => format!(
+                "hand it to #{owner} with task_create and part \"{p}\", with your ruling on anything left open"
+            ),
+            None => "decide who fixes it and hand it out with task_create".to_string(),
+        };
+        self.tell_lead(
+            project,
+            format!(
+                "Repair needed (round {round} of {of}) for {label}: {reason} Next: {how}; then ask for a re-review with a task for the reviewer."
+            ),
+        );
+    }
+
+    /// A task the lead creates for a part with a failure counted: it is that round's repair.
+    /// Past the cap, or after the user took the part over or cancelled it, it is refused.
+    pub(crate) fn repair_for_task(&self, caller: u32, part: Option<&str>) -> Result<u8, String> {
+        let Some(part) = part else {
+            return Ok(0);
+        };
+        let Some(b) = self.bursts.iter().find(|b| b.roles.contains_key(&caller)) else {
+            return Ok(0);
+        };
+        let Some(l) = b.repairs.iter().find(|l| l.part.as_deref() == Some(part)) else {
+            return Ok(0);
+        };
+        if l.stopped {
+            return Err(format!(
+                "the repair cap for {part} is reached: the user decides first (Squad tab)"
+            ));
+        }
+        if let Some(why) = &l.closed {
+            return Err(format!("{part}: {why}"));
+        }
+        Ok(if l.pending { l.rounds } else { 0 })
+    }
+
+    /// The lead's repair task exists: the round's repair is handed out.
+    pub(crate) fn repair_handed(&mut self, caller: u32, part: Option<&str>) {
+        let Some(part) = part else {
+            return;
+        };
+        if let Some(l) = self
+            .bursts
+            .iter_mut()
+            .find(|b| b.roles.contains_key(&caller))
+            .and_then(|b| {
+                b.repairs
+                    .iter_mut()
+                    .find(|l| l.part.as_deref() == Some(part))
+            })
+        {
+            l.pending = false;
         }
     }
 
     /// The engineer decides a stopped loop.
     pub fn repair_decide(
         &mut self,
-        sessions: &dyn Sessions,
+        _sessions: &dyn Sessions,
         project: ProjectId,
         index: usize,
         d: Decision,
-        now: Instant,
+        _now: Instant,
     ) -> Result<(), String> {
         let b = self
             .bursts
@@ -158,33 +197,44 @@ impl Hub {
         if !l.stopped {
             return Err("This loop has not reached its cap".into());
         }
-        let (part, reason) = (l.part.clone(), l.last_reason.clone());
+        let part = l.part.clone();
+        let label = l.label();
         l.stopped = false;
-        match d {
+        let line = match d {
             Decision::Again => {
                 l.extra += 1;
-                self.repair(sessions, project, part, &reason, now);
+                l.rounds += 1;
+                l.pending = true;
+                format!(
+                    "The user allows one more repair round for {label}: hand it out with task_create{}. Last failure: {}",
+                    part.as_ref()
+                        .map_or(String::new(), |p| format!(" and part \"{p}\"")),
+                    l.last_reason
+                )
             }
             Decision::TakeOver => {
                 l.closed = Some("taken over by the user".into());
-                self.notices.push(format!("You took over {}", l.label()));
+                format!("The user takes over {label}: hand out nothing more for it.")
             }
             Decision::Cancel => {
                 l.closed = Some("cancelled by the user".into());
-                let label = l.label();
-                let open: Vec<u32> = self
-                    .tasks
-                    .list
-                    .iter()
-                    .filter(|t| t.part == part && !t.state.finished())
-                    .map(|t| t.id)
-                    .collect();
-                for t in open {
-                    self.cancel_task(t);
-                }
-                self.notices.push(format!("Cancelled {label}"));
+                format!("The user cancelled {label}: its open tasks are cancelled.")
+            }
+        };
+        if d == Decision::Cancel {
+            let open: Vec<u32> = self
+                .tasks
+                .list
+                .iter()
+                .filter(|t| t.part == part && !t.state.finished())
+                .map(|t| t.id)
+                .collect();
+            for t in open {
+                self.cancel_task(t);
             }
         }
+        self.tell_lead(project, line.clone());
+        self.notices.push(line);
         Ok(())
     }
 

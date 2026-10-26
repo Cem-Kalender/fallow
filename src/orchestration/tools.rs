@@ -196,7 +196,7 @@ const SPECS: &[Spec] = &[
     },
     Spec {
         name: "review_verdict",
-        description: "Reviewers: give your verdict on the work (or one part of it). approved signals review-approved; changes-requested signals review-changes-requested, and Fallow hands a repair task to the session that built the part (or the lead). Your latest verdict replaces your earlier one.",
+        description: "Reviewers: give your verdict on the work (or one part of it). approved signals review-approved; changes-requested signals review-changes-requested, and the lead hands out the repair. Your latest verdict replaces your earlier one, and it completes your open review task (for that part).",
         args: &[
             (
                 "verdict",
@@ -207,7 +207,7 @@ const SPECS: &[Spec] = &[
             (
                 "notes",
                 "string",
-                "What you checked and what must change, at most 2 KiB",
+                "What you checked and what must change, at most 4 KiB",
                 true,
             ),
             (
@@ -929,11 +929,21 @@ pub(super) fn call(
             if pre.len() > super::tasks::PRECONDITIONS_MAX {
                 return Reply::error("invalid", "at most 8 preconditions");
             }
+            // A task for a part with a failure counted is its repair round; past the cap the
+            // user decides first (FR-025, 004 run 2).
+            let round = match hub.repair_for_task(caller, part.as_deref()) {
+                Ok(r) => r,
+                Err(why) => return Reply::error("not_allowed", why),
+            };
             match hub.create_task(sessions, me.party(), text, target, pre, now) {
                 Ok((id, state)) => {
+                    if round > 0 {
+                        hub.repair_handed(caller, part.as_deref());
+                    }
                     if let Some(t) = hub.tasks.get_mut(id) {
                         t.role_conditions = role_pre;
                         t.part = part;
+                        t.repair_round = round;
                     }
                     Reply::Done(json!({
                     "task": id,
@@ -1023,8 +1033,9 @@ pub(super) fn call(
                 Err((code, m)) => return Reply::error(code, m),
             };
             let text = format!(
-                "Question from {}: {q}\nAnswer it with deliver to session {caller}; bring the user in if the decision is theirs.",
-                me.party().label()
+                "Question from {}: {}\nAnswer it with deliver to session {caller}; bring the user in if the decision is theirs.",
+                me.party().label(),
+                super::lead::one_line(&q)
             );
             match hub.request_delivery(
                 sessions,
@@ -1073,13 +1084,11 @@ pub(super) fn call(
                     "your worktree changed although your role is read-only: your verdicts no longer count",
                 );
             }
-            let notes = match board::clean_text(
-                args["notes"].as_str().unwrap_or_default(),
-                events::MESSAGE_MAX,
-            ) {
-                Ok(n) => n,
-                Err((code, m)) => return Reply::error(code, m),
-            };
+            let notes =
+                match board::clean_text(args["notes"].as_str().unwrap_or_default(), 4 * 1024) {
+                    Ok(n) => n,
+                    Err((code, m)) => return Reply::error(code, m),
+                };
             let part = args.get("part").and_then(Value::as_str).map(|p| {
                 let n = p.trim_start_matches(['T', 't']);
                 match n.parse::<u32>() {
@@ -1093,15 +1102,24 @@ pub(super) fn call(
             });
             let project = b.project;
             let key = (BoardId::Project(project), event.to_string());
-            let message = match &part {
+            let mut message = match &part {
                 Some(p) => format!("{p}: {notes}"),
                 None => notes.clone(),
             };
+            if message.len() > events::MESSAGE_MAX {
+                let mut cut = events::MESSAGE_MAX - 3;
+                while !message.is_char_boundary(cut) {
+                    cut -= 1;
+                }
+                message.truncate(cut);
+                message.push_str("...");
+            }
             if let Err(e) = hub.signal(&key, me.party(), Some(message)) {
                 return Reply::error("too_many_pending", e);
             }
             hub.record_signal(caller, event);
             hub.verdict(caller, approve, &notes);
+            hub.finish_review_tasks(caller, approve, part.as_deref());
             if r.level == super::squad::Level::ReadOnly {
                 hub.check_worktrees.push(caller);
             }
@@ -1109,7 +1127,10 @@ pub(super) fn call(
                 hub.pending_repairs.push((
                     project,
                     part,
-                    format!("#{caller} asked for changes: {notes}"),
+                    format!(
+                        "#{caller} asked for changes: {}",
+                        notes.chars().take(200).collect::<String>()
+                    ),
                 ));
             }
             Reply::Done(json!({ "signalled": event }))
@@ -1194,7 +1215,11 @@ pub(super) fn call(
                 },
             };
             if let Some(b) = hub.burst_for(caller) {
-                if done {
+                let read_only = role
+                    .as_ref()
+                    .is_some_and(|r| r.level == super::squad::Level::ReadOnly);
+                // Reviewers report through review_verdict; evidence is for work (004 run 2).
+                if done && !read_only {
                     let Some(e) = ev.as_mut() else {
                         return Reply::error(
                             "invalid",
@@ -1209,7 +1234,10 @@ pub(super) fn call(
                             if let Err(why) = super::evidence::check(
                                 &dir,
                                 branch.as_deref(),
-                                b.start_commit.as_deref(),
+                                b.bases
+                                    .get(&caller)
+                                    .or(b.start_commit.as_ref())
+                                    .map(String::as_str),
                                 edits,
                                 e,
                             ) {

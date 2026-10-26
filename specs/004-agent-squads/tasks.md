@@ -319,6 +319,12 @@ is ready by evidence Fallow checks.
   "nothing to compare" (`RunState::NoTests` in `src/orchestration/gates.rs`). Tests in
   `squad.rs` and `tests/squad_gates.rs`.
 
+- [X] T050 [US5] [US7] Findings of the second manual run (Markdown converter, research R-10):
+  repairs go through the lead with rounds counted per part (FR-025); evidence files compared with
+  the session's own start (FR-023); a verdict completes the review task and reviewers need no
+  evidence; verdict notes up to 8 KiB; reviewers may run git show/diff/log/ls-tree/grep; gate
+  lines name their commit. Tests in `tests/squad_evidence.rs`, `squad_lead.rs`, `squad_publish.rs`.
+
 **Checkpoint**: quickstart Q10 passes with no interventions besides the spec and the merge.
 
 ---

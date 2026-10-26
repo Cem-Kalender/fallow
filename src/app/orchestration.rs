@@ -88,10 +88,22 @@ fn asks_permission(s: &crate::session::Session) -> bool {
         return false;
     };
     let n = t.total_lines();
-    (n.saturating_sub(25)..n).any(|v| {
-        let line = t.line_text(v);
-        PROMPTS.iter().any(|p| line.contains(p))
-    })
+    let lines: Vec<String> = (n.saturating_sub(15)..n).map(|v| t.line_text(v)).collect();
+    looks_like_prompt(&lines)
+}
+
+/// A permission prompt at the bottom of a screen: a prompt's question, not in echoed input
+/// (a line starting with `>` or `❯`), together with its choices (review: a typed message
+/// quoting "requires approval" must not count).
+pub fn looks_like_prompt(lines: &[String]) -> bool {
+    let question = lines.iter().any(|l| {
+        let t = l.trim_start();
+        !t.starts_with('>') && !t.starts_with('❯') && PROMPTS.iter().any(|p| t.contains(p))
+    });
+    let choices = lines.iter().any(|l| {
+        l.contains("1. Yes") || l.contains("Yes (y)") || l.to_ascii_lowercase().contains("(y/n)")
+    });
+    question && choices
 }
 
 /// The hub's view of the app: the sessions, plus the project list for tools that name a project.
@@ -279,6 +291,7 @@ impl AppState {
         if starts.is_empty() {
             return false;
         }
+        let mut pending_bases = Vec::new();
         for s in starts {
             let result = match start_guard(&self.sessions, self.snapshot.as_deref()) {
                 Some(why) => Err(why),
@@ -292,14 +305,18 @@ impl AppState {
                         .and_then(|_| s.from.session())
                         .and_then(|from| self.sessions.get(from))
                         .and_then(|from| git::head(&from.cwd).ok());
-                    self.start_role_session(
+                    let started = self.start_role_session(
                         s.project,
                         &s.profile,
                         place,
                         s.role.clone(),
                         s.args.clone(),
-                        base,
-                    )
+                        base.clone(),
+                    );
+                    if let (Ok(sid), Some(b)) = (&started, base) {
+                        pending_bases.push((*sid, b));
+                    }
+                    started
                 }
             };
             if let Ok(sid) = &result {
@@ -319,6 +336,9 @@ impl AppState {
             };
             if let Some(h) = self.hub.as_mut() {
                 h.start_done(&view, s.id, result, Instant::now());
+                for (sid, b) in pending_bases.drain(..) {
+                    h.set_base(sid, b);
+                }
             }
         }
         true

@@ -29,7 +29,7 @@ permissions, verified session identity) and 002 (sessions, worktrees, profiles).
 
 ### Session 2026-10-26 (after the first manual run)
 
-- Q: Who is told what happens in a squad, and who do agents ask when they need a decision? → A: Everything goes through the lead. Fallow reports every event that needs action to the lead, not to the engineer. The other sessions decide within their task and the spec; when a decision falls outside both they consult the lead, never the engineer, and only the lead consults the engineer. Briefings do not invite questions. The engineer keeps the decisions that are theirs (the merge, confirming a role that bypasses an agent's checks, a repair loop past its cap), and the lead brings those to them.
+- Q: Who is told what happens in a squad, and who do agents ask when they need a decision? → A: Everything goes through the lead. Fallow reports every event that needs action to the lead, not to the engineer. The other sessions work autonomously; when they need clarification they ask the lead, never the engineer, and only the lead consults the engineer. Autonomy comes first: briefings make asking possible without prompting it. The engineer keeps the decisions that are theirs (the merge, confirming a role that bypasses an agent's checks, a repair loop past its cap), and the lead brings those to them.
 - Q: How autonomous is the squad? → A: Fully, once the spec is agreed. The engineer defines the spec with the lead; from then on the squad builds it on its own, and the lead manages and monitors the squad until the work is actually finished: every task done with evidence, the builders' work integrated in the lead's commit, the gates passing on that commit, and the reviewers' approval. Only then does the lead report to the engineer, with the merge ready.
 
 ## User Scenarios & Testing *(mandatory)*
@@ -229,8 +229,8 @@ The engineer defines the spec with the lead (with Spec Kit: specify and clarify)
 squad builds it on its own, and the lead manages it: Fallow tells the lead about everything that needs action (a task reported, a
 review verdict, a gate result, a repair, a session stuck waiting for a permission or asking a
 question, everyone idle), so the lead can merge the builders' work into its own branch, hand out the
-next task and ask for another review. Builders and reviewers decide within their task and the spec;
-for a decision outside both they consult the lead, and only the lead consults the engineer. The lead
+next task and ask for another review. Builders and reviewers work on their own; when they need
+clarification they ask the lead, and only the lead consults the engineer. The lead
 keeps going until the work is finished by evidence Fallow can check, then tells the engineer that the
 merge is ready.
 
@@ -251,8 +251,7 @@ besides the spec, the merge, and decisions brought to them by the lead).
 3. **Given** a reviewer gives a verdict, a gate finishes, a repair loop stops at its cap, or every
    session waits, **When** it happens, **Then** the lead is told with what it means for the merge,
    and the engineer is told only when a decision is theirs.
-4. **Given** a builder or reviewer needs a decision outside its task and the spec, **When** it
-   consults the lead, **Then** the question goes to the lead as a message labelled as a question from
+4. **Given** a builder or reviewer needs clarification, **When** it asks the lead, **Then** the question goes to the lead as a message labelled as a question from
    that session, and the lead's answer goes back to it; it cannot ask the engineer directly.
 5. **Given** a builder or reviewer is stuck at its agent's own permission prompt, **When** Fallow
    sees the prompt, **Then** the lead is told which session is stuck and on what; roles that edit
@@ -393,11 +392,15 @@ besides the spec, the merge, and decisions brought to them by the lead).
 
 - **FR-023**: Reporting a task done during a burst MUST include evidence: the commit, commands run with
   their results, and files changed. Fallow MUST refuse a report whose commit is not on the reporting
-  session's branch.
+  session's branch, and compare the listed files with the changes since that session started (not
+  since the burst started). Read-only roles report through their verdict and need no evidence; a
+  verdict completes the reviewer's open review task.
 - **FR-024**: A task handed to the next role MUST carry the evidence of the reports it depends on.
-- **FR-025**: A failed gate or a review asking for changes MUST create a repair task for the builder
-  who owns the part; after the squad's repair cap (default 2 rounds), Fallow MUST stop the loop and ask
-  the engineer.
+- **FR-025**: A failed gate or a review asking for changes MUST count a repair round for its part and
+  be told to the lead with the part's owner; the lead rules on anything left open and hands the
+  repair out (a task for that part is the round's repair). After the squad's repair cap (default 2
+  rounds), Fallow MUST stop the loop, refuse tasks for that part, and ask the engineer. (Changed
+  after the second manual run: repair tasks Fallow created itself crossed the lead's rulings.)
 - **FR-025a**: The owner of a part MUST be the session its task was handed to, as Fallow recorded it at
   hand-over; a review verdict names the part (task) it concerns. A failure not tied to one part (for
   example a final gate failing) MUST go to the lead, which decides whom to hand the repair to.
@@ -433,8 +436,8 @@ besides the spec, the merge, and decisions brought to them by the lead).
 - **FR-034**: Sessions other than the lead MUST consult the lead, not the engineer: Fallow MUST offer
   them a tool to consult the lead, deliver the question to the lead labelled as a question from that
   session, and deliver the lead's answer back; their agents MUST be started without their own "ask
-  the user" tool where the agent CLI allows it. Briefings MUST NOT invite questions: they say to
-  decide within the task and the spec, and to consult the lead only for a decision outside both.
+  the user" tool where the agent CLI allows it. Briefings MUST put autonomy first: they say to work
+  on their own and that clarifying questions go to the lead, without prompting questions.
 - **FR-035**: Roles that edit or run commands MUST be started with flags under which their agent does
   not stop to ask for the actions their level allows, and denies the rest without asking, where the
   agent CLI supports it. When Fallow sees an agent's permission prompt in a session other than the

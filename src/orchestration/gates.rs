@@ -112,6 +112,30 @@ pub struct GateRun {
     pub after_tasks: usize,
     /// A temporary worktree (baseline) to remove when the run ends.
     pub dir: Option<PathBuf>,
+    /// The gate session could not be started: not a result, tried again later.
+    pub start_failed: bool,
+}
+
+/// How long a gate that could not start waits before Fallow tries again.
+pub const START_RETRY: Duration = Duration::from_secs(60);
+/// A baseline that could not start this often is given up: the burst runs without one.
+pub const BASELINE_TRIES: usize = 3;
+
+/// Whether a gate's baseline is done: it ran (any result), or could not start
+/// `BASELINE_TRIES` times (verification C: a failed start is not a result).
+fn baseline_settled(runs: &[GateRun], gate: &str) -> bool {
+    let mine = runs
+        .iter()
+        .filter(|r| r.gate == gate && r.kind == Kind::Baseline);
+    let (mut ran, mut failed_starts) = (false, 0);
+    for r in mine {
+        if r.start_failed {
+            failed_starts += 1;
+        } else if r.state != RunState::Running {
+            ran = true;
+        }
+    }
+    ran || failed_starts >= BASELINE_TRIES
 }
 
 /// A gate run the app should start now.
@@ -159,12 +183,10 @@ impl Hub {
             return false;
         };
         b.start_commit.is_some()
-            && b.squad.gates.iter().any(|g| {
-                g.baseline
-                    && !b.gate_runs.iter().any(|r| {
-                        r.gate == g.name && r.kind == Kind::Baseline && r.state != RunState::Running
-                    })
-            })
+            && b.squad
+                .gates
+                .iter()
+                .any(|g| g.baseline && !baseline_settled(&b.gate_runs, &g.name))
     }
 
     /// Whether a task for `session` waits for the baseline: every role but the lead's.
@@ -190,7 +212,21 @@ impl Hub {
                         && b.squad.role(r).is_some_and(|r| r.level != Level::ReadOnly)
                 })
             })
-            .filter_map(|t| t.evidence.as_ref().map(|e| e.commit.clone()))
+            .filter_map(|t| {
+                t.assigned
+                    .zip(t.evidence.as_ref().map(|e| e.commit.clone()))
+            })
+            // Only each builder's latest reported commit must be integrated: an amended or
+            // superseded earlier report must not hold the final gate forever (review).
+            .fold(Vec::<(u32, String)>::new(), |mut acc, (s, c)| {
+                match acc.iter_mut().find(|(x, _)| *x == s) {
+                    Some(e) => e.1 = c,
+                    None => acc.push((s, c)),
+                }
+                acc
+            })
+            .into_iter()
+            .map(|(_, c)| c)
             .collect()
     }
 
@@ -209,8 +245,20 @@ impl Hub {
                 if runs.iter().any(|r| r.state == RunState::Running) {
                     continue;
                 }
-                let has = |k: Kind| runs.iter().any(|r| r.kind == k);
-                if g.baseline && b.start_commit.is_some() && !has(Kind::Baseline) {
+                // A gate that could not start is tried again after START_RETRY, not at once.
+                if runs
+                    .last()
+                    .is_some_and(|r| r.start_failed && r.started.elapsed() < START_RETRY)
+                {
+                    continue;
+                }
+                if g.baseline
+                    && b.start_commit.is_some()
+                    && !baseline_settled(&b.gate_runs, &g.name)
+                    && !runs
+                        .iter()
+                        .any(|r| r.kind == Kind::Baseline && r.state == RunState::Running)
+                {
                     jobs.push(Job {
                         project: b.project,
                         gate: g.clone(),
@@ -270,20 +318,38 @@ impl Hub {
             deadline: now + timeout,
             after_tasks: done,
             dir,
+            start_failed: false,
         };
         match session {
             Ok(id) => {
                 run.session = id;
                 b.roles.insert(id, GATE_ROLE.into());
                 b.gate_runs.push(run);
+                // The lead's new commit is its answer to a failure of the whole work: the next
+                // final failure counts a new round (verification B).
+                if job.kind == Kind::Final {
+                    if let Some(l) = b.repairs.iter_mut().find(|l| l.part.is_none()) {
+                        l.pending = false;
+                    }
+                }
             }
             Err(why) => {
-                let i = b.gate_runs.len();
+                // Not a result of the work: no commit (so it is due again), no repair round,
+                // and retried after START_RETRY (review).
+                run.commit = None;
+                run.state = RunState::Failed(None);
+                run.start_failed = true;
+                if job.kind == Kind::Final {
+                    run.class = Some(Class::Fail);
+                }
                 b.gate_runs.push(run);
-                self.finish_run(job.project, i, RunState::Failed(None), BTreeSet::new());
                 self.tell_lead(
                     job.project,
-                    format!("Gate {} could not start: {why}", job.gate.name),
+                    format!(
+                        "Gate {} ({}) could not start: {why}. Fallow tries again in a minute.",
+                        job.gate.name,
+                        job.kind.label()
+                    ),
                 );
             }
         }
@@ -348,7 +414,10 @@ impl Hub {
                 .iter()
                 .rev()
                 .find(|r| {
-                    r.gate == gate && r.kind == Kind::Baseline && r.state != RunState::Running
+                    r.gate == gate
+                        && r.kind == Kind::Baseline
+                        && r.state != RunState::Running
+                        && !r.start_failed
                 })
                 .cloned()
         };
@@ -360,9 +429,12 @@ impl Hub {
         }
         let run = run.clone();
         let mut text = format!(
-            "Gate {} ({}) {}",
+            "Gate {} ({}{}) {}",
             run.gate,
             run.kind.label(),
+            run.commit
+                .as_ref()
+                .map_or(String::new(), |c| format!(", {}", &c[..c.len().min(10)])),
             run.state.label()
         );
         if let Some(c) = run.class {
@@ -473,6 +545,16 @@ pub fn failing_names(output: &str, how: &Failures) -> BTreeSet<String> {
 
 /// Whether a run's output says no tests ran (unittest, pytest, cargo, Jest, Go, .NET).
 pub fn no_tests(output: &str) -> bool {
+    // cargo prints "running 0 tests" for every target without tests even when others ran and
+    // failed (review): a run with any test is not "no tests".
+    static RAN: OnceLock<Regex> = OnceLock::new();
+    let ran = RAN.get_or_init(|| {
+        Regex::new(r"(?m)running [1-9][0-9]* tests?|Ran [1-9][0-9]* tests?|collected [1-9][0-9]* items?|^(FAIL|ok)\s")
+            .expect("valid pattern")
+    });
+    if ran.is_match(output) || !failing_names(output, &Failures::Auto).is_empty() {
+        return false;
+    }
     const SAYS: &[&str] = &[
         "Ran 0 tests",
         "NO TESTS RAN",
@@ -491,7 +573,8 @@ pub fn classify(final_run: &GateRun, baseline: Option<&GateRun>) -> Class {
     if final_run.state.passed() {
         return Class::Pass;
     }
-    let Some(b) = baseline.filter(|b| !matches!(b.state, RunState::Running | RunState::NoTests))
+    let Some(b) = baseline
+        .filter(|b| !b.start_failed && !matches!(b.state, RunState::Running | RunState::NoTests))
     else {
         return Class::Fail;
     };

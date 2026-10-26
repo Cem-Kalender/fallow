@@ -155,6 +155,7 @@ fn gate_run(state: RunState, class: Option<Class>, now: Instant) -> GateRun {
         deadline: now + Duration::from_secs(60),
         after_tasks: 0,
         dir: None,
+        start_failed: false,
     }
 }
 
@@ -391,9 +392,10 @@ fn verdicts_are_reviewers_own_and_disagreement_goes_to_the_engineer() {
         "{n}"
     );
     assert!(!ready(&h));
-    // The request for changes became a repair for the lead (no part named).
+    // The request for changes is a repair round the lead hands out (no part named).
     h.tick(&f, now);
-    assert!(h.tasks.list.iter().any(|t| t.repair_round == 1));
+    let l = &h.burst_of(1).unwrap().repairs[0];
+    assert_eq!((l.rounds, l.pending, l.part.clone()), (1, true, None));
     // #4 approves after all: ready, and squad_status lists both verdicts.
     verdict(&mut h, &f, 4, "approved", "now fine", now);
     assert!(ready(&h));

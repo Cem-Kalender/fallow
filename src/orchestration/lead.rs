@@ -16,11 +16,54 @@ pub const GROUP_EVERY: Duration = Duration::from_secs(10);
 /// A status for the lead after this long without an update while the merge is not ready (FR-037).
 pub const QUIET_STATUS: Duration = Duration::from_secs(10 * 60);
 
+/// A line of an update: agents' text (notes, reasons) on one line, so it cannot start a line
+/// that looks like Fallow's own (review).
+pub fn one_line(s: &str) -> String {
+    s.split(['\n', '\r'])
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .collect::<Vec<_>>()
+        .join(" / ")
+}
+
+/// The update typed into the lead and the lines left for the next one: as many lines as fit in
+/// a delivery with the merge summary (a single line longer than that is cut); the rest wait
+/// (verification D: nothing is dropped).
+pub fn update_text(lines: &[String], summary: &str) -> (String, Vec<String>) {
+    let max = super::delivery::TEXT_MAX - 200 - summary.len();
+    let mut text = String::from("Squad update:");
+    let mut rest = Vec::new();
+    for (i, l) in lines.iter().enumerate() {
+        let mut l = l.clone();
+        if i == 0 && text.len() + l.len() + 3 > max {
+            let mut cut = max.saturating_sub(text.len() + 10);
+            while !l.is_char_boundary(cut) {
+                cut -= 1;
+            }
+            l.truncate(cut);
+            l.push_str(" ...");
+        } else if text.len() + l.len() + 3 > max {
+            rest = lines[i..].to_vec();
+            break;
+        }
+        text.push_str("\n- ");
+        text.push_str(&l);
+    }
+    if !rest.is_empty() {
+        text.push_str(&format!("\n- ({} more in the next update)", rest.len()));
+    }
+    if !summary.is_empty() {
+        text.push('\n');
+        text.push_str(summary);
+    }
+    (text, rest)
+}
+
 impl Hub {
     /// Queues a line for the lead of `project`'s burst (FR-032).
     pub(crate) fn tell_lead(&mut self, project: ProjectId, line: String) {
         if let Some(b) = self.bursts.iter_mut().find(|b| b.project == project) {
-            b.lead_updates.push(line);
+            b.lead_updates.push(one_line(&line));
         }
     }
 
@@ -130,24 +173,26 @@ impl Hub {
             let lead_info = sessions.info(lead).filter(|s| s.running);
             match lead_info {
                 None => {
-                    // No lead to tell: the engineer hears it (they can name a new lead).
+                    // No lead to tell: the engineer hears it as one notice (only the last
+                    // notice is shown), and every line goes to the activity log.
                     let lines = std::mem::take(&mut self.bursts[i].lead_updates);
-                    self.notices.extend(lines);
+                    for l in &lines {
+                        self.activity
+                            .add(Party::Fallow, super::activity::Action::Post, l, None);
+                    }
+                    let name = self.bursts[i].project_name.clone();
+                    let all = lines.join(" | ");
+                    self.alerts.push(format!(
+                        "{name} has no running lead (L in the Squad tab names one): {}",
+                        all.chars().take(1500).collect::<String>()
+                    ));
                     changed = true;
                 }
                 Some(s) if s.idle && s.state != WAITING_FOR_APPROVAL => {
                     let lines = std::mem::take(&mut self.bursts[i].lead_updates);
-                    let mut text = String::from("Squad update:");
-                    for l in &lines {
-                        text.push_str("\n- ");
-                        text.push_str(l);
-                    }
                     let summary = self.merge_summary(project);
-                    if !summary.is_empty() {
-                        text.push('\n');
-                        text.push_str(&summary);
-                    }
-                    let _ = self.request_delivery(
+                    let (text, rest) = update_text(&lines, &summary);
+                    let sent = self.request_delivery(
                         sessions,
                         Party::Fallow,
                         lead,
@@ -156,6 +201,15 @@ impl Hub {
                         true,
                         now,
                     );
+                    // Lines that did not fit, or all of them if typing was refused, wait for the
+                    // next update: none is lost (FR-033).
+                    let keep = if sent.is_err() { lines } else { rest };
+                    if !keep.is_empty() {
+                        let b = &mut self.bursts[i];
+                        let newer = std::mem::take(&mut b.lead_updates);
+                        b.lead_updates = keep;
+                        b.lead_updates.extend(newer);
+                    }
                     self.bursts[i].last_sent = now;
                     self.bursts[i].last_update = now;
                     changed = true;

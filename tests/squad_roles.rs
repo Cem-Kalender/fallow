@@ -507,3 +507,24 @@ fn a_session_at_a_permission_prompt_is_not_free_and_says_so() {
     };
     assert_eq!(v["sessions"][1]["state"], "waiting for the user's approval");
 }
+
+#[test]
+fn a_prompt_is_a_question_with_its_choices_not_a_quote() {
+    use fallow::app::orchestration::looks_like_prompt;
+    let v = |l: &[&str]| l.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    assert!(looks_like_prompt(&v(&[
+        " PowerShell command",
+        " This command requires approval",
+        " Do you want to proceed?",
+        " ❯ 1. Yes",
+        "   3. No",
+    ])));
+    // A typed message quoting the words, without choices, is not a prompt.
+    assert!(!looks_like_prompt(&v(&[
+        "> Squad update: #3 is stuck: This command requires approval",
+        "",
+    ])));
+    assert!(!looks_like_prompt(&v(&[
+        "Do you want to proceed? I think so."
+    ])));
+}

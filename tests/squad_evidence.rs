@@ -266,8 +266,8 @@ fn done_reports_need_evidence_fallow_checks() {
 }
 
 #[test]
-fn failures_go_back_to_the_owner_until_the_cap() {
-    // FR-025, FR-025a.
+fn failures_count_rounds_and_the_lead_hands_out_repairs_until_the_cap() {
+    // FR-025 with 004 run 2: Fallow counts and tells the lead; the lead hands out the repair.
     let (d, c0, c1, _) = repo("repair");
     let (mut h, f, now) = setup(&d, &c0, 2);
     let t = hand(&mut h, &f, 2, "api", now);
@@ -279,58 +279,79 @@ fn failures_go_back_to_the_owner_until_the_cap() {
         Some(json!({"commit": c1, "files": ["a.txt"]})),
         now,
     );
-    let repairs = |h: &Hub| -> Vec<(u32, u8)> {
-        h.tasks
-            .list
-            .iter()
-            .filter(|t| t.repair_round > 0)
-            .map(|t| (t.assigned.unwrap_or(0), t.repair_round))
-            .collect()
+    let lead_create = |h: &mut Hub| {
+        h.call(
+            &f,
+            1,
+            "task_create",
+            json!({"text": "fix it", "target": {"session": 2}, "part": "api"}),
+            now,
+        )
     };
-    // Tied to the part: its owner (#2).
+    let lead_lines = |h: &Hub| -> String { h.burst_of(1).unwrap().lead_updates.join("\n") };
+    // Round 1: told to the lead with the owner; Fallow creates no task itself.
+    let before = h.tasks.list.len();
     h.repair(&f, 1, Some("api".into()), "tests fail", now);
-    h.tick(&f, now);
-    assert_eq!(repairs(&h), [(2, 1)]);
-    let open = h.tasks.list.last().unwrap();
-    assert_eq!(open.part.as_deref(), Some("api"));
-    assert!(open.text.contains("Repair round 1 of 2"), "{}", open.text);
-    let id = open.id;
-    report(
-        &mut h,
-        &f,
-        2,
-        id,
-        Some(json!({"commit": c1, "files": ["a.txt"]})),
-        now,
+    assert_eq!(h.tasks.list.len(), before, "no task from Fallow");
+    assert!(
+        lead_lines(&h).contains("Repair needed (round 1 of 2) for api: tests fail"),
+        "{}",
+        lead_lines(&h)
     );
+    assert!(lead_lines(&h).contains("hand it to #2 with task_create and part \"api\""));
+    let Reply::Done(v) = lead_create(&mut h) else {
+        panic!()
+    };
+    let r1 = v["task"].as_u64().unwrap() as u32;
+    assert_eq!(h.tasks.get(r1).unwrap().repair_round, 1);
+    // An ordinary follow-up for the part without a failure is not a round.
+    let Reply::Done(v) = lead_create(&mut h) else {
+        panic!()
+    };
+    assert_eq!(
+        h.tasks
+            .get(v["task"].as_u64().unwrap() as u32)
+            .unwrap()
+            .repair_round,
+        0
+    );
+    // Round 2, then the cap: the third failure goes to the user; tasks for the part wait.
     h.repair(&f, 1, Some("api".into()), "still failing", now);
-    h.tick(&f, now);
-    assert_eq!(repairs(&h).len(), 2);
-    let id = h.tasks.list.last().unwrap().id;
-    report(
-        &mut h,
-        &f,
-        2,
-        id,
-        Some(json!({"commit": c1, "files": ["a.txt"]})),
-        now,
+    let Reply::Done(v) = lead_create(&mut h) else {
+        panic!()
+    };
+    assert_eq!(
+        h.tasks
+            .get(v["task"].as_u64().unwrap() as u32)
+            .unwrap()
+            .repair_round,
+        2
     );
-    // The third failure goes to the engineer.
     h.repair(&f, 1, Some("api".into()), "failing again", now);
-    assert_eq!(repairs(&h).len(), 2, "no third repair task");
-    // The engineer's decision (an alert), brought to them by the lead too (004 US7).
     assert!(
         h.alerts
             .iter()
             .any(|n| n.contains("Repair cap reached for api"))
     );
-    let l = &h.burst_of(1).unwrap().repairs[0];
-    assert!(l.stopped && l.rounds == 2);
-    // "Once more": one more round.
+    let r = lead_create(&mut h);
+    assert!(
+        matches!(r, Reply::Error("not_allowed", ref m) if m.contains("the user decides first")),
+        "{r:?}"
+    );
+    // "Once more": round 3 is allowed and counted.
     h.repair_decide(&f, 1, 0, Decision::Again, now).unwrap();
-    h.tick(&f, now);
-    assert_eq!(repairs(&h).len(), 3);
-    // A review asking for changes without a part goes to the lead.
+    assert!(lead_lines(&h).contains("The user allows one more repair round for api"));
+    let Reply::Done(v) = lead_create(&mut h) else {
+        panic!()
+    };
+    assert_eq!(
+        h.tasks
+            .get(v["task"].as_u64().unwrap() as u32)
+            .unwrap()
+            .repair_round,
+        3
+    );
+    // A review asking for changes without a part is the whole work's: the lead decides who.
     let r = h.call(
         &f,
         3,
@@ -340,14 +361,21 @@ fn failures_go_back_to_the_owner_until_the_cap() {
     );
     assert!(matches!(r, Reply::Done(_)));
     h.tick(&f, now);
-    let last = h.tasks.list.last().unwrap();
-    assert_eq!(last.target, tasks::Target::Session(1));
-    assert!(
-        last.text.contains("asked for changes: naming"),
-        "{}",
-        last.text
-    );
+    let all = updates_to_lead(&h);
+    assert!(all.contains("for (whole work)"), "{all}");
+    assert!(all.contains("asked for changes: naming"), "{all}");
     let _ = std::fs::remove_dir_all(&d);
+}
+
+/// Everything typed into the lead so far.
+fn updates_to_lead(h: &Hub) -> String {
+    h.deliveries
+        .list
+        .iter()
+        .filter(|d| d.to == 1)
+        .map(|d| d.text.clone())
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 #[test]

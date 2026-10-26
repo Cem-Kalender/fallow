@@ -1190,6 +1190,46 @@ impl Hub {
         Ok(state)
     }
 
+    /// A reviewer's verdict completes its open review tasks (004 run 2: a review was reported
+    /// done while it asked for changes, and the re-review was not tracked).
+    pub(crate) fn finish_review_tasks(&mut self, caller: u32, approve: bool, part: Option<&str>) {
+        let mine =
+            |t: &&tasks::Task| t.assigned == Some(caller) && t.state == tasks::State::InProgress;
+        // A verdict for a part completes that part's review task, or one without a part.
+        let mut open: Vec<u32> = self
+            .tasks
+            .list
+            .iter()
+            .filter(mine)
+            .filter(|t| part.is_none() || t.part.as_deref() == part)
+            .map(|t| t.id)
+            .collect();
+        if open.is_empty() && part.is_some() {
+            open = self
+                .tasks
+                .list
+                .iter()
+                .filter(mine)
+                .filter(|t| t.part.is_none())
+                .map(|t| t.id)
+                .collect();
+        }
+        for id in open {
+            if let Some(t) = self.tasks.get_mut(id) {
+                t.note = Some(if approve {
+                    "verdict: approved".into()
+                } else {
+                    "verdict: changes requested".into()
+                });
+            }
+            self.tasks.finish(id, tasks::State::Done);
+            self.task_changed(id, "done (verdict given)");
+            if let Some(t) = self.tasks.get(id).cloned() {
+                self.tell_task(t.created_by.session(), &t);
+            }
+        }
+    }
+
     /// A hand-over delivery ended: delivered keeps the task in progress; rejected or expired
     /// pauses it (so it is not offered again at once); a target that exited puts a "next free"
     /// task back in the queue and fails a task for that session.
