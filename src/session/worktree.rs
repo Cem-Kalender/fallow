@@ -142,6 +142,17 @@ pub fn next_branch(project: &Path, profile: &str, root: Option<&Path>) -> Result
 /// Creates a worktree on a new branch from the project's current commit. On failure nothing
 /// half-created is left registered (US6 scenario 7).
 pub fn create(project: &Path, branch: &str, root: Option<&Path>) -> Result<Worktree, String> {
+    create_at(project, branch, root, None)
+}
+
+/// `create`, branching from `base` (a commit) instead of the project's `HEAD` (004: a session
+/// started in a burst starts from the requesting session's commit).
+pub fn create_at(
+    project: &Path,
+    branch: &str,
+    root: Option<&Path>,
+    base: Option<&str>,
+) -> Result<Worktree, String> {
     let name = branch.strip_prefix(PREFIX).unwrap_or(branch);
     let path = worktree_dir(project, root, name);
     if path.exists() {
@@ -150,7 +161,10 @@ pub fn create(project: &Path, branch: &str, root: Option<&Path>) -> Result<Workt
     if !has_commits(project) {
         return Err(NO_COMMITS.into());
     }
-    let base = git(project, &["rev-parse", "HEAD"])?.trim().to_string();
+    let base = match base {
+        Some(b) => b.to_string(),
+        None => git(project, &["rev-parse", "HEAD"])?.trim().to_string(),
+    };
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
     }

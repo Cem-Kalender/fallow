@@ -910,7 +910,7 @@ impl AppState {
         id: &str,
         place: Where,
     ) -> Result<SessionId, String> {
-        self.start_role_session(project, id, place, None, Vec::new())
+        self.start_role_session(project, id, place, None, Vec::new(), None)
     }
 
     /// `start_session_in` with a role in a burst and its flags (004 FR-009).
@@ -921,6 +921,7 @@ impl AppState {
         place: Where,
         role: Option<String>,
         extra_args: Vec<String>,
+        base: Option<String>,
     ) -> Result<SessionId, String> {
         let profile = self
             .profiles
@@ -945,8 +946,9 @@ impl AppState {
             Where::Existing(w) => (w.path.clone(), Workdir::Worktree(w)),
             Where::NewWorktree => {
                 let branch = worktree::next_branch(&project_path, &profile.id, root.as_deref())?;
-                let w = worktree::create(&project_path, &branch, root.as_deref())
-                    .map_err(|e| format!("Could not create a worktree: {e}"))?;
+                let w =
+                    worktree::create_at(&project_path, &branch, root.as_deref(), base.as_deref())
+                        .map_err(|e| format!("Could not create a worktree: {e}"))?;
                 (w.path.clone(), Workdir::Worktree(w))
             }
         };

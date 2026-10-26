@@ -284,12 +284,21 @@ impl AppState {
                 Some(why) => Err(why),
                 None => {
                     let place = self.default_where(s.project);
+                    // In a burst a new session starts from the requester's commit (the lead's
+                    // integrated work, or its committed plan), not from the project's HEAD.
+                    let base = s
+                        .role
+                        .as_ref()
+                        .and_then(|_| s.from.session())
+                        .and_then(|from| self.sessions.get(from))
+                        .and_then(|from| git::head(&from.cwd).ok());
                     self.start_role_session(
                         s.project,
                         &s.profile,
                         place,
                         s.role.clone(),
                         s.args.clone(),
+                        base,
                     )
                 }
             };
