@@ -327,25 +327,58 @@ fn permissions_lines(state: &AppState, v: &OrchView) -> Vec<Line<'static>> {
     lines
 }
 
-/// Splits `text` into display lines at most `width` columns wide.
+/// Splits `text` into display lines at most `width` columns wide, between words where it can
+/// (a word longer than a line is split). Spaces inside a line are kept.
 pub fn wrap(text: &str, width: usize) -> Vec<String> {
     let width = width.max(4);
     let mut out = Vec::new();
     for para in text.split('\n') {
-        let mut line = String::new();
-        let mut w = 0;
-        for c in para.chars() {
-            let cw = c.width().unwrap_or(0);
-            if w + cw > width {
+        let (mut line, mut w, mut first) = (String::new(), 0, true);
+        for word in para.split(' ') {
+            let word = word.replace('\t', " ");
+            let ww: usize = word.chars().map(|c| c.width().unwrap_or(0)).sum();
+            let sep = usize::from(!first);
+            if w + sep + ww <= width {
+                if !first {
+                    line.push(' ');
+                }
+                line.push_str(&word);
+                w += sep + ww;
+                first = false;
+                continue;
+            }
+            if !first {
                 out.push(std::mem::take(&mut line));
                 w = 0;
             }
-            line.push(if c == '\t' { ' ' } else { c });
-            w += cw.max(usize::from(c == '\t'));
+            for c in word.chars() {
+                let cw = c.width().unwrap_or(0);
+                if w + cw > width {
+                    out.push(std::mem::take(&mut line));
+                    w = 0;
+                }
+                line.push(c);
+                w += cw;
+            }
+            first = false;
         }
         out.push(line);
     }
     out
+}
+
+#[cfg(test)]
+mod wrap_tests {
+    #[test]
+    fn wraps_between_words_and_splits_only_long_words() {
+        assert_eq!(
+            super::wrap("starts sessions and publishes", 16),
+            vec!["starts sessions", "and publishes"]
+        );
+        assert_eq!(super::wrap("  indented", 20), vec!["  indented"]);
+        assert_eq!(super::wrap("abcdefghij", 4), vec!["abcd", "efgh", "ij"]);
+        assert_eq!(super::wrap("a\nb", 10), vec!["a", "b"]);
+    }
 }
 
 /// The board the Board tab shows.
