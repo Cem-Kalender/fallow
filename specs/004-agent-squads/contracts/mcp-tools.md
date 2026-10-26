@@ -48,6 +48,7 @@ session_start"), and the refusal is logged.
 
 | Tool | Role | Arguments | Result |
 |---|---|---|---|
+| `consult_lead` | every role but the lead | `question` | Delivers the question to the lead, labelled as a question from this session; the lead answers with `deliver`. For a decision outside the session's task and the spec (US7, FR-034). |
 | `review_verdict` | reviewer roles | `part?` (task), `verdict` (`"approved"` \| `"changes-requested"`), `notes` | Signals `review-approved` or `review-changes-requested` for the part, with the notes, from this session; a changes-requested verdict creates the repair task (FR-025). |
 | `squad_status` | all | — | The squad in force: roles and their sessions, gates and their latest runs with classification, merge conditions met or not, repair rounds, time left. |
 | `publish` | lead | `title`, `body` | Draft-PR mode: tells Fallow the pull request address after the lead opened it (`url`); Fallow records it. Local-merge mode: refused; the engineer merges. |

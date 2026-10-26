@@ -386,7 +386,14 @@ impl AppState {
                     .map(|s| (b.project, s.cwd.clone()))
             })
             .collect();
-        let jobs = hub.gates_due(&|p| leads.get(&p).and_then(|d| git::head(d).ok()));
+        let jobs = hub.gates_due(&|p, needed| {
+            let dir = leads.get(&p)?;
+            let head = git::head(dir).ok()?;
+            needed
+                .iter()
+                .all(|c| git::on_branch(dir, c, &head))
+                .then_some(head)
+        });
         for job in jobs {
             let Some(path) = self.projects.get(job.project).map(|p| p.path.clone()) else {
                 continue;
@@ -721,9 +728,11 @@ impl AppState {
         let Some(hub) = self.hub.as_mut() else {
             return;
         };
-        if let Some(last) = hub.notices.last().cloned() {
-            hub.notices.clear();
-            self.say(last);
+        let shown = hub.alerts.last().or(hub.notices.last()).cloned();
+        hub.alerts.clear();
+        hub.notices.clear();
+        if let Some(text) = shown {
+            self.say(text);
         }
     }
 }

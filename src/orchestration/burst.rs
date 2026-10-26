@@ -66,6 +66,15 @@ pub struct Burst {
     /// Since when every session has waited, and when the engineer was last told (FR-026).
     pub waiting_since: Option<Instant>,
     pub deadlock_notice: Option<Instant>,
+    /// Lines for the lead's next squad update (US7, FR-032).
+    pub lead_updates: Vec<String>,
+    /// When the lead was last given an update or status, and when one was last typed.
+    pub last_update: Instant,
+    pub last_sent: Instant,
+    /// Members whose permission prompt the lead was told about.
+    pub prompt_told: BTreeSet<u32>,
+    /// The lead and the engineer were told the merge is ready.
+    pub ready_told: bool,
     pub(crate) warned: bool,
 }
 
@@ -152,6 +161,11 @@ impl Hub {
             repairs: Vec::new(),
             waiting_since: None,
             deadlock_notice: None,
+            lead_updates: Vec::new(),
+            last_update: now,
+            last_sent: now.checked_sub(super::lead::GROUP_EVERY).unwrap_or(now),
+            prompt_told: BTreeSet::new(),
+            ready_told: false,
             warned: false,
         };
         let note = super::briefing::common_note(&burst);

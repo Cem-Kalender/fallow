@@ -9,9 +9,10 @@
 //!   reaches the engineer. Builders commit and report with evidence; one of them also tries to
 //!   start a session and approve a review (refused, SC-002). The lead tries to fake the gate
 //!   (refused, SC-004).
-//! - The lead merges the builders' branches into its worktree; Fallow runs the final gate on
-//!   that commit and signals it; the reviewer approves. Before that the merge stays closed
-//!   (SC-003).
+//! - The lead acts only on Fallow's squad updates typed into its session, never polling (SC-010):
+//!   when both builders' reports have arrived it merges their branches into its worktree; Fallow
+//!   runs the final gate on that commit and signals it; the reviewer approves; Fallow tells the
+//!   lead every merge condition holds. Before that the merge stays closed (SC-003).
 //! - When the merge is ready, the harness presses `m`, `y` in the Squad tab: the project's main
 //!   branch then contains the gated commit, and no agent was ever handed a merge (SC-009).
 //! - After `Shift-X` the lead's next delivery waits for the engineer again (SC-007).
@@ -148,7 +149,7 @@ fn run_all(bin: &Path, base: &Path) -> Result<i32, String> {
     // The lead waits for the harness's files instead of typed lines: Fallow types its own
     // messages into it.
     let lead = format!(
-        "print lead-ready\nuntil-file {go}\ncall whoami {{}}\nwrite {whoami}\ncall event_signal {{\"name\":\"gate-tests-passed\"}}\nwrite {fake}\n{b}write {start}\n{c}{r}call squad_status {{}}\nwrite {early}\nwait-loop api-done 240 {api}\nwait-loop web-done 240 {web}\nmerge-branches fallow/\nwait-ready {ready} 300\ncall inbox {{}}\nwrite {inbox}\ncall task_list {{\"mine\":false}}\nwrite {tasks}\nuntil-file {ended}\ncall deliver {{\"session\":3,\"text\":\"zz-after-end\"}}\nwrite {after}\nprint lead-done\n",
+        "print lead-ready\nuntil-file {go}\ncall whoami {{}}\nwrite {whoami}\ncall event_signal {{\"name\":\"gate-tests-passed\"}}\nwrite {fake}\n{b}write {start}\n{c}{r}call squad_status {{}}\nwrite {early}\nuntil-all was reported done by #3|was reported done by #4\nmerge-branches fallow/\nuntil Every merge condition holds\ncall squad_status {{}}\nwrite {ready}\ncall inbox {{}}\nwrite {inbox}\ncall task_list {{\"mine\":false}}\nwrite {tasks}\nuntil-file {ended}\ncall deliver {{\"session\":3,\"text\":\"zz-after-end\"}}\nwrite {after}\nprint lead-done\n",
         go = f("go"),
         whoami = f("lead-whoami"),
         fake = f("lead-gate"),
@@ -157,8 +158,6 @@ fn run_all(bin: &Path, base: &Path) -> Result<i32, String> {
         c = start("c", "builder", Some("zz-build-the-page")),
         r = start("r", "reviewer", None),
         early = f("lead-status-early"),
-        api = f("lead-api"),
-        web = f("lead-web"),
         ready = f("lead-ready-status"),
         inbox = f("lead-inbox"),
         tasks = f("lead-tasks"),

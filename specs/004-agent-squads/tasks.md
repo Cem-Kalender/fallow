@@ -283,6 +283,41 @@ squad, US4–US6 add gates, evidence and publishing to the squad.
 
 ---
 
+## Phase 10: User Story 7 - The lead drives the squad (Priority: P7, added after the first manual run)
+
+**Goal**: everything goes through the lead; the squad builds an agreed spec on its own until the merge
+is ready by evidence Fallow checks.
+
+**Independent Test**: a small spec, two builders and a reviewer; nothing from the engineer until
+"merge ready"; count interventions.
+
+- [X] T042 [P] [US7] Write `tests/squad_lead.rs`:
+  - a builder's report (also of a repair task Fallow created) reaches the lead as one grouped
+    "Squad update" while the lead is idle, not while it is busy, and none is lost;
+  - verdicts, final gate results, repairs created or stopped, a member at a permission prompt (once),
+    everyone waiting, and merge ready are lead updates; merge ready also notifies the engineer;
+  - a status line after 10 minutes without an update while the merge is not ready;
+  - `consult_lead` delivers a labelled question to the lead; refused for the lead itself;
+  - without a running lead, updates become the engineer's notices.
+- [X] T043 [US7] Implement lead updates in `src/orchestration/lead.rs` and wire the events into the
+  hub (`report_task`, `verdict`, `finish_run`, `repair`, `tick_deadlock`, readiness), replacing the
+  creator-only report message; limit the engineer's notices (FR-036).
+- [X] T044 [US7] Add `consult_lead` in `src/orchestration/tools.rs` (every role but the lead).
+- [X] T045 [US7] Agent flags in `src/orchestration/roles.rs` (research R-10): Claude Code roles other
+  than the lead without `AskUserQuestion`; `edit` and `edit-run` under `dontAsk` with allowed tools.
+  Update the exact-vector tests.
+- [X] T046 [US7] Briefings in `src/orchestration/briefing.rs`: the lead runs the squad on its own once
+  the spec is agreed, until merge ready; others decide within their task and the spec, and consult
+  the lead only for a decision outside both (FR-034, FR-038). Do not invite questions.
+- [X] T047 [US7] Extend `cargo xtask squad` (SC-010): the lead acts only on typed squad updates (no
+  polling) and the run reaches merge ready with no engineer input besides the merge.
+- [ ] T048 [US7] Manual run (SC-011, quickstart Q10): agree a small spec with the lead in
+  FallowSandbox, then count interventions until merge ready. Needs the engineer at the terminal.
+
+**Checkpoint**: quickstart Q10 passes with no interventions besides the spec and the merge.
+
+---
+
 ## Phase 9: Polish & Cross-Cutting Concerns
 
 - [X] T036 [P] Extend 003's gate and control tests in `tests/orch_gate.rs`:

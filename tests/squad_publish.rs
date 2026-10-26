@@ -382,7 +382,7 @@ fn verdicts_are_reviewers_own_and_disagreement_goes_to_the_engineer() {
         Reply::Done(_)
     ));
     let n = h
-        .notices
+        .alerts
         .iter()
         .find(|n| n.contains("Reviewers disagree"))
         .expect("disagreement shown");

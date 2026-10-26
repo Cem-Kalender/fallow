@@ -193,7 +193,7 @@ fn baseline_first_then_a_final_run_fallow_signals_itself() {
     )
     .unwrap();
     // The baseline is due at once, on the starting commit.
-    let jobs = h.gates_due(&|_| None);
+    let jobs = h.gates_due(&|_, _| None);
     assert_eq!(jobs.len(), 1);
     assert_eq!(
         (jobs[0].kind, jobs[0].commit.as_deref()),
@@ -212,7 +212,7 @@ fn baseline_first_then_a_final_run_fallow_signals_itself() {
     h.start_done(&f, v["start"].as_u64().unwrap(), Ok(2), now);
     h.gate_started(&jobs[0], Ok(7), jobs[0].commit.clone(), None, now);
     assert_eq!(h.role_of(7), Some(gates::GATE_ROLE));
-    assert!(h.gates_due(&|_| None).is_empty(), "one run at a time");
+    assert!(h.gates_due(&|_, _| None).is_empty(), "one run at a time");
     h.tick(&f, now);
     let task = h.tasks.list.last().unwrap().id;
     assert!(
@@ -236,7 +236,7 @@ fn baseline_first_then_a_final_run_fallow_signals_itself() {
     h.tick(&f, now);
     assert_eq!(h.tasks.get(task).unwrap().assigned, Some(2));
     assert!(
-        h.gates_due(&|_| None).is_empty(),
+        h.gates_due(&|_, _| None).is_empty(),
         "no final run before the builder is done"
     );
     // The builder reports; the final run is due in the lead's worktree.
@@ -247,10 +247,26 @@ fn baseline_first_then_a_final_run_fallow_signals_itself() {
         json!({"task": task, "outcome": "done", "evidence": {"commit": "abc1234", "files": []}}),
         now,
     );
-    let jobs = h.gates_due(&|_| None);
+    // Not before the lead's commit contains the builder's reported commit (004 manual run).
+    assert!(h.gates_due(&|_, _| None).is_empty(), "not integrated yet");
+    let asked = std::cell::RefCell::new(Vec::new());
+    let jobs = h.gates_due(&|_, needed| {
+        asked.borrow_mut().extend(needed.iter().cloned());
+        Some("abc1234".into())
+    });
     assert_eq!(
-        (jobs.len(), jobs[0].kind, jobs[0].lead),
-        (1, Kind::Final, 1)
+        *asked.borrow(),
+        ["abc1234"],
+        "the builder's evidence commit"
+    );
+    assert_eq!(
+        (
+            jobs.len(),
+            jobs[0].kind,
+            jobs[0].lead,
+            jobs[0].commit.as_deref()
+        ),
+        (1, Kind::Final, 1, Some("abc1234"))
     );
     h.gate_started(&jobs[0], Ok(8), Some("abc1234".into()), None, now);
     h.gate_finished(8, Some(101), "test a::old ... FAILED\n");
@@ -263,16 +279,12 @@ fn baseline_first_then_a_final_run_fallow_signals_itself() {
     let r = h.readiness(1).unwrap();
     assert!(r.ready, "{r:?}");
     assert_eq!(r.commit.as_deref(), Some("abc1234"));
+    // Once per commit: the same commit is not gated again; a new integrated one is.
     assert!(
-        h.gates_due(&|_| None).is_empty(),
-        "not again until more work is done"
-    );
-    // The lead merged the builders' branches: its commit changed, so the final run is due again.
-    assert!(
-        h.gates_due(&|_| Some("abc1234".into())).is_empty(),
+        h.gates_due(&|_, _| Some("abc1234".into())).is_empty(),
         "same commit"
     );
-    let jobs = h.gates_due(&|_| Some("def5678".into()));
+    let jobs = h.gates_due(&|_, _| Some("def5678".into()));
     assert_eq!((jobs.len(), jobs[0].kind), (1, Kind::Final));
 }
 
@@ -298,7 +310,7 @@ fn a_gate_past_its_time_limit_fails_and_its_session_is_ended() {
         now,
     )
     .unwrap();
-    let job = h.gates_due(&|_| None).remove(0);
+    let job = h.gates_due(&|_, _| None).remove(0);
     h.gate_started(&job, Ok(7), None, None, now);
     h.tick(&f, now + Duration::from_secs(61));
     let b = h.burst_of(1).unwrap();
@@ -322,8 +334,8 @@ fn a_gate_past_its_time_limit_fails_and_its_session_is_ended() {
         now,
     )
     .unwrap();
-    let job = h2.gates_due(&|_| None).remove(0);
+    let job = h2.gates_due(&|_, _| None).remove(0);
     h2.gate_started(&job, Err("limit".into()), None, None, now);
-    assert!(h2.gates_due(&|_| None).is_empty());
+    assert!(h2.gates_due(&|_, _| None).is_empty());
     assert!(!h2.baseline_pending(1));
 }

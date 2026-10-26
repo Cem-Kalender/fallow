@@ -122,6 +122,32 @@ answer or ask the user if the installer asks anything. Documented persistent ins
 as a task (approved by the engineer's "yes"), saying to check for `uv` first and to ask the engineer
 if it is missing. Fallow downloads and writes nothing itself (FR-007).
 
+## R-10: The lead drives the squad (US7, added after the first manual run)
+
+**Finding**: in the manual run, results reached the engineer (notices) or the lead's inbox (only
+read when polled), so the engineer routed every result by hand; a repair task created by Fallow was
+reported to nobody; a reviewer in `dontAsk` could not ask anything, and a builder in `acceptEdits`
+asked the engineer directly.
+
+**Decision**:
+- **Lead updates**: the hub keeps a queue of updates per burst. Events that need action add a line
+  (task reported, including Fallow's repair tasks; verdict; final gate result; repair created or
+  stopped; a member at its agent's permission prompt; a question; everyone waiting; merge ready).
+  On a tick, when the lead is idle and 10 s passed since the last update, the queue becomes one
+  delivery from Fallow ("Squad update"), ending with what the merge still needs. Without a running
+  lead the lines become notices for the engineer. After 10 minutes without an update while the
+  merge is not ready, a status line is queued.
+- **Questions**: a `consult_lead` tool for every role but the lead; the question is delivered to
+  the lead labelled with the asking session, and the lead answers with `deliver`.
+- **Agent flags** (Claude Code): roles other than the lead get `--disallowedTools AskUserQuestion`;
+  `edit` and `edit-run` use `--permission-mode dontAsk` with `--allowedTools Edit Write NotebookEdit`
+  (plus `Bash PowerShell` for edit-run), so their agent never stops at a prompt for what its level
+  allows and denies the rest without asking (code.claude.com/docs/en/permissions: `dontAsk`
+  "auto-denies every call that would otherwise prompt", allow rules still apply). Codex and Gemini
+  keep their mappings; their prompts are detected on screen and reported to the lead.
+- **Engineer's notices** during a burst: the burst's own state, the merge ready, a repair cap,
+  reviewers disagreeing, and confirmations; the rest goes to the lead.
+
 ## R-9: Verifying squads
 
 - `cargo test`: squad parsing and validation (`file:line`), level → flags per agent (exact vectors),

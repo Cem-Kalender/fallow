@@ -27,6 +27,11 @@ permissions, verified session identity) and 002 (sessions, worktrees, profiles).
 - Q: How are a role's permissions given for agents other than Claude Code? → A: Roles use permission levels (read-only, edit, edit and run commands); Fallow ships flags for each built-in agent checked against its documentation; a squad may override them; an agent without a mapping cannot take a restricted role until the squad gives its flags.
 - Q: How many sessions may a burst start? → A: One number set when starting the burst: how many sessions the lead may start (default 3, at most the session limit); the existing session limit and memory guard still apply.
 
+### Session 2026-10-26 (after the first manual run)
+
+- Q: Who is told what happens in a squad, and who do agents ask when they need a decision? → A: Everything goes through the lead. Fallow reports every event that needs action to the lead, not to the engineer. The other sessions decide within their task and the spec; when a decision falls outside both they consult the lead, never the engineer, and only the lead consults the engineer. Briefings do not invite questions. The engineer keeps the decisions that are theirs (the merge, confirming a role that bypasses an agent's checks, a repair loop past its cap), and the lead brings those to them.
+- Q: How autonomous is the squad? → A: Fully, once the spec is agreed. The engineer defines the spec with the lead; from then on the squad builds it on its own, and the lead manages and monitors the squad until the work is actually finished: every task done with evidence, the builders' work integrated in the lead's commit, the gates passing on that commit, and the reviewers' approval. Only then does the lead report to the engineer, with the merge ready.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - A coordination burst led by the engineer's session (Priority: P1)
@@ -218,6 +223,47 @@ merge waits for the engineer.
 4. **Given** a squad merges locally, **When** a commit appears on the target branch during the burst
    that the engineer did not merge through Fallow, **Then** the engineer is warned.
 
+### User Story 7 - The lead drives the squad (Priority: P7)
+
+The engineer defines the spec with the lead (with Spec Kit: specify and clarify). From then on the
+squad builds it on its own, and the lead manages it: Fallow tells the lead about everything that needs action (a task reported, a
+review verdict, a gate result, a repair, a session stuck waiting for a permission or asking a
+question, everyone idle), so the lead can merge the builders' work into its own branch, hand out the
+next task and ask for another review. Builders and reviewers decide within their task and the spec;
+for a decision outside both they consult the lead, and only the lead consults the engineer. The lead
+keeps going until the work is finished by evidence Fallow can check, then tells the engineer that the
+merge is ready.
+
+**Why this priority**: Without it the engineer has to route every result between sessions by hand,
+which is the babysitting a squad should remove. Found in the first manual run of US1 to US6.
+
+**Independent Test**: Agree a small spec with the lead for two builders and a reviewer, then do
+nothing until Fallow says the merge is ready. Count the engineer's interventions (target: none
+besides the spec, the merge, and decisions brought to them by the lead).
+
+**Acceptance Scenarios**:
+
+1. **Given** a burst with a lead, two builders and a reviewer, **When** a builder reports its task
+   done, **Then** Fallow tells the lead at once (who, which part, the evidence, what the merge still
+   needs), even if the lead is idle, and whoever created the task.
+2. **Given** Fallow created a repair task, **When** its owner reports it, **Then** the lead is told
+   the same way, so the repaired work is integrated.
+3. **Given** a reviewer gives a verdict, a gate finishes, a repair loop stops at its cap, or every
+   session waits, **When** it happens, **Then** the lead is told with what it means for the merge,
+   and the engineer is told only when a decision is theirs.
+4. **Given** a builder or reviewer needs a decision outside its task and the spec, **When** it
+   consults the lead, **Then** the question goes to the lead as a message labelled as a question from
+   that session, and the lead's answer goes back to it; it cannot ask the engineer directly.
+5. **Given** a builder or reviewer is stuck at its agent's own permission prompt, **When** Fallow
+   sees the prompt, **Then** the lead is told which session is stuck and on what; roles that edit
+   and run commands are started so that their agent does not stop to ask for the actions their level
+   allows.
+6. **Given** the spec is agreed and work is open, **When** no event has reached the lead for a set
+   time, **Then** Fallow sends the lead a short status of what is open, so the lead never waits
+   forever.
+7. **Given** every merge condition holds on the lead's integrated commit, **When** that happens,
+   **Then** Fallow tells the lead and the engineer that the merge is ready, naming the commit.
+
 ### Edge Cases
 
 - **A burst is started from a session in another project's folder**: the burst covers the lead's
@@ -241,6 +287,11 @@ merge waits for the engineer.
   gates, the time limit, the project scope and the engineer's ability to end the burst at once.
 - **Subagents**: an agent's own subagents act as that session (same identity, role and worktree);
   they do not count as sessions and cannot hold another role.
+- **Many events at once** (two builders report while a gate finishes): updates to the lead are
+  grouped into one message, at most one every few seconds, so the lead is not flooded.
+- **The lead is busy or its session exited**: updates wait and are typed when the lead is idle;
+  without a running lead, they go to the engineer as notices, who can name a new lead.
+- **A question with no lead to answer it**: it goes to the engineer.
 
 ## Requirements *(mandatory)*
 
@@ -343,7 +394,8 @@ merge waits for the engineer.
   hand-over; a review verdict names the part (task) it concerns. A failure not tied to one part (for
   example a final gate failing) MUST go to the lead, which decides whom to hand the repair to.
 - **FR-026**: When every session in a burst waits on another for longer than a set time (default 10
-  minutes), Fallow MUST tell the engineer which sessions wait for what.
+  minutes), Fallow MUST tell the lead which sessions wait for what (US7; the engineer when there
+  is no running lead).
 
 **Review and publishing (P6)**
 
@@ -360,6 +412,34 @@ merge waits for the engineer.
   commit during the burst that was not merged through Fallow. With draft pull requests, Fallow MUST
   state in the briefing and in the squad view that enforcement depends on the platform's branch
   protection, which Fallow cannot check.
+
+**The lead drives the squad (P7)**
+
+- **FR-032**: During a burst Fallow MUST tell the lead, as a message typed into its session, about
+  every event that needs action: a task reported done or failed (including tasks Fallow created), a
+  review verdict, a final gate result, a repair task created or a loop stopped at its cap, a session
+  waiting at its agent's permission prompt, a question from a session, everyone waiting (FR-026),
+  and the merge becoming ready. Each message MUST say what it means for the merge.
+- **FR-033**: Messages to the lead MUST be grouped (at most one every 10 seconds) and typed only while
+  the lead is idle, in the order the events happened; none may be lost while the lead is busy.
+- **FR-034**: Sessions other than the lead MUST consult the lead, not the engineer: Fallow MUST offer
+  them a tool to consult the lead, deliver the question to the lead labelled as a question from that
+  session, and deliver the lead's answer back; their agents MUST be started without their own "ask
+  the user" tool where the agent CLI allows it. Briefings MUST NOT invite questions: they say to
+  decide within the task and the spec, and to consult the lead only for a decision outside both.
+- **FR-035**: Roles that edit or run commands MUST be started with flags under which their agent does
+  not stop to ask for the actions their level allows, and denies the rest without asking, where the
+  agent CLI supports it. When Fallow sees an agent's permission prompt in a session other than the
+  lead's, it MUST tell the lead.
+- **FR-036**: The engineer's notices during a burst MUST be limited to decisions that are theirs (the
+  merge, confirming a role that bypasses an agent's checks, a repair loop past its cap) and to the
+  burst's own state (start, ten minutes left, end); the rest goes to the lead.
+- **FR-037**: When the lead has been told nothing for a set time (default 10 minutes) while tasks are
+  open or the merge is not ready, Fallow MUST send it a short status of what is open.
+- **FR-038**: When every merge condition holds, Fallow MUST tell the lead and the engineer that the
+  merge is ready, with the commit. The lead's briefing MUST define finished as that state and say
+  that, once the spec is agreed, the lead manages the squad on its own until then, consulting the
+  engineer only for decisions that are theirs.
 
 **Across the feature**
 
@@ -410,6 +490,12 @@ merge waits for the engineer.
 - **SC-009**: A squad end-to-end test (lead, two builders, reviewer, gate) completes with the local
   merge waiting for the engineer, using only scripted agents, in CI on all three platforms. No agent
   is ever handed a merge task.
+- **SC-010**: In the end-to-end test, the lead learns of every report, verdict, gate result and
+  repair only from Fallow's messages (it never polls), and the run reaches "merge ready" with no
+  input from the engineer besides the goal and the merge.
+- **SC-011**: In a manual run with Claude Code (one goal, two builders, a reviewer, a gate), the
+  engineer intervenes only for the goal, the merge, and decisions Fallow or the lead brings to them;
+  every intervention is counted and recorded.
 
 ## Assumptions
 

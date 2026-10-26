@@ -25,6 +25,9 @@ fn v(a: &[&str]) -> Vec<String> {
 /// The agent's flags for a level (research R-2), or `None` when Fallow knows no safe mapping.
 pub fn level_flags(style: Style, level: Level) -> Option<Vec<String>> {
     Some(match (style, level) {
+        // In a squad nobody waits for the user (004 US7, research R-10): `dontAsk` denies what
+        // the level does not allow instead of asking, and AskUserQuestion is left out (questions
+        // go to the lead). Claude Code runs commands with Bash, or PowerShell on Windows.
         (Style::Claude, Level::ReadOnly) => v(&[
             "--permission-mode",
             "dontAsk",
@@ -32,15 +35,29 @@ pub fn level_flags(style: Style, level: Level) -> Option<Vec<String>> {
             "Edit",
             "Write",
             "NotebookEdit",
+            "AskUserQuestion",
         ]),
-        (Style::Claude, Level::Edit) => v(&["--permission-mode", "acceptEdits"]),
-        // Claude Code runs commands with its Bash tool, or its PowerShell tool on Windows.
+        (Style::Claude, Level::Edit) => v(&[
+            "--permission-mode",
+            "dontAsk",
+            "--allowedTools",
+            "Edit",
+            "Write",
+            "NotebookEdit",
+            "--disallowedTools",
+            "AskUserQuestion",
+        ]),
         (Style::Claude, Level::EditRun) => v(&[
             "--permission-mode",
-            "acceptEdits",
+            "dontAsk",
             "--allowedTools",
+            "Edit",
+            "Write",
+            "NotebookEdit",
             "Bash",
             "PowerShell",
+            "--disallowedTools",
+            "AskUserQuestion",
         ]),
         (Style::Codex, Level::ReadOnly) => {
             v(&["--sandbox", "read-only", "--ask-for-approval", "never"])
@@ -212,7 +229,7 @@ mod tests {
 
     #[test]
     fn exact_flags_per_agent_and_level() {
-        // research R-2.
+        // research R-2, R-10.
         assert_eq!(
             args(&role(Level::ReadOnly), "claude"),
             [
@@ -221,21 +238,36 @@ mod tests {
                 "--disallowedTools",
                 "Edit",
                 "Write",
-                "NotebookEdit"
+                "NotebookEdit",
+                "AskUserQuestion"
             ]
         );
         assert_eq!(
             args(&role(Level::Edit), "claude"),
-            ["--permission-mode", "acceptEdits"]
+            [
+                "--permission-mode",
+                "dontAsk",
+                "--allowedTools",
+                "Edit",
+                "Write",
+                "NotebookEdit",
+                "--disallowedTools",
+                "AskUserQuestion"
+            ]
         );
         assert_eq!(
             args(&role(Level::EditRun), "claude"),
             [
                 "--permission-mode",
-                "acceptEdits",
+                "dontAsk",
                 "--allowedTools",
+                "Edit",
+                "Write",
+                "NotebookEdit",
                 "Bash",
-                "PowerShell"
+                "PowerShell",
+                "--disallowedTools",
+                "AskUserQuestion"
             ]
         );
         assert_eq!(

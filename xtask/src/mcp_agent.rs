@@ -11,6 +11,8 @@
 //! - `sleep <ms>`
 //! - `until <text>`: reads lines typed into the terminal until one contains `text`.
 //! - `until-file <path>`: waits until `path` exists (the harness's signal, 004).
+//! - `until-all <a>|<b>|…`: reads typed lines until each text has appeared (in any order or
+//!   line), for Fallow's grouped squad updates (004 US7).
 //! - `commit-file <name>`: writes `name` in the session's folder and commits it (004).
 //! - `merge-branches <prefix>`: merges every local branch starting with `prefix` into the
 //!   folder's branch (the lead integrating builders' work, 004).
@@ -289,6 +291,16 @@ pub fn run(args: &[String]) -> ! {
                     std::thread::sleep(Duration::from_millis(100));
                 }
                 out(&format!("got {rest}"));
+            }
+            ("until-all", _) => {
+                let mut left: Vec<&str> = rest.split('|').map(str::trim).collect();
+                while !left.is_empty() {
+                    match typed.recv() {
+                        Ok(l) => left.retain(|t| !l.contains(t)),
+                        Err(_) => break,
+                    }
+                }
+                out(&format!("got all of {rest}"));
             }
             ("until", _) => loop {
                 match typed.recv() {

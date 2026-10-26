@@ -112,7 +112,9 @@ impl Hub {
                 std::time::SystemTime::now(),
                 TEXT_BUDGET,
             );
-            self.notices.push(text);
+            // The user's decision: the lead brings it to them, and the Squad tab shows it.
+            self.tell_lead(project, text.clone());
+            self.alerts.push(text);
             return;
         }
         l.rounds += 1;
@@ -131,8 +133,10 @@ impl Hub {
                 t.part = part;
                 t.repair_round = round;
             }
-            self.notices
-                .push(format!("Repair round {round} for {label} goes to #{owner}"));
+            self.tell_lead(
+                project,
+                format!("Repair round {round} for {label} goes to #{owner} (T{id}): {reason}"),
+            );
         }
     }
 
@@ -240,16 +244,21 @@ impl Hub {
             if due {
                 b.deadlock_notice = Some(now);
                 let list: Vec<String> = members.into_iter().map(|(_, w)| w).collect();
-                notices.push(format!(
-                    "All {all} sessions in {} have waited {} min: {}",
-                    b.project_name,
-                    b.squad.wait_notice_min,
-                    list.join("; ")
+                notices.push((
+                    b.project,
+                    format!(
+                        "All {all} sessions in {} have waited {} min: {}",
+                        b.project_name,
+                        b.squad.wait_notice_min,
+                        list.join("; ")
+                    ),
                 ));
             }
         }
         let changed = !notices.is_empty();
-        self.notices.extend(notices);
+        for (project, n) in notices {
+            self.tell_lead(project, n);
+        }
         changed
     }
 }

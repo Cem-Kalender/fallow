@@ -318,8 +318,9 @@ fn failures_go_back_to_the_owner_until_the_cap() {
     // The third failure goes to the engineer.
     h.repair(&f, 1, Some("api".into()), "failing again", now);
     assert_eq!(repairs(&h).len(), 2, "no third repair task");
+    // The engineer's decision (an alert), brought to them by the lead too (004 US7).
     assert!(
-        h.notices
+        h.alerts
             .iter()
             .any(|n| n.contains("Repair cap reached for api"))
     );
@@ -372,12 +373,21 @@ fn cancelling_a_stopped_part_cancels_its_open_tasks() {
 }
 
 #[test]
-fn the_engineer_hears_when_everyone_waits() {
-    // FR-026, research R-7: once after wait_notice_min, then at most every 30 minutes.
+fn the_lead_hears_when_everyone_waits() {
+    // FR-026, research R-7: once after wait_notice_min, then at most every 30 minutes; told to
+    // the lead (004 US7).
     let (d, c0, _, _) = repo("wait");
     let (mut h, f, now) = setup(&d, &c0, 2);
+    let to_lead = |h: &Hub| -> Vec<String> {
+        h.deliveries
+            .list
+            .iter()
+            .filter(|d| d.to == 1 && d.from == fallow::orchestration::Party::Fallow)
+            .map(|d| d.text.clone())
+            .collect()
+    };
     let count = |h: &Hub| {
-        h.notices
+        to_lead(h)
             .iter()
             .filter(|n| n.contains("have waited"))
             .count()
@@ -387,11 +397,8 @@ fn the_engineer_hears_when_everyone_waits() {
     assert_eq!(count(&h), 0);
     h.tick(&f, now + Duration::from_secs(10 * 60));
     assert_eq!(count(&h), 1);
-    let n = h
-        .notices
-        .iter()
-        .find(|n| n.contains("have waited"))
-        .unwrap();
+    let texts = to_lead(&h);
+    let n = texts.iter().find(|n| n.contains("have waited")).unwrap();
     assert!(
         n.contains("All 3 sessions") && n.contains("#2 builder is idle"),
         "{n}"

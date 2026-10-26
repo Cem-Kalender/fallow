@@ -171,10 +171,33 @@ impl Hub {
         })
     }
 
+    /// The commits builders reported done in a burst (their evidence), oldest first.
+    fn builder_commits(&self, project: ProjectId) -> Vec<String> {
+        let Some(b) = self.burst_of(project) else {
+            return Vec::new();
+        };
+        self.tasks
+            .list
+            .iter()
+            .filter(|t| t.created_at >= b.started && t.state == tasks::State::Done)
+            .filter(|t| {
+                t.assigned.and_then(|a| b.roles.get(&a)).is_some_and(|r| {
+                    r != "lead"
+                        && r != GATE_ROLE
+                        && b.squad.role(r).is_some_and(|r| r.level != Level::ReadOnly)
+                })
+            })
+            .filter_map(|t| t.evidence.as_ref().map(|e| e.commit.clone()))
+            .collect()
+    }
+
     /// Gate runs to start now (research R-6): baselines at once; a final run when every task
-    /// handed to a builder is done, and again after more work is done or when the lead's
-    /// commit (`lead_head`, asked only then) changed since the last final run.
-    pub fn gates_due(&self, lead_head: &dyn Fn(ProjectId) -> Option<String>) -> Vec<Job> {
+    /// handed to a builder is done and the lead's commit contains all of their reported
+    /// commits (`integrated` answers with that commit, asked only then), once per commit.
+    pub fn gates_due(
+        &self,
+        integrated: &dyn Fn(ProjectId, &[String]) -> Option<String>,
+    ) -> Vec<Job> {
         let mut jobs = Vec::new();
         for b in &self.bursts {
             let (handed, done) = self.builder_tasks(b.project);
@@ -194,17 +217,21 @@ impl Hub {
                     });
                     continue;
                 }
-                let last = runs.iter().rev().find(|r| r.kind == Kind::Final);
-                let again = |l: &GateRun| {
-                    done > l.after_tasks
-                        || lead_head(b.project).is_some_and(|h| l.commit.as_deref() != Some(&h))
+                if handed == 0 || done < handed {
+                    continue;
+                }
+                // Only the lead's integrated work is gated: a commit without a builder's
+                // reported work would fail for the wrong reason (004 manual run).
+                let Some(head) = integrated(b.project, &self.builder_commits(b.project)) else {
+                    continue;
                 };
-                if handed > 0 && done == handed && last.is_none_or(|l| again(l)) {
+                let last = runs.iter().rev().find(|r| r.kind == Kind::Final);
+                if last.is_none_or(|l| l.commit.as_deref() != Some(head.as_str())) {
                     jobs.push(Job {
                         project: b.project,
                         gate: g.clone(),
                         kind: Kind::Final,
-                        commit: None,
+                        commit: Some(head),
                         lead: b.lead,
                     });
                 }
@@ -246,18 +273,15 @@ impl Hub {
                 run.session = id;
                 b.roles.insert(id, GATE_ROLE.into());
                 b.gate_runs.push(run);
-                self.notices.push(format!(
-                    "Gate {} ({}) runs in #{id}",
-                    job.gate.name,
-                    job.kind.label()
-                ));
             }
             Err(why) => {
                 let i = b.gate_runs.len();
                 b.gate_runs.push(run);
                 self.finish_run(job.project, i, RunState::Failed(None), BTreeSet::new());
-                self.notices
-                    .push(format!("Gate {} could not start: {why}", job.gate.name));
+                self.tell_lead(
+                    job.project,
+                    format!("Gate {} could not start: {why}", job.gate.name),
+                );
             }
         }
     }
@@ -362,7 +386,7 @@ impl Hub {
         );
         self.activity
             .add(Party::Fallow, Action::Signal, &text, None);
-        self.notices.push(text);
+        self.tell_lead(project, text);
     }
 
     /// Gate runs past their time limit fail "timed out"; their sessions are for the app to end

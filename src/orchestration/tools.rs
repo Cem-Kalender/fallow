@@ -228,6 +228,11 @@ const SPECS: &[Spec] = &[
         ],
     },
     Spec {
+        name: "consult_lead",
+        description: "Ask the lead a question, for example to clarify the spec or your task. Fallow types it into the lead's session, labelled with your session; the lead answers with a delivery. The lead brings the user in when a decision is theirs.",
+        args: &[("question", "string", "The question, at most 2 KiB", true)],
+    },
+    Spec {
         name: "squad_status",
         description: "While the project coordinates: the squad in force (roles and their sessions), gate runs with their classification, each merge condition met or not and why, and the time left.",
         args: &[],
@@ -373,6 +378,21 @@ pub fn squad_status(hub: &Hub, project: crate::projects::ProjectId, now: Instant
             "published": b.published,
             "merged": b.merged.iter().map(|(g, _)| g.clone()).collect::<Vec<_>>(),
         },
+        "repairs": b
+            .repairs
+            .iter()
+            .map(|l| {
+                json!({
+                    "part": l.label(),
+                    "owner": l.owner,
+                    "rounds": l.rounds,
+                    "cap": b.squad.repair_cap.saturating_add(l.extra),
+                    "stopped": l.stopped,
+                    "closed": l.closed,
+                    "last_failure": l.last_reason,
+                })
+            })
+            .collect::<Vec<_>>(),
         "verdicts": b
             .verdicts
             .iter()
@@ -401,6 +421,8 @@ pub fn tool_allowed(role: &super::squad::Role, name: &str) -> bool {
     use super::squad::Tool;
     let groups: &[Tool] = match name {
         "whoami" | "session_list" | "squad_status" => &[Tool::Sessions],
+        // Every role but the lead (the lead talks with the user in its own session).
+        "consult_lead" => return role.name != "lead",
         "board_post" | "board_read" => &[Tool::Board],
         "event_signal" | "event_wait" | "event_status" => &[Tool::Events],
         "deliver" => &[Tool::Deliver],
@@ -983,6 +1005,38 @@ pub(super) fn call(
                     Reply::Done(v)
                 }
                 Err(r) => r,
+            }
+        }
+        "consult_lead" => {
+            let Some(b) = hub.burst_for(caller) else {
+                return Reply::error("unavailable", "this project is not coordinating");
+            };
+            let lead = b.lead;
+            if lead == caller {
+                return Reply::error("invalid", "you are the lead: ask the user in your session");
+            }
+            let q = match board::clean_text(
+                args["question"].as_str().unwrap_or_default(),
+                events::MESSAGE_MAX,
+            ) {
+                Ok(q) => q,
+                Err((code, m)) => return Reply::error(code, m),
+            };
+            let text = format!(
+                "Question from {}: {q}\nAnswer it with deliver to session {caller}; bring the user in if the decision is theirs.",
+                me.party().label()
+            );
+            match hub.request_delivery(
+                sessions,
+                Party::Fallow,
+                lead,
+                text,
+                super::delivery::Purpose::Message,
+                true,
+                now,
+            ) {
+                Ok((id, _)) => Reply::Done(json!({ "delivery": id, "to": lead })),
+                Err(e) => Reply::error("unavailable", e),
             }
         }
         "review_verdict" => {

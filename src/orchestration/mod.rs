@@ -18,6 +18,7 @@ pub mod gates;
 pub mod git;
 pub mod identity;
 pub mod inject;
+pub mod lead;
 pub mod permissions;
 pub mod publish;
 pub mod repair;
@@ -299,6 +300,8 @@ pub struct Hub {
     refusals: HashMap<u32, Instant>,
     /// Messages for the engineer (shown as notices by the app, then cleared).
     pub notices: Vec<String>,
+    /// Decisions that are the engineer's (004 FR-036): shown before other notices.
+    pub alerts: Vec<String>,
     pub boards: board::Boards,
     pub events: events::Events,
     /// The request being handled (for tools that answer later).
@@ -425,6 +428,7 @@ impl Hub {
             links: HashMap::new(),
             refusals: HashMap::new(),
             notices: Vec::new(),
+            alerts: Vec::new(),
         }
     }
 
@@ -1152,28 +1156,34 @@ impl Hub {
         self.task_changed(id, if done { "done" } else { "failed" });
         if let Some(t) = self.tasks.get(id).cloned() {
             self.tell_task(t.created_by.session(), &t);
-            // During a burst the creator is told at once, so an idle lead does not wait for a
-            // report it never reads (004 manual run).
-            if let (Some(creator), Some(_)) = (t.created_by.session(), self.burst_for(caller)) {
-                if creator != caller {
-                    let who = self
-                        .role_of(caller)
-                        .map_or(format!("#{caller}"), |r| format!("#{caller} {r}"));
-                    let mut text = format!(
-                        "Task T{id}{} was reported {} by {who}.",
-                        t.part
-                            .as_ref()
-                            .map_or(String::new(), |p| format!(" (part {p})")),
-                        if done { "done" } else { "failed" }
-                    );
-                    if let Some(e) = &t.evidence {
-                        text.push_str(&format!(" Evidence: {}.", e.summary()));
+            // During a burst the lead hears every report, also of tasks Fallow created, and so
+            // does a session that created the task (004 US7, FR-032).
+            if let Some(b) = self.burst_for(caller) {
+                let (project, lead) = (b.project, b.lead);
+                let who = self
+                    .role_of(caller)
+                    .map_or(format!("#{caller}"), |r| format!("#{caller} {r}"));
+                let mut text = format!(
+                    "Task T{id}{} was reported {} by {who}.",
+                    t.part
+                        .as_ref()
+                        .map_or(String::new(), |p| format!(" (part {p})")),
+                    if done { "done" } else { "failed" }
+                );
+                if let Some(e) = &t.evidence {
+                    text.push_str(&format!(" Evidence: {}.", e.summary()));
+                }
+                if let Some(n) = &t.note {
+                    text.push_str(&format!(" Note: {n}"));
+                }
+                if caller != lead {
+                    self.tell_lead(project, text.clone());
+                }
+                // A session that created the task and is not the lead hears it too.
+                if let Some(creator) = t.created_by.session() {
+                    if creator != caller && creator != lead {
+                        self.pending_reports.push((creator, text));
                     }
-                    if let Some(n) = &t.note {
-                        text.push_str(&format!(" Note: {n}"));
-                    }
-                    text.push_str(" Call squad_status to see what the merge still needs.");
-                    self.pending_reports.push((creator, text));
                 }
             }
         }
@@ -1603,6 +1613,7 @@ impl Hub {
             changed = true;
         }
         changed |= self.tick_deadlock(sessions, now);
+        changed |= self.tick_lead(sessions, now);
         for (w, end) in self.events.due(now) {
             changed = true;
             let reply = match end {

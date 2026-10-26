@@ -122,6 +122,7 @@ fn each_role_sees_and_may_call_only_its_tools() {
         "task_list",
         "task_report",
         "review_verdict",
+        "consult_lead",
     ]);
     let reviewer = set(&[
         "whoami",
@@ -136,15 +137,14 @@ fn each_role_sees_and_may_call_only_its_tools() {
         "task_list",
         "task_report",
         "review_verdict",
+        "consult_lead",
     ]);
     let expect = |want: &BTreeSet<String>| -> BTreeSet<String> {
         want.intersection(&all).cloned().collect()
     };
-    for (id, want) in [
-        (1, all.clone()),
-        (2, expect(&builder)),
-        (3, expect(&reviewer)),
-    ] {
+    let mut lead = all.clone();
+    lead.remove("consult_lead");
+    for (id, want) in [(1, lead), (2, expect(&builder)), (3, expect(&reviewer))] {
         let got = names(&h.accepted(id).tools.unwrap());
         assert_eq!(got, want, "session #{id}");
         // Every other tool is refused with not_allowed, whatever the arguments.
@@ -334,10 +334,15 @@ fn role_flags_are_resolved_and_a_bypass_waits_for_the_engineer() {
         b.args,
         [
             "--permission-mode",
-            "acceptEdits",
+            "dontAsk",
             "--allowedTools",
+            "Edit",
+            "Write",
+            "NotebookEdit",
             "Bash",
-            "PowerShell"
+            "PowerShell",
+            "--disallowedTools",
+            "AskUserQuestion"
         ]
     );
     assert!(!b.bypass);

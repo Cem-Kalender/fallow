@@ -34,6 +34,7 @@ cargo xtask bench-startup         # unchanged; a pending --coordinate burst crea
 | Q6 | Publishing (US6) | With a remote: all conditions met. Without a remote: press `m`. | Remote: the lead opens a draft pull request and reports its address; you merge on the platform. Local: Fallow merges exactly the gated commit after you confirm. |
 | Q7 | Repair loop (US5) | Have the reviewer ask for changes three times with `repair_cap = 2`. | Two repair tasks go to the builder; the third time Fallow asks you. |
 | Q8 | End | Wait for the end, or `Shift-X`. | "Coordination ended" notice and board note; the next delivery request prompts again. |
+| Q10 | Autonomous squad (US7) | Agree a small spec with the lead (two builders, a reviewer, a gate), then do nothing. | The lead learns of every report, verdict, gate result and repair from Fallow's squad updates, integrates and re-reviews on its own, and tells you when the merge is ready; count your interventions (target: the spec and the merge only). |
 | Q9 | Launch option | `fallow --coordinate 1h <project>`, start a session. | The burst starts with that session as lead; `--coordinate 9h` exits with "at most 8h". |
 
 ## Results

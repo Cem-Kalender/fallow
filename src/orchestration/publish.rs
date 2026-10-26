@@ -202,6 +202,14 @@ impl Hub {
         };
         b.verdicts
             .insert(session, (v.to_string(), notes.to_string()));
+        b.lead_updates.push(format!(
+            "#{session} reviewer {}: {notes}",
+            if approve {
+                "approved"
+            } else {
+                "asks for changes"
+            }
+        ));
         let counting: Vec<(u32, String, String)> = b
             .verdicts
             .iter()
@@ -225,7 +233,8 @@ impl Hub {
                 std::time::SystemTime::now(),
                 super::TEXT_BUDGET,
             );
-            self.notices.push(text);
+            self.tell_lead(project, text.clone());
+            self.alerts.push(text);
         }
     }
 
