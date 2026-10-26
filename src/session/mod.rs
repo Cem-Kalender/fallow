@@ -142,6 +142,8 @@ pub struct Session {
     pub orch: OrchLink,
     /// When the user last sent a key or paste to this session (003 FR-014).
     pub last_key: Option<Instant>,
+    /// The session's role in a coordination burst (004 FR-009): fixed for its life.
+    pub role: Option<String>,
 }
 
 impl Session {
@@ -214,6 +216,7 @@ impl Session {
             signals: Arc::new(Mutex::new(Vec::new())),
             orch: OrchLink::default(),
             last_key: None,
+            role: None,
         }
     }
 
@@ -394,6 +397,7 @@ impl SessionManager {
             signals: Arc::new(Mutex::new(Vec::new())),
             orch: OrchLink::default(),
             last_key: None,
+            role: None,
         };
         self.spawn_into(&mut s, req.rows, req.cols, events);
         self.sessions.push(s);

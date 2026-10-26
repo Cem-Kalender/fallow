@@ -120,7 +120,7 @@ impl Activity {
                 (_, None, None) => true,
                 (Party::Agent { session: s, .. }, Some(want), _) => *s == want,
                 (Party::Agent { project: p, .. }, None, Some(want)) => p == want,
-                (Party::User, ..) => false,
+                (Party::User | Party::Fallow, ..) => false,
             })
     }
 }
@@ -145,6 +145,7 @@ mod tests {
             session,
             profile: "Claude Code".into(),
             project: project.into(),
+            role: None,
         }
     }
 

@@ -26,6 +26,7 @@ impl Fake {
             state: "needs attention".into(),
             running: true,
             idle: true,
+            role: None,
         };
         Fake(RefCell::new(vec![
             s(1, 1, "api", "claude"),

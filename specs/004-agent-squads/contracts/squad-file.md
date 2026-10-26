@@ -17,7 +17,6 @@ name = "default"                 # shown in the squad view and the briefing
 
 publish = "auto"                 # "auto": draft pull request if the project has a remote, else local merge;
                                  # "draft-pr" | "local-merge"                                     (FR-028)
-merge = "on-approval"            # local merge only: "on-approval" (the engineer presses merge) | "automatic"
 target_branch = ""               # empty: the branch checked out in the project when the burst starts
 repair_cap = 2                   # FR-025: rounds per part before Fallow asks the engineer; 0..=10
 wait_notice_min = 10             # FR-026: everyone waiting this long → the engineer is told; 1..=120
@@ -66,6 +65,7 @@ failures = "auto"                # how failing checks are named for classificati
                                  # runners), "exit-code", or a regex with one capture group
 
 [merge]
+mode = "on-approval"             # local merge only: "on-approval" (the engineer presses merge) | "automatic"
 # Every condition must hold before the work is published (FR-028, SC-003).
 requires = [
   "gate:tests",                  # the final run of gate "tests" passed (or failed only as the baseline did)

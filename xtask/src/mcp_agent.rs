@@ -27,6 +27,11 @@
 //! - `post-fill <count> <bytes> <scope>`: posts `count` messages of `bytes` bytes as fast as the
 //!   rate limit allows (waiting `retry_after_s` when told to slow down).
 //! - `done-in <dir>`: creates `<dir>/<pid>` (the harness counts them).
+//! - `verdict <approved|changes-requested> <task> <notes…>`: `review_verdict` (004).
+//! - `report-evidence <task> <commit|HEAD> <file…>`: `task_report` done with evidence; `HEAD` is
+//!   this folder's current commit (004).
+//! - `publish <url>`: the `publish` tool (004).
+//! - `start-role <role> <profile> <project> <first task…>`: `session_start` with a role (004).
 //! - `print <text>`
 //!
 //! After the script it prints `script done` and echoes every typed line as `got <line>`.
@@ -137,6 +142,23 @@ fn now_ms() -> u128 {
     SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
         .map_or(0, |d| d.as_millis())
+}
+
+/// Prints `ok <n>` or `fail <n> <why>` and keeps the result (or error) as the last result.
+fn record(r: Result<Value, String>, last: &mut String, n: usize, out: &dyn Fn(&str)) {
+    match r {
+        Ok(v) => {
+            *last = v.to_string();
+            out(&format!("ok {n}"));
+        }
+        Err(e) => {
+            *last = e.clone();
+            out(&format!(
+                "fail {n} {}",
+                e.chars().take(60).collect::<String>()
+            ));
+        }
+    }
 }
 
 /// The server command from `--mcp-config <json>` in our own arguments.
@@ -280,6 +302,57 @@ pub fn run(args: &[String]) -> ! {
                 out(&format!("posted {ok} of {count}"));
             }
             ("report-tasks", _) => task_file = Some(rest.to_string()),
+            ("verdict", Some((c, _))) => {
+                let mut p = rest.splitn(3, ' ');
+                let verdict = p.next().unwrap_or("approved");
+                let part: Option<u64> = p.next().and_then(|t| t.parse().ok());
+                let notes = p.next().unwrap_or("");
+                let mut a = json!({"verdict": verdict, "notes": notes});
+                if let Some(t) = part {
+                    a["part"] = json!(t);
+                }
+                record(c.call("review_verdict", a), &mut last, n, &out);
+            }
+            ("report-evidence", Some((c, _))) => {
+                let mut p = rest.split_whitespace();
+                let task: u64 = p.next().and_then(|t| t.parse().ok()).unwrap_or(0);
+                let commit = match p.next() {
+                    Some("HEAD") | None => std::process::Command::new("git")
+                        .args(["rev-parse", "HEAD"])
+                        .output()
+                        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+                        .unwrap_or_default(),
+                    Some(c) => c.to_string(),
+                };
+                let files: Vec<&str> = p.collect();
+                let a = json!({
+                    "task": task,
+                    "outcome": "done",
+                    "note": "done by mcp-agent",
+                    "evidence": {
+                        "commit": commit,
+                        "commands": [{"command": "scripted", "result": "ok"}],
+                        "files": files,
+                    }
+                });
+                record(c.call("task_report", a), &mut last, n, &out);
+            }
+            ("publish", Some((c, _))) => {
+                let a = json!({"title": "squad work", "body": "", "url": rest});
+                record(c.call("publish", a), &mut last, n, &out);
+            }
+            ("start-role", Some((c, _))) => {
+                let mut p = rest.splitn(4, ' ');
+                let role = p.next().unwrap_or("builder");
+                let profile = p.next().unwrap_or("claude");
+                let project = p.next().unwrap_or("");
+                let task = p.next().unwrap_or("");
+                let mut a = json!({"role": role, "profile": profile, "project": project});
+                if !task.is_empty() {
+                    a["first_task"] = json!(task);
+                }
+                record(c.call("session_start", a), &mut last, n, &out);
+            }
             ("write", _) => {
                 let _ = std::fs::write(rest, &last);
                 out(&format!("ok {n}"));

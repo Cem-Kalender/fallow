@@ -30,6 +30,7 @@ impl Sessions for SessionManager {
             state: s.state.label(),
             running: s.state.running(),
             idle: s.state == SessionState::NeedsAttention,
+            role: s.role.clone(),
         })
     }
 

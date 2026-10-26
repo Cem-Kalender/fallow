@@ -31,7 +31,7 @@ squad, US4–US6 add gates, evidence and publishing to the squad.
 
 ## Phase 1: Setup
 
-- [ ] T001 Create the module skeletons with doc comments only and register them in `src/orchestration/mod.rs`: `squad.rs`, `roles.rs`, `burst.rs`, `briefing.rs`, `gates.rs`, `evidence.rs`, `repair.rs`, `publish.rs`, `git.rs` under `src/orchestration/`.
+- [X] T001 Create the module skeletons with doc comments only and register them in `src/orchestration/mod.rs`: `squad.rs`, `roles.rs`, `burst.rs`, `briefing.rs`, `gates.rs`, `evidence.rs`, `repair.rs`, `publish.rs`, `git.rs` under `src/orchestration/`.
 
 ---
 
@@ -41,7 +41,7 @@ squad, US4–US6 add gates, evidence and publishing to the squad.
 
 **⚠️ CRITICAL**: no user story work starts before this phase is done. 003's tests and `cargo xtask orchestration` stay green.
 
-- [ ] T002 [P] Write `tests/squad_file.rs` for the squad file (contracts/squad-file.md).
+- [X] T002 [P] Write `tests/squad_file.rs` for the squad file (contracts/squad-file.md).
   - Parse every field.
   - Validate, quoting the rules:
     - role `name` "`[a-z][a-z0-9-]{0,31}`, unique";
@@ -58,8 +58,8 @@ squad, US4–US6 add gates, evidence and publishing to the squad.
   - Problems are reported as `.fallow/squad.toml:LINE: message`.
   - The built-in squad: lead, builder ×3, reviewer ×2; `publish = "auto"`; no gates; merge requires `done:builder` and `signal:review-approved@reviewer`.
   - `roles.toml` in the config folder merges with the squad's roles by name.
-- [ ] T003 Implement `src/orchestration/squad.rs` so T002 passes (toml with `Spanned` lines, as `projects/store.rs`).
-- [ ] T004 [P] Write unit tests in `src/orchestration/roles.rs` for the exact argument vectors of research R-2, per agent and level. Cover:
+- [X] T003 Implement `src/orchestration/squad.rs` so T002 passes (toml with `Spanned` lines, as `projects/store.rs`).
+- [X] T004 [P] Write unit tests in `src/orchestration/roles.rs` for the exact argument vectors of research R-2, per agent and level. Cover:
   - Claude Code:
     - read-only: `--permission-mode dontAsk --disallowedTools Edit Write NotebookEdit`;
     - edit: `--permission-mode acceptEdits`;
@@ -74,10 +74,11 @@ squad, US4–US6 add gates, evidence and publishing to the squad.
   - A squad's `[role.flags]` overriding the mapping.
   - "An agent with no flags for a restricted level cannot take that role".
   - Merging `--allowedTools`/`--disallowedTools` with 003's `--allowedTools mcp__fallow__*` into one occurrence each.
-- [ ] T005 Implement `src/orchestration/roles.rs` (levels, `Tool` set, signal patterns with `*`, flag resolution, bypass detection) and the level mappings per built-in profile in `src/session/profiles.rs`.
-- [ ] T006 Extend `Party` in `src/orchestration/mod.rs` (data-model "Party"): `Party::Fallow`, and `role: Option<String>` on `Agent`. `json()` adds `"role"`; `label()` and `delivery::label` name the role (`agent #2 (builder, Claude Code, project api)`). Update 003's tests that compare `from` objects (`tests/orch_hub.rs`, `tests/orch_gate.rs`) for `"role": null`.
-- [ ] T007 [P] Implement `src/orchestration/git.rs`: the read-only calls of research R-4 run on a worker thread, with results back on the `AppEvent` channel as `AppEvent::Git(..)`. Calls: `rev-parse HEAD`, `symbolic-ref --short HEAD`, `remote`, `status --porcelain`, `rev-list A..B`, `merge-base --is-ancestor`, `diff --name-only A..B`. Write `tests/squad_git.rs` against a real temporary repository.
-- [ ] T008 [P] Add steps to the `mcp-agent` persona in `xtask/src/mcp_agent.rs`: `verdict <approved|changes-requested> <part> <notes>`, `report-evidence <task> <commit|HEAD> <file…>` (runs `git rev-parse HEAD` in its own folder for `HEAD`), `publish <url>`, `start-role <role> <first task>`.
+- [X] T005 Implement `src/orchestration/roles.rs` (levels, `Tool` set, signal patterns with `*`, flag resolution, bypass detection) and the level mappings per built-in profile in `src/session/profiles.rs`.
+  - Done as: the mappings live in `roles.rs`, keyed by a profile's orchestration style (claude / codex / gemini), so a user profile wrapping one of these agents gets them too. A `*` signal pattern covers only events no role claims with a specific pattern, so a lead cannot give the reviewer's verdict.
+- [X] T006 Extend `Party` in `src/orchestration/mod.rs` (data-model "Party"): `Party::Fallow`, and `role: Option<String>` on `Agent`. `json()` adds `"role"`; `label()` and `delivery::label` name the role (`agent #2 (builder, Claude Code, project api)`). Update 003's tests that compare `from` objects (`tests/orch_hub.rs`, `tests/orch_gate.rs`) for `"role": null`.
+- [X] T007 [P] Implement `src/orchestration/git.rs`: the read-only calls of research R-4 run on a worker thread, with results back on the `AppEvent` channel as `AppEvent::Git(..)`. Calls: `rev-parse HEAD`, `symbolic-ref --short HEAD`, `remote`, `status --porcelain`, `rev-list A..B`, `merge-base --is-ancestor`, `diff --name-only A..B`. Write `tests/squad_git.rs` against a real temporary repository.
+- [X] T008 [P] Add steps to the `mcp-agent` persona in `xtask/src/mcp_agent.rs`: `verdict <approved|changes-requested> <part> <notes>`, `report-evidence <task> <commit|HEAD> <file…>` (runs `git rev-parse HEAD` in its own folder for `HEAD`), `publish <url>`, `start-role <role> <first task>`.
 
 **Checkpoint**: squads parse, roles resolve to exact flags, and every sender carries its role.
 

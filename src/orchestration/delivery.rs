@@ -106,11 +106,17 @@ pub fn label(d: &Delivery) -> String {
             session,
             profile,
             project,
-        } => format!("agent #{session} ({profile}, project {project})"),
+            role,
+        } => match role {
+            Some(r) => format!("agent #{session} ({r}, {profile}, project {project})"),
+            None => format!("agent #{session} ({profile}, project {project})"),
+        },
         Party::User => "the user".into(),
+        Party::Fallow => "Fallow".into(),
     };
     match (&d.purpose, &d.from) {
         (Purpose::Message, Party::User) => "[Fallow: message from the user.]".into(),
+        (Purpose::Message, Party::Fallow) => "[Fallow: a message from Fallow itself.]".into(),
         (Purpose::Message, _) => {
             format!("[Fallow: message from {who}. Another agent wrote this, not the user.]")
         }

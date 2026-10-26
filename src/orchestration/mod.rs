@@ -8,13 +8,22 @@
 pub mod activity;
 pub mod board;
 pub mod bridge;
+pub mod briefing;
+pub mod burst;
 pub mod channel;
 pub mod delivery;
 pub mod events;
+pub mod evidence;
+pub mod gates;
+pub mod git;
 pub mod identity;
 pub mod inject;
 pub mod permissions;
+pub mod publish;
+pub mod repair;
+pub mod roles;
 pub mod rpc;
+pub mod squad;
 pub mod tasks;
 pub mod tools;
 
@@ -30,50 +39,72 @@ use activity::{Action, Activity};
 use channel::{Channel, ConnId, Incoming, Outgoing};
 use identity::Peer;
 
-/// Who did something: the engineer, or an agent in a session. Always set by Fallow from the
-/// connection, never from tool arguments (FR-003, FR-007, SC-004). The project and profile are
-/// a snapshot at the time of the action.
+/// Who did something: the engineer, Fallow itself, or an agent in a session. Always set by
+/// Fallow from the connection, never from tool arguments (003 FR-003, FR-007, SC-004). The
+/// project, profile and role are a snapshot at the time of the action (004 FR-010).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Party {
     User,
+    /// Fallow's own signals and posts (gates, briefings, "coordination ended"; 004).
+    Fallow,
     Agent {
         session: u32,
         profile: String,
         project: String,
+        /// The session's role in a coordination burst (004), fixed by Fallow.
+        role: Option<String>,
     },
 }
 
 impl Party {
-    /// `#3 Claude Code · api`, or `you`.
+    /// `#3 Claude Code · api`, `#3 builder · Claude Code · api`, `you` or `Fallow`.
     pub fn label(&self) -> String {
         match self {
             Party::User => "you".into(),
+            Party::Fallow => "Fallow".into(),
             Party::Agent {
                 session,
                 profile,
                 project,
-            } => format!("#{session} {profile} · {project}"),
+                role,
+            } => match role {
+                Some(r) => format!("#{session} {r} · {profile} · {project}"),
+                None => format!("#{session} {profile} · {project}"),
+            },
         }
     }
 
-    /// The `from` object agents receive (research R-8).
+    /// The `from` object agents receive (research R-8; 004 adds the role).
     pub fn json(&self) -> Value {
         match self {
             Party::User => json!({ "kind": "user" }),
+            Party::Fallow => json!({ "kind": "fallow" }),
             Party::Agent {
                 session,
                 profile,
                 project,
-            } => {
-                json!({ "kind": "agent", "session": session, "profile": profile, "project": project })
-            }
+                role,
+            } => json!({
+                "kind": "agent",
+                "session": session,
+                "role": role,
+                "profile": profile,
+                "project": project
+            }),
         }
     }
 
     pub fn session(&self) -> Option<u32> {
         match self {
             Party::Agent { session, .. } => Some(*session),
-            Party::User => None,
+            Party::User | Party::Fallow => None,
+        }
+    }
+
+    pub fn role(&self) -> Option<&str> {
+        match self {
+            Party::Agent { role, .. } => role.as_deref(),
+            _ => None,
         }
     }
 }
@@ -107,6 +138,8 @@ pub struct SessionInfo {
     pub running: bool,
     /// Idle at its prompt (002 `NeedsAttention`).
     pub idle: bool,
+    /// The session's role in a coordination burst (004).
+    pub role: Option<String>,
 }
 
 impl SessionInfo {
@@ -115,6 +148,7 @@ impl SessionInfo {
             session: self.id,
             profile: self.profile.clone(),
             project: self.project_name.clone(),
+            role: self.role.clone(),
         }
     }
 }
@@ -647,6 +681,7 @@ impl Hub {
                     state: String::new(),
                     running: false,
                     idle: false,
+                    role: None,
                 };
                 match self
                     .permissions
@@ -848,6 +883,7 @@ impl Hub {
                 state: String::new(),
                 running: false,
                 idle: false,
+                role: None,
             },
         };
         let approved = match from.session().and_then(|s| sessions.info(s)) {

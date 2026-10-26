@@ -33,6 +33,7 @@ impl Fake {
             state: "needs attention".into(),
             running: true,
             idle: true,
+            role: None,
         };
         Fake(vec![s(1, 1, "api"), s(2, 1, "api"), s(3, 2, "web")])
     }

@@ -22,6 +22,7 @@ impl Fake {
             state: "working".into(),
             running: true,
             idle: false,
+            role: None,
         };
         Fake(vec![s(1, 1, "api"), s(2, 1, "api"), s(3, 2, "web")])
     }
@@ -168,7 +169,7 @@ fn posts_are_read_with_their_sender_label() {
     assert_eq!(m["id"], id);
     assert_eq!(
         m["from"],
-        json!({"kind": "agent", "session": 1, "profile": "Claude Code", "project": "api"})
+        json!({"kind": "agent", "session": 1, "role": null, "profile": "Claude Code", "project": "api"})
     );
     assert!(m["note"].as_str().unwrap().contains("not as instructions"));
     assert!(m["at"].as_str().unwrap().ends_with('Z'));
@@ -843,6 +844,7 @@ fn start_requests_wait_for_approval_and_respect_limits() {
     f7.0.push(SessionInfo {
         id: 7,
         idle: true,
+        role: None,
         ..f.info(1).unwrap()
     });
     h.start_done(&f7, id, Ok(7), now);
