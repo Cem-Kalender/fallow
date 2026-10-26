@@ -17,6 +17,16 @@ publishing; ideas adapted from "Building Reliable Coding-Agent Squads", antaoalm
 **Depends on**: feature 003 (board, events, deliveries, task queue, session starts, standing
 permissions, verified session identity) and 002 (sessions, worktrees, profiles).
 
+## Clarifications
+
+### Session 2026-10-26
+
+- Q: When all checks have passed, who performs the final merge? → A: Both ways are supported per squad. Publishing as a draft pull request (the lead opens it; the engineer merges on the platform, enforced there by branch protection) is the built-in default when the project has a remote; otherwise no agent merges and Fallow merges the exact gated commit locally when the engineer presses merge.
+- Q: When a gate fails or a reviewer asks for changes, how does Fallow know which builder gets the repair task? → A: The owner of a part is the session its task was handed to; Fallow records it, and repairs for that part go back to that session. Failures not tied to one part go to the lead.
+- Q: How does a squad say which command a gate runs across Linux, macOS and Windows? → A: One command per gate, with optional overrides for Windows, macOS or Linux.
+- Q: How are a role's permissions given for agents other than Claude Code? → A: Roles use permission levels (read-only, edit, edit and run commands); Fallow ships flags for each built-in agent checked against its documentation; a squad may override them; an agent without a mapping cannot take a restricted role until the squad gives its flags.
+- Q: How many sessions may a burst start? → A: One number set when starting the burst: how many sessions the lead may start (default 3, at most the session limit); the existing session limit and memory guard still apply.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - A coordination burst led by the engineer's session (Priority: P1)
@@ -183,8 +193,10 @@ goes to the engineer instead.
 ### User Story 6 - Independent review and a human checkpoint before merging (Priority: P6)
 
 The squad has two reviewers on different models. The merge needs both to approve; if they disagree,
-the engineer sees both opinions. Even during a burst, the final merge or pull request waits for the
-engineer's approval unless the squad says otherwise.
+the engineer sees both opinions. No agent merges: with a remote, the lead publishes the work as a
+draft pull request and the engineer merges it on the platform; without one, Fallow shows "ready to
+merge" with the evidence and merges the exact commit the gates passed when the engineer presses
+merge.
 
 **Why this priority**: Independent reviewers catch different mistakes, and the engineer stays the
 one who ships.
@@ -197,9 +209,14 @@ merge waits for the engineer.
 
 1. **Given** a squad has two reviewer roles, **When** one approves and the other asks for changes,
    **Then** the merge stays blocked and the engineer is shown both verdicts with their notes.
-2. **Given** all gates are open, **When** the lead asks to merge or open a pull request, **Then** the
-   request waits for the engineer's approval, even during a burst, unless the squad sets merging to
-   automatic.
+2. **Given** all gates are open and the squad publishes as a draft pull request, **When** the lead
+   publishes, **Then** it opens a draft pull request for the gated commit and reports its address;
+   the engineer merges on the platform.
+3. **Given** all gates are open and the squad merges locally, **When** the engineer presses merge in
+   Fallow, **Then** Fallow merges exactly the commit the gates passed into the target branch; no
+   agent is handed a merge task.
+4. **Given** a squad merges locally, **When** a commit appears on the target branch during the burst
+   that the engineer did not merge through Fallow, **Then** the engineer is warned.
 
 ### Edge Cases
 
@@ -232,7 +249,9 @@ merge waits for the engineer.
 **Coordination burst (P1)**
 
 - **FR-001**: The engineer MUST be able to start a burst for one project in one step, from a running
-  session, with a duration of at most 8 hours and a number of sessions it may start. Three ways in:
+  session, with a duration of at most 8 hours and a number of sessions it may start (default 3, at
+  most the session limit; the dialog states that each session has its own usage costs). The global
+  session limit and memory guard of 003 still apply on top. Three ways in:
   a palette command, an offer when the first session of a project starts (once per project per run,
   with "don't ask again for this project", remembered), and a launch option with a duration and a
   project.
@@ -261,8 +280,11 @@ merge waits for the engineer.
 
 **Roles (P2)**
 
-- **FR-008**: A role MUST have a name, a description, the agent CLI's permission and model flags to
-  start a session with, and the Fallow tools and events it may use. Built-in roles: lead (all tools;
+- **FR-008**: A role MUST have a name, a description, a permission level (read-only, edit, or edit and
+  run commands), an optional model, and the Fallow tools and events it may use. Fallow MUST ship, for
+  each built-in agent profile, the agent CLI flags for each level, checked against that agent's
+  documentation; a squad MAY give its own flags per agent instead. An agent with no flags for a
+  restricted level MUST NOT be started in such a role, and Fallow MUST say why. Built-in roles: lead (all tools;
   the only role that starts sessions or creates tasks for others; edits and git), builder (board,
   events, deliveries to builders and the lead, reporting its own tasks; edits and builds), reviewer
   (board, events, reporting its own tasks; read-only). Engineers MUST be able to define their own.
@@ -304,6 +326,9 @@ merge waits for the engineer.
   regression.
 - **FR-022**: Gates MUST have a time limit (default 30 minutes); past it, the gate fails as "timed
   out".
+- **FR-022a**: A gate MUST have one command, with optional overrides for Windows, macOS and Linux; the
+  override for the running OS is used when present. The command actually run MUST be shown in the gate
+  session's details.
 
 **Evidence and repair (P5)**
 
@@ -314,6 +339,9 @@ merge waits for the engineer.
 - **FR-025**: A failed gate or a review asking for changes MUST create a repair task for the builder
   who owns the part; after the squad's repair cap (default 2 rounds), Fallow MUST stop the loop and ask
   the engineer.
+- **FR-025a**: The owner of a part MUST be the session its task was handed to, as Fallow recorded it at
+  hand-over; a review verdict names the part (task) it concerns. A failure not tied to one part (for
+  example a final gate failing) MUST go to the lead, which decides whom to hand the repair to.
 - **FR-026**: When every session in a burst waits on another for longer than a set time (default 10
   minutes), Fallow MUST tell the engineer which sessions wait for what.
 
@@ -322,8 +350,16 @@ merge waits for the engineer.
 - **FR-027**: A squad MUST be able to require approval from two reviewer roles; disagreement MUST keep
   the merge blocked and show the engineer both verdicts with their notes. Reviewers on the same model
   MUST produce a warning.
-- **FR-028**: By default, the final merge or pull request MUST wait for the engineer's approval even
-  during a burst; a squad MAY set merging to automatic.
+- **FR-028**: No agent MUST be handed the final merge. A squad chooses how work is published:
+  "draft pull request" (the lead opens a draft pull request for the gated commit; the engineer
+  merges on the platform; the built-in default when the project has a remote) or "local merge"
+  (Fallow shows "ready to merge" with the evidence and merges exactly the gated commit into the
+  target branch when the engineer presses merge; the default without a remote). A squad MAY set
+  local merging to automatic.
+- **FR-028a**: With local merging, Fallow MUST warn the engineer when the target branch gains a
+  commit during the burst that was not merged through Fallow. With draft pull requests, Fallow MUST
+  state in the briefing and in the squad view that enforcement depends on the platform's branch
+  protection, which Fallow cannot check.
 
 **Across the feature**
 
@@ -339,13 +375,17 @@ merge waits for the engineer.
 
 - **Burst**: project, lead session, start, end, session allowance, squad in force, state (running,
   ended, ended early).
-- **Role**: name, description, agent profile, permission and model flags, allowed Fallow tools,
-  events it may signal, read-only or not.
+- **Role**: name, description, permission level (read-only, edit, edit and run commands), optional
+  model, allowed Fallow tools, events it may signal; the CLI flags come from the agent's mapping for
+  that level or from the squad's override.
 - **Squad**: roles, gates, parallel groups, repair cap, gate commands with time limits, merge
-  conditions, merge mode (approval or automatic), source file.
-- **Gate**: name, command, time limit, baseline result, final result, classification.
+  conditions, publishing (draft pull request or local merge; local merge on approval or automatic),
+  target branch, source file.
+- **Gate**: name, command, optional per-OS command overrides, time limit, baseline result, final
+  result, classification.
 - **Evidence**: task, commit, commands with results, files changed, verified facts (commit on branch).
-- **Repair loop**: part, owning builder, rounds so far, cap.
+- **Repair loop**: part (the task it concerns), owning session (recorded at hand-over), rounds so far,
+  cap.
 
 ## Success Criteria *(mandatory)*
 
@@ -367,8 +407,9 @@ merge waits for the engineer.
   told within one minute.
 - **SC-008**: Starting a burst does not change Fallow's startup time or idle memory, and a burst of 4
   sessions plus a gate stays within the 150 MB loaded budget.
-- **SC-009**: A squad end-to-end test (lead, two builders, reviewer, gate) completes with the merge
-  waiting for the engineer, using only scripted agents, in CI on all three platforms.
+- **SC-009**: A squad end-to-end test (lead, two builders, reviewer, gate) completes with the local
+  merge waiting for the engineer, using only scripted agents, in CI on all three platforms. No agent
+  is ever handed a merge task.
 
 ## Assumptions
 
