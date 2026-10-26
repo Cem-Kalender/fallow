@@ -379,6 +379,10 @@ pub struct CallCtx {
     pub progress: Option<Value>,
 }
 
+/// The state of a session whose agent shows a permission prompt (004 manual run): idle, but
+/// waiting for the user, not for work.
+pub const WAITING_FOR_APPROVAL: &str = "waiting for approval";
+
 /// All text the hub stores (board messages, and later notes and task text), at most; the
 /// oldest board messages go first (data-model.md "Limits", SC-007).
 pub const TEXT_BUDGET: usize = 24 * 1024 * 1024;
@@ -1071,6 +1075,48 @@ impl Hub {
         Ok(())
     }
 
+    /// The agent that created a task withdraws it (004 manual run: a task that reached the wrong
+    /// session). Any open task it created; a hand-over still waiting is rejected with it.
+    pub fn withdraw_task(
+        &mut self,
+        caller: u32,
+        id: u32,
+        note: Option<String>,
+    ) -> Result<tasks::State, Reply> {
+        let t = self
+            .tasks
+            .get(id)
+            .ok_or_else(|| Reply::error("not_found", format!("no task T{id}")))?;
+        if t.created_by.session() != Some(caller) {
+            return Err(Reply::error(
+                "not_allowed",
+                format!("T{id} was not created by your session; only its creator withdraws it"),
+            ));
+        }
+        if t.state.finished() {
+            return Err(Reply::error(
+                "invalid",
+                format!("T{id} is already {}", t.state.label()),
+            ));
+        }
+        if let Some(d) = t.delivery {
+            if self
+                .deliveries
+                .finish(d, delivery::State::Rejected)
+                .is_some()
+            {
+                self.delivery_outcome(d);
+            }
+        }
+        let why = note.unwrap_or_else(|| "withdrawn by its creator".into());
+        self.tasks.finish(id, tasks::State::Cancelled(why));
+        self.task_changed(id, "withdrawn by its creator");
+        Ok(self
+            .tasks
+            .get(id)
+            .map_or(tasks::State::Done, |t| t.state.clone()))
+    }
+
     /// The assigned agent reports a task done or failed (FR-020).
     pub fn report_task(
         &mut self,
@@ -1185,6 +1231,7 @@ impl Hub {
             let free = |s: &SessionInfo| {
                 s.running
                     && s.idle
+                    && s.state != WAITING_FOR_APPROVAL
                     && !busy.contains(&s.id)
                     && self.events.waiting(s.id, now).is_none()
             };
@@ -1194,7 +1241,14 @@ impl Hub {
                     profile, project, ..
                 } => all
                     .iter()
-                    .find(|s| &s.profile_id == profile && s.project == *project && free(s)),
+                    // The next free session is another one: an agent asking for it never gets
+                    // its own task back (004 manual run).
+                    .find(|s| {
+                        &s.profile_id == profile
+                            && s.project == *project
+                            && Some(s.id) != t.created_by.session()
+                            && free(s)
+                    }),
             }
             .map(|s| s.id);
             let Some(to) = pick else {

@@ -332,7 +332,13 @@ fn role_flags_are_resolved_and_a_bypass_waits_for_the_engineer() {
     let b = h.starts.last().unwrap();
     assert_eq!(
         b.args,
-        ["--permission-mode", "acceptEdits", "--allowedTools", "Bash"]
+        [
+            "--permission-mode",
+            "acceptEdits",
+            "--allowedTools",
+            "Bash",
+            "PowerShell"
+        ]
     );
     assert!(!b.bypass);
     let r = h.call(
@@ -420,4 +426,79 @@ fn a_read_only_worktree_that_changes_stops_counting() {
     );
     assert!(h.events.map.get(&key).unwrap().signal.is_none(), "cleared");
     assert!(h.notices.iter().any(|n| n.contains("no longer count")));
+}
+
+#[test]
+fn a_next_free_task_never_returns_to_its_creator_and_the_creator_can_withdraw_it() {
+    // 004 manual run: the lead's "next free claude" task was handed to the lead itself.
+    let (mut h, mut f, now) = setup();
+    // Only the lead is idle: the builder and reviewer are busy for now.
+    for s in f.0.iter_mut().filter(|s| s.id != 1) {
+        s.idle = false;
+    }
+    let r = h.call(
+        &f,
+        1,
+        "task_create",
+        json!({"text": "build it", "target": {"profile": "claude", "project": "api"}}),
+        now,
+    );
+    let Reply::Done(v) = r else { panic!("{r:?}") };
+    let t = v["task"].as_u64().unwrap() as u32;
+    h.tick(&f, now);
+    assert_eq!(
+        h.tasks.get(t).unwrap().assigned,
+        None,
+        "not handed back to #1"
+    );
+    f.0.iter_mut().find(|s| s.id == 2).unwrap().idle = true;
+    h.tick(&f, now);
+    assert_eq!(h.tasks.get(t).unwrap().assigned, Some(2));
+    // A builder cannot withdraw the lead's task; the lead can.
+    let r = h.call(
+        &f,
+        2,
+        "task_report",
+        json!({"task": t, "outcome": "cancelled"}),
+        now,
+    );
+    assert!(refused(&r, "not_allowed"), "{r:?}");
+    let r = h.call(
+        &f,
+        1,
+        "task_report",
+        json!({"task": t, "outcome": "cancelled", "note": "sent twice"}),
+        now,
+    );
+    assert!(
+        matches!(r, Reply::Done(ref v) if v["state"].as_str().unwrap().starts_with("cancelled")),
+        "{r:?}"
+    );
+}
+
+#[test]
+fn a_session_at_a_permission_prompt_is_not_free_and_says_so() {
+    let (mut h, mut f, now) = setup();
+    for s in f.0.iter_mut().filter(|s| s.id == 2) {
+        s.state = fallow::orchestration::WAITING_FOR_APPROVAL.into();
+    }
+    let r = h.call(
+        &f,
+        1,
+        "task_create",
+        json!({"text": "build it", "target": {"session": 2}}),
+        now,
+    );
+    let Reply::Done(v) = r else { panic!("{r:?}") };
+    let t = v["task"].as_u64().unwrap() as u32;
+    h.tick(&f, now);
+    assert_eq!(
+        h.tasks.get(t).unwrap().assigned,
+        None,
+        "not typed over a prompt"
+    );
+    let Reply::Done(v) = h.call(&f, 1, "session_list", json!({}), now) else {
+        panic!()
+    };
+    assert_eq!(v["sessions"][1]["state"], "waiting for the user's approval");
 }

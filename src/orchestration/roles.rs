@@ -34,9 +34,14 @@ pub fn level_flags(style: Style, level: Level) -> Option<Vec<String>> {
             "NotebookEdit",
         ]),
         (Style::Claude, Level::Edit) => v(&["--permission-mode", "acceptEdits"]),
-        (Style::Claude, Level::EditRun) => {
-            v(&["--permission-mode", "acceptEdits", "--allowedTools", "Bash"])
-        }
+        // Claude Code runs commands with its Bash tool, or its PowerShell tool on Windows.
+        (Style::Claude, Level::EditRun) => v(&[
+            "--permission-mode",
+            "acceptEdits",
+            "--allowedTools",
+            "Bash",
+            "PowerShell",
+        ]),
         (Style::Codex, Level::ReadOnly) => {
             v(&["--sandbox", "read-only", "--ask-for-approval", "never"])
         }
@@ -225,7 +230,13 @@ mod tests {
         );
         assert_eq!(
             args(&role(Level::EditRun), "claude"),
-            ["--permission-mode", "acceptEdits", "--allowedTools", "Bash"]
+            [
+                "--permission-mode",
+                "acceptEdits",
+                "--allowedTools",
+                "Bash",
+                "PowerShell"
+            ]
         );
         assert_eq!(
             args(&role(Level::ReadOnly), "codex"),

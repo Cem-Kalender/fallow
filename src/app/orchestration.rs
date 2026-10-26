@@ -29,7 +29,11 @@ impl Sessions for SessionManager {
             project_name: s.project_name.clone(),
             profile_id: s.profile.id.clone(),
             profile: s.profile.name.clone(),
-            state: s.state.label(),
+            state: if s.state == SessionState::NeedsAttention && asks_permission(s) {
+                crate::orchestration::WAITING_FOR_APPROVAL.into()
+            } else {
+                s.state.label()
+            },
             running: s.state.running(),
             idle: s.state == SessionState::NeedsAttention,
             role: s.role.clone(),
@@ -65,6 +69,29 @@ impl Sessions for SessionManager {
         }
         Ok(())
     }
+}
+
+/// What agents' permission prompts say (Claude Code, Codex CLI, Gemini CLI).
+const PROMPTS: &[&str] = &[
+    "Do you want to proceed?",
+    "requires approval",
+    "Do you want to make this edit",
+    "Do you want to create",
+    "Allow command?",
+    "Allow execution",
+    "Apply this change?",
+];
+
+/// Whether an idle session's screen shows its agent asking for permission: its last lines.
+fn asks_permission(s: &crate::session::Session) -> bool {
+    let Ok(mut t) = s.term.lock() else {
+        return false;
+    };
+    let n = t.total_lines();
+    (n.saturating_sub(25)..n).any(|v| {
+        let line = t.line_text(v);
+        PROMPTS.iter().any(|p| line.contains(p))
+    })
 }
 
 /// The hub's view of the app: the sessions, plus the project list for tools that name a project.

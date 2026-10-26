@@ -146,10 +146,15 @@ const SPECS: &[Spec] = &[
     },
     Spec {
         name: "task_report",
-        description: "Report a task handed to your session as done or failed, with an optional note. The next task for your session follows.",
+        description: "Report a task handed to your session as done or failed, with an optional note. The next task for your session follows. A task you created yourself (for example one that reached the wrong session) can be withdrawn with outcome \"cancelled\".",
         args: &[
             ("task", "integer", "The task number (T1 is 1)", true),
-            ("outcome", "string", "\"done\" or \"failed\"", true),
+            (
+                "outcome",
+                "string",
+                "\"done\", \"failed\", or \"cancelled\" (only for a task you created)",
+                true,
+            ),
             ("note", "string", "At most 2 KiB", false),
             (
                 "evidence",
@@ -507,6 +512,8 @@ pub fn rfc3339(t: SystemTime) -> String {
 pub fn agent_state(s: &SessionInfo) -> &'static str {
     if !s.running {
         "exited"
+    } else if s.state == super::WAITING_FOR_APPROVAL {
+        "waiting for the user's approval"
     } else if s.idle {
         "idle"
     } else if s.state == "starting" {
@@ -1101,10 +1108,19 @@ pub(super) fn call(
             let done = match args["outcome"].as_str() {
                 Some("done") => true,
                 Some("failed") => false,
+                Some("cancelled") => {
+                    let note = args.get("note").and_then(Value::as_str).map(str::to_string);
+                    return match hub.withdraw_task(caller, id, note) {
+                        Ok(s) => Reply::Done(json!({ "state": s.label() })),
+                        Err(r) => r,
+                    };
+                }
                 other => {
                     return Reply::error(
                         "invalid",
-                        format!("outcome {other:?}: expected \"done\" or \"failed\""),
+                        format!(
+                            "outcome {other:?}: expected \"done\", \"failed\" or \"cancelled\""
+                        ),
                     );
                 }
             };
