@@ -150,7 +150,7 @@ squad, US4–US6 add gates, evidence and publishing to the squad.
 
 **Independent Test**: a builder's `session_start` and `review-approved` signal are refused; a reviewer whose worktree changes is reported and its verdicts stop counting.
 
-- [ ] T018 [P] [US2] Write `tests/squad_roles.rs`:
+- [X] T018 [P] [US2] Write `tests/squad_roles.rs`:
   - SC-002: every built-in role's `tools/list` matches contracts/mcp-tools.md "Tool list per role", and every tool outside it is refused with `not_allowed`.
   - Restricted events by pattern; `gate-*` refused for every role.
   - Role preconditions (`{"name": "review-approved", "role": "reviewer"}`) are met only by that role.
@@ -160,17 +160,17 @@ squad, US4–US6 add gates, evidence and publishing to the squad.
     - requires a role during a burst;
     - refused beyond the role's `max` or the allowance;
     - refused for an agent without flags for the role's level.
-- [ ] T019 [US2] Enforce roles in `src/orchestration/tools.rs`, `events.rs` and `tasks.rs`: tool lists and refusals per role, restricted events, role preconditions, and `session_start` with `role`.
-- [ ] T020 [US2] Start role sessions, in `src/app/workspace.rs` and `src/orchestration/inject.rs`:
+- [X] T019 [US2] Enforce roles in `src/orchestration/tools.rs`, `events.rs` and `tasks.rs`: tool lists and refusals per role, restricted events, role preconditions, and `session_start` with `role`.
+- [X] T020 [US2] Start role sessions, in `src/app/workspace.rs` and `src/orchestration/inject.rs`:
   - resolve the role's profile and flags (T005) and merge them with 003's per-run flags;
   - `Session.role` is fixed for life;
   - a bypass confirmation dialog (contracts/ui-commands.md) before a role whose flags bypass the agent's checks;
   - session details (`i`) show role, level and the exact command line (FR-014).
-- [ ] T021 [US2] Check read-only worktrees (FR-013):
+- [X] T021 [US2] Check read-only worktrees (FR-013):
   - the git worker runs `status --porcelain` and `rev-list <start>..HEAD` in each read-only session's worktree when it signals and every 2 minutes;
   - a change warns the engineer and marks the session's signals as not counting for gates and preconditions;
   - tests in `tests/squad_roles.rs` with a real repository.
-- [ ] T022 [US2] Show roles: a role column in `src/ui/workspace.rs`, and `session_list` and `whoami` with roles (contracts/mcp-tools.md). Extend `cargo xtask squad` with the SC-002 refusals (a builder calls `session_start` and signals `review-approved`).
+- [X] T022 [US2] Show roles: a role column in `src/ui/workspace.rs`, and `session_list` and `whoami` with roles (contracts/mcp-tools.md). Extend `cargo xtask squad` with the SC-002 refusals (a builder calls `session_start` and signals `review-approved`).
 
 **Checkpoint**: quickstart Q3 and Q4 pass.
 

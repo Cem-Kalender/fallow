@@ -97,6 +97,23 @@ pub fn worktree_state(path: &Path, start: &str) -> Result<WorktreeState, String>
     })
 }
 
+/// A read-only session's worktree now (FR-013): the tip of its branch (or `HEAD`), its
+/// uncommitted changes, and the commits on its branch since `base` (none without a base).
+pub fn read_only_check(
+    dir: &Path,
+    branch: Option<&str>,
+    base: Option<&str>,
+) -> Result<(String, Vec<String>, Vec<String>), String> {
+    let at = branch.unwrap_or("HEAD");
+    let tip = git(dir, &["rev-parse", at])?.trim().to_string();
+    let changed = changes(dir)?;
+    let commits = match base {
+        Some(b) => commits_between(dir, b, at)?,
+        None => Vec::new(),
+    };
+    Ok((tip, changed, commits))
+}
+
 /// Runs `job` on a short-lived thread and passes its result to `done` there.
 pub fn spawn<T: Send + 'static>(
     job: impl FnOnce() -> T + Send + 'static,

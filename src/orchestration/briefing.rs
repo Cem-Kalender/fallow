@@ -172,6 +172,7 @@ mod tests {
             has_remote: true,
             spec_kit,
             roles: HashMap::new(),
+            tainted: HashMap::new(),
             warned: false,
         }
     }

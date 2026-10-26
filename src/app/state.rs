@@ -197,6 +197,8 @@ pub struct AppState {
     pub pending_coordinate: Option<(std::time::Duration, Option<PathBuf>)>,
     /// 004: projects offered coordination in this run.
     pub coordinate_offered: Vec<crate::projects::ProjectId>,
+    /// 004: read-only worktree checks.
+    pub ro_checks: super::orchestration::ReadOnlyChecks,
 }
 
 impl AppState {
@@ -250,6 +252,7 @@ impl AppState {
             orch_settings: Default::default(),
             pending_coordinate: None,
             coordinate_offered: Vec::new(),
+            ro_checks: Default::default(),
         }
     }
 

@@ -80,6 +80,23 @@ pub struct AppView<'a> {
 /// FR-029's 150 MB budget; the margin is for the session about to start).
 pub const START_MEMORY_LIMIT: u64 = 140 * 1024 * 1024;
 
+/// The read-only worktree checks (004 FR-013): run off the main loop by `git`, every 2 minutes
+/// and whenever a read-only session signals.
+#[derive(Debug, Default)]
+pub struct ReadOnlyChecks {
+    /// Each session's branch tip and uncommitted files at its first check.
+    base: std::collections::HashMap<u32, (String, Vec<String>)>,
+    running: std::collections::HashSet<u32>,
+    last: Option<Instant>,
+    results: ReadOnlyResults,
+}
+
+type ReadOnlyResults = std::sync::Arc<
+    std::sync::Mutex<Vec<(u32, Result<(String, Vec<String>, Vec<String>), String>)>>,
+>;
+
+const READ_ONLY_EVERY: std::time::Duration = std::time::Duration::from_secs(120);
+
 impl Sessions for AppView<'_> {
     fn info(&self, id: u32) -> Option<SessionInfo> {
         self.sessions.info(id)
@@ -101,6 +118,9 @@ impl Sessions for AppView<'_> {
             Some(why) => Err(why.clone()),
             None => Ok(()),
         }
+    }
+    fn profile(&self, id: &str) -> Option<crate::session::profiles::AgentProfile> {
+        self.profiles.iter().find(|p| p.id == id).cloned()
     }
     fn projects(&self) -> Vec<(crate::projects::ProjectId, String, bool)> {
         self.projects
@@ -204,6 +224,7 @@ impl AppState {
             }
         }
         changed |= self.carry_out_starts();
+        changed |= self.check_read_only();
         changed |= self.type_deliveries();
         self.take_hub_notices();
         changed
@@ -224,7 +245,13 @@ impl AppState {
                 Some(why) => Err(why),
                 None => {
                     let place = self.default_where(s.project);
-                    self.start_session_in(s.project, &s.profile, place)
+                    self.start_role_session(
+                        s.project,
+                        &s.profile,
+                        place,
+                        s.role.clone(),
+                        s.args.clone(),
+                    )
                 }
             };
             if let Ok(sid) = &result {
@@ -278,6 +305,88 @@ impl AppState {
             };
             hub.delivered(id, result);
             changed = true;
+        }
+        changed
+    }
+
+    /// Starts due read-only checks and applies finished ones (FR-013).
+    fn check_read_only(&mut self) -> bool {
+        let Some(hub) = self.hub.as_mut() else {
+            return false;
+        };
+        let mut changed = false;
+        let done = self
+            .ro_checks
+            .results
+            .lock()
+            .map(|mut v| std::mem::take(&mut *v))
+            .unwrap_or_default();
+        for (id, result) in done {
+            self.ro_checks.running.remove(&id);
+            let Ok((tip, files, commits)) = result else {
+                continue;
+            };
+            let Some((_, before)) = self.ro_checks.base.get(&id).cloned() else {
+                self.ro_checks.base.insert(id, (tip, files));
+                continue;
+            };
+            let new_files: Vec<&String> = files.iter().filter(|f| !before.contains(f)).collect();
+            let why = if !new_files.is_empty() {
+                let shown: Vec<&str> = new_files.iter().take(3).map(|f| f.as_str()).collect();
+                Some(format!(
+                    "{} changed file(s): {}",
+                    new_files.len(),
+                    shown.join(", ")
+                ))
+            } else if !commits.is_empty() {
+                Some(format!("{} new commit(s)", commits.len()))
+            } else {
+                None
+            };
+            if let Some(why) = why {
+                hub.taint(id, why);
+                changed = true;
+            }
+        }
+        let now = Instant::now();
+        let mut want = std::mem::take(&mut hub.check_worktrees);
+        if self
+            .ro_checks
+            .last
+            .is_none_or(|t| now.saturating_duration_since(t) >= READ_ONLY_EVERY)
+        {
+            self.ro_checks.last = Some(now);
+            want.extend(hub.read_only_sessions());
+        }
+        let read_only = hub.read_only_sessions();
+        want.sort_unstable();
+        want.dedup();
+        for id in want {
+            if !read_only.contains(&id) || self.ro_checks.running.contains(&id) {
+                continue;
+            }
+            let Some(s) = self.sessions.get(id) else {
+                continue;
+            };
+            let dir = s.cwd.clone();
+            let branch = s.workdir.branch().map(str::to_string);
+            let base = self.ro_checks.base.get(&id).map(|(tip, _)| tip.clone());
+            self.ro_checks.running.insert(id);
+            let out = self.ro_checks.results.clone();
+            crate::orchestration::git::spawn(
+                move || {
+                    crate::orchestration::git::read_only_check(
+                        &dir,
+                        branch.as_deref(),
+                        base.as_deref(),
+                    )
+                },
+                move |r| {
+                    if let Ok(mut v) = out.lock() {
+                        v.push((id, r));
+                    }
+                },
+            );
         }
         changed
     }
@@ -619,6 +728,26 @@ impl AppState {
             (None, false, _) => "not running".into(),
         };
         lines.push(format!("Orchestration: {orch}"));
+        if let Some(role) = &s.role {
+            let level = self
+                .hub
+                .as_ref()
+                .and_then(|h| h.burst_for(s.id))
+                .and_then(|b| b.squad.role(role))
+                .map_or("", |r| r.level.as_str());
+            lines.push(format!("Role:    {role} ({level})"));
+        }
+        if let Some(c) = &s.command_line {
+            lines.push("Command line:".into());
+            lines.push(format!("  {c}"));
+            if crate::orchestration::roles::bypasses(
+                &c.split(' ').map(str::to_string).collect::<Vec<_>>(),
+            ) {
+                lines.push(
+                    "  Warning: these flags let the agent skip its own permission checks.".into(),
+                );
+            }
+        }
         self.overlay = Overlay::Info {
             title: s.label(),
             lines,

@@ -173,6 +173,13 @@ pub trait Sessions {
         v
     }
 
+    /// The full profile `id` (004: a role's flags depend on the agent). `None`: unknown here,
+    /// and a role then starts with no extra flags.
+    fn profile(&self, id: &str) -> Option<crate::session::profiles::AgentProfile> {
+        let _ = id;
+        None
+    }
+
     /// Whether another session may start now: 002's session limit (FR-007) and memory (FR-029).
     fn start_allowed(&self) -> Result<(), String> {
         Ok(())
@@ -303,6 +310,8 @@ pub struct Hub {
     pub starts: Vec<StartRequest>,
     /// Coordination bursts, at most one per project (004).
     pub bursts: Vec<burst::Burst>,
+    /// Read-only sessions to check now (they signalled; FR-013). The app drains it.
+    pub check_worktrees: Vec<u32>,
     next_start: u64,
 }
 
@@ -320,6 +329,12 @@ pub struct StartRequest {
     pub expires: Instant,
     pub covered_by: Option<u32>,
     pub state: StartState,
+    /// 004: the new session's role in the burst, and the extra arguments it implies.
+    pub role: Option<String>,
+    pub args: Vec<String>,
+    /// The role's command line makes the agent skip its own permission checks (FR-014): the
+    /// engineer confirms the start even during a burst.
+    pub bypass: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -383,6 +398,7 @@ impl Hub {
             tasks: tasks::Tasks::default(),
             starts: Vec::new(),
             bursts: Vec::new(),
+            check_worktrees: Vec::new(),
             next_start: 0,
             settings,
             channel: None,
@@ -657,6 +673,7 @@ impl Hub {
         profile: &str,
         project: &str,
         first_task: Option<String>,
+        role: Option<&str>,
         now: Instant,
     ) -> Result<(u64, StartState), Reply> {
         let Some((pid, pname)) = sessions
@@ -682,10 +699,18 @@ impl Hub {
                 format!("project {proj_name} is missing"),
             ));
         }
+        let (role, args, bypass) = self.start_role(sessions, from, &pid, proj, role)?;
         self.next_start += 1;
         let id = self.next_start;
         let state = match sessions.start_allowed() {
             Err(why) => StartState::Refused(why),
+            Ok(()) if bypass => {
+                self.notices.push(format!(
+                    "Role {} starts {pname} with flags that skip its permission checks: o to confirm",
+                    role.as_deref().unwrap_or("?")
+                ));
+                StartState::Pending
+            }
             Ok(()) => {
                 let target = SessionInfo {
                     id: 0,
@@ -737,6 +762,9 @@ impl Hub {
             expires: now + std::time::Duration::from_secs(self.settings.request_timeout_s),
             covered_by: None,
             state: state.clone(),
+            role,
+            args,
+            bypass,
         });
         if matches!(state, StartState::Refused(_)) {
             self.start_outcome(id);
@@ -807,6 +835,20 @@ impl Hub {
             Err(e) => StartState::Refused(e.clone()),
         };
         let (from, task) = (s.from.clone(), s.first_task.clone());
+        let (role, project) = (s.role.clone(), s.project);
+        if let (Ok(sid), Some(r)) = (&result, role) {
+            if let Some(b) = self.bursts.iter_mut().find(|b| b.project == project) {
+                let read_only = b
+                    .squad
+                    .role(&r)
+                    .is_some_and(|r| r.level == squad::Level::ReadOnly);
+                b.roles.insert(*sid, r);
+                // The first check records the worktree as it starts (FR-013).
+                if read_only {
+                    self.check_worktrees.push(*sid);
+                }
+            }
+        }
         if let (Ok(sid), Some(text)) = (result, task) {
             if let Ok((t, _)) = self.create_task(
                 sessions,
@@ -1106,13 +1148,7 @@ impl Hub {
             if t.paused || !matches!(t.state, tasks::State::Queued | tasks::State::Blocked) {
                 continue;
             }
-            let unmet = t.preconditions.iter().any(|k| {
-                self.events
-                    .map
-                    .get(k)
-                    .and_then(|e| e.signal.as_ref())
-                    .is_none()
-            });
+            let unmet = t.preconditions.iter().any(|k| !self.condition_met(&t, k));
             let want = if unmet {
                 tasks::State::Blocked
             } else {
@@ -1568,5 +1604,188 @@ impl Hub {
                 }
             }
         }
+    }
+}
+
+impl Hub {
+    /// Whether precondition `k` of task `t` holds: the event is signalled and, when the task
+    /// names a role for it, the latest signal came from that role (004 FR-012), from a session
+    /// whose signals still count (FR-013).
+    pub(crate) fn condition_met(&self, t: &tasks::Task, k: &events::Key) -> bool {
+        let Some(sig) = self.events.map.get(k).and_then(|e| e.signal.as_ref()) else {
+            return false;
+        };
+        match t.role_conditions.iter().find(|(key, _)| key == k) {
+            None => true,
+            Some((_, role)) => {
+                sig.from.role() == Some(role.as_str())
+                    && !sig.from.session().is_some_and(|s| self.tainted(s))
+            }
+        }
+    }
+
+    /// The role, extra arguments and bypass flag for a session an agent asks to start (004
+    /// FR-008, FR-009): during a burst a role is required and limited by the squad; outside one
+    /// there are no roles.
+    fn start_role(
+        &self,
+        sessions: &dyn Sessions,
+        from: &SessionInfo,
+        profile: &str,
+        project: ProjectId,
+        role: Option<&str>,
+    ) -> Result<(Option<String>, Vec<String>, bool), Reply> {
+        let Some(b) = self.burst_for(from.id) else {
+            return match role {
+                None => Ok((None, Vec::new(), false)),
+                Some(_) => Err(Reply::error(
+                    "invalid",
+                    "role: sessions have roles only while the project coordinates",
+                )),
+            };
+        };
+        let names: Vec<&str> = b.squad.roles.iter().map(|r| r.name.as_str()).collect();
+        let Some(name) = role else {
+            return Err(Reply::error(
+                "invalid",
+                format!(
+                    "during coordination, session_start needs a role: one of {}",
+                    names.join(", ")
+                ),
+            ));
+        };
+        if project != b.project {
+            return Err(Reply::error(
+                "not_allowed",
+                format!("coordination starts sessions only in {}", b.project_name),
+            ));
+        }
+        let Some(r) = b.squad.role(name) else {
+            return Err(Reply::error(
+                "invalid",
+                format!("no role {name:?}; the squad has {}", names.join(", ")),
+            ));
+        };
+        let running: Vec<u32> = sessions
+            .all()
+            .into_iter()
+            .filter(|s| s.running)
+            .map(|s| s.id)
+            .collect();
+        let have = b
+            .roles
+            .iter()
+            .filter(|(id, rn)| *rn == name && running.contains(id))
+            .count()
+            + self
+                .starts
+                .iter()
+                .filter(|s| {
+                    s.project == b.project
+                        && s.role.as_deref() == Some(name)
+                        && matches!(s.state, StartState::Pending | StartState::Approved)
+                })
+                .count();
+        if have >= usize::from(r.max) {
+            return Err(Reply::error(
+                "not_allowed",
+                format!(
+                    "the squad allows at most {} {name} session(s) at once",
+                    r.max
+                ),
+            ));
+        }
+        let used = self
+            .permissions
+            .list
+            .iter()
+            .find(|p| p.id == b.permission)
+            .map_or(0, |p| p.starts_used);
+        if used >= b.allowance {
+            return Err(Reply::error(
+                "not_allowed",
+                format!(
+                    "this burst may start {} session(s) and started {used}; ask the user",
+                    b.allowance
+                ),
+            ));
+        }
+        let (args, bypass) = match sessions.profile(profile) {
+            Some(p) => {
+                let args = roles::role_args(r, &p).map_err(|e| Reply::error("not_allowed", e))?;
+                let bypass = roles::bypasses(&args) || roles::bypasses(&p.args);
+                (args, bypass)
+            }
+            None => (Vec::new(), false),
+        };
+        Ok((Some(name.to_string()), args, bypass))
+    }
+
+    /// Whether a session's signals stopped counting (a read-only role's worktree changed,
+    /// FR-013).
+    pub fn tainted(&self, session: u32) -> bool {
+        self.bursts.iter().any(|b| b.tainted.contains_key(&session))
+    }
+
+    /// Sessions of read-only roles, for the worktree check (FR-013).
+    pub fn read_only_sessions(&self) -> Vec<u32> {
+        self.bursts
+            .iter()
+            .flat_map(|b| {
+                b.roles.iter().filter_map(|(id, r)| {
+                    let ro = b
+                        .squad
+                        .role(r)
+                        .is_some_and(|r| r.level == squad::Level::ReadOnly);
+                    (ro && !b.tainted.contains_key(id)).then_some(*id)
+                })
+            })
+            .collect()
+    }
+
+    /// A read-only session's worktree changed (FR-013): the engineer is warned, its signals stop
+    /// counting, and the events it signalled are cleared.
+    pub fn taint(&mut self, session: u32, why: String) {
+        let Some(b) = self
+            .bursts
+            .iter_mut()
+            .find(|b| b.roles.contains_key(&session))
+        else {
+            return;
+        };
+        if b.tainted.contains_key(&session) {
+            return;
+        }
+        let role = b.roles.get(&session).cloned().unwrap_or_default();
+        let project = b.project;
+        b.tainted.insert(session, why.clone());
+        let cleared: Vec<events::Key> = self
+            .events
+            .map
+            .iter()
+            .filter(|(k, e)| {
+                k.0 == board::BoardId::Project(project)
+                    && e.signal
+                        .as_ref()
+                        .is_some_and(|s| s.from.session() == Some(session))
+            })
+            .map(|(k, _)| k.clone())
+            .collect();
+        for k in &cleared {
+            self.clear_event(k);
+        }
+        let text = format!(
+            "#{session} {role}'s worktree changed ({why}): its signals and verdicts no longer count."
+        );
+        self.boards.post(
+            board::BoardId::Project(project),
+            Party::Fallow,
+            text.clone(),
+            std::time::SystemTime::now(),
+            TEXT_BUDGET,
+        );
+        self.activity
+            .add(Party::Fallow, Action::Refused, &text, None);
+        self.notices.push(text);
     }
 }

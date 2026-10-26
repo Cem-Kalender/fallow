@@ -86,7 +86,7 @@ fn run_all(bin: &Path, base: &Path) -> Result<i32, String> {
     // The lead waits for the harness's files instead of typed lines: Fallow types its own
     // "coordination started" message into the lead.
     let lead = format!(
-        "print lead-ready\nuntil-file {}\ncall whoami {{}}\nwrite {}\ncall session_start {{\"profile\":\"b\",\"project\":\"project\",\"first_task\":\"zz-build-the-page\"}}\nwrite {}\nsleep 15000\ncall inbox {{}}\nwrite {}\nuntil-file {}\ncall deliver {{\"session\":2,\"text\":\"zz-after-end\"}}\nwrite {}\nprint lead-done\n",
+        "print lead-ready\nuntil-file {}\ncall whoami {{}}\nwrite {}\ncall session_start {{\"profile\":\"b\",\"project\":\"project\",\"first_task\":\"zz-build-the-page\",\"role\":\"builder\"}}\nwrite {}\nsleep 15000\ncall inbox {{}}\nwrite {}\nuntil-file {}\ncall deliver {{\"session\":2,\"text\":\"zz-after-end\"}}\nwrite {}\nprint lead-done\n",
         f("go"),
         f("lead-whoami"),
         f("lead-start"),
@@ -94,10 +94,13 @@ fn run_all(bin: &Path, base: &Path) -> Result<i32, String> {
         f("ended"),
         f("lead-after"),
     );
+    // The builder tries what its role may not do (SC-002).
     let builder = format!(
-        "report-tasks {}\ncall whoami {{}}\nwrite {}\n",
+        "report-tasks {}\ncall whoami {{}}\nwrite {}\ncall session_start {{\"profile\":\"b\",\"project\":\"project\",\"role\":\"builder\"}}\nwrite {}\ncall event_signal {{\"name\":\"review-approved\"}}\nwrite {}\n",
         f("b-tasks"),
         f("b-whoami"),
+        f("b-start"),
+        f("b-signal"),
     );
     std::fs::write(base.join("lead.script"), lead).map_err(|e| e.to_string())?;
     std::fs::write(base.join("b.script"), builder).map_err(|e| e.to_string())?;
@@ -167,6 +170,9 @@ fn run_all(bin: &Path, base: &Path) -> Result<i32, String> {
     let inbox = std::fs::read_to_string(base.join("lead-inbox")).unwrap_or_default();
     let b_tasks = std::fs::read_to_string(base.join("b-tasks")).unwrap_or_default();
     let after = wait_for(&base.join("lead-after"), "{", Duration::from_secs(30));
+    let b_whoami = std::fs::read_to_string(base.join("b-whoami")).unwrap_or_default();
+    let b_start = std::fs::read_to_string(base.join("b-start")).unwrap_or_default();
+    let b_signal = std::fs::read_to_string(base.join("b-signal")).unwrap_or_default();
     s.quit_with_sessions();
     let outcome = s.finish();
     let mut problems = outcome.problems(None);
@@ -186,29 +192,35 @@ fn run_all(bin: &Path, base: &Path) -> Result<i32, String> {
     let task_ok = b_tasks.trim() == "T1 done";
     // After the burst: the delivery waits for the engineer again.
     let ended_ok = after.contains("pending");
-    let pass = role_ok && start_ok && task_ok && ended_ok;
+    // SC-002: the builder has its role, and may neither start sessions nor approve reviews.
+    let refusals_ok = b_whoami.contains("\"role\":\"builder\"")
+        && b_start.contains("not_allowed")
+        && b_signal.contains("not_allowed");
+    let pass = role_ok && start_ok && task_ok && ended_ok && refusals_ok;
     let result = if pass { "PASS" } else { "FAIL" };
     let ok = |b: bool| if b { "ok" } else { "WRONG" };
     println!(
-        "os={} role={} start={} task={} after_end={} result={result}",
+        "os={} role={} start={} task={} after_end={} builder_refusals={} result={result}",
         std::env::consts::OS,
         ok(role_ok),
         ok(start_ok),
         ok(task_ok),
         ok(ended_ok),
+        ok(refusals_ok),
     );
     if !pass {
         println!(
-            "whoami: {whoami:?}\nstart: {start:?}\ninbox: {inbox:?}\nbuilder: {b_tasks:?}\nafter: {after:?}"
+            "whoami: {whoami:?}\nstart: {start:?}\ninbox: {inbox:?}\nbuilder: {b_tasks:?}\nafter: {after:?}\nbuilder whoami: {b_whoami:?}\nbuilder start: {b_start:?}\nbuilder signal: {b_signal:?}"
         );
     }
     pty::step_summary(&format!(
-        "### Squads ({})\n\n| check | result | expected |\n|---|---|---|\n| the lead's whoami: role and briefing | {} | lead, briefing |\n| the lead starts a builder with a first task | {} | no prompt, started |\n| the builder receives the task and reports it | {} | T1 done |\n| a delivery after Shift-X | {} | pending again |\n\n**{result}**\n",
+        "### Squads ({})\n\n| check | result | expected |\n|---|---|---|\n| the lead's whoami: role and briefing | {} | lead, briefing |\n| the lead starts a builder with a first task | {} | no prompt, started |\n| the builder receives the task and reports it | {} | T1 done |\n| a delivery after Shift-X | {} | pending again |\n| a builder's session_start and review-approved | {} | refused (SC-002) |\n\n**{result}**\n",
         std::env::consts::OS,
         ok(role_ok),
         ok(start_ok),
         ok(task_ok),
         ok(ended_ok),
+        ok(refusals_ok),
     ));
     Ok(if pass { 0 } else { 1 })
 }

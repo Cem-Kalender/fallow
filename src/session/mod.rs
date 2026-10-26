@@ -144,6 +144,10 @@ pub struct Session {
     pub last_key: Option<Instant>,
     /// The session's role in a coordination burst (004 FR-009): fixed for its life.
     pub role: Option<String>,
+    /// 004: the role's flags, added to the profile's arguments on every run of this session.
+    pub extra_args: Vec<String>,
+    /// The command line of the current run, as started (FR-014); the bridge token is hidden.
+    pub command_line: Option<String>,
 }
 
 impl Session {
@@ -217,6 +221,8 @@ impl Session {
             orch: OrchLink::default(),
             last_key: None,
             role: None,
+            extra_args: Vec::new(),
+            command_line: None,
         }
     }
 
@@ -339,6 +345,28 @@ pub struct StartRequest {
     pub cols: u16,
 }
 
+/// A command line as the engineer reads it: each argument quoted when needed, the bridge token
+/// replaced by `<token>` (FR-014).
+pub fn shown_command(program: &str, args: &[String], token: Option<String>) -> String {
+    let quote = |a: &str| {
+        if a.is_empty() || a.contains(char::is_whitespace) || a.contains('"') {
+            format!("'{a}'")
+        } else {
+            a.to_string()
+        }
+    };
+    let mut out = quote(program);
+    for a in args {
+        let a = match &token {
+            Some(t) => a.replace(t.as_str(), "<token>"),
+            None => a.clone(),
+        };
+        out.push(' ');
+        out.push_str(&quote(&a));
+    }
+    out
+}
+
 impl SessionManager {
     pub fn running(&self) -> usize {
         self.sessions.iter().filter(|s| s.state.running()).count()
@@ -357,6 +385,18 @@ impl SessionManager {
     pub fn start(
         &mut self,
         req: StartRequest,
+        events: &Sender<AppEvent>,
+    ) -> Result<SessionId, String> {
+        self.start_with(req, None, Vec::new(), events)
+    }
+
+    /// `start` for a session with a role in a burst (004 FR-009): `extra_args` are the role's
+    /// flags, added to the profile's arguments.
+    pub fn start_with(
+        &mut self,
+        req: StartRequest,
+        role: Option<String>,
+        extra_args: Vec<String>,
         events: &Sender<AppEvent>,
     ) -> Result<SessionId, String> {
         if self.running() >= self.limits.max_sessions {
@@ -397,7 +437,9 @@ impl SessionManager {
             signals: Arc::new(Mutex::new(Vec::new())),
             orch: OrchLink::default(),
             last_key: None,
-            role: None,
+            role,
+            extra_args,
+            command_line: None,
         };
         self.spawn_into(&mut s, req.rows, req.cols, events);
         self.sessions.push(s);
@@ -415,10 +457,20 @@ impl SessionManager {
         };
         let mut args = resolved.prefix_args;
         args.extend(s.profile.args.iter().cloned());
+        args.extend(s.extra_args.iter().cloned());
         let mut env = s.profile.env.clone();
         s.orch.cleanup();
         s.orch.unsupported = None;
         self.orchestrate(s, &mut args, &mut env);
+        if !s.extra_args.is_empty() {
+            // A role's tool lists and the per-run ones become one occurrence each (004 T005).
+            args = crate::orchestration::roles::merge_list_flags(args);
+        }
+        s.command_line = Some(shown_command(
+            &resolved.program.to_string_lossy(),
+            &args,
+            s.orch.token.as_ref().map(|t| t.hex()),
+        ));
         let spec = SpawnSpec {
             program: resolved.program,
             args,

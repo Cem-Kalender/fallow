@@ -910,6 +910,18 @@ impl AppState {
         id: &str,
         place: Where,
     ) -> Result<SessionId, String> {
+        self.start_role_session(project, id, place, None, Vec::new())
+    }
+
+    /// `start_session_in` with a role in a burst and its flags (004 FR-009).
+    pub fn start_role_session(
+        &mut self,
+        project: crate::projects::ProjectId,
+        id: &str,
+        place: Where,
+        role: Option<String>,
+        extra_args: Vec<String>,
+    ) -> Result<SessionId, String> {
         let profile = self
             .profiles
             .iter()
@@ -949,7 +961,7 @@ impl AppState {
             cols: area.width.max(1),
         };
         self.ensure_hub(req.profile.orchestration);
-        let sid = self.sessions.start(req, &tx)?;
+        let sid = self.sessions.start_with(req, role, extra_args, &tx)?;
         self.track(sid);
         Ok(sid)
     }

@@ -47,6 +47,8 @@ pub struct Burst {
     pub spec_kit: bool,
     /// Roles of the sessions in the burst, fixed for their life (FR-009).
     pub roles: HashMap<u32, String>,
+    /// Read-only sessions whose worktree changed, and how (FR-013): their signals do not count.
+    pub tainted: HashMap<u32, String>,
     pub(crate) warned: bool,
 }
 
@@ -122,6 +124,7 @@ impl Hub {
             has_remote: r.has_remote,
             spec_kit: r.spec_kit,
             roles,
+            tainted: HashMap::new(),
             warned: false,
         };
         let note = super::briefing::common_note(&burst);

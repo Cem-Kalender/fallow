@@ -191,8 +191,9 @@ fn requests_lines(state: &AppState, v: &OrchView, width: usize) -> Vec<Line<'sta
                     continue;
                 };
                 let row = format!(
-                    "{}  →  start {} in {}   expires in {}",
+                    "{}  →  start {}{} in {}   expires in {}",
                     s.from.label(),
+                    s.role.as_ref().map_or(String::new(), |r| format!("{r} · ")),
                     s.profile_name,
                     s.project_name,
                     time_left(s.expires.saturating_duration_since(now))
@@ -201,6 +202,18 @@ fn requests_lines(state: &AppState, v: &OrchView, width: usize) -> Vec<Line<'sta
                     row,
                     if i == selected { sel } else { Style::default() },
                 ));
+                // 004 FR-014: a role whose flags skip the agent's checks needs the engineer.
+                if s.bypass {
+                    lines.push(Line::styled(
+                        format!(
+                            "  Role {} starts {} with {}. That agent will run any command without asking. y starts it anyway.",
+                            s.role.as_deref().unwrap_or("?"),
+                            s.profile_name,
+                            s.args.join(" ")
+                        ),
+                        Style::default().fg(ratatui::style::Color::Red),
+                    ));
+                }
                 if i == selected {
                     match &s.first_task {
                         Some(t) => {

@@ -123,7 +123,7 @@ const SPECS: &[Spec] = &[
             (
                 "preconditions",
                 "array",
-                "Events that must be signalled first: [{\"name\": …, \"scope\": \"project\"|\"shared\"}], at most 8",
+                "Events that must be signalled first: [{\"name\": …, \"scope\": \"project\"|\"shared\", \"role\": optional role that must signal it}], at most 8",
                 false,
             ),
         ],
@@ -167,6 +167,12 @@ const SPECS: &[Spec] = &[
                 "first_task",
                 "string",
                 "Optional: queued for the new session, at most 8 KiB",
+                false,
+            ),
+            (
+                "role",
+                "string",
+                "While the project coordinates (required then): the new session's role in the squad, for example \"builder\" or \"reviewer\"",
                 false,
             ),
         ],
@@ -410,14 +416,25 @@ pub(super) fn call(
     let Some(spec) = SPECS.iter().find(|s| s.name == name) else {
         return Reply::Rpc(-32602, format!("unknown tool {name:?}"));
     };
-    if let Err(r) = check(spec, &args) {
-        return r;
-    }
     let Some(mut me) = sessions.info(caller) else {
         return Reply::error("unavailable", "your session is not known to Fallow");
     };
-    // The role Fallow assigned is authoritative (004 FR-009).
+    // The role Fallow assigned is authoritative (004 FR-009), and narrows the tools (FR-011).
     me.role = hub.role_of(caller).map(str::to_string);
+    let role = hub
+        .burst_for(caller)
+        .and_then(|b| me.role.as_deref().and_then(|r| b.squad.role(r)).cloned());
+    if let Some(r) = &role {
+        if !tool_allowed(r, name) {
+            let why = format!("your role {} may not use {name}", r.name);
+            hub.activity
+                .add(me.party(), Action::Refused, name, Some(why.clone()));
+            return Reply::error("not_allowed", why);
+        }
+    }
+    if let Err(r) = check(spec, &args) {
+        return r;
+    }
     let repeat = name == "event_wait"
         && hub.events.recent.get(&caller).is_some_and(|(k, _, _)| {
             Some(k.1.as_str()) == args.get("name").and_then(Value::as_str)
@@ -474,6 +491,7 @@ pub(super) fn call(
                 .map(|s| {
                     json!({
                         "session": s.id,
+                        "role": hub.role_of(s.id),
                         "profile": s.profile,
                         "project": s.project_name,
                         "state": agent_state(&s),
@@ -482,7 +500,23 @@ pub(super) fn call(
                     })
                 })
                 .collect();
-            Reply::Done(json!({ "sessions": list }))
+            let mut v = json!({ "sessions": list });
+            if let Some(b) = hub.burst_of(me.project) {
+                v["roles"] = b
+                    .squad
+                    .roles
+                    .iter()
+                    .map(|r| {
+                        json!({
+                            "name": r.name,
+                            "description": r.description,
+                            "level": r.level.as_str(),
+                            "max": r.max,
+                        })
+                    })
+                    .collect();
+            }
+            Reply::Done(v)
         }
         "board_post" => {
             let b = match board_of(&me, &args) {
@@ -529,6 +563,36 @@ pub(super) fn call(
                 Ok(k) => k,
                 Err(r) => return r,
             };
+            // During a burst: gate events are Fallow's, restricted events the roles' (FR-012,
+            // FR-020), and a read-only session whose worktree changed no longer counts (FR-013).
+            if let Some(b) = hub.bursts.iter().find(|b| b.project == me.project) {
+                if super::roles::fallow_only(&key.1) {
+                    return Reply::error(
+                        "not_allowed",
+                        format!("{}: only Fallow signals gate events", key.1),
+                    );
+                }
+                if let Some(r) = &role {
+                    if !super::roles::may_signal(&b.squad, r, &key.1) {
+                        let why = format!("your role {} may not signal {}", r.name, key.1);
+                        hub.activity
+                            .add(me.party(), Action::Refused, &key.1, Some(why.clone()));
+                        return Reply::error("not_allowed", why);
+                    }
+                }
+                if hub.tainted(caller) {
+                    return Reply::error(
+                        "not_allowed",
+                        "your worktree changed although your role is read-only: your signals no longer count",
+                    );
+                }
+                if role
+                    .as_ref()
+                    .is_some_and(|r| r.level == super::squad::Level::ReadOnly)
+                {
+                    hub.check_worktrees.push(caller);
+                }
+            }
             let message = args.get("message").and_then(Value::as_str);
             let message = match message {
                 None => None,
@@ -662,14 +726,29 @@ pub(super) fn call(
                 Err(r) => return r,
             };
             let mut pre = Vec::new();
+            let mut role_pre = Vec::new();
             for p in args
                 .get("preconditions")
                 .and_then(Value::as_array)
                 .into_iter()
                 .flatten()
             {
+                if let Some(extra) = p.as_object().and_then(|o| {
+                    o.keys()
+                        .find(|k| !["name", "scope", "role"].contains(&k.as_str()))
+                }) {
+                    return Reply::Rpc(
+                        -32602,
+                        format!("task_create: unknown precondition field {extra:?}"),
+                    );
+                }
                 match event_key(&me, p) {
-                    Ok(k) => pre.push(k),
+                    Ok(k) => {
+                        if let Some(r) = p.get("role").and_then(Value::as_str) {
+                            role_pre.push((k.clone(), r.to_string()));
+                        }
+                        pre.push(k);
+                    }
                     Err(r) => return r,
                 }
             }
@@ -677,13 +756,18 @@ pub(super) fn call(
                 return Reply::error("invalid", "at most 8 preconditions");
             }
             match hub.create_task(sessions, me.party(), text, target, pre, now) {
-                Ok((id, state)) => Reply::Done(json!({
+                Ok((id, state)) => {
+                    if let Some(t) = hub.tasks.get_mut(id) {
+                        t.role_conditions = role_pre;
+                    }
+                    Reply::Done(json!({
                     "task": id,
                     "state": match state {
                         super::tasks::State::PendingApproval => "pending_approval".to_string(),
                         s => s.label(),
                     },
-                })),
+                    }))
+                }
                 Err(e) if e.contains("not running") => Reply::error("not_found", e),
                 Err(e) => Reply::error("too_many_pending", e),
             }
@@ -727,6 +811,7 @@ pub(super) fn call(
                 args["profile"].as_str().unwrap_or_default(),
                 args["project"].as_str().unwrap_or_default(),
                 first,
+                args.get("role").and_then(Value::as_str),
                 now,
             ) {
                 Ok((id, state)) => {

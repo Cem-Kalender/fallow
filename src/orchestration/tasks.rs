@@ -76,6 +76,8 @@ pub struct Task {
     pub text: String,
     pub target: Target,
     pub preconditions: Vec<Key>,
+    /// Preconditions that must be signalled by a session in a given role (004 FR-012).
+    pub role_conditions: Vec<(Key, String)>,
     pub state: State,
     pub paused: bool,
     pub assigned: Option<u32>,
@@ -117,6 +119,7 @@ impl Tasks {
             text,
             target,
             preconditions,
+            role_conditions: Vec::new(),
             state: if approved {
                 State::Queued
             } else {
