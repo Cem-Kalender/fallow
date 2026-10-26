@@ -85,6 +85,50 @@ agent profiles (`orchestration = "claude"` connects a profile of your own to the
 `projects.toml`, the remembered project list, which Fallow writes. The palette's "Reload
 configuration" reads `profiles.toml` again.
 
+## Coordination mode and squads
+
+For a time-limited burst (at most 8 hours), a project's agents can work together without asking
+you at every step. Start it with the palette's "Coordinate this project…" from a session, by
+accepting the offer when a project's first session starts, or with
+`fallow --coordinate 4h [PATH]`. The session it starts from is the **lead**; you choose how long
+it lasts and how many sessions agents may start. The hint bar counts down, and `Shift-X` ends it
+at once.
+
+- **Squads.** A squad declares roles, gates and merge conditions in `.fallow/squad.toml` in the
+  project, versioned with your code (Fallow only reads it). Without the file, a built-in squad is
+  used: a lead, up to three builders and up to two read-only reviewers. Roles for all projects
+  can live in `roles.toml` in Fallow's config directory.
+- **Roles.** Fallow fixes each session's role at its start and stamps it on everything the
+  others receive. A role decides which of Fallow's tools the session sees and which events it may
+  signal (only reviewers approve a review; no role signals a gate). A role's level (`read-only`,
+  `edit`, `edit-run`) becomes the agent's own permission flags: Claude Code
+  `--permission-mode dontAsk` with edits disallowed, `acceptEdits`, or `acceptEdits` with Bash;
+  Codex `--sandbox read-only|workspace-write`; Gemini `--approval-mode plan|auto_edit`. The
+  agent enforces those, not Fallow; for read-only roles Fallow checks the outcome, and a
+  reviewer whose worktree changes stops counting. Flags that make an agent skip its own checks
+  need your confirmation.
+- **Briefings.** Each session gets its role's briefing when it connects and from `whoami`: its
+  tools, the rules, the squad, how to report work. With Spec Kit in the project (`.specify/`),
+  the briefing describes its pipeline; without it, Fallow can have the lead run Spec Kit's
+  official installer after you agree (Fallow itself downloads and writes nothing).
+- **Gates.** A gate is a command (your build and tests) that Fallow runs itself as a session,
+  once on the starting commit (the baseline) and again on the lead's commit when the builders'
+  work is done. Only Fallow signals a gate's result; a final run that fails only where the
+  baseline already failed is told apart from a regression.
+- **Evidence and repair.** A done report names the commit, the commands run and the files
+  changed; Fallow checks the commit is on the session's branch. A failed gate or a review asking
+  for changes goes back to the session that built the part, up to `repair_cap` rounds, then to
+  you. When every session has waited too long, you are told who waits for what.
+- **Publishing.** No agent merges. With a remote, the lead opens a draft pull request once every
+  merge condition holds, and you merge it. Without one, the Squad tab says "ready to merge" and
+  `m` merges exactly the gated commit into the target branch after you confirm.
+
+Risks: during a burst, agents act on each other's output without your review, and a prompt
+injection in one session can reach the others. That is why bursts are time-limited, scoped to one
+project, revocable at once, and gated by evidence Fallow checks itself. Agents' claims about their
+work are not verified beyond those checks. Each session runs its own agent and uses its own plan
+or API usage.
+
 ## Known gaps
 
 - **No kitty keyboard protocol inside sessions.** Agents fall back to their legacy keys: in
@@ -101,6 +145,11 @@ configuration" reads `profiles.toml` again.
 - **Orchestration: Aider** has no tool support, so its sessions run without orchestration.
   **Gemini CLI** is not connected when an administrator's system settings file exists, because
   Fallow's per-run settings file would replace it.
+- **Coordination: Gemini CLI** has no flags Fallow can map to the `edit-run` level, and
+  **Codex CLI** has no "ask before every command" mode; such a role needs flags in the squad
+  (`[role.flags]`), or the agent cannot take it.
+- **Coordination: read-only roles** depend on the agent CLI honoring its flags; Fallow checks the
+  worktree afterwards rather than preventing edits.
 - **Orchestration: waking an idle agent** needs a delivery you approve (or a permission).
   Claude Code's "channels", which could wake it without typing, are a research preview behind a
   confirmation screen at every launch, so Fallow does not use them yet.

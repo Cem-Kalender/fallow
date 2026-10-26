@@ -33,9 +33,14 @@ Notes:
   `mkdir`, `touch`, `rm`, `mv`, `cp` and `sed` inside the working directory.
 - Claude Code's `--allowedTools` and `--disallowedTools` take several values; Fallow merges them with
   003's `--allowedTools mcp__fallow__*` into one occurrence each, appended at the end (003 R-5).
-- **Codex**: `untrusted` is retired, `on-failure` deprecated, `--full-auto` deprecated (**verify** on
-  the installed version: Fallow reads `codex --version` when the start menu opens and refuses roles
-  whose flags its version does not know).
+- **Codex**: `untrusted` is retired, `on-failure` deprecated, `--full-auto` deprecated.
+  **Verified (2026-10-26, T040)** against the Codex sandboxing documentation: `--sandbox read-only`
+  and `--sandbox workspace-write` with `--ask-for-approval never` or `on-request` are the current
+  forms, and `never` keeps the sandbox's limits (it only removes prompts); the bypass flag is
+  `--dangerously-bypass-approvals-and-sandbox` (alias `--yolo`), which Fallow detects. No Codex
+  version check was added: the four flags Fallow uses are the documented ones, and an unknown flag
+  makes Codex exit at once with its own message, shown in the session. Codex was not installed on
+  the development machine; quickstart Q4 with Codex stays a manual check.
 - **Gemini**: "replaced by Antigravity CLI" for some tiers since June 2026; the profile stays, and an
   `edit-run` role on Gemini needs explicit flags (FR-008: no silent guessing).
 - Sources: code.claude.com/docs/en/{cli-reference,permissions,permission-modes};
@@ -105,9 +110,13 @@ wait (event wait, blocked task, or idle with no task) and no gate runs; if that 
 ## R-8: Spec Kit
 
 **Facts**: requires Python 3.11+ and uv (or pipx). One shot:
-`uvx --from git+https://github.com/github/spec-kit.git specify init --here --force --non-interactive --integration claude`
-(**verify** the uvx form; documented install: `uv tool install specify-cli --from git+https://github.com/github/spec-kit.git`,
-then `specify init --here --force --non-interactive --integration claude`).
+`uvx --from git+https://github.com/github/spec-kit.git specify init --here --force --integration claude`.
+**Verified (2026-10-26, T040)** against Spec Kit's "One-time Usage (uvx)" page: `uvx --from
+git+https://github.com/github/spec-kit.git specify init --here --integration <agent>` initializes
+the current directory. `--non-interactive` is not documented there and was dropped; `--force`
+(skip the confirmation for a non-empty directory with `--here`) is kept, and the lead is told to
+answer or ask the user if the installer asks anything. Documented persistent install:
+`uv tool install specify-cli --from git+https://github.com/github/spec-kit.git`.
 
 **Decision**: detection is "the project has `.specify/`". The offer delivers this command to the lead
 as a task (approved by the engineer's "yes"), saying to check for `uv` first and to ask the engineer

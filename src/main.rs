@@ -40,14 +40,16 @@ fn main() -> ExitCode {
     // the event loop and procmon were running.
     if let Some(path) = &opts.bench_stats {
         let line = format!(
-            "pid={} ticks={} cycles={} buffers={} searches={} copies={} sessions={}\n",
+            "pid={} ticks={} cycles={} buffers={} searches={} copies={} sessions={} bursts={} gates={}\n",
             std::process::id(),
             stats.ticks,
             stats.cycles,
             stats.buffers,
             stats.searches,
             stats.copies,
-            stats.sessions
+            stats.sessions,
+            stats.bursts,
+            stats.gates
         );
         if let Err(e) = std::fs::write(path, line) {
             eprintln!("fallow: cannot write {}: {e}", path.display());

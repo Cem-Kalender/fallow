@@ -403,3 +403,90 @@ fn a_start_request_and_its_first_task_need_approval() {
     h.tick(&f, now);
     assert!(typed(&h).is_empty(), "the hand-over waits for approval");
 }
+
+#[test]
+fn a_burst_is_a_permission_and_revoking_it_prompts_again() {
+    // 004 T036: every burst path still goes through the 003 permission gate.
+    use fallow::orchestration::burst::BurstRequest;
+    let f = Fake::new();
+    let mut h = hub();
+    let now = Instant::now();
+    h.start_burst(
+        &f,
+        BurstRequest {
+            lead: 1,
+            duration: Duration::from_secs(3600),
+            allowance: None,
+            squad: fallow::orchestration::squad::builtin(),
+            start_commit: None,
+            target_branch: None,
+            has_remote: false,
+            spec_kit: false,
+            max_sessions: 8,
+        },
+        now,
+    )
+    .unwrap();
+    let covered = deliver(&mut h, &f, 1, 2, now);
+    assert!(
+        typed(&h).contains(&covered),
+        "covered by the burst's permission"
+    );
+    // Another project's sessions are not covered.
+    let other = deliver(&mut h, &f, 3, 1, now);
+    assert!(!typed(&h).contains(&other));
+    h.revoke_all();
+    assert!(h.bursts.is_empty(), "revoking all ends the burst");
+    let after = deliver(&mut h, &f, 1, 2, now);
+    assert!(!typed(&h).contains(&after), "prompts again");
+    assert_eq!(h.deliveries.get(after).unwrap().state, State::Pending);
+}
+
+#[test]
+fn no_tool_role_or_permission_can_stop_pause_or_kill_a_session() {
+    // 004 T036 (constitution IV): nothing agents can call ends a session, and no squad tool
+    // group or permission action names one.
+    let tools = fallow::orchestration::tools::list();
+    for t in tools.as_array().unwrap() {
+        let name = t["name"].as_str().unwrap();
+        for word in [
+            "stop",
+            "kill",
+            "pause",
+            "exit",
+            "interrupt",
+            "terminate",
+            "merge",
+        ] {
+            assert!(!name.contains(word), "{name}");
+        }
+    }
+    for g in [
+        "board", "events", "deliver", "tasks", "report", "start", "sessions",
+    ] {
+        assert!(fallow::orchestration::squad::Tool::parse(g).is_some());
+    }
+    for g in ["stop", "kill", "pause", "control", "merge"] {
+        assert!(
+            fallow::orchestration::squad::Tool::parse(g).is_none(),
+            "{g}"
+        );
+    }
+    // A permission's actions are delivering, creating tasks and starting sessions: nothing
+    // else exists to grant (the match is exhaustive).
+    use fallow::orchestration::permissions::{Act, Permissions};
+    for a in [Act::Deliver, Act::CreateTask, Act::StartSession] {
+        match a {
+            Act::Deliver | Act::CreateTask | Act::StartSession => {}
+        }
+    }
+    let mut ps = Permissions::default();
+    let mut g = grant(Scope::Project(1), Scope::Project(1), true, 60);
+    g.create_task = true;
+    g.start_limit = Some(3);
+    ps.grant(&g, Instant::now()).unwrap();
+    let label = ps.list[0].actions_label();
+    for word in ["stop", "kill", "pause"] {
+        assert!(!label.contains(word), "{label}");
+    }
+}

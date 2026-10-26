@@ -143,3 +143,21 @@ fn quitting_with_sessions_asks_once_and_lists_them() {
     }
     assert!(s.quit, "quit completes within 5 s of the confirmation");
 }
+
+#[test]
+fn only_fallows_own_gate_sessions_end_without_a_confirmation() {
+    // 004 FR-022 and constitution IV: a gate past its time limit is ended by Fallow; no agent
+    // session can be ended that way, whatever its role.
+    let mut m = SessionManager::default();
+    let a = long_running(&mut m);
+    let e = m.end_gate(a).unwrap_err();
+    assert!(e.contains("not a gate session"), "{e}");
+    assert!(m.get(a).unwrap().state.running());
+    m.get_mut(a).unwrap().role = Some("gate".into());
+    assert!(
+        m.end_gate(a).is_err(),
+        "a role is not enough: only Fallow's gate profile"
+    );
+    m.stop(a, token_for(&stop_subject(a))).unwrap();
+    let _ = m.force_stop(a, token_for(&force_subject(a)));
+}

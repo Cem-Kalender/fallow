@@ -39,3 +39,15 @@ cargo xtask bench-startup         # unchanged; a pending --coordinate burst crea
 ## Results
 
 Filled in during implementation (per OS, with CI run numbers).
+
+### Windows 11, 2026-10-26 (development machine, debug build)
+
+| # | How | Result |
+|---|---|---|
+| Q1 | Manual, Claude Code in FallowSandbox (after US1) | PASS: countdown, `lead`, board note, `whoami` briefing; Claude acted on it and asked for the goal |
+| Q8 | Manual, same run | PASS: "Coordination ended" notice and board note, 0 permissions |
+| Q1–Q3, Q5, Q6 (local merge), Q8 | `cargo xtask squad` (scripted agents) | PASS: no prompt for starts and tasks; builder's start and approval refused; baseline and final gate, an agent's fake gate refused; merge closed until gate, work and review; `m`, `y` merged the gated commit into main; prompts again after `Shift-X` |
+| Q2–Q9 with Claude Code | T041, the engineer at the terminal | open |
+| Q4, Q7 | covered by `tests/squad_roles.rs` and `tests/squad_evidence.rs`; manual run open (T041) | — |
+
+CI (three OSes): "Squads (004 SC-009)" runs `cargo xtask squad`; run numbers to be added.

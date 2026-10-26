@@ -199,6 +199,9 @@ pub struct AppState {
     pub coordinate_offered: Vec<crate::projects::ProjectId>,
     /// 004: read-only worktree checks.
     pub ro_checks: super::orchestration::ReadOnlyChecks,
+    /// 004: bursts and gate runs started in this run (`--bench-stats`).
+    pub bursts_started: u64,
+    pub gates_started: u64,
 }
 
 impl AppState {
@@ -253,6 +256,8 @@ impl AppState {
             pending_coordinate: None,
             coordinate_offered: Vec::new(),
             ro_checks: Default::default(),
+            bursts_started: 0,
+            gates_started: 0,
         }
     }
 

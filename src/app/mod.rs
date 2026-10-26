@@ -39,6 +39,9 @@ pub struct RunStats {
     pub copies: u64,
     /// Sessions started (002 loaded-memory evidence, T037).
     pub sessions: u64,
+    /// Coordination bursts and gate runs started (004 SC-008 evidence, T038).
+    pub bursts: u64,
+    pub gates: u64,
 }
 
 /// `--all-users` takes effect only when Fallow already runs elevated (FR-031).
@@ -72,6 +75,8 @@ pub fn run(opts: &Options) -> (ExitCode, RunStats) {
         searches: 0,
         copies: 0,
         sessions: 0,
+        bursts: 0,
+        gates: 0,
     };
     let paths = ConfigPaths::resolve(opts.config_dir.as_deref());
     if opts.print_config_paths {
@@ -180,6 +185,8 @@ pub fn run(opts: &Options) -> (ExitCode, RunStats) {
     stats.searches = state.searches;
     stats.copies = state.clipboard.copies;
     stats.sessions = state.sessions.started;
+    stats.bursts = state.bursts_started;
+    stats.gates = state.gates_started;
     match result {
         Ok(()) => (ExitCode::SUCCESS, stats),
         Err(e) => {

@@ -9,7 +9,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use fallow::app::commands::{COMMANDS, Context, find};
 use fallow::app::keymap::lookup;
 use fallow::session::keys::LeaveKey;
-use fallow::ui::help::{CONFLICTS, CONFLICTS_002, CONFLICTS_003};
+use fallow::ui::help::{CONFLICTS, CONFLICTS_002, CONFLICTS_003, CONFLICTS_004};
 use fallow::ui::palette;
 
 fn parse_key(s: &str) -> KeyEvent {
@@ -231,6 +231,12 @@ const CONTRACT: &[(Context, &str, &str)] = &[
     (Context::Orchestration, "↓", "orch.down"),
     (Context::Orchestration, "PgUp", "orch.page_up"),
     (Context::Orchestration, "PgDn", "orch.page_down"),
+    // 004: the Squad tab (contracts/ui-commands.md "Commands")
+    (Context::Orchestration, "+", "orch.extend"),
+    (Context::Orchestration, "Shift-L", "orch.make_lead"),
+    (Context::Orchestration, "m", "orch.merge"),
+    (Context::Orchestration, "r", "orch.repair_again"),
+    (Context::Orchestration, "t", "orch.take_over"),
 ];
 
 /// Contexts that are text inputs (FR-066: `?` is text there).
@@ -330,6 +336,17 @@ fn every_003_key_in_the_conflicts_table_is_bound() {
             let hit = contexts
                 .iter()
                 .find_map(|c| lookup(&ev, *c, false).filter(|id| find(id).is_some()));
+            assert!(hit.is_some(), "{key:?} maps to no command");
+        }
+    }
+}
+
+#[test]
+fn every_004_key_in_the_conflicts_table_is_bound() {
+    for row in CONFLICTS_004 {
+        for key in expand(row[0]) {
+            let ev = parse_key(&key);
+            let hit = lookup(&ev, Context::Orchestration, false).filter(|id| find(id).is_some());
             assert!(hit.is_some(), "{key:?} maps to no command");
         }
     }

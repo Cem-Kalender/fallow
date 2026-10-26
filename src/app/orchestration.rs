@@ -390,6 +390,9 @@ impl AppState {
                 }
             };
             let result = self.start_gate_session(&job, cwd);
+            if result.is_ok() {
+                self.gates_started += 1;
+            }
             if result.is_err() {
                 if let Some(d) = &dir {
                     let _ = crate::session::worktree::remove_temporary(&path, d);
@@ -1416,7 +1419,7 @@ fn spec_kit_installer(style: Style) -> String {
         Style::Claude | Style::None => "claude",
     };
     format!(
-        "The user agreed to set up Spec Kit in this project for the coordination burst. Run its official installer here: `uvx --from git+https://github.com/github/spec-kit.git specify init --here --force --non-interactive --integration {integration}` (check first that uv is installed with `uv --version`; if it is missing, ask the user how to proceed instead of installing it). Then commit the files it added and post on the board that Spec Kit is set up."
+        "The user agreed to set up Spec Kit in this project for the coordination burst. Run its official installer here: `uvx --from git+https://github.com/github/spec-kit.git specify init --here --force --integration {integration}` (check first that uv is installed with `uv --version`; if it is missing, ask the user how to proceed instead of installing it; if the installer asks a question, ask the user). Then commit the files it added and post on the board that Spec Kit is set up."
     )
 }
 
@@ -1540,6 +1543,7 @@ impl AppState {
         };
         let now = Instant::now();
         hub.start_burst(&view, request, now)?;
+        self.bursts_started += 1;
         if setup_spec_kit {
             hub.request_delivery(
                 &view,

@@ -208,8 +208,13 @@ It covers:
    particular M1 (Claude Code connects through `--mcp-config` and asks no tool permission), M5
    (a delivery is typed as one bracketed paste with its label) and M13 (no socket is left in
    `~/Library/Caches/fallow/run` after quit).
+7. **004 agent squads** (added by 004 T039), with Claude Code signed in: quickstart Q1–Q9 of
+   `specs/004-agent-squads/quickstart.md`, in particular Q4 (a read-only reviewer on Claude Code
+   cannot edit, and a change made by hand in its worktree is reported), Q5 (the gate session
+   runs through the user's shell and Fallow signals its result) and Q6 (local merge of exactly
+   the gated commit after `m`).
 
-The "beta" label is removed only when all five pass **and** the results are recorded in
+The "beta" label is removed only when all of them pass **and** the results are recorded in
 research.md (R-11 for item 1, R-2 for item 2, a new "macOS hardware verification" entry for items
 3 and 4).
 

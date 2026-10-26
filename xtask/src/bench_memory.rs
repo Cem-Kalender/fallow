@@ -136,10 +136,14 @@ pub fn run(args: &[String]) -> i32 {
     if let Some(fixture) = &a.loaded {
         if let Err(e) = write_flood_profile(&config_dir)
             .and_then(|()| crate::pty::no_coordinate_offer(&config_dir, fixture))
+            .and_then(|()| squad_repo(fixture))
         {
             eprintln!("bench-memory: INVALID: {e}");
             return 2;
         }
+        // 004 SC-008: the four sessions run in a coordination burst whose first session is the
+        // lead; its baseline gate runs as a fifth (command) session.
+        args.extend(["--coordinate", "1h"]);
     } else if let Err(e) = crate::projects::write(&config_dir, crate::projects::COUNT) {
         // Idle profile: 50 remembered projects and no session (002 FR-029).
         eprintln!("bench-memory: INVALID: {e}");
@@ -200,6 +204,9 @@ pub fn run(args: &[String]) -> i32 {
     }
     let outcome = s.finish();
     let _ = std::fs::remove_dir_all(&config_dir);
+    if let Some(fixture) = &a.loaded {
+        remove_squad_repo(fixture);
+    }
 
     let mut csv = String::from("second,rss_bytes\n");
     for (sec, b) in &samples {
@@ -225,9 +232,15 @@ pub fn run(args: &[String]) -> i32 {
         let field = |k| pty::stat_field(&outcome.stats_line, k).unwrap_or(0);
         let (buffers, searches, copies) = (field("buffers"), field("searches"), field("copies"));
         let sessions = field("sessions");
+        let (bursts, gates) = (field("bursts"), field("gates"));
         println!(
-            "loaded evidence: buffers={buffers} searches={searches} copies={copies} sessions={sessions}"
+            "loaded evidence: buffers={buffers} searches={searches} copies={copies} sessions={sessions} bursts={bursts} gates={gates}"
         );
+        if bursts < 1 || gates < 1 {
+            problems.push(format!(
+                "{bursts} bursts and {gates} gate runs, need a burst with a gate (004 SC-008)"
+            ));
+        }
         if sessions < SESSIONS {
             problems.push(format!("{sessions} sessions started, need {SESSIONS}"));
         }
@@ -398,6 +411,56 @@ fn script(s: &mut Session, start: Instant, samples: &mut Vec<(u64, u64)>) -> Res
         wait(s, Duration::from_millis(500), start, samples);
     }
     Ok(())
+}
+
+/// The squad the loaded run coordinates with: a baseline gate printing 20,000 lines.
+const SQUAD: &str = r#"[[gate]]
+name = "bench"
+command = "seq 1 20000 | sed 's/^/gate output line /'"
+windows = "1..20000 | ForEach-Object { \"gate output line $_\" }"
+baseline = true
+"#;
+
+/// Makes the fixture a git repository whose one commit holds only the squad file, so that the
+/// burst has a starting commit for its baseline gate (the fixture's own files stay untracked).
+fn squad_repo(fixture: &std::path::Path) -> Result<(), String> {
+    let git = |args: &[&str]| -> Result<(), String> {
+        let o = std::process::Command::new("git")
+            .current_dir(fixture)
+            .args([
+                "-c",
+                "user.name=bench",
+                "-c",
+                "user.email=bench@example.com",
+            ])
+            .args(args)
+            .output()
+            .map_err(|e| format!("git: {e}"))?;
+        if o.status.success() {
+            Ok(())
+        } else {
+            Err(format!(
+                "git {args:?}: {}",
+                String::from_utf8_lossy(&o.stderr).trim()
+            ))
+        }
+    };
+    remove_squad_repo(fixture);
+    std::fs::create_dir_all(fixture.join(".fallow")).map_err(|e| e.to_string())?;
+    std::fs::write(fixture.join(".fallow").join("squad.toml"), SQUAD).map_err(|e| e.to_string())?;
+    git(&["init", "-q"])?;
+    git(&["add", ".fallow"])?;
+    git(&["commit", "-q", "-m", "bench squad"])
+}
+
+/// Leaves the fixture as it was generated.
+fn remove_squad_repo(fixture: &std::path::Path) {
+    let _ = std::fs::remove_dir_all(fixture.join(".git"));
+    let _ = std::fs::remove_dir_all(fixture.join(".fallow"));
+    if let (Some(parent), Some(name)) = (fixture.parent(), fixture.file_name()) {
+        let _ =
+            std::fs::remove_dir_all(parent.join(format!("{}.worktrees", name.to_string_lossy())));
+    }
 }
 
 /// Sessions the loaded profile starts (FR-029: 4 with full scrollback).

@@ -88,11 +88,14 @@ fn attempt(args: &Args, n: usize, config: &str) -> Verdict {
     let mut times = Vec::with_capacity(RUNS);
     for i in 0..WARMUPS + RUNS {
         let warmup = i < WARMUPS;
-        let mut s = match Session::spawn(
-            &args.bin,
-            &["--config-dir", config],
-            Duration::from_secs(3600),
-        ) {
+        // 004 T038: every other run waits to coordinate; that must create nothing before the
+        // first session (constitution II), so the first frame stays as fast.
+        let coordinate = i % 2 == 1;
+        let mut argv = vec!["--config-dir", config];
+        if coordinate {
+            argv.extend(["--coordinate", "1h"]);
+        }
+        let mut s = match Session::spawn(&args.bin, &argv, Duration::from_secs(3600)) {
             Ok(s) => s,
             Err(e) => {
                 eprintln!("bench-startup: {e}");
@@ -114,6 +117,14 @@ fn attempt(args: &Args, n: usize, config: &str) -> Verdict {
         let Some(t) = frame else {
             return Verdict::Invalid;
         };
+        if coordinate && crate::pty::stat_field(&outcome.stats_line, "bursts") != Some(0) {
+            eprintln!(
+                "bench-startup: run {} INVALID: --coordinate created a burst before any session ({})",
+                i + 1,
+                outcome.stats_line.trim()
+            );
+            return Verdict::Invalid;
+        }
         if !warmup {
             times.push(ms(t));
         }

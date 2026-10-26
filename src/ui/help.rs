@@ -72,6 +72,14 @@ pub const NOTES: &[(&str, &str)] = &[
         "Agents in Fallow sessions get tools to post on a board, signal and wait for events, ask Fallow to type a message into another session, queue tasks, and ask for new sessions. Nothing is typed into a session and nothing starts unless you approve it in the orchestration view (`o`), or a standing permission you granted covers it: one source, one target, chosen actions, at most 8 hours, revocable at once (`Shift-X` revokes all). No tool and no permission can stop, pause or kill a session. Everything stays in memory and is gone when Fallow quits.",
     ),
     (
+        "Coordination and squads",
+        "Coordinate this project (palette, or the offer when a project's first session starts) lets its agents work together for up to 8 hours: the session you start it from is the lead, and agents deliver, create tasks and start up to the allowed number of sessions without asking. A squad (`.fallow/squad.toml` in the project, or the built-in one) declares the roles, the gates Fallow runs itself, and the merge conditions. Fallow briefs each session for its role. Gates are command sessions; only Fallow signals their results. Done reports carry evidence Fallow checks. Failures go back to the owner of the part up to the repair cap, then to you. No agent merges: with a remote the lead opens a draft pull request; without one you press `m` in the Squad tab and Fallow merges exactly the gated commit. `Shift-X` ends coordination at once.",
+    ),
+    (
+        "Roles and their limits",
+        "A role's level (read-only, edit, edit-run) becomes the agent's own permission flags; the agent CLI enforces them, not Fallow. Fallow enforces what it controls: each role sees and may call only its tools, may signal only its events, and is fixed for the session's life. For read-only roles Fallow checks the outcome: if the worktree changes, you are told and the session's signals and verdicts stop counting. Flags that skip an agent's own checks need your confirmation. An agent with no flags for a level cannot take that role (give them in the squad as `[role.flags]`).",
+    ),
+    (
         "Connecting other agents",
         "Claude Code, Codex CLI and Gemini CLI are connected for each run without changing their own settings. For a profile of your own that runs one of them, add `orchestration = \"claude\"` (or `\"codex\"`, `\"gemini\"`) to it in profiles.toml. Aider has no tool support; Gemini is not connected when an administrator's system settings file exists. The session list says `no orchestration` and why.",
     ),
@@ -264,6 +272,25 @@ pub const CONFLICTS_003: &[[&str; 5]] = &[
     ],
 ];
 
+/// 004: keys of the Squad tab (contracts/ui-commands.md "Commands").
+pub const CONFLICTS_004: &[[&str; 5]] = &[
+    ["+", "free", "free", "free", "n/a (orchestration view)"],
+    [
+        "Shift-L",
+        "free",
+        "free",
+        "free",
+        "n/a (orchestration view)",
+    ],
+    [
+        "m, r, t",
+        "free",
+        "free",
+        "free",
+        "n/a (orchestration view)",
+    ],
+];
+
 pub const CONFLICTS_STATUS: &str = "Windows Terminal: verified against its published defaults.json. Terminal.app and iTerm2: checked against documented defaults; to be confirmed in the macOS hardware run-through.";
 
 /// The overlay's text.
@@ -331,6 +358,9 @@ pub fn lines() -> Vec<Line<'static>> {
         dim,
     ));
     for [k, wt, ta, it, ag] in CONFLICTS_003 {
+        out.push(Line::raw(format!("  {k:<17}{wt:<40}{ta:<50}{it:<16}{ag}")));
+    }
+    for [k, wt, ta, it, ag] in CONFLICTS_004 {
         out.push(Line::raw(format!("  {k:<17}{wt:<40}{ta:<50}{it:<16}{ag}")));
     }
     out

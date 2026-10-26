@@ -285,17 +285,17 @@ squad, US4–US6 add gates, evidence and publishing to the squad.
 
 ## Phase 9: Polish & Cross-Cutting Concerns
 
-- [ ] T036 [P] Extend 003's gate and control tests in `tests/orch_gate.rs`:
+- [X] T036 [P] Extend 003's gate and control tests in `tests/orch_gate.rs`:
   - every burst path still needs the permission;
   - a revoked burst prompts again;
   - no tool, role or permission can stop, pause or kill a session;
   - no merge task is ever handed to an agent (constitution quality gate).
-- [ ] T037 [P] Update `src/ui/help.rs`: "Coordination and squads", "Roles and their limits" (read-only depends on the agent CLI; Fallow checks the outcome), and conflict rows for `+`, `L`, `m`, `r`, `t`. Update `tests/keymap_conflicts.rs`.
-- [ ] T038 [P] Extend `xtask/src/bench_memory.rs`: `--loaded` runs a burst of 4 sessions plus a gate (SC-008). Check that `bench-startup` with `--coordinate` creates nothing before the first frame.
-- [ ] T039 [P] Update the docs:
+- [X] T037 [P] Update `src/ui/help.rs`: "Coordination and squads", "Roles and their limits" (read-only depends on the agent CLI; Fallow checks the outcome), and conflict rows for `+`, `L`, `m`, `r`, `t`. Update `tests/keymap_conflicts.rs`.
+- [X] T038 [P] Extend `xtask/src/bench_memory.rs`: `--loaded` runs a burst of 4 sessions plus a gate (SC-008). Check that `bench-startup` with `--coordinate` creates nothing before the first frame.
+- [X] T039 [P] Update the docs:
   - `README.md`: coordination mode, squads, the squad file, roles and levels, publishing, known gaps (Gemini edit-run needs flags; Codex has no "ask before every command");
   - `specs/001-llm-aware-tui-editor/plan.md`: release checklist item 7, 004 Q1–Q9 on macOS.
-- [ ] T040 Resolve the research verify items and record them in `specs/004-agent-squads/research.md`:
+- [X] T040 Resolve the research verify items and record them in `specs/004-agent-squads/research.md`:
   - Codex flags on the installed version, and a `codex --version` check when roles resolve;
   - the `uvx` form of the Spec Kit command.
 - [ ] T041 Run quickstart Q1–Q9 on Windows with Claude Code and record the results in `specs/004-agent-squads/quickstart.md`. Needs the engineer at the terminal.
