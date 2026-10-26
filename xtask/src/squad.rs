@@ -75,21 +75,72 @@ fn pause(ms: u64) {
     std::thread::sleep(Duration::from_millis(ms));
 }
 
+/// The squad the harness's project declares: a gate that passes unless `gate.fail` exists, and
+/// a merge that needs the gate, the builder's work and a review.
+const SQUAD: &str = r#"name = "harness"
+[[gate]]
+name = "tests"
+command = "test ! -f gate.fail"
+windows = "if (Test-Path gate.fail) { exit 1 }"
+timeout_min = 5
+baseline = true
+
+[merge]
+requires = ["gate:tests", "done:builder", "signal:review-approved@reviewer"]
+"#;
+
+fn git(dir: &Path, args: &[&str]) -> Result<(), String> {
+    let out = std::process::Command::new("git")
+        .current_dir(dir)
+        .args([
+            "-c",
+            "user.name=harness",
+            "-c",
+            "user.email=harness@example.com",
+        ])
+        .args(args)
+        .output()
+        .map_err(|e| format!("git: {e}"))?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        ))
+    }
+}
+
+/// A git project with the squad file, committed (the burst's starting commit).
+fn make_project(project: &Path) -> Result<(), String> {
+    git(project, &["init", "-q", "-b", "main"])?;
+    std::fs::create_dir_all(project.join(".fallow")).map_err(|e| e.to_string())?;
+    std::fs::write(project.join(".fallow").join("squad.toml"), SQUAD).map_err(|e| e.to_string())?;
+    std::fs::write(project.join("README.md"), "harness\n").map_err(|e| e.to_string())?;
+    git(project, &["add", "."])?;
+    git(project, &["commit", "-q", "-m", "start"])
+}
+
 fn run_all(bin: &Path, base: &Path) -> Result<i32, String> {
     let config = base.join("config");
     let project = base.join("project");
     for d in [&config, &project] {
         std::fs::create_dir_all(d).map_err(|e| format!("{}: {e}", d.display()))?;
     }
+    make_project(&project)?;
     let me = std::env::current_exe().map_err(|e| e.to_string())?;
     let f = |name: &str| base.join(name).display().to_string();
     // The lead waits for the harness's files instead of typed lines: Fallow types its own
     // "coordination started" message into the lead.
+    // It tries to fake the gate (SC-004), then waits for Fallow's own gate signal.
     let lead = format!(
-        "print lead-ready\nuntil-file {}\ncall whoami {{}}\nwrite {}\ncall session_start {{\"profile\":\"b\",\"project\":\"project\",\"first_task\":\"zz-build-the-page\",\"role\":\"builder\"}}\nwrite {}\nsleep 15000\ncall inbox {{}}\nwrite {}\ncall squad_status {{}}\nwrite {}\nuntil-file {}\ncall deliver {{\"session\":2,\"text\":\"zz-after-end\"}}\nwrite {}\nprint lead-done\n",
+        "print lead-ready\nuntil-file {}\ncall whoami {{}}\nwrite {}\ncall event_signal {{\"name\":\"gate-tests-passed\"}}\nwrite {}\ncall session_start {{\"profile\":\"b\",\"project\":\"project\",\"first_task\":\"zz-build-the-page\",\"role\":\"builder\"}}\nwrite {}\ncall squad_status {{}}\nwrite {}\nwait-loop gate-tests-passed 180 {}\ncall inbox {{}}\nwrite {}\ncall squad_status {{}}\nwrite {}\nuntil-file {}\ncall deliver {{\"session\":3,\"text\":\"zz-after-end\"}}\nwrite {}\nprint lead-done\n",
         f("go"),
         f("lead-whoami"),
+        f("lead-gate"),
         f("lead-start"),
+        f("lead-status-early"),
+        f("lead-gate-wait"),
         f("lead-inbox"),
         f("lead-status"),
         f("ended"),
@@ -148,14 +199,15 @@ fn run_all(bin: &Path, base: &Path) -> Result<i32, String> {
         s.send(b"\r");
         s.seen(Duration::from_secs(10))
             .ok_or("the coordination dialog never opened")?;
-        s.expect(b"Coordinating");
+        // The countdown shows once the start notices have gone.
+        s.expect(b"coordinating");
         s.send(b"\r");
-        s.seen(Duration::from_secs(10))
+        s.seen(Duration::from_secs(30))
             .ok_or("no countdown in the hint bar")?;
         std::fs::write(base.join("go"), "go").map_err(|e| e.to_string())?;
         // The builder gets its task and reports it; the lead reads its inbox.
-        wait_for(&base.join("b-tasks"), "done", Duration::from_secs(60));
-        wait_for(&base.join("lead-status"), "{", Duration::from_secs(60));
+        wait_for(&base.join("b-tasks"), "done", Duration::from_secs(90));
+        wait_for(&base.join("lead-status"), "{", Duration::from_secs(200));
         // Shift-X in the orchestration view ends the burst.
         s.send(b"o");
         pause(500);
@@ -172,6 +224,9 @@ fn run_all(bin: &Path, base: &Path) -> Result<i32, String> {
     let b_tasks = std::fs::read_to_string(base.join("b-tasks")).unwrap_or_default();
     let after = wait_for(&base.join("lead-after"), "{", Duration::from_secs(30));
     let status = std::fs::read_to_string(base.join("lead-status")).unwrap_or_default();
+    let early = std::fs::read_to_string(base.join("lead-status-early")).unwrap_or_default();
+    let fake_gate = std::fs::read_to_string(base.join("lead-gate")).unwrap_or_default();
+    let gate_wait = std::fs::read_to_string(base.join("lead-gate-wait")).unwrap_or_default();
     let b_whoami = std::fs::read_to_string(base.join("b-whoami")).unwrap_or_default();
     let b_start = std::fs::read_to_string(base.join("b-start")).unwrap_or_default();
     let b_signal = std::fs::read_to_string(base.join("b-signal")).unwrap_or_default();
@@ -190,7 +245,8 @@ fn run_all(bin: &Path, base: &Path) -> Result<i32, String> {
     }
     let role_ok = whoami.contains("\"role\":\"lead\"") && whoami.contains("\"briefing\"");
     // Covered by the burst: the start is not pending, it happened, and its task was handed over.
-    let start_ok = !start.contains("pending") && inbox.contains("started as #2");
+    // The baseline gate is #2 (it starts with the burst), so the builder is #3.
+    let start_ok = !start.contains("pending") && inbox.contains("started as #3");
     let task_ok = b_tasks.trim() == "T1 done";
     // After the burst: the delivery waits for the engineer again.
     let ended_ok = after.contains("pending");
@@ -199,14 +255,22 @@ fn run_all(bin: &Path, base: &Path) -> Result<i32, String> {
         && b_start.contains("not_allowed")
         && b_signal.contains("not_allowed");
     // US3: the builder's work is done, but without a review the merge stays closed (SC-003).
-    let closed_ok = status.contains("\"ready\":false")
+    let closed_ok = early.contains("\"ready\":false")
+        && status.contains("\"ready\":false")
         && status.contains("\"condition\":\"done:builder\",\"met\":true")
+        && status.contains("\"condition\":\"gate:tests\",\"met\":true")
         && status.contains("\"condition\":\"signal:review-approved@reviewer\",\"met\":false");
-    let pass = role_ok && start_ok && task_ok && ended_ok && refusals_ok && closed_ok;
+    // US4: an agent cannot signal the gate; the baseline ran, then the final run, which Fallow
+    // classified and signalled itself (SC-004).
+    let gate_ok = fake_gate.contains("not_allowed")
+        && gate_wait.contains("status=signalled")
+        && status.contains("\"kind\":\"baseline\"")
+        && status.contains("\"class\":\"pass\"");
+    let pass = role_ok && start_ok && task_ok && ended_ok && refusals_ok && closed_ok && gate_ok;
     let result = if pass { "PASS" } else { "FAIL" };
     let ok = |b: bool| if b { "ok" } else { "WRONG" };
     println!(
-        "os={} role={} start={} task={} after_end={} builder_refusals={} merge_closed={} result={result}",
+        "os={} role={} start={} task={} after_end={} builder_refusals={} merge_closed={} gate={} result={result}",
         std::env::consts::OS,
         ok(role_ok),
         ok(start_ok),
@@ -214,14 +278,15 @@ fn run_all(bin: &Path, base: &Path) -> Result<i32, String> {
         ok(ended_ok),
         ok(refusals_ok),
         ok(closed_ok),
+        ok(gate_ok),
     );
     if !pass {
         println!(
-            "whoami: {whoami:?}\nstart: {start:?}\ninbox: {inbox:?}\nbuilder: {b_tasks:?}\nafter: {after:?}\nbuilder whoami: {b_whoami:?}\nbuilder start: {b_start:?}\nbuilder signal: {b_signal:?}\nsquad status: {status:?}"
+            "whoami: {whoami:?}\nstart: {start:?}\ninbox: {inbox:?}\nbuilder: {b_tasks:?}\nafter: {after:?}\nbuilder whoami: {b_whoami:?}\nbuilder start: {b_start:?}\nbuilder signal: {b_signal:?}\nsquad status: {status:?}\nearly status: {early:?}\nfake gate: {fake_gate:?}\ngate wait: {gate_wait:?}"
         );
     }
     pty::step_summary(&format!(
-        "### Squads ({})\n\n| check | result | expected |\n|---|---|---|\n| the lead's whoami: role and briefing | {} | lead, briefing |\n| the lead starts a builder with a first task | {} | no prompt, started |\n| the builder receives the task and reports it | {} | T1 done |\n| a delivery after Shift-X | {} | pending again |\n| a builder's session_start and review-approved | {} | refused (SC-002) |\n| merge without a review | {} | closed (SC-003) |\n\n**{result}**\n",
+        "### Squads ({})\n\n| check | result | expected |\n|---|---|---|\n| the lead's whoami: role and briefing | {} | lead, briefing |\n| the lead starts a builder with a first task | {} | no prompt, started |\n| the builder receives the task and reports it | {} | T1 done |\n| a delivery after Shift-X | {} | pending again |\n| a builder's session_start and review-approved | {} | refused (SC-002) |\n| merge without a review | {} | closed (SC-003) |\n| gate: baseline, final, Fallow's signal; an agent's refused | {} | pass (SC-004) |\n\n**{result}**\n",
         std::env::consts::OS,
         ok(role_ok),
         ok(start_ok),
@@ -229,6 +294,7 @@ fn run_all(bin: &Path, base: &Path) -> Result<i32, String> {
         ok(ended_ok),
         ok(refusals_ok),
         ok(closed_ok),
+        ok(gate_ok),
     ));
     Ok(if pass { 0 } else { 1 })
 }

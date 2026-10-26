@@ -153,6 +153,8 @@ fn gate_run(state: RunState, class: Option<Class>, now: Instant) -> GateRun {
         class,
         started: now,
         deadline: now + Duration::from_secs(60),
+        after_tasks: 0,
+        dir: None,
     }
 }
 

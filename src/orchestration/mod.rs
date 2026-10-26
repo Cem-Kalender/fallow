@@ -312,6 +312,8 @@ pub struct Hub {
     pub bursts: Vec<burst::Burst>,
     /// Read-only sessions to check now (they signalled; FR-013). The app drains it.
     pub check_worktrees: Vec<u32>,
+    /// Gate sessions past their time limit, for the app to end (004 FR-022).
+    pub end_gates: Vec<u32>,
     next_start: u64,
 }
 
@@ -399,6 +401,7 @@ impl Hub {
             starts: Vec::new(),
             bursts: Vec::new(),
             check_worktrees: Vec::new(),
+            end_gates: Vec::new(),
             next_start: 0,
             settings,
             channel: None,
@@ -1181,6 +1184,10 @@ impl Hub {
             let Some(to) = pick else {
                 continue;
             };
+            // Builders begin after the baseline gate ran (004 FR-021).
+            if self.held_for_baseline(to) {
+                continue;
+            }
             let by_user = t.created_by == Party::User || t.approved_handover;
             if let Ok((did, _)) = self.request_delivery(
                 sessions,
@@ -1464,6 +1471,7 @@ impl Hub {
     pub fn tick(&mut self, sessions: &dyn Sessions, now: Instant) -> bool {
         let _ = sessions;
         let mut changed = self.tick_bursts(now);
+        changed |= self.tick_gates(now);
         for (w, end) in self.events.due(now) {
             changed = true;
             let reply = match end {

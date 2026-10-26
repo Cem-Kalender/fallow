@@ -205,21 +205,21 @@ squad, US4–US6 add gates, evidence and publishing to the squad.
 
 **Independent Test**: with a baseline that fails, a final run with the same failures is "baseline only" and one with a new failure is "regression".
 
-- [ ] T025 [P] [US4] Write `tests/squad_gates.rs`:
+- [X] T025 [P] [US4] Write `tests/squad_gates.rs`:
   - Failure names (research R-5): from cargo, pytest, Jest/Vitest, Go and .NET output samples; `regex` with one capture group; `exit-code`.
   - The classification table: Pass, BaselineOnly, Regression, Fail without names or baseline.
   - Gate behaviour:
     - `timeout_min` reached means failed "timed out";
     - the per-OS override chosen for the running OS;
     - `gate-*` events signalled only by `Party::Fallow` (SC-004).
-- [ ] T026 [US4] Implement `src/orchestration/gates.rs`: gate runs, failure-name extraction from a session's scrollback text, classification, time limits.
-- [ ] T027 [US4] Run gates in `src/app/orchestration.rs` (research R-6).
+- [X] T026 [US4] Implement `src/orchestration/gates.rs`: gate runs, failure-name extraction from a session's scrollback text, classification, time limits.
+- [X] T027 [US4] Run gates in `src/app/orchestration.rs` (research R-6).
   - Baseline: in a temporary worktree at `start_commit` before builders' tasks are handed over (builders' first tasks wait for it), removed afterwards.
   - Final: in the lead's worktree when every task handed to a builder is reported done.
   - Both are command sessions through the shell profile, with role `gate`. They count against `sessions.max_sessions`, not the allowance.
   - On `SessionExited`, Fallow signals `gate-<name>-passed/-failed` as `Party::Fallow` and records the classification.
   - The Squad tab shows the runs.
-- [ ] T028 [US4] Extend `cargo xtask squad` with a gate whose command passes or fails on a marker file: baseline recorded before the builder's task, final classified, and an agent's attempt to signal `gate-tests-passed` refused.
+- [X] T028 [US4] Extend `cargo xtask squad` with a gate whose command passes or fails on a marker file: baseline recorded before the builder's task, final classified, and an agent's attempt to signal `gate-tests-passed` refused.
 
 **Checkpoint**: quickstart Q5 passes.
 

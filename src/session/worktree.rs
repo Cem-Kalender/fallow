@@ -170,6 +170,35 @@ pub fn create(project: &Path, branch: &str, root: Option<&Path>) -> Result<Workt
     }
 }
 
+/// A temporary worktree at `commit`, detached, for a baseline gate run (004 research R-6).
+pub fn create_detached(
+    project: &Path,
+    commit: &str,
+    root: Option<&Path>,
+    name: &str,
+) -> Result<PathBuf, String> {
+    let path = worktree_dir(project, root, name);
+    if path.exists() {
+        let _ = remove_temporary(project, &path);
+    }
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
+    }
+    let p = path.display().to_string();
+    git(project, &["worktree", "add", "--detach", &p, commit])?;
+    Ok(path)
+}
+
+/// Removes a temporary worktree Fallow created itself (a baseline run's), with whatever the
+/// run left in it.
+pub fn remove_temporary(project: &Path, path: &Path) -> Result<(), String> {
+    git(
+        project,
+        &["worktree", "remove", "--force", &path.display().to_string()],
+    )
+    .map(|_| ())
+}
+
 /// True when the worktree has no uncommitted changes and no untracked files.
 pub fn is_clean(path: &Path) -> Result<bool, String> {
     let s = git(path, &["status", "--porcelain", "--untracked-files=normal"])?;

@@ -681,6 +681,21 @@ impl SessionManager {
         Ok(())
     }
 
+    /// Ends a gate session that ran past its time limit (004 FR-022). Gate sessions are command
+    /// sessions Fallow starts itself; this refuses every other session, so no agent is ever
+    /// stopped without the engineer's confirmation (constitution IV).
+    pub fn end_gate(&mut self, id: SessionId) -> Result<(), String> {
+        let s = self.get_mut(id).ok_or("no such session")?;
+        if s.profile.id != crate::orchestration::gates::GATE_PROFILE
+            || s.profile.orchestration != profiles::Style::None
+        {
+            return Err("not a gate session".into());
+        }
+        let p = s.pty.as_mut().ok_or("the session is not running")?;
+        p.kill();
+        Ok(())
+    }
+
     /// Quit confirmed: graceful stop of every running session (one confirmation covers all,
     /// spec Edge Cases).
     pub fn stop_all_confirmed(&mut self, token: ConfirmedToken) {

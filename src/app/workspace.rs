@@ -1036,13 +1036,43 @@ impl AppState {
     }
 
     /// Asks procmon to track a session's agent (R-8).
-    fn track(&self, id: SessionId) {
+    pub(super) fn track(&self, id: SessionId) {
         if let (Some(tx), Some(pid)) = (&self.requests, self.sessions.get(id).and_then(|s| s.pid)) {
             let _ = tx.send(crate::procmon::worker::Request::Track { pid, session: id });
         }
     }
 
     pub fn session_exited(&mut self, id: SessionId, code: Option<u32>) -> bool {
+        // A gate session's exit status decides the gate (004 FR-020); its output names the
+        // failing checks, read from memory.
+        let output = self
+            .hub
+            .as_ref()
+            .filter(|h| h.role_of(id) == Some(crate::orchestration::gates::GATE_ROLE))
+            .and_then(|_| self.sessions.get(id))
+            .and_then(|s| {
+                s.term.lock().ok().map(|mut t| {
+                    let n = t.total_lines();
+                    (0..n)
+                        .map(|v| t.line_text(v))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                })
+            });
+        if let (Some(hub), Some(text)) = (self.hub.as_mut(), output) {
+            let exit = code.map(|c| c as i32);
+            if let Some(run) = hub.gate_finished(id, exit, &text) {
+                if let (Some(d), Some(p)) = (
+                    run.dir,
+                    self.sessions
+                        .get(id)
+                        .and_then(|s| self.projects.get(s.project)),
+                ) {
+                    let _ = crate::session::worktree::remove_temporary(&p.path, &d);
+                }
+            }
+            self.take_hub_notices();
+        }
         if let Some(hub) = self.hub.as_mut() {
             hub.session_ended(id);
         }

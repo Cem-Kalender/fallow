@@ -225,6 +225,7 @@ impl AppState {
         }
         changed |= self.carry_out_starts();
         changed |= self.check_read_only();
+        changed |= self.run_gates();
         changed |= self.type_deliveries();
         self.take_hub_notices();
         changed
@@ -309,6 +310,117 @@ impl AppState {
         changed
     }
 
+    /// Starts due gate runs and ends timed-out ones (004 research R-6). Gate sessions take no
+    /// focus and count against `sessions.max_sessions`.
+    fn run_gates(&mut self) -> bool {
+        let Some(hub) = self.hub.as_mut() else {
+            return false;
+        };
+        let mut changed = false;
+        for id in std::mem::take(&mut hub.end_gates) {
+            let _ = self.sessions.end_gate(id);
+            changed = true;
+        }
+        let jobs = hub.gates_due();
+        for job in jobs {
+            let Some(path) = self.projects.get(job.project).map(|p| p.path.clone()) else {
+                continue;
+            };
+            let root = self.sessions.limits.worktree_root.clone();
+            let (cwd, commit, dir) = match job.kind {
+                crate::orchestration::gates::Kind::Baseline => {
+                    let commit = job.commit.clone().unwrap_or_default();
+                    let name = format!(
+                        "fallow-gate-{}-baseline-{}",
+                        job.gate.name,
+                        std::process::id()
+                    );
+                    match crate::session::worktree::create_detached(
+                        &path,
+                        &commit,
+                        root.as_deref(),
+                        &name,
+                    ) {
+                        Ok(d) => (d.clone(), Some(commit), Some(d)),
+                        Err(e) => {
+                            if let Some(h) = self.hub.as_mut() {
+                                h.gate_started(&job, Err(e), Some(commit), None, Instant::now());
+                            }
+                            changed = true;
+                            continue;
+                        }
+                    }
+                }
+                crate::orchestration::gates::Kind::Final => {
+                    let cwd = self
+                        .sessions
+                        .get(job.lead)
+                        .map_or(path.clone(), |s| s.cwd.clone());
+                    let commit = git::head(&cwd).ok();
+                    (cwd, commit, None)
+                }
+            };
+            let result = self.start_gate_session(&job, cwd);
+            if result.is_err() {
+                if let Some(d) = &dir {
+                    let _ = crate::session::worktree::remove_temporary(&path, d);
+                }
+            }
+            let dir = if result.is_ok() { dir } else { None };
+            if let Some(h) = self.hub.as_mut() {
+                h.gate_started(&job, result, commit, dir, Instant::now());
+            }
+            changed = true;
+        }
+        if changed {
+            self.take_hub_notices();
+        }
+        changed
+    }
+
+    /// Starts the command session for a gate run: the shell with the gate's command for this
+    /// OS, no orchestration, no focus.
+    fn start_gate_session(
+        &mut self,
+        job: &crate::orchestration::gates::Job,
+        cwd: std::path::PathBuf,
+    ) -> Result<u32, String> {
+        use crate::orchestration::gates;
+        let (program, args) = gates::shell_command(job.gate.command_for(std::env::consts::OS));
+        let profile = crate::session::profiles::AgentProfile {
+            id: gates::GATE_PROFILE.into(),
+            name: format!("gate {} ({})", job.gate.name, job.kind.label()),
+            command: program,
+            args,
+            env: Vec::new(),
+            builtin: false,
+            orchestration: Style::None,
+        };
+        let p = self
+            .projects
+            .get(job.project)
+            .ok_or("the project is not in the list")?;
+        let tx = self
+            .events
+            .clone()
+            .ok_or("Sessions are not available in this mode")?;
+        let area = crate::ui::workspace::session_rect(self);
+        let req = crate::session::StartRequest {
+            project: p.id,
+            project_name: p.name.clone(),
+            cwd,
+            workdir: crate::session::Workdir::ProjectFolder,
+            profile,
+            rows: area.height.max(1),
+            cols: area.width.max(1),
+        };
+        let sid = self
+            .sessions
+            .start_with(req, Some(gates::GATE_ROLE.into()), Vec::new(), &tx)?;
+        self.track(sid);
+        Ok(sid)
+    }
+
     /// Starts due read-only checks and applies finished ones (FR-013).
     fn check_read_only(&mut self) -> bool {
         let Some(hub) = self.hub.as_mut() else {
@@ -391,7 +503,7 @@ impl AppState {
         changed
     }
 
-    fn take_hub_notices(&mut self) {
+    pub(super) fn take_hub_notices(&mut self) {
         let Some(hub) = self.hub.as_mut() else {
             return;
         };
