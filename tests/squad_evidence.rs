@@ -402,3 +402,43 @@ fn the_engineer_hears_when_everyone_waits() {
     assert_eq!(count(&h), 2);
     let _ = std::fs::remove_dir_all(&d);
 }
+
+#[test]
+fn the_creator_is_told_when_its_task_is_reported() {
+    // 004 manual run: an idle lead never read the builder's report.
+    let (d, c0, c1, _) = repo("told");
+    let (mut h, f, now) = setup(&d, &c0, 2);
+    let t = hand(&mut h, &f, 2, "hello", now);
+    report(
+        &mut h,
+        &f,
+        2,
+        t,
+        Some(json!({"commit": c1, "files": ["a.txt"]})),
+        now,
+    );
+    h.tick(&f, now);
+    let to_lead: Vec<String> = h
+        .deliveries
+        .list
+        .iter()
+        .filter(|d| d.to == 1 && d.from == fallow::orchestration::Party::Fallow)
+        .map(|d| d.text.clone())
+        .collect();
+    let msg = to_lead
+        .iter()
+        .find(|m| {
+            m.contains(&format!(
+                "Task T{t} (part hello) was reported done by #2 builder"
+            ))
+        })
+        .unwrap_or_else(|| panic!("{to_lead:?}"));
+    assert!(msg.contains("Evidence: commit"), "{msg}");
+    assert!(
+        h.ready()
+            .iter()
+            .any(|id| h.deliveries.get(*id).unwrap().text == *msg),
+        "approved"
+    );
+    let _ = std::fs::remove_dir_all(&d);
+}

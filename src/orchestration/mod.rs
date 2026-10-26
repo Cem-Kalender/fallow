@@ -322,6 +322,8 @@ pub struct Hub {
     pub end_gates: Vec<u32>,
     /// Failures to turn into repair tasks on the next tick: project, part, reason (FR-025).
     pub pending_repairs: Vec<(ProjectId, Option<String>, String)>,
+    /// Reports to type into the sessions that created the tasks (004): session, text.
+    pub pending_reports: Vec<(u32, String)>,
     next_start: u64,
 }
 
@@ -415,6 +417,7 @@ impl Hub {
             check_worktrees: Vec::new(),
             end_gates: Vec::new(),
             pending_repairs: Vec::new(),
+            pending_reports: Vec::new(),
             next_start: 0,
             settings,
             channel: None,
@@ -1149,6 +1152,30 @@ impl Hub {
         self.task_changed(id, if done { "done" } else { "failed" });
         if let Some(t) = self.tasks.get(id).cloned() {
             self.tell_task(t.created_by.session(), &t);
+            // During a burst the creator is told at once, so an idle lead does not wait for a
+            // report it never reads (004 manual run).
+            if let (Some(creator), Some(_)) = (t.created_by.session(), self.burst_for(caller)) {
+                if creator != caller {
+                    let who = self
+                        .role_of(caller)
+                        .map_or(format!("#{caller}"), |r| format!("#{caller} {r}"));
+                    let mut text = format!(
+                        "Task T{id}{} was reported {} by {who}.",
+                        t.part
+                            .as_ref()
+                            .map_or(String::new(), |p| format!(" (part {p})")),
+                        if done { "done" } else { "failed" }
+                    );
+                    if let Some(e) = &t.evidence {
+                        text.push_str(&format!(" Evidence: {}.", e.summary()));
+                    }
+                    if let Some(n) = &t.note {
+                        text.push_str(&format!(" Note: {n}"));
+                    }
+                    text.push_str(" Call squad_status to see what the merge still needs.");
+                    self.pending_reports.push((creator, text));
+                }
+            }
         }
         Ok(state)
     }
@@ -1558,6 +1585,19 @@ impl Hub {
         let _ = sessions;
         let mut changed = self.tick_bursts(now);
         changed |= self.tick_gates(now);
+        for (to, text) in std::mem::take(&mut self.pending_reports) {
+            // Fallow's own message, approved as it is made (like the burst's briefing note).
+            let _ = self.request_delivery(
+                sessions,
+                Party::Fallow,
+                to,
+                text,
+                delivery::Purpose::Message,
+                true,
+                now,
+            );
+            changed = true;
+        }
         for (project, part, why) in std::mem::take(&mut self.pending_repairs) {
             self.repair(sessions, project, part, &why, now);
             changed = true;
