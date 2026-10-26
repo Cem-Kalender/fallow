@@ -940,9 +940,56 @@ pub fn squad_lines(state: &AppState, v: &OrchView) -> Vec<Line<'static>> {
         } else {
             Style::default()
         };
+        let tainted = if b.tainted.contains_key(id) {
+            "  (worktree changed: signals do not count)"
+        } else {
+            ""
+        };
         lines.push(Line::styled(
-            format!("{:<10} {}", role, session_name(state, *id)),
+            format!("{:<10} {}{tainted}", role, session_name(state, *id)),
             style,
+        ));
+    }
+    if !b.gate_runs.is_empty() {
+        lines.push(Line::raw(""));
+        lines.push(Line::styled("Gates", bold));
+        for g in &b.gate_runs {
+            lines.push(Line::raw(format!(
+                "  {} {} #{}  {}{}{}",
+                g.gate,
+                g.kind.label(),
+                g.session,
+                g.state.label(),
+                g.class
+                    .map_or(String::new(), |c| format!(" · {}", c.label())),
+                if g.failing.is_empty() {
+                    String::new()
+                } else {
+                    let names: Vec<&str> = g.failing.iter().take(3).map(String::as_str).collect();
+                    format!(" · failing: {}", names.join(", "))
+                },
+            )));
+        }
+    }
+    if let Some(r) = state.hub.as_ref().and_then(|h| h.readiness(b.project)) {
+        lines.push(Line::raw(""));
+        lines.push(Line::styled(format!("Merge ({})", r.mode.label()), bold));
+        for c in &r.checks {
+            lines.push(Line::raw(format!(
+                "  {} {:<34} {}",
+                if c.met { "✓" } else { "✗" },
+                c.condition,
+                c.why
+            )));
+        }
+        let verdict = match (r.ready, &r.commit) {
+            (true, Some(c)) => format!("Ready to merge {}", &c[..c.len().min(10)]),
+            (true, None) => "Every condition holds".to_string(),
+            (false, _) => "Not ready: the conditions above must all hold".to_string(),
+        };
+        lines.push(Line::styled(
+            format!("  {verdict}"),
+            if r.ready { bold } else { dim },
         ));
     }
     lines

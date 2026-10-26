@@ -657,7 +657,7 @@ pub fn load(project: &Path, config_dir: Option<&Path>) -> Result<Squad, Vec<Stri
         }
         _ => Vec::new(),
     };
-    let path = project.join(SQUAD_FILE);
+    let path = project.join(".fallow").join("squad.toml");
     match std::fs::read_to_string(&path) {
         Ok(text) => parse(&path.display().to_string(), &text, &base).map(|mut s| {
             s.source = Source::File(path.clone());

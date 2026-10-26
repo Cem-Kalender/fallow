@@ -1396,6 +1396,11 @@ impl Hub {
         if let Some(e) = self.events.map.get_mut(key) {
             e.signal = None;
         }
+        if let board::BoardId::Project(p) = key.0 {
+            if let Some(b) = self.bursts.iter_mut().find(|b| b.project == p) {
+                b.signed.remove(&key.1);
+            }
+        }
     }
 
     /// Events of a project's scope and the shared scope, sorted by scope then name.

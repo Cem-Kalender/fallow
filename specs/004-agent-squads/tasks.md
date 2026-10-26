@@ -182,13 +182,13 @@ squad, US4–US6 add gates, evidence and publishing to the squad.
 
 **Independent Test**: a squad whose merge needs backend done, frontend done and review approved keeps the merge closed until all three hold; editing the file mid-burst changes nothing.
 
-- [ ] T023 [P] [US3] Write merge-condition tests in `tests/squad_publish.rs`:
+- [X] T023 [P] [US3] Write merge-condition tests in `tests/squad_publish.rs`:
   - `gate:<name>`, `done:<role>`, `signal:<event>@<role>` evaluated against the hub state;
   - an invalid squad file blocks the burst with `file:line`;
   - a squad file changed during a burst does not change its rules (FR-018);
   - the built-in squad's conditions;
   - SC-003: the merge condition is never "ready" before every condition holds.
-- [ ] T024 [US3] Use the squad, in `src/orchestration/burst.rs` and `src/orchestration/publish.rs`:
+- [X] T024 [US3] Use the squad, in `src/orchestration/burst.rs` and `src/orchestration/publish.rs`:
   - load `.fallow/squad.toml` (or the built-in) when the burst starts, frozen in the burst;
   - role maxima;
   - `MergeReadiness` (data-model) with each condition and why;

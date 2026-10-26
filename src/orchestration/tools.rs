@@ -178,6 +178,11 @@ const SPECS: &[Spec] = &[
         ],
     },
     Spec {
+        name: "squad_status",
+        description: "While the project coordinates: the squad in force (roles and their sessions), gate runs with their classification, each merge condition met or not and why, and the time left.",
+        args: &[],
+    },
+    Spec {
         name: "event_status",
         description: "Whether a named event was signalled, by whom, and how many agents wait for it. Does not wait.",
         args: &[("name", "string", "Event name", true), SCOPE],
@@ -258,6 +263,65 @@ fn board_label(b: BoardId, me: &SessionInfo) -> String {
         BoardId::Shared => "shared board".into(),
         BoardId::Project(_) => format!("{} board", me.project_name),
     }
+}
+
+/// The `squad_status` result for a project's burst.
+pub fn squad_status(hub: &Hub, project: crate::projects::ProjectId, now: Instant) -> Option<Value> {
+    let b = hub.burst_of(project)?;
+    let r = hub.readiness(project)?;
+    let roles: Vec<Value> = b
+        .squad
+        .roles
+        .iter()
+        .map(|role| {
+            let mut ids: Vec<u32> = b
+                .roles
+                .iter()
+                .filter(|(_, n)| **n == role.name)
+                .map(|(id, _)| *id)
+                .collect();
+            ids.sort_unstable();
+            json!({
+                "name": role.name,
+                "level": role.level.as_str(),
+                "max": role.max,
+                "sessions": ids,
+            })
+        })
+        .collect();
+    let gates: Vec<Value> = b
+        .gate_runs
+        .iter()
+        .map(|g| {
+            json!({
+                "gate": g.gate,
+                "kind": g.kind.label(),
+                "session": g.session,
+                "commit": g.commit,
+                "state": g.state.label(),
+                "failing": g.failing,
+                "class": g.class.map(|c| c.label()),
+            })
+        })
+        .collect();
+    let checks: Vec<Value> = r
+        .checks
+        .iter()
+        .map(|c| json!({ "condition": c.condition, "met": c.met, "why": c.why }))
+        .collect();
+    Some(json!({
+        "squad": b.squad.name,
+        "lead": b.lead,
+        "ends_in_min": b.ends.saturating_duration_since(now).as_secs() / 60,
+        "roles": roles,
+        "gates": gates,
+        "merge": {
+            "ready": r.ready,
+            "conditions": checks,
+            "commit": r.commit,
+            "publish": r.mode.label(),
+        },
+    }))
 }
 
 /// The `tools/list` array for a role (004 FR-011); `None`: every tool (outside a burst).
@@ -602,7 +666,12 @@ pub(super) fn call(
                 },
             };
             match hub.signal(&key, me.party(), message) {
-                Ok(n) => Reply::Done(json!({ "signalled": true, "waiters_woken": n })),
+                Ok(n) => {
+                    if key.0 == BoardId::Project(me.project) {
+                        hub.record_signal(caller, &key.1);
+                    }
+                    Reply::Done(json!({ "signalled": true, "waiters_woken": n }))
+                }
                 Err(e) => Reply::error("too_many_pending", e),
             }
         }
@@ -828,6 +897,10 @@ pub(super) fn call(
                 Err(r) => r,
             }
         }
+        "squad_status" => match squad_status(hub, me.project, now) {
+            Some(v) => Reply::Done(v),
+            None => Reply::error("unavailable", "this project is not coordinating"),
+        },
         "task_report" => {
             let Some(id) = args["task"].as_i64().and_then(|i| u32::try_from(i).ok()) else {
                 return Reply::error("invalid", "task must be a task number");

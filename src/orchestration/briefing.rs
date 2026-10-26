@@ -173,6 +173,8 @@ mod tests {
             spec_kit,
             roles: HashMap::new(),
             tainted: HashMap::new(),
+            gate_runs: Vec::new(),
+            signed: HashMap::new(),
             warned: false,
         }
     }

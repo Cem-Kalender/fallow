@@ -4,7 +4,7 @@
 //! the allowance; at most 8 hours), a lead, and the squad frozen at its start. Ending it revokes
 //! the permission, so every 003 path and its tests stay in force.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::time::{Duration, Instant};
 
 use super::activity::Action;
@@ -49,6 +49,10 @@ pub struct Burst {
     pub roles: HashMap<u32, String>,
     /// Read-only sessions whose worktree changed, and how (FR-013): their signals do not count.
     pub tainted: HashMap<u32, String>,
+    /// Gate runs Fallow observed (FR-020, FR-021).
+    pub gate_runs: Vec<super::gates::GateRun>,
+    /// Who signalled which event during the burst, for `signal:` merge conditions.
+    pub signed: HashMap<String, BTreeSet<u32>>,
     pub(crate) warned: bool,
 }
 
@@ -125,6 +129,8 @@ impl Hub {
             spec_kit: r.spec_kit,
             roles,
             tainted: HashMap::new(),
+            gate_runs: Vec::new(),
+            signed: HashMap::new(),
             warned: false,
         };
         let note = super::briefing::common_note(&burst);
