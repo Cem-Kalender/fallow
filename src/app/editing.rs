@@ -147,6 +147,11 @@ pub enum Pending {
     ForceStopSession(u32),
     /// 002 US4: remove a project with running sessions from the list.
     RemoveProject(crate::projects::ProjectId),
+    /// 004 FR-028: merge the gated commit into the target branch (local merge).
+    Merge {
+        project: crate::projects::ProjectId,
+        commit: String,
+    },
 }
 
 const DOUBLE_CLICK: Duration = Duration::from_millis(400);
@@ -656,6 +661,7 @@ impl AppState {
                         }
                     }
                     Pending::CloseBuffer(i) => self.editor.close(i),
+                    Pending::Merge { project, commit } => self.merge_now(project, &commit),
                     Pending::RemoveProject(id) => self.remove_project(id),
                     Pending::Delete(path) => match fileops::delete(&path, token) {
                         Ok(()) => {

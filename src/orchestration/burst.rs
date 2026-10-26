@@ -53,6 +53,14 @@ pub struct Burst {
     pub gate_runs: Vec<super::gates::GateRun>,
     /// Who signalled which event during the burst, for `signal:` merge conditions.
     pub signed: HashMap<String, BTreeSet<u32>>,
+    /// Each reviewer's latest verdict and notes (FR-027).
+    pub verdicts: HashMap<u32, (String, String)>,
+    /// The draft pull request the lead opened (draft-PR mode, FR-028).
+    pub published: Option<String>,
+    /// (gated commit, merge commit) Fallow merged on the engineer's press (local merge).
+    pub merged: Vec<(String, String)>,
+    /// Commits on the target branch made outside Fallow's merge, already reported (FR-028a).
+    pub foreign_seen: BTreeSet<String>,
     /// Repair loops per part (FR-025).
     pub repairs: Vec<super::repair::RepairLoop>,
     /// Since when every session has waited, and when the engineer was last told (FR-026).
@@ -117,6 +125,7 @@ impl Hub {
             ));
         }
         let permission = self.grant(&Self::grant_for(lead.project, allowance, r.duration), now)?;
+        let target_branch = r.squad.target_branch.clone().or(r.target_branch);
         let mut roles = HashMap::new();
         roles.insert(r.lead, "lead".to_string());
         let burst = Burst {
@@ -129,13 +138,17 @@ impl Hub {
             ends: now + r.duration,
             squad: r.squad,
             start_commit: r.start_commit,
-            target_branch: r.target_branch,
+            target_branch,
             has_remote: r.has_remote,
             spec_kit: r.spec_kit,
             roles,
             tainted: HashMap::new(),
             gate_runs: Vec::new(),
             signed: HashMap::new(),
+            verdicts: HashMap::new(),
+            published: None,
+            merged: Vec::new(),
+            foreign_seen: BTreeSet::new(),
             repairs: Vec::new(),
             waiting_since: None,
             deadlock_notice: None,

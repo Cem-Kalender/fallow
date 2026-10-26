@@ -625,6 +625,12 @@ pub const COMMANDS: &[Command] = &[
         "+",
     )),
     on(cmd(
+        "orch.merge",
+        "Merge the gated commit now (local merge)",
+        Orchestration,
+        "m",
+    )),
+    on(cmd(
         "orch.repair_again",
         "Hand the stopped repair back once more",
         Orchestration,

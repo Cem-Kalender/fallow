@@ -711,7 +711,10 @@ impl Hub {
                 format!("project {proj_name} is missing"),
             ));
         }
-        let (role, args, bypass) = self.start_role(sessions, from, &pid, proj, role)?;
+        let (role, args, bypass, warn) = self.start_role(sessions, from, &pid, proj, role)?;
+        if let Some(w) = warn {
+            self.notices.push(w);
+        }
         self.next_start += 1;
         let id = self.next_start;
         let state = match sessions.start_allowed() {
@@ -1654,6 +1657,10 @@ impl Hub {
     }
 }
 
+/// A role session's start: the role, its extra arguments, whether they bypass the agent's
+/// checks, and a warning for the engineer.
+type RoleStart = (Option<String>, Vec<String>, bool, Option<String>);
+
 impl Hub {
     /// Whether precondition `k` of task `t` holds: the event is signalled and, when the task
     /// names a role for it, the latest signal came from that role (004 FR-012), from a session
@@ -1681,10 +1688,10 @@ impl Hub {
         profile: &str,
         project: ProjectId,
         role: Option<&str>,
-    ) -> Result<(Option<String>, Vec<String>, bool), Reply> {
+    ) -> Result<RoleStart, Reply> {
         let Some(b) = self.burst_for(from.id) else {
             return match role {
-                None => Ok((None, Vec::new(), false)),
+                None => Ok((None, Vec::new(), false, None)),
                 Some(_) => Err(Reply::error(
                     "invalid",
                     "role: sessions have roles only while the project coordinates",
@@ -1692,6 +1699,7 @@ impl Hub {
             };
         };
         let names: Vec<&str> = b.squad.roles.iter().map(|r| r.name.as_str()).collect();
+        let mut warn = None;
         let Some(name) = role else {
             return Err(Reply::error(
                 "invalid",
@@ -1757,6 +1765,22 @@ impl Hub {
                 ),
             ));
         }
+        // Two reviewers on the same agent and model are less independent (FR-027): a warning.
+        if roles::may_signal(&b.squad, r, "review-approved") {
+            let same = b.roles.iter().any(|(id, other)| {
+                b.squad.role(other).is_some_and(|o| {
+                    roles::may_signal(&b.squad, o, "review-approved") && o.model == r.model
+                }) && sessions
+                    .info(*id)
+                    .is_some_and(|s| s.running && s.profile_id == profile)
+            });
+            if same {
+                warn = Some(format!(
+                    "A second reviewer on the same agent and model ({profile}{}): its review is less independent",
+                    r.model.as_ref().map_or(String::new(), |m| format!(" {m}"))
+                ));
+            }
+        }
         let (args, bypass) = match sessions.profile(profile) {
             Some(p) => {
                 let args = roles::role_args(r, &p).map_err(|e| Reply::error("not_allowed", e))?;
@@ -1765,7 +1789,7 @@ impl Hub {
             }
             None => (Vec::new(), false),
         };
-        Ok((Some(name.to_string()), args, bypass))
+        Ok((Some(name.to_string()), args, bypass, warn))
     }
 
     /// Whether a session's signals stopped counting (a read-only role's worktree changed,

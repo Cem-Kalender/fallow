@@ -320,3 +320,235 @@ fn an_invalid_squad_file_blocks_the_burst_and_a_running_burst_keeps_its_rules() 
     );
     let _ = std::fs::remove_dir_all(&d);
 }
+
+fn builtin_burst(has_remote: bool) -> (Hub, Fake, Instant) {
+    let mut h = Hub::new(OrchestrationSettings::default());
+    let f = Fake(vec![info(1)]);
+    let now = Instant::now();
+    h.start_burst(
+        &f,
+        BurstRequest {
+            lead: 1,
+            duration: Duration::from_secs(3600),
+            allowance: Some(5),
+            squad: squad::builtin(),
+            start_commit: None,
+            target_branch: Some("main".into()),
+            has_remote,
+            spec_kit: false,
+            max_sessions: 8,
+        },
+        now,
+    )
+    .unwrap();
+    (h, f, now)
+}
+
+fn verdict(h: &mut Hub, f: &Fake, who: u32, v: &str, notes: &str, now: Instant) -> Reply {
+    h.call(
+        f,
+        who,
+        "review_verdict",
+        json!({"verdict": v, "notes": notes}),
+        now,
+    )
+}
+
+#[test]
+fn verdicts_are_reviewers_own_and_disagreement_goes_to_the_engineer() {
+    // FR-027, US6 scenarios 1 and 2.
+    let (mut h, mut f, now) = builtin_burst(false);
+    start(&mut h, &mut f, "builder", 2, now);
+    start(&mut h, &mut f, "reviewer", 3, now);
+    start(&mut h, &mut f, "reviewer", 4, now);
+    assert!(
+        h.notices.iter().any(|n| n.contains("same agent and model")),
+        "{:?}",
+        h.notices
+    );
+    let t = hand(&mut h, &f, 2, now);
+    done(&mut h, &f, 2, t, now);
+    for who in [1, 2] {
+        let r = verdict(&mut h, &f, who, "approved", "fine", now);
+        assert!(matches!(r, Reply::Error("not_allowed", _)), "#{who}: {r:?}");
+    }
+    assert!(matches!(
+        verdict(&mut h, &f, 3, "approved", "spec covered", now),
+        Reply::Done(_)
+    ));
+    assert!(!ready(&h), "both reviewers must approve");
+    assert!(matches!(
+        verdict(&mut h, &f, 4, "changes-requested", "missing tests", now),
+        Reply::Done(_)
+    ));
+    let n = h
+        .notices
+        .iter()
+        .find(|n| n.contains("Reviewers disagree"))
+        .expect("disagreement shown");
+    assert!(
+        n.contains("spec covered") && n.contains("missing tests"),
+        "{n}"
+    );
+    assert!(!ready(&h));
+    // The request for changes became a repair for the lead (no part named).
+    h.tick(&f, now);
+    assert!(h.tasks.list.iter().any(|t| t.repair_round == 1));
+    // #4 approves after all: ready, and squad_status lists both verdicts.
+    verdict(&mut h, &f, 4, "approved", "now fine", now);
+    assert!(ready(&h));
+    let Reply::Done(v) = h.call(&f, 1, "squad_status", json!({}), now) else {
+        panic!()
+    };
+    assert_eq!(v["verdicts"].as_array().unwrap().len(), 2);
+    // No agent is ever handed a merge: Fallow's own tasks are repairs only (SC-009).
+    assert!(
+        h.tasks
+            .list
+            .iter()
+            .filter(|t| t.created_by == fallow::orchestration::Party::Fallow)
+            .all(|t| t.repair_round > 0 && !t.text.contains("git merge"))
+    );
+}
+
+#[test]
+fn publishing_follows_the_mode_and_only_the_lead_reports_a_pull_request() {
+    // FR-028: a remote means draft-pr, none means local-merge.
+    let (h, _, _) = builtin_burst(false);
+    assert_eq!(h.readiness(1).unwrap().mode.label(), "local-merge");
+    let (mut h, mut f, now) = builtin_burst(true);
+    assert_eq!(h.readiness(1).unwrap().mode.label(), "draft-pr");
+    start(&mut h, &mut f, "builder", 2, now);
+    start(&mut h, &mut f, "reviewer", 3, now);
+    let publish = |h: &mut Hub, f: &Fake, who: u32| {
+        h.call(
+            f,
+            who,
+            "publish",
+            json!({"title": "Login page", "url": "https://example.com/pr/1"}),
+            now,
+        )
+    };
+    let r = publish(&mut h, &f, 1);
+    assert!(
+        matches!(r, Reply::Error("not_allowed", ref m) if m.contains("not every merge condition")),
+        "{r:?}"
+    );
+    let t = hand(&mut h, &f, 2, now);
+    done(&mut h, &f, 2, t, now);
+    verdict(&mut h, &f, 3, "approved", "ok", now);
+    let r = publish(&mut h, &f, 2);
+    assert!(
+        matches!(r, Reply::Error("not_allowed", _)),
+        "builder: {r:?}"
+    );
+    let r = publish(&mut h, &f, 1);
+    assert!(matches!(r, Reply::Done(_)), "{r:?}");
+    assert_eq!(
+        h.burst_of(1).unwrap().published.as_deref(),
+        Some("https://example.com/pr/1")
+    );
+    // Local-merge mode refuses it: the engineer merges.
+    let (mut h, mut f, now) = builtin_burst(false);
+    start(&mut h, &mut f, "builder", 2, now);
+    start(&mut h, &mut f, "reviewer", 3, now);
+    let t = hand(&mut h, &f, 2, now);
+    done(&mut h, &f, 2, t, now);
+    verdict(&mut h, &f, 3, "approved", "ok", now);
+    let r = publish(&mut h, &f, 1);
+    assert!(
+        matches!(r, Reply::Error("not_allowed", ref m) if m.contains("merges the gated commit in Fallow")),
+        "{r:?}"
+    );
+}
+
+fn git(dir: &std::path::Path, args: &[&str]) -> String {
+    let o = std::process::Command::new("git")
+        .current_dir(dir)
+        .args(["-c", "user.name=t", "-c", "user.email=t@example.com"])
+        .args(args)
+        .output()
+        .unwrap();
+    assert!(
+        o.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&o.stderr)
+    );
+    String::from_utf8_lossy(&o.stdout).trim().to_string()
+}
+
+#[test]
+fn the_local_merge_takes_exactly_the_gated_commit_and_reports_foreign_ones() {
+    // FR-028, FR-028a on a real repository.
+    use fallow::orchestration::publish::{foreign, local_merge};
+    let d = std::env::temp_dir().join(format!("fallow-merge-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&d);
+    std::fs::create_dir_all(&d).unwrap();
+    git(&d, &["init", "-q", "-b", "main"]);
+    std::fs::write(d.join("README"), "x\n").unwrap();
+    git(&d, &["add", "."]);
+    git(&d, &["commit", "-q", "-m", "start"]);
+    let start = git(&d, &["rev-parse", "HEAD"]);
+    git(&d, &["checkout", "-q", "-b", "lead"]);
+    std::fs::write(d.join("a.txt"), "a\n").unwrap();
+    git(&d, &["add", "."]);
+    git(&d, &["commit", "-q", "-m", "gated"]);
+    let gated = git(&d, &["rev-parse", "HEAD"]);
+    std::fs::write(d.join("b.txt"), "b\n").unwrap();
+    git(&d, &["add", "."]);
+    git(&d, &["commit", "-q", "-m", "after the gate"]);
+    let later = git(&d, &["rev-parse", "HEAD"]);
+    // Not on the target branch: refused.
+    let e = local_merge(&d, "main", &gated).unwrap_err();
+    assert!(e.contains("not on the target branch main"), "{e}");
+    git(&d, &["checkout", "-q", "main"]);
+    // Not clean: refused.
+    std::fs::write(d.join("README"), "changed\n").unwrap();
+    let e = local_merge(&d, "main", &gated).unwrap_err();
+    assert!(e.contains("uncommitted"), "{e}");
+    git(&d, &["checkout", "--", "README"]);
+    // Someone commits on main during the burst: foreign.
+    std::fs::write(d.join("hotfix.txt"), "h\n").unwrap();
+    git(&d, &["add", "."]);
+    git(&d, &["commit", "-q", "-m", "hotfix"]);
+    let hotfix = git(&d, &["rev-parse", "HEAD"]);
+    assert_eq!(foreign(&d, &start, "main", &[]).unwrap(), [hotfix.as_str()]);
+    // The merge takes the gated commit, not the later one.
+    let merge = local_merge(&d, "main", &gated).unwrap();
+    git(&d, &["merge-base", "--is-ancestor", &gated, "main"]);
+    let o = std::process::Command::new("git")
+        .current_dir(&d)
+        .args(["merge-base", "--is-ancestor", &later, "main"])
+        .output()
+        .unwrap();
+    assert!(
+        !o.status.success(),
+        "the commit after the gate is not merged"
+    );
+    let merged = vec![(gated.clone(), merge.clone())];
+    assert_eq!(
+        foreign(&d, &start, "main", &merged).unwrap(),
+        [hotfix.as_str()]
+    );
+    // The hub reports each foreign commit once.
+    let (mut h, _, _) = builtin_burst(false);
+    h.foreign_commits(1, vec![hotfix.clone()]);
+    h.foreign_commits(1, vec![hotfix.clone()]);
+    assert_eq!(
+        h.notices
+            .iter()
+            .filter(|n| n.contains("not merged by Fallow"))
+            .count(),
+        1
+    );
+    h.merged(1, &gated, &merge);
+    assert_eq!(h.burst_of(1).unwrap().merged.len(), 1);
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn a_squad_may_merge_automatically() {
+    let text = "[merge]\nmode = \"automatic\"\nrequires = [\"done:builder\"]\n";
+    let s = squad::parse(".fallow/squad.toml", text, &[]).unwrap();
+    assert_eq!(s.merge, squad::Merge::Automatic);
+}

@@ -11,6 +11,11 @@
 //! - `sleep <ms>`
 //! - `until <text>`: reads lines typed into the terminal until one contains `text`.
 //! - `until-file <path>`: waits until `path` exists (the harness's signal, 004).
+//! - `commit-file <name>`: writes `name` in the session's folder and commits it (004).
+//! - `merge-branches <prefix>`: merges every local branch starting with `prefix` into the
+//!   folder's branch (the lead integrating builders' work, 004).
+//! - `wait-ready <file> <timeout_s>`: polls `squad_status` until the merge is ready, then writes
+//!   the status to `file` (004).
 //! - `post-timed <count> <interval ms> <scope>`: posts `t=<epoch ms> i=<n>` messages.
 //! - `measure-reads <count> <scope> [file]`: polls `board_read` until `count` timed messages
 //!   arrived and prints (and writes to `file`) `latency p95_ms=… max_ms=… n=…`.
@@ -178,6 +183,20 @@ fn server_command(args: &[String]) -> Result<Vec<String>, String> {
     Ok(cmd)
 }
 
+/// Runs git in the session's folder as a scripted author; true when it succeeded.
+fn git_ok(args: &[&str]) -> bool {
+    std::process::Command::new("git")
+        .args([
+            "-c",
+            "user.name=mcp-agent",
+            "-c",
+            "user.email=mcp-agent@example.com",
+        ])
+        .args(args)
+        .output()
+        .is_ok_and(|o| o.status.success())
+}
+
 /// Runs the persona: `mcp-agent <script> [--mcp-config <json> …]`. Never returns.
 pub fn run(args: &[String]) -> ! {
     let out = |s: &str| {
@@ -223,6 +242,48 @@ pub fn run(args: &[String]) -> ! {
         match (cmd, &mut client) {
             ("print", _) => out(rest),
             ("sleep", _) => std::thread::sleep(Duration::from_millis(rest.parse().unwrap_or(0))),
+            ("commit-file", _) => {
+                let ok = std::fs::write(rest, format!("{rest}\n")).is_ok()
+                    && git_ok(&["add", rest])
+                    && git_ok(&["commit", "-q", "-m", &format!("add {rest}")]);
+                out(&format!(
+                    "commit-file {rest}: {}",
+                    if ok { "ok" } else { "failed" }
+                ));
+            }
+            ("merge-branches", _) => {
+                let list = std::process::Command::new("git")
+                    .args(["for-each-ref", "--format=%(refname:short)", "refs/heads/"])
+                    .output()
+                    .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+                    .unwrap_or_default();
+                let mut merged = 0;
+                for b in list.lines().filter(|b| b.starts_with(rest)) {
+                    if git_ok(&["merge", "--no-edit", "-q", b]) {
+                        merged += 1;
+                    }
+                }
+                out(&format!("merged {merged} branch(es)"));
+            }
+            ("wait-ready", Some((c, _))) => {
+                let mut p = rest.split_whitespace();
+                let file = p.next().unwrap_or("ready.json").to_string();
+                let limit: u64 = p.next().and_then(|t| t.parse().ok()).unwrap_or(120);
+                let until = Instant::now() + Duration::from_secs(limit);
+                let mut status = Value::Null;
+                while Instant::now() < until {
+                    if let Ok(v) = c.call("squad_status", json!({})) {
+                        let ready = v["merge"]["ready"] == true;
+                        status = v;
+                        if ready {
+                            break;
+                        }
+                    }
+                    std::thread::sleep(Duration::from_secs(2));
+                }
+                let _ = std::fs::write(&file, status.to_string());
+                out(&format!("wait-ready: {}", status["merge"]["ready"]));
+            }
             ("until-file", _) => {
                 while !std::path::Path::new(rest).exists() {
                     std::thread::sleep(Duration::from_millis(100));
@@ -312,7 +373,7 @@ pub fn run(args: &[String]) -> ! {
             ("verdict", Some((c, _))) => {
                 let mut p = rest.splitn(3, ' ');
                 let verdict = p.next().unwrap_or("approved");
-                let part: Option<u64> = p.next().and_then(|t| t.parse().ok());
+                let part: Option<&str> = p.next().filter(|t| *t != "-");
                 let notes = p.next().unwrap_or("");
                 let mut a = json!({"verdict": verdict, "notes": notes});
                 if let Some(t) = part {

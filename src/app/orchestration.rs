@@ -89,6 +89,10 @@ pub struct ReadOnlyChecks {
     running: std::collections::HashSet<u32>,
     last: Option<Instant>,
     results: ReadOnlyResults,
+    /// When gate runs were last looked for (they may ask git for the lead's commit).
+    gates_at: Option<Instant>,
+    /// When the target branches were last watched (FR-028a).
+    watched_at: Option<Instant>,
 }
 
 type ReadOnlyResults = std::sync::Arc<
@@ -96,6 +100,7 @@ type ReadOnlyResults = std::sync::Arc<
 >;
 
 const READ_ONLY_EVERY: std::time::Duration = std::time::Duration::from_secs(120);
+const GATES_EVERY: std::time::Duration = std::time::Duration::from_secs(2);
 
 impl Sessions for AppView<'_> {
     fn info(&self, id: u32) -> Option<SessionInfo> {
@@ -231,6 +236,7 @@ impl AppState {
         changed |= self.carry_out_starts();
         changed |= self.check_read_only();
         changed |= self.run_gates();
+        changed |= self.publish_checks();
         changed |= self.type_deliveries();
         self.take_hub_notices();
         changed
@@ -326,7 +332,25 @@ impl AppState {
             let _ = self.sessions.end_gate(id);
             changed = true;
         }
-        let jobs = hub.gates_due();
+        let now = Instant::now();
+        if self
+            .ro_checks
+            .gates_at
+            .is_some_and(|t| now.saturating_duration_since(t) < GATES_EVERY)
+        {
+            return changed;
+        }
+        self.ro_checks.gates_at = Some(now);
+        let leads: std::collections::HashMap<crate::projects::ProjectId, std::path::PathBuf> = hub
+            .bursts
+            .iter()
+            .filter_map(|b| {
+                self.sessions
+                    .get(b.lead)
+                    .map(|s| (b.project, s.cwd.clone()))
+            })
+            .collect();
+        let jobs = hub.gates_due(&|p| leads.get(&p).and_then(|d| git::head(d).ok()));
         for job in jobs {
             let Some(path) = self.projects.get(job.project).map(|p| p.path.clone()) else {
                 continue;
@@ -424,6 +448,152 @@ impl AppState {
             .start_with(req, Some(gates::GATE_ROLE.into()), Vec::new(), &tx)?;
         self.track(sid);
         Ok(sid)
+    }
+
+    /// The commit a local merge takes: the final gates' commit, or (a squad without gates) the
+    /// lead's commit now.
+    fn gated_commit(&self, project: crate::projects::ProjectId) -> Option<String> {
+        let hub = self.hub.as_ref()?;
+        let r = hub.readiness(project)?;
+        r.commit.or_else(|| {
+            let lead = hub.burst_of(project)?.lead;
+            git::head(&self.sessions.get(lead)?.cwd).ok()
+        })
+    }
+
+    /// `m` in the Squad tab: asks to merge exactly the gated commit (FR-028, SC-009).
+    fn ask_merge(&mut self, project: crate::projects::ProjectId) -> bool {
+        use crate::orchestration::publish::Mode;
+        let Some(r) = self.hub.as_ref().and_then(|h| h.readiness(project)) else {
+            self.say("No coordination in this project");
+            return true;
+        };
+        if r.mode != Mode::LocalMerge {
+            self.say(
+                "This project has a remote: the lead opens a draft pull request, which you merge",
+            );
+            return true;
+        }
+        if !r.ready {
+            self.say("Not ready: every merge condition must hold (Squad tab)");
+            return true;
+        }
+        let Some(commit) = self.gated_commit(project) else {
+            self.say("No gated commit is known yet");
+            return true;
+        };
+        let target = self
+            .hub
+            .as_ref()
+            .and_then(|h| h.burst_of(project))
+            .and_then(|b| b.target_branch.clone())
+            .unwrap_or_else(|| "the target branch".into());
+        let d = crate::ui::confirm::Dialog::new(
+            "Merge the squad's work",
+            &format!("merge {commit}"),
+            vec![
+                format!(
+                    "Fallow runs git merge --no-ff {} on {target}",
+                    &commit[..commit.len().min(10)]
+                ),
+                "in the project folder, which must be on that branch and clean.".into(),
+            ],
+            "Merge",
+        );
+        self.overlay = Overlay::Confirm {
+            dialog: d,
+            action: super::editing::Pending::Merge { project, commit },
+        };
+        true
+    }
+
+    /// The confirmed (or the squad's automatic) local merge.
+    pub(super) fn merge_now(&mut self, project: crate::projects::ProjectId, commit: &str) {
+        let Some(path) = self.projects.get(project).map(|p| p.path.clone()) else {
+            return;
+        };
+        let target = self
+            .hub
+            .as_ref()
+            .and_then(|h| h.burst_of(project))
+            .and_then(|b| b.target_branch.clone());
+        let Some(target) = target else {
+            self.say("No target branch is known (the project was not on a branch when coordination started)");
+            return;
+        };
+        match crate::orchestration::publish::local_merge(&path, &target, commit) {
+            Ok(merge) => {
+                if let Some(h) = self.hub.as_mut() {
+                    h.merged(project, commit, &merge);
+                }
+                self.take_hub_notices();
+            }
+            Err(e) => self.say(format!("Not merged: {e}")),
+        }
+    }
+
+    /// The squad's automatic local merge once ready, and the target-branch watcher every two
+    /// minutes (FR-028, FR-028a).
+    fn publish_checks(&mut self) -> bool {
+        use crate::orchestration::publish::Mode;
+        use crate::orchestration::squad::Merge;
+        let Some(hub) = self.hub.as_ref() else {
+            return false;
+        };
+        let auto: Vec<crate::projects::ProjectId> = hub
+            .bursts
+            .iter()
+            .filter(|b| b.squad.merge == Merge::Automatic && b.merged.is_empty())
+            .filter(|b| {
+                hub.readiness(b.project)
+                    .is_some_and(|r| r.ready && r.mode == Mode::LocalMerge)
+            })
+            .map(|b| b.project)
+            .collect();
+        let mut changed = false;
+        for p in auto {
+            if let Some(c) = self.gated_commit(p) {
+                self.merge_now(p, &c);
+                changed = true;
+            }
+        }
+        let now = Instant::now();
+        if self
+            .ro_checks
+            .watched_at
+            .is_some_and(|t| now.saturating_duration_since(t) < READ_ONLY_EVERY)
+        {
+            return changed;
+        }
+        self.ro_checks.watched_at = Some(now);
+        let Some(hub) = self.hub.as_ref() else {
+            return changed;
+        };
+        let watch: Vec<_> = hub
+            .bursts
+            .iter()
+            .filter_map(|b| {
+                let path = self.projects.get(b.project)?.path.clone();
+                Some((
+                    b.project,
+                    path,
+                    b.start_commit.clone()?,
+                    b.target_branch.clone()?,
+                    b.merged.clone(),
+                ))
+            })
+            .collect();
+        for (p, path, start, target, merged) in watch {
+            if let Ok(foreign) =
+                crate::orchestration::publish::foreign(&path, &start, &target, &merged)
+            {
+                if let Some(h) = self.hub.as_mut() {
+                    h.foreign_commits(p, foreign);
+                }
+            }
+        }
+        self.take_hub_notices();
+        changed
     }
 
     /// Starts due read-only checks and applies finished ones (FR-013).
@@ -757,6 +927,12 @@ impl AppState {
                     }
                 }
                 self.take_hub_notices();
+            }
+            "orch.merge" if v.tab == Tab::Squad => {
+                let Some(project) = self.projects.selected().map(|p| p.id) else {
+                    return Some(false);
+                };
+                return Some(self.ask_merge(project));
             }
             "orch.make_lead" if v.tab == Tab::Squad => {
                 let sel = v.selected;

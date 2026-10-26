@@ -183,3 +183,178 @@ impl Hub {
             .insert(session);
     }
 }
+
+impl Hub {
+    /// A reviewer's verdict: kept with its notes; reviewers that disagree are shown to the
+    /// engineer, never resolved silently (FR-027).
+    pub(crate) fn verdict(&mut self, session: u32, approve: bool, notes: &str) {
+        let Some(b) = self
+            .bursts
+            .iter_mut()
+            .find(|b| b.roles.contains_key(&session))
+        else {
+            return;
+        };
+        let v = if approve {
+            "approved"
+        } else {
+            "changes-requested"
+        };
+        b.verdicts
+            .insert(session, (v.to_string(), notes.to_string()));
+        let counting: Vec<(u32, String, String)> = b
+            .verdicts
+            .iter()
+            .filter(|(id, _)| !b.tainted.contains_key(id))
+            .map(|(id, (v, n))| (*id, v.clone(), n.clone()))
+            .collect();
+        let yes = counting.iter().any(|(_, v, _)| v == "approved");
+        let no = counting.iter().any(|(_, v, _)| v == "changes-requested");
+        if yes && no {
+            let mut parts: Vec<String> = counting
+                .iter()
+                .map(|(id, v, n)| format!("#{id} {v}: {n}"))
+                .collect();
+            parts.sort();
+            let text = format!("Reviewers disagree: {}", parts.join(" | "));
+            let project = b.project;
+            self.boards.post(
+                super::board::BoardId::Project(project),
+                super::Party::Fallow,
+                text.clone(),
+                std::time::SystemTime::now(),
+                super::TEXT_BUDGET,
+            );
+            self.notices.push(text);
+        }
+    }
+
+    /// The lead reports the draft pull request it opened (draft-PR mode).
+    pub(crate) fn published(&mut self, project: ProjectId, url: &str, title: &str) {
+        let Some(b) = self.bursts.iter_mut().find(|b| b.project == project) else {
+            return;
+        };
+        b.published = Some(url.to_string());
+        let text = format!("Draft pull request opened by the lead: {title} {url}. You merge it.");
+        self.boards.post(
+            super::board::BoardId::Project(project),
+            super::Party::Fallow,
+            text.clone(),
+            std::time::SystemTime::now(),
+            super::TEXT_BUDGET,
+        );
+        self.notices.push(text);
+    }
+
+    /// Fallow merged the gated commit on the engineer's press (or automatically, as the squad
+    /// says).
+    pub fn merged(&mut self, project: ProjectId, gated: &str, merge: &str) {
+        let Some(b) = self.bursts.iter_mut().find(|b| b.project == project) else {
+            return;
+        };
+        b.merged.push((gated.to_string(), merge.to_string()));
+        let target = b
+            .target_branch
+            .clone()
+            .unwrap_or_else(|| "the target branch".into());
+        let text = format!(
+            "Merged {} into {target} ({})",
+            &gated[..gated.len().min(10)],
+            &merge[..merge.len().min(10)]
+        );
+        self.boards.post(
+            super::board::BoardId::Project(project),
+            super::Party::Fallow,
+            text.clone(),
+            std::time::SystemTime::now(),
+            super::TEXT_BUDGET,
+        );
+        self.notices.push(text);
+    }
+
+    /// Commits on the target branch that Fallow did not merge (FR-028a): each is reported once.
+    pub fn foreign_commits(&mut self, project: ProjectId, commits: Vec<String>) {
+        let Some(b) = self.bursts.iter_mut().find(|b| b.project == project) else {
+            return;
+        };
+        let new: Vec<String> = commits
+            .into_iter()
+            .filter(|c| !b.foreign_seen.contains(c))
+            .collect();
+        if new.is_empty() {
+            return;
+        }
+        b.foreign_seen.extend(new.iter().cloned());
+        let target = b.target_branch.clone().unwrap_or_default();
+        let shown: Vec<&str> = new.iter().take(5).map(|c| &c[..c.len().min(10)]).collect();
+        self.notices.push(format!(
+            "{} new commit(s) on {target} during coordination, not merged by Fallow: {}",
+            new.len(),
+            shown.join(", ")
+        ));
+    }
+}
+
+fn git(dir: &std::path::Path, args: &[&str]) -> Result<String, String> {
+    let out = std::process::Command::new("git")
+        .current_dir(dir)
+        .args(args)
+        .output()
+        .map_err(|e| format!("git: {e}"))?;
+    if out.status.success() {
+        Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+    } else {
+        Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
+    }
+}
+
+/// The engineer's local merge (FR-028): `git merge --no-ff <gated>` in the project folder, which
+/// must be on the target branch and clean. Returns the new commit of the target branch.
+pub fn local_merge(dir: &std::path::Path, target: &str, gated: &str) -> Result<String, String> {
+    let on = super::git::branch(dir).unwrap_or_default();
+    if on != target {
+        return Err(format!(
+            "the project folder is on {}, not on the target branch {target}",
+            if on.is_empty() {
+                "a detached HEAD"
+            } else {
+                &on
+            }
+        ));
+    }
+    if !super::git::changes(dir)?.is_empty() {
+        return Err("the project folder has uncommitted changes".into());
+    }
+    if !super::git::commit_exists(dir, gated) {
+        return Err(format!("commit {gated} is not in the project's repository"));
+    }
+    let msg = format!(
+        "Merge {} (coordination, merged by Fallow)",
+        &gated[..gated.len().min(10)]
+    );
+    if let Err(e) = git(dir, &["merge", "--no-ff", "-m", &msg, gated]) {
+        let _ = git(dir, &["merge", "--abort"]);
+        return Err(format!("git merge failed: {e}"));
+    }
+    git(dir, &["rev-parse", "HEAD"])
+}
+
+/// Commits on `target` since `start` that neither came from a merged gated commit nor are
+/// Fallow's merge commits (FR-028a).
+pub fn foreign(
+    dir: &std::path::Path,
+    start: &str,
+    target: &str,
+    merged: &[(String, String)],
+) -> Result<Vec<String>, String> {
+    let mut args = vec!["rev-list".to_string(), format!("{start}..{target}")];
+    for (g, _) in merged {
+        args.push(format!("^{g}"));
+    }
+    let a: Vec<&str> = args.iter().map(String::as_str).collect();
+    Ok(git(dir, &a)?
+        .lines()
+        .map(str::to_string)
+        .filter(|c| !merged.iter().any(|(_, m)| m == c))
+        .collect())
+}

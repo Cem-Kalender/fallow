@@ -257,7 +257,7 @@ squad, US4–US6 add gates, evidence and publishing to the squad.
 
 **Independent Test**: one reviewer approves and one asks for changes, so the merge stays closed and the engineer sees both; local merge waits for the engineer and merges exactly the gated commit.
 
-- [ ] T032 [P] [US6] Extend `tests/squad_publish.rs`:
+- [X] T032 [P] [US6] Extend `tests/squad_publish.rs`:
   - `review_verdict` is reviewer-only.
   - Two reviewers: a disagreement keeps the merge closed and is shown with both notes. Same model: a warning.
   - Publish mode resolution: a remote means `draft-pr`, none means `local-merge`.
@@ -268,12 +268,12 @@ squad, US4–US6 add gates, evidence and publishing to the squad.
     - a foreign commit on the target branch during the burst warns (FR-028a);
     - automatic merge when the squad says so.
   - "No agent is ever handed a merge task" (SC-009).
-- [ ] T033 [US6] Implement `review_verdict` in `src/orchestration/tools.rs` (the event for the part, notes, repair on changes requested) and disagreement handling in `src/orchestration/publish.rs`.
-- [ ] T034 [US6] Implement publishing in `src/orchestration/publish.rs` and `src/app/orchestration.rs`:
+- [X] T033 [US6] Implement `review_verdict` in `src/orchestration/tools.rs` (the event for the part, notes, repair on changes requested) and disagreement handling in `src/orchestration/publish.rs`.
+- [X] T034 [US6] Implement publishing in `src/orchestration/publish.rs` and `src/app/orchestration.rs`:
   - draft-PR mode: the lead's briefing says to open a draft pull request for the gated commit and call `publish`;
   - local-merge mode: "ready to merge" in the Squad tab, and `m` asks to confirm, naming branch and commit; Fallow then runs `git merge --no-ff <commit>`;
   - the target-branch watcher every 2 minutes.
-- [ ] T035 [US6] Complete `cargo xtask squad` for SC-009 on three OSes:
+- [X] T035 [US6] Complete `cargo xtask squad` for SC-009 on three OSes:
   - lead, two builders, reviewer and a gate, all scripted;
   - the run ends with "ready to merge", which the harness presses (`m`, `y`);
   - check that the target branch has the gated commit and no agent got a merge task;

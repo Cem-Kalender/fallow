@@ -190,6 +190,39 @@ const SPECS: &[Spec] = &[
         ],
     },
     Spec {
+        name: "review_verdict",
+        description: "Reviewers: give your verdict on the work (or one part of it). approved signals review-approved; changes-requested signals review-changes-requested, and Fallow hands a repair task to the session that built the part (or the lead). Your latest verdict replaces your earlier one.",
+        args: &[
+            (
+                "verdict",
+                "string",
+                "\"approved\" or \"changes-requested\"",
+                true,
+            ),
+            (
+                "notes",
+                "string",
+                "What you checked and what must change, at most 2 KiB",
+                true,
+            ),
+            (
+                "part",
+                "string",
+                "Optional: the part you reviewed (its name, or a task number such as \"T3\")",
+                false,
+            ),
+        ],
+    },
+    Spec {
+        name: "publish",
+        description: "The lead, in draft pull request mode, once every merge condition holds: tell Fallow the address of the DRAFT pull request you opened for the gated commit. Fallow records it; the user merges it. In local-merge mode this is refused: the user merges in Fallow.",
+        args: &[
+            ("title", "string", "The pull request's title", true),
+            ("body", "string", "Its description", false),
+            ("url", "string", "Its address", true),
+        ],
+    },
+    Spec {
         name: "squad_status",
         description: "While the project coordinates: the squad in force (roles and their sessions), gate runs with their classification, each merge condition met or not and why, and the time left.",
         args: &[],
@@ -332,7 +365,14 @@ pub fn squad_status(hub: &Hub, project: crate::projects::ProjectId, now: Instant
             "conditions": checks,
             "commit": r.commit,
             "publish": r.mode.label(),
+            "published": b.published,
+            "merged": b.merged.iter().map(|(g, _)| g.clone()).collect::<Vec<_>>(),
         },
+        "verdicts": b
+            .verdicts
+            .iter()
+            .map(|(id, (v, n))| json!({ "session": id, "verdict": v, "notes": n }))
+            .collect::<Vec<_>>(),
     }))
 }
 
@@ -937,6 +977,118 @@ pub(super) fn call(
                 }
                 Err(r) => r,
             }
+        }
+        "review_verdict" => {
+            let Some(b) = hub.burst_for(caller) else {
+                return Reply::error("unavailable", "this project is not coordinating");
+            };
+            let approve = match args["verdict"].as_str() {
+                Some("approved") => true,
+                Some("changes-requested") => false,
+                other => {
+                    return Reply::error(
+                        "invalid",
+                        format!("verdict {other:?}: \"approved\" or \"changes-requested\""),
+                    );
+                }
+            };
+            let event = if approve {
+                "review-approved"
+            } else {
+                "review-changes-requested"
+            };
+            let Some(r) = &role else {
+                return Reply::error("not_allowed", "only sessions with a role give verdicts");
+            };
+            if !super::roles::may_signal(&b.squad, r, event) {
+                let why = format!("your role {} may not give review verdicts", r.name);
+                hub.activity
+                    .add(me.party(), Action::Refused, event, Some(why.clone()));
+                return Reply::error("not_allowed", why);
+            }
+            if hub.tainted(caller) {
+                return Reply::error(
+                    "not_allowed",
+                    "your worktree changed although your role is read-only: your verdicts no longer count",
+                );
+            }
+            let notes = match board::clean_text(
+                args["notes"].as_str().unwrap_or_default(),
+                events::MESSAGE_MAX,
+            ) {
+                Ok(n) => n,
+                Err((code, m)) => return Reply::error(code, m),
+            };
+            let part = args.get("part").and_then(Value::as_str).map(|p| {
+                let n = p.trim_start_matches(['T', 't']);
+                match n.parse::<u32>() {
+                    Ok(id) => hub
+                        .tasks
+                        .get(id)
+                        .and_then(|t| t.part.clone())
+                        .unwrap_or_else(|| p.to_string()),
+                    Err(_) => p.to_string(),
+                }
+            });
+            let project = b.project;
+            let key = (BoardId::Project(project), event.to_string());
+            let message = match &part {
+                Some(p) => format!("{p}: {notes}"),
+                None => notes.clone(),
+            };
+            if let Err(e) = hub.signal(&key, me.party(), Some(message)) {
+                return Reply::error("too_many_pending", e);
+            }
+            hub.record_signal(caller, event);
+            hub.verdict(caller, approve, &notes);
+            if r.level == super::squad::Level::ReadOnly {
+                hub.check_worktrees.push(caller);
+            }
+            if !approve {
+                hub.pending_repairs.push((
+                    project,
+                    part,
+                    format!("#{caller} asked for changes: {notes}"),
+                ));
+            }
+            Reply::Done(json!({ "signalled": event }))
+        }
+        "publish" => {
+            let Some(b) = hub.burst_for(caller) else {
+                return Reply::error("unavailable", "this project is not coordinating");
+            };
+            if me.role.as_deref() != Some("lead") {
+                return Reply::error("not_allowed", "only the lead publishes");
+            }
+            let project = b.project;
+            let Some(r) = hub.readiness(project) else {
+                return Reply::error("unavailable", "this project is not coordinating");
+            };
+            if r.mode == super::publish::Mode::LocalMerge {
+                return Reply::error(
+                    "not_allowed",
+                    "this project has no remote: the user merges the gated commit in Fallow",
+                );
+            }
+            if !r.ready {
+                let unmet: Vec<String> = r
+                    .checks
+                    .iter()
+                    .filter(|c| !c.met)
+                    .map(|c| format!("{} ({})", c.condition, c.why))
+                    .collect();
+                return Reply::error(
+                    "not_allowed",
+                    format!("not every merge condition holds: {}", unmet.join("; ")),
+                );
+            }
+            let url = args["url"].as_str().unwrap_or_default().trim().to_string();
+            if !(url.starts_with("https://") || url.starts_with("http://")) || url.len() > 500 {
+                return Reply::error("invalid", "url: the pull request's http(s) address");
+            }
+            let title = args["title"].as_str().unwrap_or_default();
+            hub.published(project, &url, title);
+            Reply::Done(json!({ "recorded": url }))
         }
         "squad_status" => match squad_status(hub, me.project, now) {
             Some(v) => Reply::Done(v),

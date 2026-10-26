@@ -171,9 +171,10 @@ impl Hub {
         })
     }
 
-    /// Gate runs to start now (research R-6): baselines at once, a final run when every task
-    /// handed to a builder is done (again after repairs).
-    pub fn gates_due(&self) -> Vec<Job> {
+    /// Gate runs to start now (research R-6): baselines at once; a final run when every task
+    /// handed to a builder is done, and again after more work is done or when the lead's
+    /// commit (`lead_head`, asked only then) changed since the last final run.
+    pub fn gates_due(&self, lead_head: &dyn Fn(ProjectId) -> Option<String>) -> Vec<Job> {
         let mut jobs = Vec::new();
         for b in &self.bursts {
             let (handed, done) = self.builder_tasks(b.project);
@@ -193,12 +194,12 @@ impl Hub {
                     });
                     continue;
                 }
-                let last = runs
-                    .iter()
-                    .rev()
-                    .find(|r| r.kind == Kind::Final)
-                    .map(|r| r.after_tasks);
-                if handed > 0 && done == handed && last.is_none_or(|n| done > n) {
+                let last = runs.iter().rev().find(|r| r.kind == Kind::Final);
+                let again = |l: &GateRun| {
+                    done > l.after_tasks
+                        || lead_head(b.project).is_some_and(|h| l.commit.as_deref() != Some(&h))
+                };
+                if handed > 0 && done == handed && last.is_none_or(|l| again(l)) {
                     jobs.push(Job {
                         project: b.project,
                         gate: g.clone(),
