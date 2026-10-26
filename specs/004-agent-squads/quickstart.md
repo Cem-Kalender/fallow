@@ -49,6 +49,7 @@ Filled in during implementation (per OS, with CI run numbers).
 | Q8 | Manual, same run | PASS: "Coordination ended" notice and board note, 0 permissions |
 | Q1–Q3, Q5, Q6 (local merge), Q8 | `cargo xtask squad` (scripted agents) | PASS: no prompt for starts and tasks; builder's start and approval refused; baseline and final gate, an agent's fake gate refused; merge closed until gate, work and review; `m`, `y` merged the gated commit into main; prompts again after `Shift-X` |
 | Q2–Q9 with Claude Code | T041, the engineer at the terminal | open |
+| Q10 | Manual, Claude Code, FallowSandbox: "Roman numerals" spec (two builders, a reviewer, gate `python -m unittest`) | PASS: the squad ran to "ready to merge" with no interventions besides the spec and the merge. A small task: it proves the routing, not the value of a squad; a larger run (three builders, integration through an agreed interface) is next |
 | Q4, Q7 | covered by `tests/squad_roles.rs` and `tests/squad_evidence.rs`; manual run open (T041) | — |
 
 CI (three OSes): "Squads (004 SC-009)" runs `cargo xtask squad`; run numbers to be added.

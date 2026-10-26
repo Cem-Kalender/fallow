@@ -311,7 +311,7 @@ is ready by evidence Fallow checks.
   the lead only for a decision outside both (FR-034, FR-038). Do not invite questions.
 - [X] T047 [US7] Extend `cargo xtask squad` (SC-010): the lead acts only on typed squad updates (no
   polling) and the run reaches merge ready with no engineer input besides the merge.
-- [ ] T048 [US7] Manual run (SC-011, quickstart Q10): agree a small spec with the lead in
+- [X] T048 [US7] Manual run (SC-011, quickstart Q10): agree a small spec with the lead in
   FallowSandbox, then count interventions until merge ready. Needs the engineer at the terminal.
 
 **Checkpoint**: quickstart Q10 passes with no interventions besides the spec and the merge.
