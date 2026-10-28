@@ -1,7 +1,7 @@
 # Constitution Amendment Proposal: Run Records
 
-**Status**: PROPOSED. Option A chosen by the project owner on 2026-10-28 (keep run records on disk);
-this text awaits their approval as written.
+**Status**: RATIFIED 2026-10-28 by the project owner, as written. Applied to
+`.specify/memory/constitution.md` (v5.0.0).
 
 **Proposed version**: 4.0.0 → **5.0.0** (MAJOR: Principle VII is redefined to allow one kind of
 orchestration data on disk).

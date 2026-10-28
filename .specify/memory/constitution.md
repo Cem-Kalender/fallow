@@ -1,28 +1,27 @@
 <!--
 Sync Impact Report
 ==================
-Version change: 3.0.1 → 4.0.0
-Bump rationale: MAJOR. Principle IV is redefined: input delivered into Fallow's own agent
-sessions may be covered by a scoped, time-limited, visible, revocable standing permission instead
-of a per-action confirmation. Destructive actions keep per-action confirmation everywhere.
-Approved by the project owner on 2026-10-19. Source: specs/003-agent-orchestration/
+Version change: 4.0.0 → 5.0.0
+Bump rationale: MAJOR. Principle VII is redefined: run records of runs the engineer chose to record
+(fingerprints, identifiers, durations, counts, fixed-value outcomes and reported token and cost
+figures, never any text, names or paths) may be kept on disk in Fallow's own cache directory.
+Approved by the project owner on 2026-10-28. Source: specs/005-adaptive-delegation/
 constitution-amendment.md.
 
 Modified principles:
-  - II. Instant Startup, No Implicit Background Work: the orchestration channel starts with the
-    first session that uses it, never at startup.
-  - IV. Observability Over Control: redefined (Fallow sessions, standing permissions,
-    destructive actions).
-  - V. Least Privilege, Read-Only by Default: starting a process is a write capability, allowed
-    only on explicit request or under a standing permission with a session limit.
-  - VII. Privacy by Construction: one local, user-only channel for Fallow's sessions; no network
-    socket, loopback included; orchestration content and session output are memory-only.
+  - VII. Privacy by Construction: signals join the memory-only orchestration data; one exception
+    for run records.
 
-Added sections: none (two new quality gates in Development Workflow & Quality Gates).
+Added sections: none (one new quality gate in Development Workflow & Quality Gates: the run-record
+marker test).
 Removed sections: none
 
 Templates requiring updates: none. plan-template.md, spec-template.md and tasks-template.md read
 the constitution at runtime.
+
+Previous amendment (4.0.0): MAJOR. Principle IV redefined (Fallow sessions, standing permissions,
+destructive actions); II, V and VII adjusted for the orchestration channel. Source:
+specs/003-agent-orchestration/constitution-amendment.md.
 
 Previous amendment (3.0.1): PATCH. The startup budget statistic (p95 of 30 runs after 3
 warm-ups, one automatic retry).
@@ -30,8 +29,7 @@ warm-ups, one automatic retry).
 Previous amendment (3.0.0): MAJOR. Principle VII: environment values are never parsed, stored,
 displayed or logged; macOS KERN_PROCARGS2 exception with a wiped buffer and the SC-007 canary.
 
-Follow-up TODOs: none. TODO(LARGE_PROJECT_FIXTURE) and TODO(REFERENCE_HARDWARE) are resolved in
-specs/001-llm-aware-tui-editor/research.md R-13 (fixture "fallow-fixture v1", 2026-10-19).
+Follow-up TODOs: none.
 -->
 
 # Fallow Constitution
@@ -142,8 +140,25 @@ Rationale: performance budgets that are not measured continuously regress silent
   It MUST NOT open any network socket for this, including on the loopback interface. Only processes
   Fallow started may use the channel, each only as itself. Fallow never makes network requests on
   an agent's behalf.
-- Messages, events, tasks, permissions and the activity log of orchestration, and the output of
-  sessions, are kept in memory only. They MUST NOT be written to disk, logged or sent anywhere.
+- Messages, events, tasks, signals, permissions and the activity log of orchestration, and the
+  output of sessions, are kept in memory only. They MUST NOT be written to disk, logged or sent
+  anywhere.
+- One exception: **run records**. For a run the engineer chose to record, Fallow MAY keep a record
+  on disk in its own cache directory, readable by the current user only. A record holds only:
+  - the run's mode and the components switched off, as fixed values;
+  - fingerprints (one-way hashes) of the task description and of the hidden tests, never the text;
+  - identifiers of the agent, model and version of each session, and of the starting and final
+    commits;
+  - the start time and durations;
+  - per part and per role, referred to by number, the counts (signals, repair rounds,
+    interventions, hidden tests passed and failed) and gate and review outcomes as fixed values;
+  - token and cost figures as agents reported them.
+
+  A run record MUST NOT contain any text written by the engineer or an agent (task names or
+  descriptions, part, role or focus names, messages, tasks, signals, reviews, notes), session
+  output, file contents, test names, paths of any kind, command lines or environment values. Run
+  records are never sent anywhere. Fallow writes none unless the engineer chose to record the run;
+  they are kept until the engineer deletes them, and Fallow shows how many it holds and their size.
 - Detection of LLM processes MUST rely only on process metadata (name, PID, executable path,
   command line, parent/child relationships, resource usage) and connection endpoints
   (remote host, port, protocol).
@@ -183,6 +198,9 @@ hostnames reveals nothing about the user beyond the fact that Fallow is running.
   test proving it is unreachable without a per-action approval or a matching, unexpired standing
   permission.
 - CI MUST verify that Fallow never opens a listening network socket, alongside the egress test.
+- CI MUST verify that a run record holds only the fields Principle VII allows, using a run whose
+  task name and description, part, role and focus names, messages, tasks, signals, reviews, test
+  names, paths and session output contain marker text that must not appear in the record.
 - Any code path that opens a network connection MUST be treated as a constitution violation,
   except forward DNS resolution of configured provider hostnames as permitted by Principle VII.
   Any further exception requires an amendment.
@@ -201,4 +219,4 @@ hostnames reveals nothing about the user beyond the fact that Fallow is running.
   Tracking section; unjustified violations block merge.
 - Compliance is reviewed at every PR and at every release.
 
-**Version**: 4.0.0 | **Ratified**: 2026-10-13 | **Last Amended**: 2026-10-19
+**Version**: 5.0.0 | **Ratified**: 2026-10-13 | **Last Amended**: 2026-10-28
