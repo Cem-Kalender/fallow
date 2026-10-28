@@ -662,7 +662,7 @@ fn run_solo_loop(bin: &Path, base: &Path) -> Result<i32, String> {
             (
                 "r",
                 format!(
-                    "wait-loop gate-tests-passed 300 {}\nverdict approved - feature checked\nwrite {}\n",
+                    "wait-loop gate-tests-passed 300 {}\nverdict-all feature checked\nwrite {}\n",
                     f("r-gate"),
                     f("r-verdict")
                 ),

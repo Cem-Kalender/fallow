@@ -555,3 +555,164 @@ pub fn foreign(
         .filter(|c| !merged.iter().any(|(_, m)| m == c))
         .collect())
 }
+
+impl Hub {
+    /// Whether a reviewer may start with `focus` (005 FR-031): with focuses in the manifest a
+    /// reviewer takes one that no running reviewer has; without them none is needed.
+    pub(crate) fn check_focus(
+        &mut self,
+        sessions: &dyn super::Sessions,
+        caller: u32,
+        role: Option<&str>,
+        focus: Option<&str>,
+    ) -> Result<(), String> {
+        let Some(project) = self.burst_for(caller).map(|b| b.project) else {
+            return Ok(());
+        };
+        self.refresh_manifest(sessions, project);
+        let Some(b) = self.burst_of(project) else {
+            return Ok(());
+        };
+        let reviewer = role
+            .and_then(|r| b.squad.role(r))
+            .is_some_and(|r| super::roles::may_signal(&b.squad, r, "review-approved"));
+        let reviews: Vec<&str> = b
+            .manifest
+            .as_ref()
+            .map(|m| m.reviews.iter().map(|r| r.focus.as_str()).collect())
+            .unwrap_or_default();
+        match (reviewer, focus) {
+            (false, Some(_)) => Err("focus is for reviewers".into()),
+            (false, None) => Ok(()),
+            (true, None) if reviews.is_empty() => Ok(()),
+            (true, None) => Err(format!(
+                "a reviewer starts with a focus from .fallow/work.toml: {}",
+                reviews.join(", ")
+            )),
+            (true, Some(f)) if !reviews.contains(&f) => Err(format!(
+                "no review focus {f:?} in .fallow/work.toml (focuses: {})",
+                if reviews.is_empty() {
+                    "none".to_string()
+                } else {
+                    reviews.join(", ")
+                }
+            )),
+            (true, Some(f)) => {
+                let taken = b
+                    .focus
+                    .iter()
+                    .any(|(id, x)| x == f && sessions.info(*id).is_some_and(|s| s.running));
+                if taken {
+                    Err(format!("a reviewer with focus {f} is already running"))
+                } else {
+                    Ok(())
+                }
+            }
+        }
+    }
+
+    /// The criteria a reviewer answers (FR-029): its focus's work, or all work; without a
+    /// manifest (or with the criteria precondition switched off and none given), the task
+    /// description is the one criterion, `task`.
+    pub fn criteria_to_answer(&self, reviewer: u32) -> Vec<(String, String, bool)> {
+        let Some(b) = self.burst_for(reviewer) else {
+            return Vec::new();
+        };
+        let task = || {
+            vec![(
+                "task".to_string(),
+                b.description
+                    .clone()
+                    .unwrap_or_else(|| "the work agreed with the user does what was asked".into()),
+                false,
+            )]
+        };
+        let Some(m) = &b.manifest else {
+            return task();
+        };
+        let works: Vec<&str> = match b
+            .focus
+            .get(&reviewer)
+            .and_then(|f| m.reviews.iter().find(|r| &r.focus == f))
+        {
+            Some(r) if !r.work.is_empty() => r.work.iter().map(String::as_str).collect(),
+            _ => m.work.iter().map(|w| w.id.as_str()).collect(),
+        };
+        let mut out = Vec::new();
+        for w in works {
+            for c in m.criteria(w, None) {
+                out.push((c.id.clone(), c.text.clone(), c.must_fail));
+            }
+        }
+        if out.is_empty() { task() } else { out }
+    }
+
+    /// What an approval's `checks` lack (FR-029), or `None` when it counts. Switched off for a
+    /// run (FR-017): any approval counts.
+    pub fn verdict_missing(
+        &self,
+        reviewer: u32,
+        checks: Option<&serde_json::Value>,
+    ) -> Option<String> {
+        let b = self.burst_for(reviewer)?;
+        if !b.squad.adaptive() || b.switched_off.contains(super::burst::OFF_VERDICT) {
+            return None;
+        }
+        let list: Vec<&serde_json::Value> = checks
+            .and_then(serde_json::Value::as_array)
+            .map(|a| a.iter().collect())
+            .unwrap_or_default();
+        let valid = |c: &&serde_json::Value| {
+            c["criterion"].as_str().is_some()
+                && c["ran"].as_str().is_some_and(|r| !r.trim().is_empty())
+                && matches!(c["expect"].as_str(), Some("pass" | "fail"))
+                && matches!(c["result"].as_str(), Some("pass" | "fail"))
+        };
+        let good: Vec<&&serde_json::Value> = list.iter().filter(|c| valid(c)).collect();
+        let answered: Vec<&str> = good
+            .iter()
+            .filter_map(|c| c["criterion"].as_str())
+            .collect();
+        let missing: Vec<String> = self
+            .criteria_to_answer(reviewer)
+            .into_iter()
+            .filter(|(id, _, _)| !answered.contains(&id.as_str()))
+            .map(|(id, _, _)| id)
+            .collect();
+        let negative = good.iter().any(|c| c["expect"] == "fail");
+        let failed: Vec<&str> = good
+            .iter()
+            .filter(|c| c["expect"] != c["result"])
+            .filter_map(|c| c["criterion"].as_str())
+            .collect();
+        let mut why = Vec::new();
+        if !missing.is_empty() {
+            why.push(format!("no check for {}", missing.join(", ")));
+        }
+        if !negative {
+            why.push("no case that must fail".to_string());
+        }
+        if !failed.is_empty() {
+            why.push(format!(
+                "checks for {} did not give the expected result (request changes instead)",
+                failed.join(", ")
+            ));
+        }
+        if list.len() != good.len() {
+            why.push("a check lacks criterion, ran, expect or result".to_string());
+        }
+        (!why.is_empty()).then(|| why.join("; "))
+    }
+
+    /// An approval that did not answer the criteria: kept as `incomplete` (it does not count).
+    pub(crate) fn incomplete_verdict(&mut self, reviewer: u32, notes: &str) {
+        if let Some(b) = self
+            .bursts
+            .iter_mut()
+            .find(|b| b.roles.contains_key(&reviewer))
+        {
+            b.verdicts
+                .insert(reviewer, ("incomplete".to_string(), notes.to_string()));
+        }
+    }
+}

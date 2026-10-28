@@ -46,6 +46,8 @@
 //!   `HEAD` (the lead's own pieces of work, 005).
 //! - `write-commit <path> <text>`: writes `text` (`\n` for line breaks) to `path` and commits it.
 //! - `answer-signal <n> <text>`: the lead answers signal `n` with its `HEAD` commit (005).
+//! - `verdict-all <notes…>`: approves with a check for every criterion `whoami` lists and one
+//!   case that must fail (005 FR-029).
 //!
 //! After the script it prints `script done` and echoes every typed line as `got <line>`.
 
@@ -400,6 +402,31 @@ pub fn run(args: &[String]) -> ! {
                 if let Some(t) = part {
                     a["part"] = json!(t);
                 }
+                record(c.call("review_verdict", a), &mut last, n, &out);
+            }
+            ("verdict-all", Some((c, _))) => {
+                let who = c.call("whoami", json!({})).unwrap_or(Value::Null);
+                let mut checks: Vec<Value> = Vec::new();
+                for k in who["criteria"].as_array().into_iter().flatten() {
+                    let fail = k["must_fail"] == true;
+                    checks.push(json!({
+                        "criterion": k["id"],
+                        "ran": "scripted check",
+                        "expect": if fail { "fail" } else { "pass" },
+                        "result": if fail { "fail" } else { "pass" },
+                    }));
+                }
+                if !checks.iter().any(|x| x["expect"] == "fail") {
+                    if let Some(first) = who["criteria"][0]["id"].as_str() {
+                        checks.push(json!({
+                            "criterion": first,
+                            "ran": "a case that must be refused",
+                            "expect": "fail",
+                            "result": "fail",
+                        }));
+                    }
+                }
+                let a = json!({"verdict": "approved", "notes": rest, "checks": checks});
                 record(c.call("review_verdict", a), &mut last, n, &out);
             }
             ("write-commit", _) => {

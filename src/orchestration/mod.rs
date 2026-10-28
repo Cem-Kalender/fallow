@@ -365,6 +365,8 @@ pub struct StartRequest {
     pub first_part: Option<(String, u8)>,
     /// What a builder starts for: a piece of work in the manifest and its part (005 R-2).
     pub assignment: Option<delegation::Assignment>,
+    /// A reviewer's focus from the manifest's `[[review]]` (005 FR-031).
+    pub focus: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -827,6 +829,7 @@ impl Hub {
             bypass,
             first_part: None,
             assignment,
+            focus: None,
         });
         if matches!(state, StartState::Refused(_)) {
             self.start_outcome(id);
@@ -898,10 +901,14 @@ impl Hub {
         };
         let (from, task, part) = (s.from.clone(), s.first_task.clone(), s.first_part.clone());
         let (role, project, assignment) = (s.role.clone(), s.project, s.assignment.clone());
+        let focus = s.focus.clone();
         if let (Ok(sid), Some(r)) = (&result, role) {
             if let Some(b) = self.bursts.iter_mut().find(|b| b.project == project) {
                 if let Some(a) = &assignment {
                     b.assigned.insert(*sid, a.clone());
+                }
+                if let Some(f) = &focus {
+                    b.focus.insert(*sid, f.clone());
                 }
                 let read_only = b.squad.role(&r).is_some_and(|r| !r.level.edits());
                 b.roles.insert(*sid, r);

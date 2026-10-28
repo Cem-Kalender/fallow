@@ -286,14 +286,14 @@ coordinate through signals and commits.
 
 **Independent Test**: quickstart Q3.
 
-- [ ] T037 [P] [US4] Extend `tests/squad_publish.rs`:
+- [X] T037 [P] [US4] Extend `tests/squad_publish.rs`:
   - a hand-over to a builder is refused without committed criteria (FR-027);
   - lead-built work without criteria uses the description as its one criterion;
   - a verdict without a check per criterion and one with `expect: "fail"` is `incomplete`, does not
     count, and the reply says what is missing (FR-029);
   - `review:approved` needs one approval per manifest focus (FR-031);
   - a squad using `check` tells the engineer that writes outside the worktree are not seen (FR-030).
-- [ ] T038 [US4] Implement T037:
+- [X] T038 [US4] Implement T037:
   - `checks` in `review_verdict` and the reviewer's `focus` at `session_start` in
     `src/orchestration/tools.rs`;
   - readiness in `src/orchestration/publish.rs`;

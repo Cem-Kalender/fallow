@@ -839,3 +839,206 @@ fn the_lead_does_not_withdraw_the_engineers_open_tasks() {
     };
     assert!(v.to_string().contains(&format!("\"task\":{t}")), "{v}");
 }
+
+/// 005: a squad following adaptive delegation (the built-in one) for the verification tests.
+fn adaptive_burst() -> (Hub, Fake, Instant) {
+    let mut h = Hub::new(OrchestrationSettings::default());
+    let f = Fake(vec![info(1)]);
+    let now = Instant::now();
+    burst_with(&mut h, &f, squad::builtin(), now);
+    (h, f, now)
+}
+
+fn check(h: &Hub, cond: &str) -> (bool, String) {
+    let c = h
+        .readiness(1)
+        .unwrap()
+        .checks
+        .into_iter()
+        .find(|c| c.condition == cond)
+        .unwrap();
+    (c.met, c.why)
+}
+
+#[test]
+fn an_approval_counts_only_when_it_answers_every_criterion() {
+    // 005 T037: FR-027, FR-029.
+    use fallow::orchestration::manifest;
+    let (mut h, mut f, now) = adaptive_burst();
+    // A builder for work without criteria is refused.
+    h.apply_manifest(
+        1,
+        Some(
+            manifest::parse(
+                manifest::WORK_FILE,
+                "[[work]]\nid = \"api\"\nbuild = \"builder\"\nreason = \"fresh context\"\n",
+            )
+            .unwrap(),
+        ),
+    );
+    let r = h.call(
+        &f,
+        1,
+        "session_start",
+        json!({"profile": "claude", "project": "api", "role": "builder", "work": "api"}),
+        now,
+    );
+    assert!(
+        matches!(&r, Reply::Error("not_allowed", m) if m.contains("no acceptance criteria")),
+        "{r:?}"
+    );
+    // With criteria: the reviewer's whoami lists them.
+    h.apply_manifest(
+        1,
+        Some(
+            manifest::parse(
+                manifest::WORK_FILE,
+                "[[work]]\nid = \"api\"\ncriteria = [{ id = \"add\", text = \"adds an item\" }, { id = \"zero\", text = \"qty 0 is refused\", must_fail = true }]\n",
+            )
+            .unwrap(),
+        ),
+    );
+    start(&mut h, &mut f, "reviewer", 3, now);
+    let Reply::Done(w) = h.call(&f, 3, "whoami", json!({}), now) else {
+        panic!()
+    };
+    assert_eq!(w["criteria"][1]["id"], "zero");
+    assert_eq!(w["criteria"][1]["must_fail"], true);
+    // "Looks fine" does not count, and is recorded as incomplete.
+    let r = verdict(&mut h, &f, 3, "approved", "looks fine", now);
+    assert!(
+        matches!(&r, Reply::Error("incomplete", m) if m.contains("no check for add, zero") && m.contains("no case that must fail")),
+        "{r:?}"
+    );
+    assert_eq!(h.burst_of(1).unwrap().verdicts[&3].0, "incomplete");
+    assert!(!check(&h, "review:approved").0);
+    // Checks for every criterion, with the case that must fail: it counts.
+    let r = h.call(
+        &f,
+        3,
+        "review_verdict",
+        json!({"verdict": "approved", "notes": "checked", "checks": [
+            {"criterion": "add", "ran": "curl -X POST /cart", "expect": "pass", "result": "pass"},
+            {"criterion": "zero", "ran": "curl qty=0", "expect": "fail", "result": "fail"},
+        ]}),
+        now,
+    );
+    assert!(matches!(r, Reply::Done(_)), "{r:?}");
+    assert!(check(&h, "review:approved").0);
+    // A check that did not give the expected result is not an approval.
+    let r = h.call(
+        &f,
+        3,
+        "review_verdict",
+        json!({"verdict": "approved", "notes": "x", "checks": [
+            {"criterion": "add", "ran": "curl", "expect": "pass", "result": "fail"},
+            {"criterion": "zero", "ran": "curl", "expect": "fail", "result": "fail"},
+        ]}),
+        now,
+    );
+    assert!(
+        matches!(&r, Reply::Error("incomplete", m) if m.contains("request changes")),
+        "{r:?}"
+    );
+    // A request for changes needs no checks: the repair starts.
+    let r = verdict(&mut h, &f, 3, "changes-requested", "add is wrong", now);
+    assert!(matches!(r, Reply::Done(_)), "{r:?}");
+}
+
+#[test]
+fn without_a_manifest_the_task_is_the_one_criterion() {
+    // 005 FR-027: work the lead builds without criteria is checked against its description.
+    let (mut h, mut f, now) = adaptive_burst();
+    start(&mut h, &mut f, "reviewer", 3, now);
+    let Reply::Done(w) = h.call(&f, 3, "whoami", json!({}), now) else {
+        panic!()
+    };
+    assert_eq!(w["criteria"][0]["id"], "task");
+    let r = h.call(
+        &f,
+        3,
+        "review_verdict",
+        json!({"verdict": "approved", "notes": "ok", "checks": [
+            {"criterion": "task", "ran": "the app", "expect": "pass", "result": "pass"},
+            {"criterion": "task", "ran": "bad input", "expect": "fail", "result": "fail"},
+        ]}),
+        now,
+    );
+    assert!(matches!(r, Reply::Done(_)), "{r:?}");
+    assert!(check(&h, "review:approved").0);
+}
+
+#[test]
+fn reviewers_take_distinct_focuses_and_each_must_approve() {
+    // 005 T037: FR-031, FR-030.
+    use fallow::orchestration::manifest;
+    let (mut h, mut f, now) = adaptive_burst();
+    assert!(
+        h.notices
+            .iter()
+            .any(|n| n.contains("writes outside it are not seen")),
+        "{:?}",
+        h.notices
+    );
+    h.apply_manifest(
+        1,
+        Some(
+            manifest::parse(
+                manifest::WORK_FILE,
+                "[[work]]\nid = \"api\"\ncriteria = [{ id = \"z\", text = \"refuses 0\", must_fail = true }]\n[[review]]\nfocus = \"security\"\n[[review]]\nfocus = \"tests\"\n",
+            )
+            .unwrap(),
+        ),
+    );
+    let start_focus = |h: &mut Hub, f: &mut Fake, focus: Option<&str>, id: u32| {
+        let mut a = json!({"profile": "claude", "project": "api", "role": "reviewer"});
+        if let Some(x) = focus {
+            a["focus"] = json!(x);
+        }
+        let r = h.call(f, 1, "session_start", a, now);
+        if let Reply::Done(v) = &r {
+            f.0.push(info(id));
+            h.start_done(f, v["start"].as_u64().unwrap(), Ok(id), now);
+        }
+        r
+    };
+    let r = start_focus(&mut h, &mut f, None, 3);
+    assert!(
+        matches!(&r, Reply::Error("not_allowed", m) if m.contains("security, tests")),
+        "{r:?}"
+    );
+    let r = start_focus(&mut h, &mut f, Some("style"), 3);
+    assert!(
+        matches!(&r, Reply::Error("not_allowed", m) if m.contains("no review focus")),
+        "{r:?}"
+    );
+    assert!(matches!(
+        start_focus(&mut h, &mut f, Some("security"), 3),
+        Reply::Done(_)
+    ));
+    let r = start_focus(&mut h, &mut f, Some("security"), 4);
+    assert!(
+        matches!(&r, Reply::Error("not_allowed", m) if m.contains("already running")),
+        "{r:?}"
+    );
+    assert!(matches!(
+        start_focus(&mut h, &mut f, Some("tests"), 4),
+        Reply::Done(_)
+    ));
+    let approve = |h: &mut Hub, f: &Fake, id: u32| {
+        h.call(
+            f,
+            id,
+            "review_verdict",
+            json!({"verdict": "approved", "notes": "ok", "checks": [
+                {"criterion": "z", "ran": "qty 0", "expect": "fail", "result": "fail"},
+            ]}),
+            now,
+        )
+    };
+    assert!(matches!(approve(&mut h, &f, 3), Reply::Done(_)));
+    let (met, why) = check(&h, "review:approved");
+    assert!(!met && why.contains("tests"), "{why}");
+    assert!(matches!(approve(&mut h, &f, 4), Reply::Done(_)));
+    assert!(check(&h, "review:approved").0);
+}

@@ -331,11 +331,13 @@ reason = "two unrelated features"
 id = "export"
 work = "extras"
 owns = ["src/export/**"]
+criteria = [{ id = "csv", text = "exports csv" }]
 
 [[part]]
 id = "import"
 work = "extras"
 owns = ["src/import/**"]
+criteria = [{ id = "csv-in", text = "imports csv" }]
 "#;
 
 #[test]

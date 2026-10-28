@@ -182,7 +182,7 @@ impl Hub {
                 "{work} is not in .fallow/work.toml at your latest commit, so the lead builds it. {how}."
             ));
         };
-        match w.build {
+        let refusal = match w.build {
             Build::Lead => Some(format!(
                 "the manifest records {work} as built by the lead. {how}."
             )),
@@ -192,7 +192,18 @@ impl Hub {
                 )
             }),
             Build::Features | Build::Parts => self.part_refusal(b, m, w, part, have),
+        };
+        if refusal.is_some() {
+            return refusal;
         }
+        // Nothing is handed to a builder before its acceptance criteria are committed (FR-027).
+        (!b.switched_off.contains(super::burst::OFF_CRITERIA) && m.criteria(work, part).is_empty())
+            .then(|| {
+                format!(
+                    "{work}{} has no acceptance criteria: commit them in .fallow/work.toml (with at least one case that must fail) before a builder starts",
+                    part.map_or(String::new(), |p| format!(", part {p},"))
+                )
+            })
     }
 
     /// The task builders' tasks default to: the assignment of the session they are for.

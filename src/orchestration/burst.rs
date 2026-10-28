@@ -226,6 +226,18 @@ impl Hub {
             switched_off: BTreeSet::new(),
             warned: false,
         };
+        // Reviewers that run commands can write outside their worktree, unseen (005 FR-030).
+        if burst
+            .squad
+            .roles
+            .iter()
+            .any(|r| r.level == super::squad::Level::Check)
+        {
+            self.notices.push(format!(
+                "{}: reviewers here may run commands; a change in their worktree voids their verdicts, but writes outside it are not seen",
+                burst.project_name
+            ));
+        }
         // A squad whose merge needs more sessions than the burst may start (004 run 3).
         let needs = burst.squad.merge_roles();
         if usize::from(allowance) < needs.len() {

@@ -240,6 +240,12 @@ const SPECS: &[Spec] = &[
                 "Optional: the part you reviewed (its name, or a task number such as \"T3\")",
                 false,
             ),
+            (
+                "checks",
+                "array",
+                "For an approval: one check per acceptance criterion (whoami lists them), [{\"criterion\": id, \"ran\": what you ran, \"expect\": \"pass\" | \"fail\", \"result\": \"pass\" | \"fail\"}], including at least one case that must fail (expect fail). An approval without them does not count.",
+                false,
+            ),
         ],
     },
     Spec {
@@ -740,6 +746,14 @@ pub(super) fn call(
                         "you build each piece of work yourself unless .fallow/work.toml delegates it"
                     );
                 }
+                if role.is_some_and(|r| r.name != "lead" && !r.level.edits()) {
+                    v["criteria"] = json!(hub
+                        .criteria_to_answer(caller)
+                        .into_iter()
+                        .map(|(id, text, must_fail)| json!({"id": id, "text": text, "must_fail": must_fail}))
+                        .collect::<Vec<_>>());
+                    v["focus"] = json!(b.focus.get(&caller));
+                }
                 if let Some((work, part)) = b.assigned.get(&caller) {
                     let m = b.manifest.as_ref();
                     v["work"] = json!({
@@ -1185,6 +1199,19 @@ pub(super) fn call(
                 .get("work")
                 .and_then(Value::as_str)
                 .map(|w| (w.to_string(), part.clone()));
+            // A reviewer's focus (FR-031): one of the manifest's, not taken by another reviewer.
+            let focus = args
+                .get("focus")
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            if let Err(why) = hub.check_focus(
+                sessions,
+                caller,
+                args.get("role").and_then(Value::as_str),
+                focus.as_deref(),
+            ) {
+                return Reply::error("not_allowed", why);
+            }
             match hub.request_start(
                 sessions,
                 &me,
@@ -1196,6 +1223,9 @@ pub(super) fn call(
                 now,
             ) {
                 Ok((id, state, hold)) => {
+                    if let Some(r) = hub.starts.iter_mut().find(|r| r.id == id) {
+                        r.focus = focus;
+                    }
                     let mut v = json!({ "start": id });
                     match state {
                         super::StartState::Refused(why) => {
@@ -1347,6 +1377,20 @@ pub(super) fn call(
                     "not_allowed",
                     "your worktree changed although your role is read-only: your verdicts no longer count",
                 );
+            }
+            // An approval answers every acceptance criterion, with a case that must fail
+            // (005 FR-029); otherwise it is recorded as incomplete and does not count.
+            if approve {
+                if let Some(missing) = hub.verdict_missing(caller, args.get("checks")) {
+                    let notes = args["notes"].as_str().unwrap_or_default().to_string();
+                    hub.incomplete_verdict(caller, &notes);
+                    return Reply::error(
+                        "incomplete",
+                        format!(
+                            "your approval does not count yet: {missing}. Give checks: one per criterion with what you ran and the result, and at least one case that must fail."
+                        ),
+                    );
+                }
             }
             let notes =
                 match board::clean_text(args["notes"].as_str().unwrap_or_default(), 4 * 1024) {
