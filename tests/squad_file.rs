@@ -173,23 +173,70 @@ fn the_built_in_squad() {
     assert_eq!(names, ["lead", "builder", "reviewer"]);
     assert_eq!(s.role("builder").unwrap().max, 3);
     assert_eq!(s.role("reviewer").unwrap().max, 2);
-    assert_eq!(s.role("reviewer").unwrap().level, Level::ReadOnly);
+    // 005 R-3: reviewers may run commands but not edit.
+    assert_eq!(s.role("reviewer").unwrap().level, Level::Check);
     assert!(s.role("builder").unwrap().tools.allows(Tool::Deliver));
     assert!(!s.role("builder").unwrap().tools.allows(Tool::Start));
     assert!(!s.role("builder").unwrap().tools.allows(Tool::Tasks));
     assert_eq!(s.publish, Publish::Auto);
     assert!(s.gates.is_empty());
+    // 005 R-16: the lead builds by default, so the merge waits for the work, not for builders.
+    assert_eq!(
+        s.merge_requires,
+        vec![Condition::WorkDone, Condition::ReviewApproved]
+    );
+    assert_eq!(s.merge_roles(), ["reviewer"]);
+    assert_eq!((s.repair_cap, s.wait_notice_min), (2, 10));
+    assert_eq!(s.max_parallel_builders, None);
+    assert_eq!((s.signal_unanswered_min, s.run_idle_end_min), (15, 3));
+    assert!(!s.test_patterns.is_empty());
+}
+
+#[test]
+fn squad_additions_of_005() {
+    // contracts/work-manifest.md "Squad file additions".
+    let s = parse(concat!(
+        "max_parallel_builders = 2\n",
+        "signal_unanswered_min = 20\n",
+        "run_idle_end_min = 5\n",
+        "test_patterns = [\"spec/**\"]\n\n",
+        "[[role]]\nname = \"checker\"\ndescription = \"d\"\nlevel = \"check\"\n\n",
+        "[merge]\nrequires = [\"work:done\", \"review:approved\", \"done:checker\"]\n",
+    ))
+    .unwrap();
+    assert_eq!(s.max_parallel_builders, Some(2));
+    assert_eq!((s.signal_unanswered_min, s.run_idle_end_min), (20, 5));
+    assert_eq!(s.test_patterns, ["spec/**"]);
+    assert_eq!(s.role("checker").unwrap().level, Level::Check);
     assert_eq!(
         s.merge_requires,
         vec![
-            Condition::AllDone("builder".into()),
-            Condition::Signal {
-                event: "review-approved".into(),
-                role: "reviewer".into()
-            }
+            Condition::WorkDone,
+            Condition::ReviewApproved,
+            Condition::AllDone("checker".into())
         ]
     );
-    assert_eq!((s.repair_cap, s.wait_notice_min), (2, 10));
+    for (text, needle) in [
+        (
+            "max_parallel_builders = 0\n",
+            "max_parallel_builders 0: expected 1..=16",
+        ),
+        ("max_parallel_builders = 17\n", "expected 1..=16"),
+        (
+            "signal_unanswered_min = 0\n",
+            "signal_unanswered_min 0: expected 1..=240",
+        ),
+        (
+            "run_idle_end_min = 61\n",
+            "run_idle_end_min 61: expected 1..=60",
+        ),
+        ("test_patterns = [\"[\"]\n", "test_patterns"),
+    ] {
+        let e = errors(text);
+        assert!(e.iter().any(|x| x.contains(needle)), "{text}: {e:?}");
+    }
+    let e = errors("[merge]\nrequires = [\"work:started\"]\n");
+    assert!(e.iter().any(|x| x.contains("work:done")), "{e:?}");
 }
 
 #[test]

@@ -58,6 +58,60 @@ pub fn condition_label(c: &Condition) -> String {
         Condition::Gate(g) => format!("gate:{g}"),
         Condition::AllDone(r) => format!("done:{r}"),
         Condition::Signal { event, role } => format!("signal:{event}@{role}"),
+        Condition::WorkDone => "work:done".to_string(),
+        Condition::ReviewApproved => "review:approved".to_string(),
+    }
+}
+
+/// Whether every counting session in `roles` signalled `event` (004 FR-027, 005 FR-041): exited
+/// sessions without it are no longer waited for, an objection that stands keeps waiting.
+fn signal_check(b: &Burst, event: &str, roles: &[&str], what: &str) -> (bool, String) {
+    let signed = b.signed.get(event).cloned().unwrap_or_default();
+    let mut all = BTreeSet::new();
+    for r in roles {
+        all.extend(counting(b, r));
+    }
+    let (gone, who): (BTreeSet<u32>, BTreeSet<u32>) =
+        all.into_iter().partition(|id| dropped(b, *id, event));
+    let stands: Vec<String> = who
+        .iter()
+        .filter(|id| b.exited.contains(id) && objects(b, **id, event))
+        .map(|id| format!("#{id}"))
+        .collect();
+    let gone = if gone.is_empty() {
+        String::new()
+    } else {
+        format!(
+            " ({} exited without it)",
+            gone.iter()
+                .map(|id| format!("#{id}"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    };
+    let missing: Vec<String> = who
+        .iter()
+        .filter(|id| !signed.contains(id))
+        .map(|id| format!("#{id}"))
+        .collect();
+    if who.is_empty() {
+        (
+            false,
+            format!("no {what} session whose signals count{gone}"),
+        )
+    } else if missing.is_empty() {
+        (true, format!("signalled by every {what}{gone}"))
+    } else if !stands.is_empty() {
+        (
+            false,
+            format!(
+                "waiting for {}{gone}; {} exited asking for changes (the user clears review-changes-requested to drop it)",
+                missing.join(", "),
+                stands.join(", ")
+            ),
+        )
+    } else {
+        (false, format!("waiting for {}{gone}", missing.join(", ")))
     }
 }
 
@@ -151,52 +205,35 @@ impl Hub {
                         (false, open.join(", "))
                     }
                 }
-                Condition::Signal { event, role } => {
-                    let signed = b.signed.get(event).cloned().unwrap_or_default();
-                    // A session that exited without the signal can never give it: the merge
-                    // no longer waits for it; one that gave it before exiting still counts.
-                    let (gone, who): (BTreeSet<u32>, BTreeSet<u32>) = counting(b, role)
-                        .into_iter()
-                        .partition(|id| dropped(b, *id, event));
-                    let stands: Vec<String> = who
-                        .iter()
-                        .filter(|id| b.exited.contains(id) && objects(b, **id, event))
-                        .map(|id| format!("#{id}"))
-                        .collect();
-                    let gone = if gone.is_empty() {
-                        String::new()
-                    } else {
-                        format!(
-                            " ({} exited without it)",
-                            gone.iter()
-                                .map(|id| format!("#{id}"))
-                                .collect::<Vec<_>>()
-                                .join(", ")
-                        )
-                    };
-                    let missing: Vec<String> = who
-                        .iter()
-                        .filter(|id| !signed.contains(id))
-                        .map(|id| format!("#{id}"))
-                        .collect();
-                    if who.is_empty() {
-                        (
-                            false,
-                            format!("no {role} session whose signals count{gone}"),
-                        )
-                    } else if missing.is_empty() {
-                        (true, format!("signalled by every {role}{gone}"))
-                    } else if !stands.is_empty() {
-                        (
-                            false,
-                            format!(
-                                "waiting for {}{gone}; {} exited asking for changes (the user clears review-changes-requested to drop it)",
-                                missing.join(", "),
-                                stands.join(", ")
-                            ),
-                        )
-                    } else {
-                        (false, format!("waiting for {}{gone}", missing.join(", ")))
+                // A session that exited without the signal can never give it: the merge no
+                // longer waits for it; one that gave it before exiting still counts.
+                Condition::Signal { event, role } => signal_check(b, event, &[role], role),
+                Condition::WorkDone => self.work_done(b),
+                Condition::ReviewApproved => {
+                    let reviewers = b.squad.reviewer_roles();
+                    match b.manifest.as_ref().filter(|m| !m.reviews.is_empty()) {
+                        None => signal_check(b, "review-approved", &reviewers, "reviewer"),
+                        Some(m) => {
+                            // One approval that counts per focus (005 FR-031).
+                            let approved = b.signed.get("review-approved");
+                            let missing: Vec<&str> = m
+                                .reviews
+                                .iter()
+                                .filter(|r| {
+                                    !b.focus.iter().any(|(id, f)| {
+                                        *f == r.focus
+                                            && !b.tainted.contains_key(id)
+                                            && approved.is_some_and(|s| s.contains(id))
+                                    })
+                                })
+                                .map(|r| r.focus.as_str())
+                                .collect();
+                            if missing.is_empty() {
+                                (true, "approved for every focus".to_string())
+                            } else {
+                                (false, format!("no approval yet for {}", missing.join(", ")))
+                            }
+                        }
                     }
                 }
             };
@@ -218,6 +255,72 @@ impl Hub {
             commit,
             mode: mode(b),
         })
+    }
+
+    /// `work:done` (005 R-16): every piece of work in the manifest reported done with evidence,
+    /// by the lead or its builders; without a manifest, the lead's task for the burst.
+    fn work_done(&self, b: &Burst) -> (bool, String) {
+        let of_burst = |t: &&tasks::Task| {
+            t.created_at >= b.started && !matches!(t.state, tasks::State::Cancelled(_))
+        };
+        let Some(m) = &b.manifest else {
+            return match self
+                .tasks
+                .list
+                .iter()
+                .filter(of_burst)
+                .find(|t| t.work.as_deref() == Some(super::manifest::BURST_WORK))
+            {
+                Some(t) if t.state == tasks::State::Done => {
+                    (true, "the lead reported the work done".to_string())
+                }
+                Some(t) => (
+                    false,
+                    format!("T{} {} (the lead's work)", t.id, t.state.label()),
+                ),
+                None => (false, "the lead has no task for the work yet".to_string()),
+            };
+        };
+        if m.work.is_empty() {
+            return (false, "the manifest lists no work".to_string());
+        }
+        let mut open = Vec::new();
+        for w in &m.work {
+            let mine: Vec<&tasks::Task> = self
+                .tasks
+                .list
+                .iter()
+                .filter(of_burst)
+                .filter(|t| t.work.as_deref() == Some(w.id.as_str()))
+                .collect();
+            let parts: Vec<&str> = m.parts_of(&w.id).map(|p| p.id.as_str()).collect();
+            let undone: Vec<String> = mine
+                .iter()
+                .filter(|t| t.state != tasks::State::Done)
+                .map(|t| format!("T{} {}", t.id, t.state.label()))
+                .collect();
+            let unbuilt: Vec<&str> = parts
+                .iter()
+                .copied()
+                .filter(|p| {
+                    !mine
+                        .iter()
+                        .any(|t| t.part.as_deref() == Some(*p) && t.state == tasks::State::Done)
+                })
+                .collect();
+            if mine.is_empty() {
+                open.push(format!("{}: not started", w.id));
+            } else if !undone.is_empty() {
+                open.push(format!("{}: {}", w.id, undone.join(", ")));
+            } else if !unbuilt.is_empty() {
+                open.push(format!("{}: no done task for {}", w.id, unbuilt.join(", ")));
+            }
+        }
+        if open.is_empty() {
+            (true, format!("{} piece(s) of work done", m.work.len()))
+        } else {
+            (false, open.join("; "))
+        }
     }
 
     /// Records who signalled what during a burst, for `signal:` conditions. A reviewer's latest

@@ -64,12 +64,9 @@ impl Hub {
                 })
             })
             .find(|s| {
-                b.roles.get(s).is_some_and(|r| {
-                    r != "lead"
-                        && b.squad
-                            .role(r)
-                            .is_none_or(|r| r.level != super::squad::Level::ReadOnly)
-                })
+                b.roles
+                    .get(s)
+                    .is_some_and(|r| r != "lead" && b.squad.role(r).is_none_or(|r| r.level.edits()))
             })
     }
 

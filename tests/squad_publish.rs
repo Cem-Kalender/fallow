@@ -10,6 +10,21 @@ use fallow::orchestration::{Hub, Reply, SessionInfo, Sessions, squad};
 use fallow::session::profiles::{AgentProfile, builtins};
 use serde_json::json;
 
+/// 004's squad: the built-in roles with 004's merge conditions (builders' tasks and a reviewer's
+/// signal). 005 changed the built-in merge to `work:done` and `review:approved`; these tests
+/// cover 004's mechanics, which still apply to squads that declare them.
+fn classic() -> squad::Squad {
+    let mut s = squad::builtin();
+    s.merge_requires = vec![
+        squad::Condition::AllDone("builder".into()),
+        squad::Condition::Signal {
+            event: "review-approved".into(),
+            role: "reviewer".into(),
+        },
+    ];
+    s
+}
+
 struct Fake(Vec<SessionInfo>);
 
 fn info(id: u32) -> SessionInfo {
@@ -243,11 +258,11 @@ fn the_merge_stays_closed_until_every_condition_holds() {
 }
 
 #[test]
-fn the_built_in_squad_needs_builder_work_and_a_review() {
+fn a_squad_needing_builder_work_and_a_review() {
     let mut h = Hub::new(OrchestrationSettings::default());
     let mut f = Fake(vec![info(1)]);
     let now = Instant::now();
-    burst_with(&mut h, &f, squad::builtin(), now);
+    burst_with(&mut h, &f, classic(), now);
     let r = h.readiness(1).unwrap();
     assert_eq!(
         r.checks
@@ -332,7 +347,7 @@ fn builtin_burst(has_remote: bool) -> (Hub, Fake, Instant) {
             lead: 1,
             duration: Duration::from_secs(3600),
             allowance: Some(5),
-            squad: squad::builtin(),
+            squad: classic(),
             start_commit: None,
             target_branch: Some("main".into()),
             has_remote,

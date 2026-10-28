@@ -84,3 +84,91 @@ fn work_runs_off_the_calling_thread() {
     let id = rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
     assert_ne!(id, caller);
 }
+
+#[test]
+fn reads_a_file_at_a_commit_and_the_commits_that_touched_paths() {
+    // 005 T004: show at commit, commits over paths, ancestry.
+    let r = repo("paths");
+    let start = git::head(&r).unwrap();
+    assert_eq!(
+        git::show(&r, &start, "a.txt").unwrap().as_deref(),
+        Some("one\n")
+    );
+    assert_eq!(git::show(&r, &start, ".fallow/work.toml").unwrap(), None);
+    assert!(git::show(&r, "no-such-commit", "a.txt").is_err());
+    std::fs::create_dir_all(r.join("contracts")).unwrap();
+    std::fs::write(r.join("contracts/c.yaml"), "v1\n").unwrap();
+    run(&r, &["add", "."]);
+    run(&r, &["commit", "-q", "-m", "contract"]);
+    let c1 = git::head(&r).unwrap();
+    std::fs::write(r.join("b.txt"), "b\n").unwrap();
+    run(&r, &["add", "."]);
+    run(&r, &["commit", "-q", "-m", "other"]);
+    let c2 = git::head(&r).unwrap();
+    assert_eq!(
+        git::commits_touching(&r, &start, &c2, &["contracts/c.yaml"]).unwrap(),
+        vec![c1.clone()]
+    );
+    assert!(
+        git::commits_touching(&r, &c1, &c2, &["contracts/c.yaml", ".fallow/work.toml"])
+            .unwrap()
+            .is_empty()
+    );
+    assert!(git::is_ancestor(&r, &c1, &c2));
+    assert!(!git::is_ancestor(&r, &c2, &c1));
+    let _ = std::fs::remove_dir_all(r.parent().unwrap());
+}
+
+#[test]
+fn fingerprints_ignore_line_endings() {
+    // 005 R-12: one-way, stable across checkouts.
+    let a = git::fingerprint("one\r\ntwo\r\n").unwrap();
+    let b = git::fingerprint("one\ntwo\n").unwrap();
+    assert_eq!(a, b);
+    assert_eq!(a.len(), 40);
+    assert_ne!(a, git::fingerprint("one\ntwo\nthree\n").unwrap());
+    assert!(!a.contains("one"));
+}
+
+#[test]
+fn a_run_copy_holds_only_the_history_up_to_its_start() {
+    // 005 T004, FR-011a: no other branch, no later commit; the project's refs unchanged.
+    let r = repo("copy");
+    let start = git::head(&r).unwrap();
+    run(&r, &["checkout", "-q", "-b", "fallow/old-run"]);
+    std::fs::write(r.join("solution.txt"), "earlier run\n").unwrap();
+    run(&r, &["add", "."]);
+    run(&r, &["commit", "-q", "-m", "an earlier solution"]);
+    run(&r, &["checkout", "-q", "main"]);
+    let refs_before = {
+        let o = Command::new("git")
+            .current_dir(&r)
+            .args(["for-each-ref"])
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&o.stdout).into_owned()
+    };
+    let dest = r.parent().unwrap().join("copy");
+    git::copy_at(&r, &start, &dest).unwrap();
+    assert_eq!(git::head(&dest).unwrap(), start);
+    assert_eq!(git::branch(&dest).as_deref(), Some("main"));
+    assert!(dest.join("a.txt").exists());
+    let o = Command::new("git")
+        .current_dir(&dest)
+        .args(["log", "--all", "--format=%s"])
+        .output()
+        .unwrap();
+    let log = String::from_utf8_lossy(&o.stdout);
+    assert!(!log.contains("earlier solution"), "{log}");
+    assert!(!git::has_remote(&dest), "no way back to the project");
+    let refs_after = {
+        let o = Command::new("git")
+            .current_dir(&r)
+            .args(["for-each-ref"])
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&o.stdout).into_owned()
+    };
+    assert_eq!(refs_before, refs_after, "the project is only read");
+    let _ = std::fs::remove_dir_all(r.parent().unwrap());
+}

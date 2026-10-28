@@ -11,6 +11,7 @@ pub mod bridge;
 pub mod briefing;
 pub mod burst;
 pub mod channel;
+pub mod delegation;
 pub mod delivery;
 pub mod events;
 pub mod evidence;
@@ -19,14 +20,20 @@ pub mod git;
 pub mod identity;
 pub mod inject;
 pub mod lead;
+pub mod manifest;
+pub mod memory;
 pub mod permissions;
 pub mod publish;
+pub mod record;
 pub mod repair;
 pub mod roles;
 pub mod rpc;
+pub mod runs;
+pub mod signals;
 pub mod squad;
 pub mod tasks;
 pub mod tools;
+pub mod usage;
 
 use std::collections::HashMap;
 use std::sync::mpsc;
@@ -882,10 +889,7 @@ impl Hub {
         let (role, project) = (s.role.clone(), s.project);
         if let (Ok(sid), Some(r)) = (&result, role) {
             if let Some(b) = self.bursts.iter_mut().find(|b| b.project == project) {
-                let read_only = b
-                    .squad
-                    .role(&r)
-                    .is_some_and(|r| r.level == squad::Level::ReadOnly);
+                let read_only = b.squad.role(&r).is_some_and(|r| !r.level.edits());
                 b.roles.insert(*sid, r);
                 // The first check records the worktree as it starts (FR-013).
                 if read_only {
@@ -2153,10 +2157,7 @@ impl Hub {
             .iter()
             .flat_map(|b| {
                 b.roles.iter().filter_map(|(id, r)| {
-                    let ro = b
-                        .squad
-                        .role(r)
-                        .is_some_and(|r| r.level == squad::Level::ReadOnly);
+                    let ro = b.squad.role(r).is_some_and(|r| !r.level.edits());
                     (ro && !b.tainted.contains_key(id)).then_some(*id)
                 })
             })

@@ -2,7 +2,8 @@
 //!
 //! Each call runs the user's own `git` in a session's worktree or the project folder and returns
 //! its result; `spawn` runs one off the main loop and hands the result back through a callback.
-//! Nothing here writes to a repository; the engineer's confirmed local merge lives in `publish`.
+//! Nothing here writes to a repository except `copy_at`, which creates a run's own copy in Fallow's
+//! cache (005); the engineer's confirmed local merge lives in `publish`.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -129,6 +130,79 @@ pub fn read_only_check(
         None => Vec::new(),
     };
     Ok((tip, changed, commits))
+}
+
+/// The text of `path` at `commit`; `Ok(None)` when the commit has no such file (005 R-1).
+pub fn show(dir: &Path, commit: &str, path: &str) -> Result<Option<String>, String> {
+    if !commit_exists(dir, commit) {
+        return Err(format!("no commit {commit}"));
+    }
+    let spec = format!("{commit}:{path}");
+    let exists = Command::new("git")
+        .current_dir(dir)
+        .args(["cat-file", "-e", &spec])
+        .output()
+        .is_ok_and(|o| o.status.success());
+    if !exists {
+        return Ok(None);
+    }
+    git(dir, &["show", &spec]).map(Some)
+}
+
+/// Commits in `to` that are not in `from` and change one of `paths` (005 R-5).
+pub fn commits_touching(
+    dir: &Path,
+    from: &str,
+    to: &str,
+    paths: &[&str],
+) -> Result<Vec<String>, String> {
+    let range = format!("{from}..{to}");
+    let mut args = vec!["rev-list", range.as_str(), "--"];
+    args.extend_from_slice(paths);
+    Ok(git(dir, &args)?.lines().map(str::to_string).collect())
+}
+
+/// Whether `a` is `b` or an ancestor of it.
+pub fn is_ancestor(dir: &Path, a: &str, b: &str) -> bool {
+    on_branch(dir, a, b)
+}
+
+/// A one-way fingerprint of `text` with line endings normalised to LF (005 R-12), computed by
+/// git so that no hashing crate is needed.
+pub fn fingerprint(text: &str) -> Result<String, String> {
+    use std::io::Write;
+    let normalised = text.replace("\r\n", "\n");
+    let mut child = Command::new("git")
+        .args(["hash-object", "--stdin"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("git: {e}"))?;
+    child
+        .stdin
+        .take()
+        .ok_or("git: no stdin")?
+        .write_all(normalised.as_bytes())
+        .map_err(|e| format!("git: {e}"))?;
+    let out = child.wait_with_output().map_err(|e| format!("git: {e}"))?;
+    if out.status.success() {
+        Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+    } else {
+        Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
+    }
+}
+
+/// A new repository at `dest` holding only `commit` of `project` and its history, checked out
+/// on `main` (005 FR-011a, R-11). The project is only read; `dest` has no remote, so a run
+/// cannot see another run's work.
+pub fn copy_at(project: &Path, commit: &str, dest: &Path) -> Result<(), String> {
+    std::fs::create_dir_all(dest).map_err(|e| format!("{}: {e}", dest.display()))?;
+    git(dest, &["init", "-q", "-b", "main"])?;
+    let source = project.display().to_string();
+    git(dest, &["fetch", "-q", "--no-tags", &source, commit])?;
+    git(dest, &["checkout", "-q", "-B", "main", "FETCH_HEAD"])?;
+    Ok(())
 }
 
 /// Runs `job` on a short-lived thread and passes its result to `done` there.

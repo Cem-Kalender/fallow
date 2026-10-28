@@ -11,6 +11,21 @@ use fallow::orchestration::{
 use fallow::session::profiles::{AgentProfile, builtins};
 use serde_json::json;
 
+/// 004's squad: the built-in roles with 004's merge conditions (builders' tasks and a reviewer's
+/// signal). 005 changed the built-in merge to `work:done` and `review:approved`; these tests
+/// cover 004's mechanics, which still apply to squads that declare them.
+fn classic() -> squad::Squad {
+    let mut s = squad::builtin();
+    s.merge_requires = vec![
+        squad::Condition::AllDone("builder".into()),
+        squad::Condition::Signal {
+            event: "review-approved".into(),
+            role: "reviewer".into(),
+        },
+    ];
+    s
+}
+
 struct Fake(Vec<SessionInfo>);
 
 fn info(id: u32) -> SessionInfo {
@@ -56,7 +71,7 @@ fn setup() -> (Hub, Fake, Instant) {
             lead: 1,
             duration: Duration::from_secs(4 * 3600),
             allowance: Some(5),
-            squad: squad::builtin(),
+            squad: classic(),
             start_commit: None,
             target_branch: Some("main".into()),
             has_remote: false,

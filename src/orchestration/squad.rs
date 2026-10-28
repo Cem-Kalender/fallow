@@ -23,6 +23,9 @@ pub const MAX_GATES: usize = 8;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Level {
     ReadOnly,
+    /// May run commands but not use the agent's edit tools: reviewers and investigators (005
+    /// research R-3). Its worktree is checked like a read-only one's.
+    Check,
     Edit,
     EditRun,
 }
@@ -31,6 +34,7 @@ impl Level {
     pub fn parse(s: &str) -> Option<Level> {
         Some(match s {
             "read-only" => Level::ReadOnly,
+            "check" => Level::Check,
             "edit" => Level::Edit,
             "edit-run" => Level::EditRun,
             _ => return None,
@@ -40,9 +44,16 @@ impl Level {
     pub fn as_str(self) -> &'static str {
         match self {
             Level::ReadOnly => "read-only",
+            Level::Check => "check",
             Level::Edit => "edit",
             Level::EditRun => "edit-run",
         }
+    }
+
+    /// Whether the level edits files: builders. The others' worktrees must stay unchanged
+    /// (004 FR-013, 005 FR-030).
+    pub fn edits(self) -> bool {
+        matches!(self, Level::Edit | Level::EditRun)
     }
 }
 
@@ -162,6 +173,12 @@ pub enum Condition {
     AllDone(String),
     /// Signalled by a session in this role (every one of them, if several).
     Signal { event: String, role: String },
+    /// Every piece of work in the manifest reported done with evidence, by the lead or its
+    /// builders; without a manifest, the lead's task for the burst (005 R-16).
+    WorkDone,
+    /// An approval that counts for every review focus in the manifest, or from every counting
+    /// reviewer without focuses (005 R-16, FR-031).
+    ReviewApproved,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -182,6 +199,14 @@ pub struct Squad {
     pub roles: Vec<Role>,
     pub gates: Vec<Gate>,
     pub merge_requires: Vec<Condition>,
+    /// At most this many builders at once (005 FR-010); `None`: the burst's allowance.
+    pub max_parallel_builders: Option<u8>,
+    /// A signal unanswered this long is told to the engineer (005 FR-035).
+    pub signal_unanswered_min: u32,
+    /// A recorded run ends when nothing of it has worked this long (005 R-13).
+    pub run_idle_end_min: u32,
+    /// Files that are tests: a part must own more than these (005 FR-006).
+    pub test_patterns: Vec<String>,
 }
 
 impl Squad {
@@ -193,13 +218,32 @@ impl Squad {
     pub fn merge_roles(&self) -> Vec<&str> {
         let mut v: Vec<&str> = Vec::new();
         for c in &self.merge_requires {
-            if let Condition::AllDone(r) | Condition::Signal { role: r, .. } = c {
-                if r != "lead" && !v.contains(&r.as_str()) {
-                    v.push(r);
+            match c {
+                Condition::AllDone(r) | Condition::Signal { role: r, .. } => {
+                    if r != "lead" && !v.contains(&r.as_str()) {
+                        v.push(r);
+                    }
                 }
+                Condition::ReviewApproved => {
+                    for r in self.reviewer_roles() {
+                        if !v.contains(&r) {
+                            v.push(r);
+                        }
+                    }
+                }
+                Condition::Gate(_) | Condition::WorkDone => {}
             }
         }
         v
+    }
+
+    /// Roles that give review verdicts (they may signal `review-approved`), not the lead.
+    pub fn reviewer_roles(&self) -> Vec<&str> {
+        self.roles
+            .iter()
+            .filter(|r| r.name != "lead" && super::roles::may_signal(self, r, "review-approved"))
+            .map(|r| r.name.as_str())
+            .collect()
     }
 }
 
@@ -244,8 +288,8 @@ fn builtin_roles() -> Vec<Role> {
         ),
         role(
             "reviewer",
-            "Reviews the builders' work against the spec, plan and tasks. Read-only.",
-            Level::ReadOnly,
+            "Reviews the work against its acceptance criteria as a black box; runs commands, edits nothing.",
+            Level::Check,
             tools(&[Tool::Board, Tool::Events, Tool::Report, Tool::Sessions]),
             &["review-*"],
             2,
@@ -265,15 +309,29 @@ pub fn builtin() -> Squad {
         wait_notice_min: 10,
         roles: builtin_roles(),
         gates: Vec::new(),
-        merge_requires: vec![
-            Condition::AllDone("builder".into()),
-            Condition::Signal {
-                event: "review-approved".into(),
-                role: "reviewer".into(),
-            },
-        ],
+        merge_requires: vec![Condition::WorkDone, Condition::ReviewApproved],
+        max_parallel_builders: None,
+        signal_unanswered_min: 15,
+        run_idle_end_min: 3,
+        test_patterns: DEFAULT_TEST_PATTERNS
+            .iter()
+            .map(|p| (*p).to_string())
+            .collect(),
     }
 }
+
+/// Files that are tests, unless a squad or manifest says otherwise (005 FR-006).
+pub const DEFAULT_TEST_PATTERNS: &[&str] = &[
+    "tests/**",
+    "test/**",
+    "**/tests/**",
+    "**/*_test.*",
+    "**/*.test.*",
+    "**/*.spec.*",
+    "**/test_*.py",
+    "**/*Test.java",
+    "**/*Tests.cs",
+];
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -320,6 +378,10 @@ struct RawSquad {
     target_branch: Option<String>,
     repair_cap: Option<Spanned<i64>>,
     wait_notice_min: Option<Spanned<i64>>,
+    max_parallel_builders: Option<Spanned<i64>>,
+    signal_unanswered_min: Option<Spanned<i64>>,
+    run_idle_end_min: Option<Spanned<i64>>,
+    test_patterns: Option<Spanned<Vec<String>>>,
     #[serde(default)]
     role: Vec<Spanned<RawRole>>,
     #[serde(default)]
@@ -362,7 +424,7 @@ fn role_from(raw: RawRole, at: &str, problems: &mut Vec<String>) -> Option<Role>
     let level = Level::parse(&raw.level);
     if level.is_none() {
         bad(format!(
-            "role {:?}: level {:?}: expected \"read-only\", \"edit\" or \"edit-run\"",
+            "role {:?}: level {:?}: expected \"read-only\", \"check\", \"edit\" or \"edit-run\"",
             raw.name, raw.level
         ));
     }
@@ -475,6 +537,11 @@ fn gate_from(raw: RawGate, at: &str, problems: &mut Vec<String>) -> Option<Gate>
 }
 
 fn condition(s: &str) -> Option<Condition> {
+    match s {
+        "work:done" => return Some(Condition::WorkDone),
+        "review:approved" => return Some(Condition::ReviewApproved),
+        _ => {}
+    }
     if let Some(g) = s.strip_prefix("gate:") {
         return Some(Condition::Gate(g.to_string()));
     }
@@ -582,6 +649,44 @@ fn finish(
             ));
         }
     }
+    let mut range = |name: &str, v: &Option<Spanned<i64>>, lo: i64, hi: i64| -> Option<i64> {
+        let v = v.as_ref()?;
+        if (lo..=hi).contains(v.get_ref()) {
+            Some(*v.get_ref())
+        } else {
+            problems.push(format!(
+                "{}: {name} {}: expected {lo}..={hi}",
+                at(v.span()),
+                v.get_ref()
+            ));
+            None
+        }
+    };
+    if let Some(n) = range("max_parallel_builders", &raw.max_parallel_builders, 1, 16) {
+        squad.max_parallel_builders = Some(n as u8);
+    }
+    if let Some(n) = range("signal_unanswered_min", &raw.signal_unanswered_min, 1, 240) {
+        squad.signal_unanswered_min = n as u32;
+    }
+    if let Some(n) = range("run_idle_end_min", &raw.run_idle_end_min, 1, 60) {
+        squad.run_idle_end_min = n as u32;
+    }
+    if let Some(t) = raw.test_patterns {
+        let bad: Vec<&String> = t
+            .get_ref()
+            .iter()
+            .filter(|p| globset::Glob::new(p).is_err())
+            .collect();
+        if bad.is_empty() {
+            squad.test_patterns = t.get_ref().clone();
+        } else {
+            problems.push(format!(
+                "{}: test_patterns: bad glob {:?}",
+                at(t.span()),
+                bad[0]
+            ));
+        }
+    }
     let mut roles: Vec<Role> = Vec::new();
     if raw.role.len() > MAX_ROLES {
         problems.push(format!("{file}:1: at most {MAX_ROLES} roles"));
@@ -627,7 +732,7 @@ fn finish(
         for r in reqs {
             match condition(&r) {
                 None => problems.push(format!(
-                    "{line}: merge condition {r:?}: expected gate:<name>, done:<role> or signal:<event>@<role>"
+                    "{line}: merge condition {r:?}: expected work:done, review:approved, gate:<name>, done:<role> or signal:<event>@<role>"
                 )),
                 Some(c) => {
                     let known = match &c {
@@ -635,6 +740,7 @@ fn finish(
                         Condition::AllDone(role) | Condition::Signal { role, .. } => {
                             squad.roles.iter().any(|x| &x.name == role)
                         }
+                        Condition::WorkDone | Condition::ReviewApproved => true,
                     };
                     if known {
                         conds.push(c);
@@ -691,9 +797,9 @@ pub fn template(test_command: Option<&str>, has_code: bool) -> String {
         None => "# No test command could be guessed. Uncomment and fill in to let Fallow run it:\n# [[gate]]\n# name = \"tests\"\n# command = \"your test command\"\n# timeout_min = 30\n# baseline = true\n# failures = \"auto\"\n".to_string(),
     };
     let requires = if test_command.is_some() {
-        "\"gate:tests\", \"done:builder\", \"signal:review-approved@reviewer\""
+        "\"gate:tests\", \"work:done\", \"review:approved\""
     } else {
-        "\"done:builder\", \"signal:review-approved@reviewer\""
+        "\"work:done\", \"review:approved\""
     };
     format!(
         "# Fallow squad: roles, gates and merge rules for coordination bursts in this project.
@@ -714,7 +820,7 @@ max = 1
 [[role]]
 name = \"builder\"
 description = \"Implements its assigned tasks in its own worktree and reports them with evidence.\"
-level = \"edit-run\"         # \"read-only\" | \"edit\" | \"edit-run\"
+level = \"edit-run\"         # \"read-only\" | \"check\" | \"edit\" | \"edit-run\"
 agent = \"claude\"           # a profile id
 # model = \"\"               # optional
 tools = [\"board\", \"events\", \"deliver\", \"report\", \"sessions\"]
@@ -723,8 +829,8 @@ max = 3
 
 [[role]]
 name = \"reviewer\"
-description = \"Reviews the builders' work against the spec, plan and tasks. Read-only.\"
-level = \"read-only\"
+description = \"Reviews the work against its acceptance criteria as a black box; runs commands, edits nothing.\"
+level = \"check\"           # runs commands, edits nothing
 agent = \"claude\"
 tools = [\"board\", \"events\", \"report\", \"sessions\"]
 signals = [\"review-*\"]

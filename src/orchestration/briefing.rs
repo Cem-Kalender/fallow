@@ -45,6 +45,9 @@ fn level_line(l: Level) -> &'static str {
         Level::ReadOnly => {
             "read-only: read and search, and git show, git diff, git log and git ls-tree, one command at a time without pipes (read other sessions' work with git show <commit>:<path>); you cannot run builds or tests, and must not change files or commit (Fallow checks your worktree). Tests are the gates' job (Fallow runs them) and the builders' evidence: judge the code and the evidence, give your verdict with review_verdict, and say in your notes what you could not verify"
         }
+        Level::Check => {
+            "run commands (builds, tests, the app) but do not change files or commit: Claude Code's edit tools are off, and Fallow checks your worktree, so a change voids your verdicts. Check the work as a black box against its acceptance criteria, including the cases that must fail"
+        }
         Level::Edit => "edit files; running commands is refused",
         Level::EditRun => "edit files and run builds and tests",
     }
@@ -76,6 +79,10 @@ fn merge_line(b: &Burst) -> String {
             Condition::Gate(g) => format!("gate {g} passed (Fallow runs it)"),
             Condition::AllDone(r) => format!("every {r} task reported done with evidence"),
             Condition::Signal { event, role } => format!("{event} signalled by {role}"),
+            Condition::WorkDone => "every piece of work reported done with evidence".to_string(),
+            Condition::ReviewApproved => {
+                "a reviewer's approval answering every acceptance criterion".to_string()
+            }
         })
         .collect();
     let publish = match (b.squad.publish, b.has_remote) {
@@ -202,6 +209,9 @@ mod tests {
             last_status: String::new(),
             user_told: None,
             exited: Default::default(),
+            manifest: None,
+            focus: HashMap::new(),
+            description: None,
             warned: false,
         }
     }

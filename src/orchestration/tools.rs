@@ -783,10 +783,7 @@ pub(super) fn call(
                         "your worktree changed although your role is read-only: your signals no longer count",
                     );
                 }
-                if role
-                    .as_ref()
-                    .is_some_and(|r| r.level == super::squad::Level::ReadOnly)
-                {
+                if role.as_ref().is_some_and(|r| !r.level.edits()) {
                     hub.check_worktrees.push(caller);
                 }
             }
@@ -1205,7 +1202,7 @@ pub(super) fn call(
             hub.record_signal(caller, event);
             hub.verdict(caller, approve, &notes);
             hub.finish_review_tasks(caller, approve, part.as_deref());
-            if r.level == super::squad::Level::ReadOnly {
+            if !r.level.edits() {
                 hub.check_worktrees.push(caller);
             }
             if !approve {
@@ -1300,9 +1297,7 @@ pub(super) fn call(
                 },
             };
             if let Some(b) = hub.burst_for(caller) {
-                let read_only = role
-                    .as_ref()
-                    .is_some_and(|r| r.level == super::squad::Level::ReadOnly);
+                let read_only = role.as_ref().is_some_and(|r| !r.level.edits());
                 // Reviewers report through review_verdict; evidence is for work (004 run 2).
                 if done && !read_only {
                     let Some(e) = ev.as_mut() else {
@@ -1311,9 +1306,7 @@ pub(super) fn call(
                             "while the project coordinates, a done report needs evidence: {\"commit\", \"commands\", \"files\"}",
                         );
                     };
-                    let edits = role
-                        .as_ref()
-                        .is_none_or(|r| r.level != super::squad::Level::ReadOnly);
+                    let edits = role.as_ref().is_none_or(|r| r.level.edits());
                     match sessions.workdir(caller) {
                         Some((dir, branch)) => {
                             if let Err(why) = super::evidence::check(

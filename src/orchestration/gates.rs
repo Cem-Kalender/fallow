@@ -14,7 +14,7 @@ use regex::Regex;
 
 use super::activity::Action;
 use super::board::BoardId;
-use super::squad::{Failures, Gate, Level};
+use super::squad::{Failures, Gate};
 use super::{Hub, Party, TEXT_BUDGET, tasks};
 use crate::projects::ProjectId;
 
@@ -158,9 +158,7 @@ impl Hub {
         };
         let builder = |id: u32| {
             b.roles.get(&id).is_some_and(|r| {
-                r != "lead"
-                    && r != GATE_ROLE
-                    && b.squad.role(r).is_some_and(|r| r.level != Level::ReadOnly)
+                r != "lead" && r != GATE_ROLE && b.squad.role(r).is_some_and(|r| r.level.edits())
             })
         };
         let handed: Vec<&tasks::Task> = self
@@ -209,7 +207,7 @@ impl Hub {
                 t.assigned.and_then(|a| b.roles.get(&a)).is_some_and(|r| {
                     r != "lead"
                         && r != GATE_ROLE
-                        && b.squad.role(r).is_some_and(|r| r.level != Level::ReadOnly)
+                        && b.squad.role(r).is_some_and(|r| r.level.edits())
                 })
             })
             .filter_map(|t| {

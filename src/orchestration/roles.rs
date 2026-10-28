@@ -55,6 +55,20 @@ pub fn level_flags(style: Style, level: Level) -> Option<Vec<String>> {
             "NotebookEdit",
             "AskUserQuestion",
         ]),
+        // Reviewers and investigators (005 R-3): every command, no edit tools. Commands can still
+        // write; the worktree check voids their verdicts if they do.
+        (Style::Claude, Level::Check) => v(&[
+            "--permission-mode",
+            "dontAsk",
+            "--allowedTools",
+            "Bash",
+            "PowerShell",
+            "--disallowedTools",
+            "Edit",
+            "Write",
+            "NotebookEdit",
+            "AskUserQuestion",
+        ]),
         (Style::Claude, Level::Edit) => v(&[
             "--permission-mode",
             "dontAsk",
@@ -80,6 +94,13 @@ pub fn level_flags(style: Style, level: Level) -> Option<Vec<String>> {
         (Style::Codex, Level::ReadOnly) => {
             v(&["--sandbox", "read-only", "--ask-for-approval", "never"])
         }
+        // Codex's read-only sandbox blocks the writes builds and tests need (005 R-3).
+        (Style::Codex, Level::Check) => v(&[
+            "--sandbox",
+            "workspace-write",
+            "--ask-for-approval",
+            "never",
+        ]),
         (Style::Codex, Level::Edit) => v(&[
             "--sandbox",
             "workspace-write",
@@ -94,7 +115,7 @@ pub fn level_flags(style: Style, level: Level) -> Option<Vec<String>> {
         ]),
         (Style::Gemini, Level::ReadOnly) => v(&["--approval-mode", "plan"]),
         (Style::Gemini, Level::Edit) => v(&["--approval-mode", "auto_edit"]),
-        (Style::Gemini, Level::EditRun) | (Style::None, _) => return None,
+        (Style::Gemini, Level::EditRun | Level::Check) | (Style::None, _) => return None,
     })
 }
 
@@ -333,6 +354,38 @@ mod tests {
             args(&role(Level::Edit), "gemini"),
             ["--approval-mode", "auto_edit"]
         );
+    }
+
+    #[test]
+    fn the_check_level_runs_commands_without_edit_tools() {
+        // 005 T006, research R-3.
+        assert_eq!(
+            args(&role(Level::Check), "claude"),
+            [
+                "--permission-mode",
+                "dontAsk",
+                "--allowedTools",
+                "Bash",
+                "PowerShell",
+                "--disallowedTools",
+                "Edit",
+                "Write",
+                "NotebookEdit",
+                "AskUserQuestion"
+            ]
+        );
+        assert_eq!(
+            args(&role(Level::Check), "codex"),
+            [
+                "--sandbox",
+                "workspace-write",
+                "--ask-for-approval",
+                "never"
+            ]
+        );
+        assert!(role_args(&role(Level::Check), &profile("gemini")).is_err());
+        assert!(!Level::Check.edits() && !Level::ReadOnly.edits());
+        assert!(Level::Edit.edits() && Level::EditRun.edits());
     }
 
     #[test]

@@ -80,6 +80,8 @@ pub struct Task {
     pub role_conditions: Vec<(Key, String)>,
     /// 004: the part of the work this task is (repairs go to its owner, FR-025a).
     pub part: Option<String>,
+    /// 005: the piece of work in the manifest this task builds (`work:done`, R-16).
+    pub work: Option<String>,
     /// 004: the evidence of its done report (FR-023).
     pub evidence: Option<super::evidence::Evidence>,
     /// 004: the repair round this task is, 0 for ordinary tasks.
@@ -127,6 +129,7 @@ impl Tasks {
             preconditions,
             role_conditions: Vec::new(),
             part: None,
+            work: None,
             evidence: None,
             repair_round: 0,
             state: if approved {

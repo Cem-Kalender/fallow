@@ -10,6 +10,21 @@ use fallow::orchestration::{Hub, Reply, SessionInfo, Sessions, StartState, squad
 use fallow::session::profiles::{AgentProfile, builtins};
 use serde_json::{Value, json};
 
+/// 004's squad: the built-in roles with 004's merge conditions (builders' tasks and a reviewer's
+/// signal). 005 changed the built-in merge to `work:done` and `review:approved`; these tests
+/// cover 004's mechanics, which still apply to squads that declare them.
+fn classic() -> squad::Squad {
+    let mut s = squad::builtin();
+    s.merge_requires = vec![
+        squad::Condition::AllDone("builder".into()),
+        squad::Condition::Signal {
+            event: "review-approved".into(),
+            role: "reviewer".into(),
+        },
+    ];
+    s
+}
+
 /// #1 (the lead) in project 1 ("api"); sessions the burst starts are added as they start.
 struct Fake(Vec<SessionInfo>);
 
@@ -84,7 +99,7 @@ fn setup() -> (Hub, Fake, Instant) {
     let mut h = Hub::new(OrchestrationSettings::default());
     let mut f = Fake(vec![info(1, "claude")]);
     let now = Instant::now();
-    burst(&mut h, &f, squad::builtin(), now);
+    burst(&mut h, &f, classic(), now);
     start(&mut h, &mut f, "builder", 2, now);
     start(&mut h, &mut f, "reviewer", 3, now);
     (h, f, now)
@@ -541,7 +556,7 @@ fn a_start_is_kept_for_each_role_the_merge_needs() {
     let mut h = Hub::new(OrchestrationSettings::default());
     let mut f = Fake(vec![info(1, "claude")]);
     let now = Instant::now();
-    burst(&mut h, &f, squad::builtin(), now);
+    burst(&mut h, &f, classic(), now);
     let ask = |h: &mut Hub, f: &Fake, role: &str| {
         h.call(
             f,
@@ -591,7 +606,7 @@ fn a_burst_too_small_for_the_merge_is_flagged_at_its_start() {
             lead: 1,
             duration: Duration::from_secs(3600),
             allowance: Some(1),
-            squad: squad::builtin(),
+            squad: classic(),
             start_commit: None,
             target_branch: None,
             has_remote: false,
@@ -615,7 +630,7 @@ fn a_first_task_can_name_its_part() {
     let mut h = Hub::new(OrchestrationSettings::default());
     let mut f = Fake(vec![info(1, "claude")]);
     let now = Instant::now();
-    burst(&mut h, &f, squad::builtin(), now);
+    burst(&mut h, &f, classic(), now);
     let r = h.call(
         &f,
         1,
@@ -658,7 +673,7 @@ fn starts_the_user_grants_later_count_as_left() {
     let mut h = Hub::new(OrchestrationSettings::default());
     let mut f = Fake(vec![info(1, "claude")]);
     let now = Instant::now();
-    burst(&mut h, &f, squad::builtin(), now);
+    burst(&mut h, &f, classic(), now);
     start(&mut h, &mut f, "builder", 2, now);
     start(&mut h, &mut f, "reviewer", 3, now);
     start(&mut h, &mut f, "builder", 4, now);

@@ -36,7 +36,7 @@ lead (US5) and memory (US6) follow.
 
 ## Phase 1: Setup
 
-- [ ] T001 Create the module skeletons with doc comments only and register them in
+- [X] T001 Create the module skeletons with doc comments only and register them in
   `src/orchestration/mod.rs`: `manifest.rs`, `signals.rs`, `delegation.rs`, `runs.rs`, `record.rs`,
   `usage.rs`, `memory.rs` under `src/orchestration/`.
 
@@ -50,7 +50,7 @@ squad.
 **⚠️ CRITICAL**: no user story work starts before this phase is done. 004's tests and
 `cargo xtask squad` stay green.
 
-- [ ] T002 [P] Write `tests/squad_manifest.rs` for `.fallow/work.toml` (contracts/work-manifest.md):
+- [X] T002 [P] Write `tests/squad_manifest.rs` for `.fallow/work.toml` (contracts/work-manifest.md):
   - parse `docs`, `shared`, `test_patterns`, `[[work]]`, `[[part]]`, `[[contract]]`, `[[review]]`;
   - errors as `.fallow/work.toml:LINE: message`:
     - duplicate ids;
@@ -62,32 +62,32 @@ squad.
   - a manifest with errors counts as absent;
   - limits: at most 64 pieces of work and 32 parts;
   - criteria with `must_fail`.
-- [ ] T003 Implement `src/orchestration/manifest.rs`:
+- [X] T003 Implement `src/orchestration/manifest.rs`:
   - the parser and validation of T002;
   - `Manifest::at(commit)`, reading `git show <commit>:.fallow/work.toml` through the git worker;
   - the absent case.
-- [ ] T004 [P] Extend `tests/squad_git.rs` with temporary repositories for:
+- [X] T004 [P] Extend `tests/squad_git.rs` with temporary repositories for:
   - show at commit;
   - commits between two commits touching given paths;
   - `merge-base --is-ancestor`;
   - `hash-object --stdin` with CRLF and LF input giving one fingerprint after normalising;
   - fetching one commit into a new repository, so that only its history is present and other branches
     are absent.
-- [ ] T005 Implement the T004 calls in `src/orchestration/git.rs`, read-only on the engineer's
+- [X] T005 Implement the T004 calls in `src/orchestration/git.rs`, read-only on the engineer's
   repository, on the existing worker thread.
-- [ ] T006 [P] Extend `tests/squad_roles.rs` for the `check` level (research R-3):
+- [X] T006 [P] Extend `tests/squad_roles.rs` for the `check` level (research R-3):
   - the exact flag vectors for Claude Code and Codex;
   - `None` for Gemini;
   - a `check` session's tracked change or commit voids its verdicts like `read-only`;
   - ignored build output does not.
-- [ ] T007 [P] Extend `tests/squad_file.rs`:
+- [X] T007 [P] Extend `tests/squad_file.rs`:
   - `level = "check"`;
   - `max_parallel_builders` "`1..=16`", `signal_unanswered_min` "`1..=240`", `run_idle_end_min`
     "`1..=60`", `test_patterns`;
   - merge conditions `work:done` and `review:approved`;
   - the new built-in squad: lead, builder ×3, reviewer (`check`) ×2, merge `work:done` and
     `review:approved`.
-- [ ] T008 Implement T006 and T007:
+- [X] T008 Implement T006 and T007:
   - `Level::Check` and its flags in `src/orchestration/roles.rs`;
   - the squad additions, the new conditions and the built-in squad in `src/orchestration/squad.rs`;
   - the conditions' labels in `src/orchestration/publish.rs` (readiness logic comes in T011).

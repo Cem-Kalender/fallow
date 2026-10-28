@@ -84,6 +84,12 @@ pub struct Burst {
     /// Sessions of the burst that exited: a `signal:` condition stops waiting for one that
     /// exited without that signal (004 run 3).
     pub exited: BTreeSet<u32>,
+    /// The work manifest at the lead's latest commit, when it has one (005 R-1).
+    pub manifest: Option<super::manifest::Manifest>,
+    /// Reviewers' focuses (005 FR-031): session → focus from the manifest.
+    pub focus: HashMap<u32, String>,
+    /// What the burst is for: a recorded run's fixed description (005 R-13).
+    pub description: Option<String>,
     pub(crate) warned: bool,
 }
 
@@ -179,6 +185,9 @@ impl Hub {
             last_status: String::new(),
             user_told: None,
             exited: BTreeSet::new(),
+            manifest: None,
+            focus: HashMap::new(),
+            description: None,
             warned: false,
         };
         // A squad whose merge needs more sessions than the burst may start (004 run 3).
