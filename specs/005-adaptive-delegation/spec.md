@@ -96,7 +96,8 @@ modes from the same starting commit and the same fixed description: plain (one s
 skills and no orchestration), solo (the lead builds alone, with Fallow's gates and a reviewer) and
 squad (the lead decides how to delegate). Each run is recorded: time working and blocked, the
 engineer's interventions, gate and review outcomes, repair rounds, signals, tokens and cost where the
-agent reports them, and whether the hidden tests pass on the final commit. Runs are repeated and
+agent reports them, and whether the hidden tests pass on what the run left. Each run works in its own
+copy of the project, so runs cannot see each other's work. Runs are repeated and
 compared side by side. The engineer can switch components off one at a time to see which matter.
 
 **Why this priority**: The feature exists to beat a single session. Without a fair, repeatable
@@ -105,19 +106,18 @@ complexity.
 
 **Independent Test**: Run one task plain and as a squad, twice each, with the same hidden tests;
 verify all four runs are recorded with mode, outcome, time, interventions and cost (where reported),
-that the hidden tests were never placed in a worktree, prompt or briefing, and that the comparison
+that the hidden tests were placed only after the run's sessions were closed, and that the comparison
 view shows the runs side by side with their spread.
 
 **Acceptance Scenarios**:
 
 1. **Given** a task in the task set, **When** the engineer starts a run, **Then** they choose the mode
    and the components switched off, and the run starts from the task's starting commit with its fixed
-   description; in a recorded run the lead does not interview the engineer.
+   description, in its own copy of the project; no session can ask the engineer anything.
 2. **Given** a run is recorded, **When** it starts, **Then** Fallow notes fingerprints of the task
    description and the hidden tests, and the agent, model and version of each session.
-3. **Given** a run ends (the lead or plain session declares it finished, or the engineer ends it),
-   **Then** Fallow runs the hidden tests on the run's final commit in a temporary checkout outside every
-   agent's worktree and records pass or fail per test count.
+3. **Given** a run ends (its sessions idle, its time limit, or the engineer), **When** the engineer
+   confirms closing the run's sessions, **Then** Fallow runs the hidden tests in the lead's worktree (the plain session's in plain mode) as the run left it and records the counts passed and failed.
 4. **Given** a burst ends, **When** the engineer opens its record, **Then** it shows per part and per
    role the time working, time blocked, signals, gate and review outcomes, repair rounds, the
    engineer's interventions, and tokens and cost where the agent reported them.
@@ -273,8 +273,8 @@ waits with a stated reason and starts when a session ends.
   on the lead.
 - A builder reports done while its question is still open: accepted only if the builder states the
   question no longer blocks the part; the question stays visible to the lead.
-- The hidden tests cannot run on a run's final commit (it does not build): the run is recorded as
-  failed with the reason, not as unmeasured.
+- The hidden tests cannot run on what the run left (it does not build): every hidden test counts as
+  failed, not as unmeasured.
 - A plain run has no lead, gates or reviewer: its record holds what Fallow can observe (time,
   interventions, the hidden tests' outcome, cost where reported).
 - An agent reads the task set's hidden tests from disk anyway: Fallow cannot prevent a process running
@@ -319,36 +319,62 @@ waits with a stated reason and starts when a session ends.
 **Measurement and comparison (US2)**
 
 - **FR-011**: The engineer MUST be able to register a task set kept outside the project: per task, a
-  name, a starting commit, a fixed description and hidden acceptance tests. Fallow reads it and never
-  places the hidden tests in a project, worktree, prompt or briefing.
-- **FR-012**: The engineer MUST be able to run a task plain (one session, no orchestration tools),
-  solo (the lead builds alone with Fallow's gates and a reviewer) or as a squad, from the task's
-  starting commit and fixed description. In a recorded run the lead MUST NOT interview the engineer.
-- **FR-013**: When a run ends, Fallow MUST run the task's hidden tests on the run's final commit in a
-  temporary checkout outside every worktree, and record the counts passed and failed. A run's final
-  commit is the head of the lead's (or plain session's) branch when it declares the run finished or
-  the engineer ends it.
+  name, a starting commit, a fixed description, the run's time limit, optional setup files (such as
+  local agent settings) and hidden acceptance tests. Fallow reads it and never places the hidden
+  tests anywhere an agent of a running run can reach through Fallow (project, worktree, prompt,
+  briefing).
+- **FR-011a**: Each run MUST take place in its own copy of the project that holds only the history up
+  to the task's starting commit, plus the task's setup files, so no run can see another run's work
+  and the engineer's repository is not written. Fallow removes the copy after the run is recorded or
+  discarded.
+- **FR-012**: The engineer MUST be able to run a task plain (one session, no Fallow orchestration
+  tools), solo (the lead builds alone with Fallow's gates and a reviewer) or as a squad, from the
+  task's starting commit and fixed description. In every mode the editing sessions (the plain session, the
+  lead, builders) run at the same agent permission level (edit and run commands, never asking the
+  engineer), so no mode can interview the engineer or stall at a prompt the others skip.
+- **FR-013**: A run MUST end when no session of the run has been working for a set time (default 3
+  minutes) while nothing of the run is in progress (no gate running, no start waiting), when its time
+  limit passes, or when the engineer ends it. Fallow then asks the engineer once to close the run's
+  sessions (naming them); after they are closed it copies the hidden tests into the lead's worktree (the plain session's in plain mode), runs them there, and records the counts passed and failed. The tested state is that
+  worktree as the run left it, committed or not, the same for every mode.
 - **FR-014**: Every recorded run MUST record per part and per role: time working, time blocked,
-  signals raised, gate outcomes, review outcomes, repair rounds and the engineer's interventions. An
-  intervention is any text the engineer types into a session of the run and any decision they make
-  beyond the approvals the run's mode requires.
-- **FR-015**: Fallow MUST record tokens and cost per session where the agent reports them about its own
-  use, and mark them unknown otherwise; it MUST NOT estimate them.
+  signals raised, gate outcomes, review outcomes, repair rounds and the engineer's interventions. Time
+  blocked is time a session waits on an open signal it raised, a start waiting for memory, or a task
+  whose preconditions are unmet. An intervention is any line the engineer sends into a session of the
+  run and any approval or decision they give during the run; recorded runs are set up to need none,
+  and closing the sessions at the end is not one.
+- **FR-015**: Fallow MUST record cost per session where the agent reports it about its own use, and
+  mark it unknown otherwise; it MUST NOT estimate cost or tokens. Tokens are recorded only if an agent
+  reports a cumulative count.
 - **FR-016**: For runs the engineer chose to record, Fallow MUST keep the run record on disk so
-  comparisons span runs and restarts. A record holds only what the constitution amendment
-  (`constitution-amendment.md`, v5.0.0) allows: mode, components switched off, fingerprints of the
-  task and the hidden tests, agent, model and version identifiers, commit identifiers, start time,
-  durations, counts, fixed-value outcomes, and reported tokens and cost. The engineer can list and
-  delete records.
-- **FR-017**: Every orchestration component MUST be switchable off for a recorded run: the reviewer,
-  gates (other than the hidden tests), contracts for parallel parts, the plan-commit check, the
-  criteria precondition, the ownership check, the verdict check, the lead's updates and parallel
-  builders. The record names those switched off.
+  comparisons span runs and restarts. A record holds only what the constitution (v5.0.0, Principle
+  VII) allows: mode, components switched off, fingerprints of the task description (line endings
+  normalised) and of the hidden tests, the agent, model and version identifiers
+  agents report, commit identifiers, start time, durations, counts, fixed-value outcomes, and reported
+  token and cost figures. The engineer can list and delete records.
+- **FR-017**: Every orchestration component MUST be switchable off for a recorded run, with this effect:
+
+  | Component off | Effect |
+  |---|---|
+  | reviewer | no reviewer starts; the review condition is dropped from the merge |
+  | gates | no gate runs during the run; gate conditions are dropped (hidden tests still run) |
+  | contracts | parallel parts may start without a contract per boundary |
+  | plan-commit check | done reports are not checked for criteria and contract changes |
+  | criteria precondition | work may be built without committed criteria; verdicts then answer the description |
+  | ownership check | edits outside owned files are not reported |
+  | verdict check | any approval counts |
+  | lead updates | after the run's description, the lead receives nothing typed by Fallow; it learns only through its tools |
+  | parallel builders | every piece of work is built by the lead |
+
+  The record names the components switched off.
 - **FR-018**: Fallow MUST run a series of recorded runs one at a time, in a shuffled order of task and
-  mode, with the number of repeats per task and mode the engineer sets (default 3).
+  mode, with the number of repeats per task and mode the engineer sets (default 3). The series waits
+  at each run's end for the engineer to close its sessions (FR-013).
 - **FR-019**: Fallow MUST show the runs of a task set grouped by task and mode, with pass rate, median
   time, interventions, cost per passing run where known, and the spread across repeats; runs whose
   fingerprints differ are not grouped together.
+- **FR-019a**: A run in progress when Fallow exits or restarts MUST be discarded, not recorded, and
+  the engineer told.
 
 **Decisions in the repo (US3)**
 
@@ -365,7 +391,8 @@ waits with a stated reason and starts when a session ends.
   done report MUST be refused unless its commit contains every commit since it started that changed
   its part's criteria or a contract it builds against; it is told which commit to take in.
 - **FR-024**: A change to the manifest, plan or a contract by a session other than the lead MUST be
-  reported to the lead and the engineer, and that work MUST NOT count until the lead accepts it.
+  reported to the lead and the engineer as a signal from Fallow, and that work MUST NOT count until
+  the lead accepts it by answering that signal.
 - **FR-025**: A builder's change to a file its part does not own MUST be reported to the lead with the
   file and its owner.
 - **FR-026**: A builder with an open question MUST be told, in its briefing and in the signal's reply,
@@ -373,19 +400,23 @@ waits with a stated reason and starts when a session ends.
 
 **Verification (US4)**
 
-- **FR-027**: A piece of work MUST NOT be built until its acceptance criteria are committed in the
-  manifest; a builder MAY propose changes to them as a signal before building.
+- **FR-027**: A piece of work MUST NOT be handed to a builder until its acceptance criteria are
+  committed in the manifest; a builder MAY propose changes to them as a signal before building. Work
+  the lead builds itself may have criteria; without them, the task description is its one criterion.
 - **FR-028**: Gates MUST run on each part and on the integrated result, classified against the
-  baseline on the starting commit (as in 004).
+  baseline on the starting commit (as in 004). The lead integrates builders' branches into its own
+  branch; the integrated result is the lead's branch, and the final gates run on its commit.
 - **FR-029**: A review verdict MUST count toward the merge only if it answers each acceptance
   criterion with what was run and the result, including at least one case that must fail; otherwise
   the reviewer is told why it does not count. This is a check of the verdict's completeness, not of
   whether the reviewer's checks ran.
 - **FR-030**: Reviewers MUST check the integrated result in a fresh session at a level that may run
   commands but not edit files, given by the agent's flags; a reviewer whose worktree changes stops
-  counting, as read-only roles in 004.
+  counting, as read-only roles in 004. Commands can still write outside the worktree, which Fallow
+  does not see; the engineer is told this when a squad uses the level.
 - **FR-031**: Several reviewers MUST each have a distinct focus named in the manifest, and the merge
-  MUST need each of their approvals. 004's warning about reviewers on the same agent and model stays.
+  MUST need an approval for each focus. 004's warning about reviewers on the same agent and model
+  stays.
 - **FR-032**: Repairs MUST go to whoever builds the part, within the repair cap (as in 004).
 
 **The lead (US5)**
@@ -398,8 +429,8 @@ waits with a stated reason and starts when a session ends.
   verdict, an exited session, a session stuck at its agent's permission prompt, a ready merge, and a
   question it left unanswered too long. It MUST NOT send periodic status.
 - **FR-036**: After Fallow restarts during a burst, it MUST rebuild what it can from the repository
-  (manifest, parts, branches and commits) and tell the engineer what was lost (permissions, tasks,
-  signals) and must be granted or started again.
+  (the manifest, and builder branches named after their work and part) and tell the engineer what was
+  lost (permissions, tasks, signals) and must be granted or started again.
 
 **Resources (US6)**
 
@@ -414,8 +445,9 @@ waits with a stated reason and starts when a session ends.
   worktrees of non-editing roles checked, gates run and signalled by Fallow, evidence checked, repairs
   capped, the merge left to the engineer.
 - **FR-040**: Fallow MUST NOT run a command, start a session or change a repository except as 004
-  allows and as this feature adds: running the hidden tests in a temporary checkout of a run's final
-  commit, and starting recorded runs the engineer asked for.
+  allows and as this feature adds: creating and removing a run's own copy of the project (FR-011a),
+  starting the runs the engineer asked for, and running the hidden tests in that copy after its
+  sessions are closed.
 - **FR-041**: Every new command MUST be in the palette, and every new key checked against the known
   conflicts (as in 004).
 
@@ -435,7 +467,8 @@ waits with a stated reason and starts when a session ends.
   (FR-021); builders can no longer deliver to each other.
 - **004 memory-only data (FR-029)**: unchanged except run records of recorded runs (FR-016), after the
   constitution amendment.
-- **004 repository access (FR-030)**: extended by FR-040.
+- **004 repository access (FR-030)**: extended by FR-040; recorded runs never touch the engineer's
+  repository (FR-011a).
 - **004 start allowance and kept starts (FR-039)**: stay; the memory budget (FR-037) applies as well.
 
 ### Key Entities
@@ -472,24 +505,30 @@ waits with a stated reason and starts when a session ends.
   contracts, in every test run.
 - **SC-007**: A new lead finishes a burst whose lead was stopped halfway, without the engineer
   restating anything already in the manifest or plan, in the manual test.
-- **SC-008**: Fallow never starts a session that takes the machine past the engineer's memory budget,
-  in a run on a 4 GB machine.
+- **SC-008**: On a 4 GB machine, Fallow never starts a session when the measured memory of the running
+  sessions (gate sessions included) plus the new session's expected size exceeds the engineer's
+  budget. Short spikes from builds inside sessions are not covered.
 - **SC-009**: Every recorded run can be repeated from its record and the task set: the record's
-  fingerprints identify the task and hidden tests, and it names the mode, components switched off,
-  starting commit and agents.
+  fingerprints identify the task description and hidden tests, its durations give the run settings, and it names the mode,
+  components switched off, starting commit and the agents' reported versions. The squad file comes
+  from the starting commit.
 
 ## Assumptions
 
 - Like 002 to 004, this feature is developed on the existing branch `001-llm-aware-tui-editor`.
 - The engineer writes the task set and its hidden tests, and freezes them before the first run of a
   series; Fallow provides the runs, measurement and comparison, not tasks.
-- "Hidden" means outside the project, worktrees, prompts and briefings. Agents run as the engineer's
-  user, so Fallow cannot stop one from reading the engineer's files on purpose.
+- "Hidden" means outside the run's copy, worktrees, prompts and briefings until the run's sessions
+  are closed. Agents run as the engineer's user, so Fallow cannot stop one from reading the
+  engineer's files on purpose.
+- A run's copy lacks the engineer's untracked local files; the task set's setup files supply what all
+  modes need (for example local agent settings), the same for every mode.
 - Token and cost figures come only from what an agent reports about its own use (for example a usage
   summary its CLI offers). Fallow does not read agents' network traffic or transcripts (Principle VII),
   so cost may be unknown for some agents; on a subscription it may be reported as tokens only.
-- Plain runs use the same agent and model as the other modes, with the engineer's usual skills and
-  settings and no Fallow orchestration tools.
+- Plain runs use the same agent and model as the other modes, with the engineer's usual skills, the
+  same permission level as builders, and no Fallow orchestration tools. Comparisons are meant for one
+  agent at a time; cost is known only for agents that report it (Claude Code today).
 - A task's success is decided by its hidden tests; code style and review quality are out of scope for
   the comparison.
 - The manifest's format, its place in the project and the default test file patterns are settled in
