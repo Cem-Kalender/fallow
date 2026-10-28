@@ -325,6 +325,12 @@ is ready by evidence Fallow checks.
   evidence; verdict notes up to 8 KiB; reviewers may run git show/diff/log/ls-tree/grep; gate
   lines name their commit. Tests in `tests/squad_evidence.rs`, `squad_lead.rs`, `squad_publish.rs`.
 
+- [X] T051 [US1] [US7] Findings of the third manual run (online shop, the lead's report): a start
+  kept for each merge role and starts beyond it wait for the engineer (FR-039); what only the
+  engineer can clear is told once (FR-040); `session_start` takes a `part` for its first task;
+  `session_list` and `squad_status` show branches, and `squad_status` a row per member (parts,
+  latest reported commit, tasks). Tests in `tests/squad_roles.rs` and `squad_lead.rs`.
+
 **Checkpoint**: quickstart Q10 passes with no interventions besides the spec and the merge.
 
 ---

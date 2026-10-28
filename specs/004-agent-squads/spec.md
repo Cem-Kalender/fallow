@@ -451,6 +451,14 @@ besides the spec, the merge, and decisions brought to them by the lead).
   merge is ready, with the commit. The lead's briefing MUST define finished as that state and say
   that, once the spec is agreed, the lead manages the squad on its own until then, consulting the
   engineer only for decisions that are theirs.
+- **FR-039**: A burst MUST keep a start for each role its merge conditions need until that role has
+  a session; a start that would use a kept start, or one beyond the allowance, MUST wait for the
+  engineer's approval instead of being refused. A burst whose allowance is smaller than the roles
+  the merge needs MUST be flagged to the engineer when it starts.
+- **FR-040**: When the squad waits for something only the engineer can clear (a start waiting for
+  approval, or a role the merge needs with no session and no starts left), Fallow MUST tell the
+  engineer once and the lead once, instead of repeated status or waiting notices. A quiet-time
+  status (FR-037) MUST NOT be repeated unchanged.
 
 **Across the feature**
 

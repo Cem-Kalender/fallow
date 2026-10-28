@@ -251,6 +251,10 @@ impl Hub {
             .filter_map(|t| t.assigned)
             .collect();
         for i in 0..self.bursts.len() {
+            // Waiting for the user is told to the user (lead.rs), not as a deadlock (004 run 3).
+            let user_blocked = self
+                .user_blocker(sessions, self.bursts[i].project)
+                .is_some();
             let b = &self.bursts[i];
             let gate_running = b
                 .gate_runs
@@ -283,7 +287,7 @@ impl Hub {
             members.sort_unstable();
             let limit = Duration::from_secs(u64::from(b.squad.wait_notice_min) * 60);
             let b = &mut self.bursts[i];
-            if gate_running || all == 0 || members.len() < all {
+            if gate_running || user_blocked || all == 0 || members.len() < all {
                 b.waiting_since = None;
                 continue;
             }
@@ -307,7 +311,10 @@ impl Hub {
         }
         let changed = !notices.is_empty();
         for (project, n) in notices {
-            self.tell_lead(project, n);
+            // A nudge, not news: it does not make the quiet-time status new again (review).
+            if let Some(b) = self.bursts.iter_mut().find(|b| b.project == project) {
+                b.lead_updates.push(n);
+            }
         }
         changed
     }

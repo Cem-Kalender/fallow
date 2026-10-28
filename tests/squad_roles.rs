@@ -279,16 +279,22 @@ fn session_start_needs_a_role_within_the_squads_limits() {
         json!({"profile": "claude", "project": "api", "role": "reviewer"}),
     );
     assert!(refused(&r, "not_allowed"), "{r:?}");
-    // The allowance (3) is used: builder, reviewer, reviewer.
+    // The allowance (3) is used: builder, reviewer, reviewer. A further start waits for the
+    // user instead of failing (004 run 3).
     let r = ask(
         &mut h,
         &f,
         json!({"profile": "claude", "project": "api", "role": "builder"}),
     );
-    let Reply::Error("not_allowed", why) = r else {
-        panic!("{r:?}")
-    };
-    assert!(why.contains("ask the user"), "{why}");
+    let Reply::Done(v) = r else { panic!("{r:?}") };
+    assert_eq!(v["state"], "pending", "{v}");
+    assert!(v["reason"].as_str().unwrap().contains("used up"), "{v}");
+    assert!(
+        h.alerts.iter().any(|a| a.contains("o to approve")),
+        "{:?}",
+        h.alerts
+    );
+    assert_eq!(h.pending_starts().count(), 1);
     // Outside a burst there are no roles.
     let mut plain = Hub::new(OrchestrationSettings::default());
     let r = plain.call(
@@ -527,4 +533,153 @@ fn a_prompt_is_a_question_with_its_choices_not_a_quote() {
     assert!(!looks_like_prompt(&v(&[
         "Do you want to proceed? I think so."
     ])));
+}
+
+#[test]
+fn a_start_is_kept_for_each_role_the_merge_needs() {
+    // 004 run 3: three builders used the allowance and no reviewer could start.
+    let mut h = Hub::new(OrchestrationSettings::default());
+    let mut f = Fake(vec![info(1, "claude")]);
+    let now = Instant::now();
+    burst(&mut h, &f, squad::builtin(), now);
+    let ask = |h: &mut Hub, f: &Fake, role: &str| {
+        h.call(
+            f,
+            1,
+            "session_start",
+            json!({"profile": "claude", "project": "api", "role": role}),
+            now,
+        )
+    };
+    start(&mut h, &mut f, "builder", 2, now);
+    start(&mut h, &mut f, "builder", 3, now);
+    // The last start is kept for the reviewer: a third builder waits for the user.
+    let Reply::Done(v) = ask(&mut h, &f, "builder") else {
+        panic!()
+    };
+    assert_eq!(v["state"], "pending", "{v}");
+    assert!(
+        v["reason"].as_str().unwrap().contains("kept for reviewer"),
+        "{v}"
+    );
+    // The reviewer itself may use it.
+    let Reply::Done(v) = ask(&mut h, &f, "reviewer") else {
+        panic!()
+    };
+    assert_eq!(v["state"], "approved", "{v}");
+    // whoami tells the lead what is left and which roles the merge needs.
+    let Reply::Done(v) = h.call(&f, 1, "whoami", json!({}), now) else {
+        panic!()
+    };
+    assert_eq!(v["burst"]["allowance_left"], 0);
+    assert_eq!(v["burst"]["merge_roles"], json!(["builder", "reviewer"]));
+    assert!(
+        v["briefing"]
+            .as_str()
+            .unwrap()
+            .contains("kept for each role the merge needs")
+    );
+}
+
+#[test]
+fn a_burst_too_small_for_the_merge_is_flagged_at_its_start() {
+    let mut h = Hub::new(OrchestrationSettings::default());
+    let f = Fake(vec![info(1, "claude")]);
+    h.start_burst(
+        &f,
+        BurstRequest {
+            lead: 1,
+            duration: Duration::from_secs(3600),
+            allowance: Some(1),
+            squad: squad::builtin(),
+            start_commit: None,
+            target_branch: None,
+            has_remote: false,
+            spec_kit: false,
+            max_sessions: 8,
+        },
+        Instant::now(),
+    )
+    .unwrap();
+    assert!(
+        h.alerts
+            .iter()
+            .any(|a| a.contains("needs a builder and a reviewer session")),
+        "{:?}",
+        h.alerts
+    );
+}
+
+#[test]
+fn a_first_task_can_name_its_part() {
+    let mut h = Hub::new(OrchestrationSettings::default());
+    let mut f = Fake(vec![info(1, "claude")]);
+    let now = Instant::now();
+    burst(&mut h, &f, squad::builtin(), now);
+    let r = h.call(
+        &f,
+        1,
+        "session_start",
+        json!({"profile": "claude", "project": "api", "role": "builder", "part": "db"}),
+        now,
+    );
+    assert!(refused(&r, "invalid"), "a part needs a first task: {r:?}");
+    let r = h.call(
+        &f,
+        1,
+        "session_start",
+        json!({"profile": "claude", "project": "api", "role": "builder", "first_task": "build the db", "part": "db"}),
+        now,
+    );
+    let Reply::Done(v) = r else { panic!("{r:?}") };
+    f.0.push(info(2, "claude"));
+    h.start_done(&f, v["start"].as_u64().unwrap(), Ok(2), now);
+    let t = h
+        .tasks
+        .list
+        .iter()
+        .find(|t| t.text == "build the db")
+        .unwrap();
+    assert_eq!(t.part.as_deref(), Some("db"));
+    // squad_status shows the member with its part.
+    let Reply::Done(v) = h.call(&f, 1, "squad_status", json!({}), now) else {
+        panic!()
+    };
+    let m = v["members"].as_array().unwrap();
+    let b = m.iter().find(|m| m["session"] == 2).unwrap();
+    assert_eq!(b["role"], "builder");
+    assert_eq!(b["parts"], json!(["db"]));
+}
+
+#[test]
+fn starts_the_user_grants_later_count_as_left() {
+    // Review: a start approved with a new grant leaves that grant's other starts usable.
+    use fallow::orchestration::permissions::{Grant, Scope};
+    let mut h = Hub::new(OrchestrationSettings::default());
+    let mut f = Fake(vec![info(1, "claude")]);
+    let now = Instant::now();
+    burst(&mut h, &f, squad::builtin(), now);
+    start(&mut h, &mut f, "builder", 2, now);
+    start(&mut h, &mut f, "reviewer", 3, now);
+    start(&mut h, &mut f, "builder", 4, now);
+    let left = |h: &mut Hub| {
+        let Reply::Done(v) = h.call(&f, 1, "whoami", json!({}), now) else {
+            panic!()
+        };
+        v["burst"]["allowance_left"].as_u64().unwrap()
+    };
+    assert_eq!(left(&mut h), 0);
+    h.grant(
+        &Grant {
+            source: Scope::Session(1),
+            target: Scope::Project(1),
+            deliver: false,
+            create_task: false,
+            start_limit: Some(2),
+            duration: Duration::from_secs(600),
+        },
+        now,
+    )
+    .unwrap();
+    assert_eq!(left(&mut h), 2);
 }

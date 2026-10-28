@@ -8,7 +8,7 @@
 use std::time::{Duration, Instant};
 
 use super::gates::GATE_ROLE;
-use super::{Hub, Party, Sessions, WAITING_FOR_APPROVAL, delivery, tasks};
+use super::{Hub, Party, Sessions, StartState, WAITING_FOR_APPROVAL, delivery, tasks};
 use crate::projects::ProjectId;
 
 /// At most one squad update every this long (FR-033).
@@ -64,6 +64,8 @@ impl Hub {
     pub(crate) fn tell_lead(&mut self, project: ProjectId, line: String) {
         if let Some(b) = self.bursts.iter_mut().find(|b| b.project == project) {
             b.lead_updates.push(one_line(&line));
+            // Something happened: the next quiet-time status is news again (review).
+            b.last_status.clear();
         }
     }
 
@@ -112,6 +114,38 @@ impl Hub {
             .collect()
     }
 
+    /// What only the user can clear: a start waiting for their approval, of a role the merge
+    /// still needs and that has no running session (004 run 3). A missing role with no starts
+    /// left is the lead's to request: its start then waits for the user (review).
+    pub(crate) fn user_blocker(
+        &self,
+        sessions: &dyn Sessions,
+        project: ProjectId,
+    ) -> Option<String> {
+        let b = self.burst_of(project)?;
+        let needed = self.needed_roles(b);
+        let running = |role: &str| {
+            b.roles
+                .iter()
+                .any(|(id, r)| r == role && sessions.info(*id).is_some_and(|s| s.running))
+        };
+        self.starts
+            .iter()
+            .find(|s| {
+                s.project == project
+                    && s.state == StartState::Pending
+                    && s.role
+                        .as_ref()
+                        .is_some_and(|r| needed.contains(r) && !running(r))
+            })
+            .map(|s| {
+                format!(
+                    "starting a {} session the merge needs waits for the user's approval (o)",
+                    s.role.as_deref().unwrap_or_default()
+                )
+            })
+    }
+
     /// Prompts seen in members' sessions, merge readiness, the quiet-time status, and the
     /// grouped update itself (called from `tick`).
     pub(crate) fn tick_lead(&mut self, sessions: &dyn Sessions, now: Instant) -> bool {
@@ -155,14 +189,43 @@ impl Hub {
             // Nothing for a long while and work open: a status (FR-037).
             let quiet = now.saturating_duration_since(self.bursts[i].last_update) >= QUIET_STATUS;
             if quiet && !ready && self.bursts[i].lead_updates.is_empty() {
-                let open = self.open_work(project);
-                let line = if open.is_empty() {
-                    "Status: no task is open. Hand out the next part, or integrate and ask for a review.".to_string()
-                } else {
-                    format!("Status: open tasks: {}.", open.join(", "))
-                };
-                self.bursts[i].lead_updates.push(line);
                 self.bursts[i].last_update = now;
+                if let Some(why) = self.user_blocker(sessions, project) {
+                    // Only the user can clear it: they are told, and the lead once, instead of
+                    // nudging the lead every ten minutes (004 run 3).
+                    if self.bursts[i].user_told.as_deref() != Some(why.as_str()) {
+                        let name = self.bursts[i].project_name.clone();
+                        self.alerts.push(format!("{name} waits for you: {why}"));
+                        self.bursts[i].lead_updates.push(format!(
+                            "Status: the squad waits for the user: {why}. Fallow told the user."
+                        ));
+                        self.bursts[i].user_told = Some(why);
+                    }
+                } else {
+                    self.bursts[i].user_told = None;
+                    let open = self.open_work(project);
+                    let missing = self.missing_roles(sessions, &self.bursts[i]);
+                    let line = if !missing.is_empty() {
+                        format!(
+                            "Status: the merge needs a {} session and none is running: start one with session_start{}.",
+                            missing.join(" and a "),
+                            if self.starts_left(&self.bursts[i]) == 0 {
+                                " (no starts are left, so it waits for the user's approval)"
+                            } else {
+                                ""
+                            }
+                        )
+                    } else if open.is_empty() {
+                        "Status: no task is open. Hand out the next part, or integrate and ask for a review.".to_string()
+                    } else {
+                        format!("Status: open tasks: {}.", open.join(", "))
+                    };
+                    // The same status again is a nudge, not news: sent once until it changes.
+                    if line != self.bursts[i].last_status {
+                        self.bursts[i].last_status = line.clone();
+                        self.bursts[i].lead_updates.push(line);
+                    }
+                }
             }
             // The grouped update (FR-033).
             if self.bursts[i].lead_updates.is_empty()

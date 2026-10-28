@@ -188,6 +188,19 @@ impl Squad {
     pub fn role(&self, name: &str) -> Option<&Role> {
         self.roles.iter().find(|r| r.name == name)
     }
+
+    /// The roles the merge conditions need a session of (not the lead, which always has one).
+    pub fn merge_roles(&self) -> Vec<&str> {
+        let mut v: Vec<&str> = Vec::new();
+        for c in &self.merge_requires {
+            if let Condition::AllDone(r) | Condition::Signal { role: r, .. } = c {
+                if r != "lead" && !v.contains(&r.as_str()) {
+                    v.push(r);
+                }
+            }
+        }
+        v
+    }
 }
 
 fn tools(list: &[Tool]) -> Tools {

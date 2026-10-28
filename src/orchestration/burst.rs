@@ -77,6 +77,10 @@ pub struct Burst {
     pub prompt_told: BTreeSet<u32>,
     /// The lead and the engineer were told the merge is ready.
     pub ready_told: bool,
+    /// The last quiet-time status, sent once until it changes; and what the squad waits for
+    /// that only the user can clear, once told (004 run 3).
+    pub last_status: String,
+    pub user_told: Option<String>,
     pub(crate) warned: bool,
 }
 
@@ -169,8 +173,19 @@ impl Hub {
             last_sent: now.checked_sub(super::lead::GROUP_EVERY).unwrap_or(now),
             prompt_told: BTreeSet::new(),
             ready_told: false,
+            last_status: String::new(),
+            user_told: None,
             warned: false,
         };
+        // A squad whose merge needs more sessions than the burst may start (004 run 3).
+        let needs = burst.squad.merge_roles();
+        if usize::from(allowance) < needs.len() {
+            self.alerts.push(format!(
+                "{}: the merge needs a {} session, but this burst may start only {allowance}: further starts wait for your approval",
+                burst.project_name,
+                needs.join(" and a ")
+            ));
+        }
         let note = super::briefing::common_note(&burst);
         let project_name = burst.project_name.clone();
         self.bursts.push(burst);

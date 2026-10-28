@@ -187,6 +187,12 @@ const SPECS: &[Spec] = &[
                 false,
             ),
             (
+                "part",
+                "string",
+                "Optional: the part the first task is for, as with task_create",
+                false,
+            ),
+            (
                 "role",
                 "string",
                 "While the project coordinates (required then): the new session's role in the squad, for example \"builder\" or \"reviewer\"",
@@ -234,7 +240,7 @@ const SPECS: &[Spec] = &[
     },
     Spec {
         name: "squad_status",
-        description: "While the project coordinates: the squad in force (roles and their sessions), gate runs with their classification, each merge condition met or not and why, and the time left.",
+        description: "While the project coordinates: the squad in force (roles and their sessions), a row per member (branch, state, parts, latest reported commit, tasks), starts left, what waits for the user, gate runs with their classification, each merge condition met or not and why, repairs, and the time left.",
         args: &[],
     },
     Spec {
@@ -321,9 +327,56 @@ fn board_label(b: BoardId, me: &SessionInfo) -> String {
 }
 
 /// The `squad_status` result for a project's burst.
-pub fn squad_status(hub: &Hub, project: crate::projects::ProjectId, now: Instant) -> Option<Value> {
+pub fn squad_status(
+    hub: &Hub,
+    sessions: &dyn Sessions,
+    project: crate::projects::ProjectId,
+    now: Instant,
+) -> Option<Value> {
     let b = hub.burst_of(project)?;
     let r = hub.readiness(project)?;
+    // One row per member: branch, parts, latest reported commit, open tasks (004 run 3).
+    let mut ids: Vec<u32> = b
+        .roles
+        .iter()
+        .filter(|(_, r)| *r != super::gates::GATE_ROLE)
+        .map(|(id, _)| *id)
+        .collect();
+    ids.sort_unstable();
+    let members: Vec<Value> = ids
+        .into_iter()
+        .map(|id| {
+            let mine: Vec<&super::tasks::Task> = hub
+                .tasks
+                .list
+                .iter()
+                .filter(|t| {
+                    t.created_at >= b.started
+                        && (t.assigned == Some(id)
+                            || (t.assigned.is_none()
+                                && t.target == super::tasks::Target::Session(id)))
+                })
+                .collect();
+            let mut parts: Vec<&str> = Vec::new();
+            for p in mine.iter().filter_map(|t| t.part.as_deref()) {
+                if !parts.contains(&p) {
+                    parts.push(p);
+                }
+            }
+            json!({
+                "session": id,
+                "role": b.roles.get(&id),
+                "branch": sessions.workdir(id).and_then(|(_, br)| br),
+                "state": sessions.info(id).map_or("exited", |s| agent_state(&s)),
+                "parts": parts,
+                "latest_commit": mine.iter().rev().find_map(|t| t.evidence.as_ref().map(|e| e.commit.clone())),
+                "tasks": mine
+                    .iter()
+                    .map(|t| format!("T{} {}", t.id, t.state.label()))
+                    .collect::<Vec<_>>(),
+            })
+        })
+        .collect();
     let roles: Vec<Value> = b
         .squad
         .roles
@@ -368,6 +421,9 @@ pub fn squad_status(hub: &Hub, project: crate::projects::ProjectId, now: Instant
         "squad": b.squad.name,
         "lead": b.lead,
         "ends_in_min": b.ends.saturating_duration_since(now).as_secs() / 60,
+        "starts_left": hub.starts_left(b),
+        "waits_for_user": hub.user_blocker(sessions, project),
+        "members": members,
         "roles": roles,
         "gates": gates,
         "merge": {
@@ -600,17 +656,12 @@ pub(super) fn call(
             });
             if let Some(b) = hub.burst_for(caller) {
                 let role = me.role.as_deref().and_then(|r| b.squad.role(r));
-                let used = hub
-                    .permissions
-                    .list
-                    .iter()
-                    .find(|p| p.id == b.permission)
-                    .map_or(0, |p| p.starts_used);
                 v["role_description"] = json!(role.map(|r| r.description.clone()));
                 v["burst"] = json!({
                     "ends_in_min": b.ends.saturating_duration_since(now).as_secs() / 60,
                     "lead": b.lead,
-                    "allowance_left": b.allowance.saturating_sub(used),
+                    "allowance_left": hub.starts_left(b),
+                    "merge_roles": b.squad.merge_roles(),
                 });
                 if let Some(r) = role {
                     v["briefing"] = json!(super::briefing::full(b, r, caller));
@@ -639,6 +690,7 @@ pub(super) fn call(
                         "role": hub.role_of(s.id),
                         "profile": s.profile,
                         "project": s.project_name,
+                        "branch": sessions.workdir(s.id).and_then(|(_, b)| b),
                         "state": agent_state(&s),
                         "connected": hub.connected(s.id),
                         "self": s.id == caller,
@@ -994,6 +1046,24 @@ pub(super) fn call(
                     Err((code, m)) => return Reply::error(code, m),
                 },
             };
+            let part = match args.get("part").and_then(Value::as_str) {
+                None => None,
+                Some(_) if first.is_none() => {
+                    return Reply::error("invalid", "part needs a first_task");
+                }
+                Some(p) if events::valid_name(p) => Some(p.to_string()),
+                Some(p) => {
+                    return Reply::error(
+                        "invalid",
+                        format!("part {p:?}: letters, digits and . _ : / # -, up to 64"),
+                    );
+                }
+            };
+            // As with task_create: a first task for a part with a failure counted is its repair.
+            let round = match hub.repair_for_task(caller, part.as_deref()) {
+                Ok(r) => r,
+                Err(why) => return Reply::error("not_allowed", why),
+            };
             match hub.request_start(
                 sessions,
                 &me,
@@ -1003,14 +1073,29 @@ pub(super) fn call(
                 args.get("role").and_then(Value::as_str),
                 now,
             ) {
-                Ok((id, state)) => {
+                Ok((id, state, hold)) => {
                     let mut v = json!({ "start": id });
                     match state {
                         super::StartState::Refused(why) => {
                             v["state"] = json!("refused");
                             v["reason"] = json!(why);
                         }
-                        s => v["state"] = json!(s.label()),
+                        s => {
+                            if let Some(p) = part {
+                                if let Some(r) = hub.starts.iter_mut().find(|r| r.id == id) {
+                                    r.first_part = Some((p.clone(), round));
+                                }
+                                if round > 0 {
+                                    hub.repair_handed(caller, Some(&p));
+                                }
+                            }
+                            if let (super::StartState::Pending, Some(h)) = (&s, hold) {
+                                v["reason"] = json!(format!(
+                                    "{h}: the user approves this start; the outcome comes through inbox"
+                                ));
+                            }
+                            v["state"] = json!(s.label());
+                        }
                     }
                     Reply::Done(v)
                 }
@@ -1172,7 +1257,7 @@ pub(super) fn call(
             hub.published(project, &url, title);
             Reply::Done(json!({ "recorded": url }))
         }
-        "squad_status" => match squad_status(hub, me.project, now) {
+        "squad_status" => match squad_status(hub, sessions, me.project, now) {
             Some(v) => Reply::Done(v),
             None => Reply::error("unavailable", "this project is not coordinating"),
         },

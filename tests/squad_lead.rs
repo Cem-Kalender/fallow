@@ -463,3 +463,78 @@ fn long_updates_continue_in_the_next_one() {
         "every line typed or kept"
     );
 }
+
+#[test]
+fn the_same_status_is_not_repeated() {
+    // 004 run 3: "no task is open" four times.
+    let (mut h, f, now) = setup();
+    let mut t = now;
+    for _ in 0..4 {
+        t += Duration::from_secs(601);
+        h.tick(&f, t);
+    }
+    let all = updates(&h).join("\n");
+    assert_eq!(all.matches("Status: no task is open").count(), 1, "{all}");
+}
+
+#[test]
+fn what_only_the_user_can_clear_goes_to_the_user_once() {
+    // 004 run 3: the starts were used up and the merge needs a reviewer.
+    let (mut h, mut f, now) = setup();
+    let start = |h: &mut Hub, f: &Fake, at: Instant| {
+        let r = h.call(
+            f,
+            1,
+            "session_start",
+            json!({"profile": "claude", "project": "api", "role": "reviewer"}),
+            at,
+        );
+        let Reply::Done(v) = r else { panic!("{r:?}") };
+        v
+    };
+    // Reviewers keep exiting until the burst's five starts are used.
+    for id in [5, 6] {
+        f.0.retain(|s| s.id != id - 1 || s.id < 4);
+        let v = start(&mut h, &f, now);
+        assert_eq!(v["state"], "approved", "{v}");
+        f.0.push(info(id));
+        h.start_done(&f, v["start"].as_u64().unwrap(), Ok(id), now);
+    }
+    f.0.retain(|s| s.id < 4);
+    let asked = now + Duration::from_secs(300);
+    let v = start(&mut h, &f, asked);
+    assert_eq!(v["state"], "pending", "{v}");
+    assert!(v["reason"].as_str().unwrap().contains("used up"), "{v}");
+    // Ticks while the request waits (it expires after request_timeout_s).
+    for s in [601, 700, 800, 899] {
+        h.tick(&f, now + Duration::from_secs(s));
+    }
+    let waits = h
+        .alerts
+        .iter()
+        .filter(|a| a.contains("waits for you"))
+        .count();
+    assert_eq!(waits, 1, "{:?}", h.alerts);
+    let all = updates(&h).join("\n");
+    assert_eq!(
+        all.matches("the squad waits for the user").count(),
+        1,
+        "{all}"
+    );
+    assert!(!all.contains("no task is open"), "{all}");
+    assert!(!all.contains("have waited"), "no deadlock nudge: {all}");
+    // Once the request expired, it is the lead's to ask again: told so, not the user.
+    let n = h.alerts.len();
+    h.tick(&f, now + Duration::from_secs(1600));
+    h.tick(&f, now + Duration::from_secs(2300));
+    let all = updates(&h).join("\n");
+    assert!(
+        all.contains("needs a reviewer session and none is running: start one with session_start (no starts are left"),
+        "{all}"
+    );
+    assert!(
+        !h.alerts[n..].iter().any(|a| a.contains("waits for you")),
+        "{:?}",
+        h.alerts
+    );
+}

@@ -350,6 +350,8 @@ pub struct StartRequest {
     /// The role's command line makes the agent skip its own permission checks (FR-014): the
     /// engineer confirms the start even during a burst.
     pub bypass: bool,
+    /// The part the first task is for, and its repair round (004 run 3).
+    pub first_part: Option<(String, u8)>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -698,7 +700,7 @@ impl Hub {
         first_task: Option<String>,
         role: Option<&str>,
         now: Instant,
-    ) -> Result<(u64, StartState), Reply> {
+    ) -> Result<(u64, StartState, Option<String>), Reply> {
         let Some((pid, pname)) = sessions
             .profiles()
             .into_iter()
@@ -722,7 +724,7 @@ impl Hub {
                 format!("project {proj_name} is missing"),
             ));
         }
-        let (role, args, bypass, warn) = self.start_role(sessions, from, &pid, proj, role)?;
+        let (role, args, bypass, warn, hold) = self.start_role(sessions, from, &pid, proj, role)?;
         if let Some(w) = warn {
             self.notices.push(w);
         }
@@ -730,6 +732,21 @@ impl Hub {
         let id = self.next_start;
         let state = match sessions.start_allowed() {
             Err(why) => StartState::Refused(why),
+            // Beyond what the burst may start on its own: the user decides (004 run 3).
+            Ok(()) if hold.is_some() => {
+                self.alerts.push(format!(
+                    "{} asks to start a {} session in {proj_name}: {}{}. o to approve or reject",
+                    from.party().label(),
+                    role.as_deref().unwrap_or("?"),
+                    hold.as_deref().unwrap_or_default(),
+                    if bypass {
+                        " (its flags skip the agent's permission checks)"
+                    } else {
+                        ""
+                    }
+                ));
+                StartState::Pending
+            }
             Ok(()) if bypass => {
                 self.notices.push(format!(
                     "Role {} starts {pname} with flags that skip its permission checks: o to confirm",
@@ -791,11 +808,12 @@ impl Hub {
             role,
             args,
             bypass,
+            first_part: None,
         });
         if matches!(state, StartState::Refused(_)) {
             self.start_outcome(id);
         }
-        Ok((id, state))
+        Ok((id, state, hold))
     }
 
     fn start_outcome(&mut self, id: u64) {
@@ -860,7 +878,7 @@ impl Hub {
             Ok(sid) => StartState::Started(*sid),
             Err(e) => StartState::Refused(e.clone()),
         };
-        let (from, task) = (s.from.clone(), s.first_task.clone());
+        let (from, task, part) = (s.from.clone(), s.first_task.clone(), s.first_part.clone());
         let (role, project) = (s.role.clone(), s.project);
         if let (Ok(sid), Some(r)) = (&result, role) {
             if let Some(b) = self.bursts.iter_mut().find(|b| b.project == project) {
@@ -887,6 +905,10 @@ impl Hub {
                 if let Some(task) = self.tasks.get_mut(t) {
                     task.created_by = from;
                     task.approved_handover = true;
+                    if let Some((p, round)) = part {
+                        task.part = Some(p);
+                        task.repair_round = round;
+                    }
                 }
             }
         }
@@ -1804,7 +1826,14 @@ impl Hub {
 
 /// A role session's start: the role, its extra arguments, whether they bypass the agent's
 /// checks, and a warning for the engineer.
-type RoleStart = (Option<String>, Vec<String>, bool, Option<String>);
+/// (role, extra arguments, bypass, warning, why the user must approve it).
+type RoleStart = (
+    Option<String>,
+    Vec<String>,
+    bool,
+    Option<String>,
+    Option<String>,
+);
 
 impl Hub {
     /// Whether precondition `k` of task `t` holds: the event is signalled and, when the task
@@ -1836,7 +1865,7 @@ impl Hub {
     ) -> Result<RoleStart, Reply> {
         let Some(b) = self.burst_for(from.id) else {
             return match role {
-                None => Ok((None, Vec::new(), false, None)),
+                None => Ok((None, Vec::new(), false, None, None)),
                 Some(_) => Err(Reply::error(
                     "invalid",
                     "role: sessions have roles only while the project coordinates",
@@ -1866,27 +1895,8 @@ impl Hub {
                 format!("no role {name:?}; the squad has {}", names.join(", ")),
             ));
         };
-        let running: Vec<u32> = sessions
-            .all()
-            .into_iter()
-            .filter(|s| s.running)
-            .map(|s| s.id)
-            .collect();
-        let have = b
-            .roles
-            .iter()
-            .filter(|(id, rn)| *rn == name && running.contains(id))
-            .count()
-            + self
-                .starts
-                .iter()
-                .filter(|s| {
-                    s.project == b.project
-                        && s.role.as_deref() == Some(name)
-                        && matches!(s.state, StartState::Pending | StartState::Approved)
-                })
-                .count();
-        if have >= usize::from(r.max) {
+        let have = |name: &str| self.role_count(sessions, b, name);
+        if have(name) >= usize::from(r.max) {
             return Err(Reply::error(
                 "not_allowed",
                 format!(
@@ -1895,21 +1905,28 @@ impl Hub {
                 ),
             ));
         }
-        let used = self
-            .permissions
-            .list
+        // Beyond the burst's starts, or using a start kept for a role the merge still needs a
+        // session of, the start waits for the user instead of failing (004 run 3).
+        // Only roles whose merge condition is still unmet count (review).
+        let left = self.starts_left(b);
+        let needed = self.needed_roles(b);
+        let missing: Vec<&str> = needed
             .iter()
-            .find(|p| p.id == b.permission)
-            .map_or(0, |p| p.starts_used);
-        if used >= b.allowance {
-            return Err(Reply::error(
-                "not_allowed",
-                format!(
-                    "this burst may start {} session(s) and started {used}; ask the user",
-                    b.allowance
-                ),
-            ));
-        }
+            .map(String::as_str)
+            .filter(|m| *m != name && have(m) == 0)
+            .collect();
+        let hold = if left == 0 {
+            Some("this burst's session starts are used up".to_string())
+        } else if !(needed.iter().any(|n| n == name) && have(name) == 0)
+            && usize::from(left) <= missing.len()
+        {
+            Some(format!(
+                "{left} start(s) left, kept for {} (the merge needs it)",
+                missing.join(", ")
+            ))
+        } else {
+            None
+        };
         // Two reviewers on the same agent and model are less independent (FR-027): a warning.
         if roles::may_signal(&b.squad, r, "review-approved") {
             let same = b.roles.iter().any(|(id, other)| {
@@ -1934,7 +1951,69 @@ impl Hub {
             }
             None => (Vec::new(), false),
         };
-        Ok((Some(name.to_string()), args, bypass, warn))
+        Ok((Some(name.to_string()), args, bypass, warn, hold))
+    }
+
+    /// Sessions the lead may still start without asking: the burst's grant and any other
+    /// project grant the user gave it (review).
+    pub fn starts_left(&self, b: &burst::Burst) -> u8 {
+        self.permissions
+            .list
+            .iter()
+            .filter(|p| {
+                p.target == permissions::Scope::Project(b.project)
+                    && matches!(p.source, permissions::Scope::Project(x) if x == b.project)
+                    || p.target == permissions::Scope::Project(b.project)
+                        && p.source == permissions::Scope::Session(b.lead)
+            })
+            .map(|p| p.start_limit.unwrap_or(0).saturating_sub(p.starts_used))
+            .fold(0u8, u8::saturating_add)
+    }
+
+    /// Running sessions in `role` plus starts for it under way.
+    fn role_count(&self, sessions: &dyn Sessions, b: &burst::Burst, role: &str) -> usize {
+        b.roles
+            .iter()
+            .filter(|(id, r)| *r == role && sessions.info(**id).is_some_and(|s| s.running))
+            .count()
+            + self
+                .starts
+                .iter()
+                .filter(|s| {
+                    s.project == b.project
+                        && s.role.as_deref() == Some(role)
+                        && matches!(s.state, StartState::Pending | StartState::Approved)
+                })
+                .count()
+    }
+
+    /// Roles (not the lead) with a merge condition not met yet (004 run 3).
+    pub(crate) fn needed_roles(&self, b: &burst::Burst) -> Vec<String> {
+        let checks = self
+            .readiness(b.project)
+            .map(|r| r.checks)
+            .unwrap_or_default();
+        let mut v: Vec<String> = Vec::new();
+        for c in &b.squad.merge_requires {
+            let (squad::Condition::AllDone(r) | squad::Condition::Signal { role: r, .. }) = c
+            else {
+                continue;
+            };
+            let label = publish::condition_label(c);
+            let met = checks.iter().any(|k| k.met && k.condition == label);
+            if r != "lead" && !met && !v.contains(r) {
+                v.push(r.clone());
+            }
+        }
+        v
+    }
+
+    /// Needed roles with no running session and no start under way.
+    pub(crate) fn missing_roles(&self, sessions: &dyn Sessions, b: &burst::Burst) -> Vec<String> {
+        self.needed_roles(b)
+            .into_iter()
+            .filter(|m| self.role_count(sessions, b, m) == 0)
+            .collect()
     }
 
     /// Whether a session's signals stopped counting (a read-only role's worktree changed,
