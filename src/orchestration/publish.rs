@@ -114,7 +114,7 @@ impl Hub {
                         .filter(|(_, r)| *r == role)
                         .map(|(id, _)| *id)
                         .collect();
-                    let handed: Vec<&tasks::Task> = self
+                    let mut handed: Vec<&tasks::Task> = self
                         .tasks
                         .list
                         .iter()
@@ -123,15 +123,30 @@ impl Hub {
                                 && t.assigned.is_some_and(|a| members.contains(&a))
                         })
                         .collect();
+                    // A withdrawn task is no longer work to finish, but the reason says so
+                    // (FR-042, review).
+                    let withdrawn = handed
+                        .iter()
+                        .filter(|t| matches!(t.state, tasks::State::Cancelled(_)))
+                        .count();
+                    handed.retain(|t| !matches!(t.state, tasks::State::Cancelled(_)));
+                    let withdrawn = if withdrawn == 0 {
+                        String::new()
+                    } else {
+                        format!(", {withdrawn} withdrawn")
+                    };
                     let open: Vec<String> = handed
                         .iter()
                         .filter(|t| t.state != tasks::State::Done)
                         .map(|t| format!("T{} {}", t.id, t.state.label()))
                         .collect();
                     if handed.is_empty() {
-                        (false, format!("no task was handed to a {role} yet"))
+                        (
+                            false,
+                            format!("no task was handed to a {role} yet{withdrawn}"),
+                        )
                     } else if open.is_empty() {
-                        (true, format!("{} task(s) done", handed.len()))
+                        (true, format!("{} task(s) done{withdrawn}", handed.len()))
                     } else {
                         (false, open.join(", "))
                     }

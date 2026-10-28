@@ -1105,7 +1105,9 @@ impl Hub {
     }
 
     /// The agent that created a task withdraws it (004 manual run: a task that reached the wrong
-    /// session). Any open task it created; a hand-over still waiting is rejected with it.
+    /// session). Any open task it created; a hand-over still waiting is rejected with it. The
+    /// lead of a burst also withdraws Fallow's tasks of the burst and any task of it that failed
+    /// or waits for a session that exited; the engineer's open tasks stay theirs (FR-042).
     pub fn withdraw_task(
         &mut self,
         caller: u32,
@@ -1116,13 +1118,31 @@ impl Hub {
             .tasks
             .get(id)
             .ok_or_else(|| Reply::error("not_found", format!("no task T{id}")))?;
-        if t.created_by.session() != Some(caller) {
+        let lead = self.bursts.iter().any(|b| {
+            let of_burst = t.created_at >= b.started
+                && match &t.target {
+                    tasks::Target::Session(s) => b.roles.contains_key(s),
+                    tasks::Target::NextFree { project, .. } => *project == b.project,
+                };
+            let left = matches!(t.state, tasks::State::Failed(_))
+                || matches!(t.target, tasks::Target::Session(s) if b.exited.contains(&s));
+            b.lead == caller && of_burst && (t.created_by == Party::Fallow || left)
+        });
+        if t.created_by.session() != Some(caller) && !lead {
             return Err(Reply::error(
                 "not_allowed",
-                format!("T{id} was not created by your session; only its creator withdraws it"),
+                format!(
+                    "T{id} was not created by your session; only its creator withdraws it (a lead also withdraws Fallow's tasks and ones that failed or wait for a session that exited)"
+                ),
             ));
         }
-        if t.state.finished() {
+        let lead = lead && t.created_by.session() != Some(caller);
+        // A session working on it is told, instead of reporting it later in vain (review).
+        let working = t
+            .assigned
+            .filter(|a| t.state == tasks::State::InProgress && *a != caller);
+        // A failed task can be withdrawn once its work is handed again.
+        if matches!(t.state, tasks::State::Done | tasks::State::Cancelled(_)) {
             return Err(Reply::error(
                 "invalid",
                 format!("T{id} is already {}", t.state.label()),
@@ -1137,9 +1157,21 @@ impl Hub {
                 self.delivery_outcome(d);
             }
         }
-        let why = note.unwrap_or_else(|| "withdrawn by its creator".into());
-        self.tasks.finish(id, tasks::State::Cancelled(why));
-        self.task_changed(id, "withdrawn by its creator");
+        let by = if lead {
+            "by the lead"
+        } else {
+            "by its creator"
+        };
+        let why = note.unwrap_or_else(|| format!("withdrawn {by}"));
+        match self.tasks.get_mut(id) {
+            // `finish` keeps a finished state: a failed task is withdrawn here.
+            Some(t) if t.state.finished() => t.state = tasks::State::Cancelled(why),
+            _ => self.tasks.finish(id, tasks::State::Cancelled(why)),
+        }
+        self.task_changed(id, &format!("withdrawn {by}"));
+        if let (Some(w), Some(t)) = (working, self.tasks.get(id).cloned()) {
+            self.tell_task(Some(w), &t);
+        }
         Ok(self
             .tasks
             .get(id)
@@ -1812,6 +1844,53 @@ impl Hub {
                 }
             }
             let (project, name) = (b.project, b.project_name.clone());
+            // Its work in progress fails and work queued for it never starts: the lead hands it
+            // again (FR-042). A next-free task goes back to the queue by itself. The lead's own
+            // exit is told to the engineer elsewhere.
+            if id != b.lead && role != gates::GATE_ROLE {
+                let label = |t: &tasks::Task| {
+                    format!(
+                        "T{}{}",
+                        t.id,
+                        t.part
+                            .as_ref()
+                            .map_or(String::new(), |p| format!(" (part {p})"))
+                    )
+                };
+                let (mut failing, mut stranded) = (Vec::new(), Vec::new());
+                for t in &self.tasks.list {
+                    if t.created_at < b.started
+                        || t.state.finished()
+                        || t.target != tasks::Target::Session(id)
+                    {
+                        continue;
+                    }
+                    if t.state == tasks::State::InProgress {
+                        failing.push(label(t));
+                    } else {
+                        stranded.push(label(t));
+                    }
+                }
+                let mut what = Vec::new();
+                if !failing.is_empty() {
+                    what.push(format!(
+                        "{} failed (the merge counts it until withdrawn)",
+                        failing.join(", ")
+                    ));
+                }
+                if !stranded.is_empty() {
+                    what.push(format!("{} will never start", stranded.join(", ")));
+                }
+                if !what.is_empty() {
+                    self.tell_lead(
+                        project,
+                        format!(
+                            "#{id} {role} exited with unfinished work: {}. Hand that work to another session with task_create (with its part), then withdraw the old task(s) with task_report outcome \"cancelled\".",
+                            what.join("; ")
+                        ),
+                    );
+                }
+            }
             if stands {
                 // Another reviewer's approval does not overrule it: it may predate the repair
                 // (review). The engineer decides.

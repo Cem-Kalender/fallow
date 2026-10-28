@@ -18,6 +18,17 @@
 //! - After `Shift-X` the lead's next delivery waits for the engineer again (SC-007).
 //!
 //! A run where the lead never connects is INVALID.
+//!
+//! A second run, `exits` (T054, FR-039 to FR-042), has no gate and the burst's 3 starts:
+//! - The lead starts two builders (#2 api, #3 page); a third builder's start waits for the
+//!   engineer, the last start being kept for the reviewer the merge needs; the reviewer (#4)
+//!   starts at once.
+//! - The reviewer exits before its verdict and builder #2 exits with its task in progress. Fallow
+//!   tells the lead both; the lead hands the api part to #3, withdraws #2's task, and starts a
+//!   new reviewer, which waits for the engineer (no starts left). The harness approves in the
+//!   Requests tab.
+//! - The new reviewer approves and #3 reports both parts: the merge is ready without the exited
+//!   sessions, and says why.
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -47,22 +58,29 @@ pub fn run(args: &[String]) -> i32 {
             }
         }
     }
-    let base = std::env::temp_dir().join(format!("fallow-squad-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&base);
-    let result = run_all(&bin, &base);
-    let _ = std::fs::remove_dir_all(&base);
-    match result {
-        Ok(code) => code,
-        Err(e) => {
-            println!("invalid: {e}");
-            println!("os={} squad result=INVALID", std::env::consts::OS);
-            pty::step_summary(&format!(
-                "### Squads ({})\n\nINVALID: {e}\n",
-                std::env::consts::OS
-            ));
-            2
-        }
+    let mut code = 0;
+    for (name, run) in [
+        ("squad", run_all as fn(&Path, &Path) -> Result<i32, String>),
+        ("exits", run_exits),
+    ] {
+        let base = std::env::temp_dir().join(format!("fallow-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let result = run(&bin, &base);
+        let _ = std::fs::remove_dir_all(&base);
+        code = code.max(match result {
+            Ok(code) => code,
+            Err(e) => {
+                println!("invalid: {e}");
+                println!("os={} {name} result=INVALID", std::env::consts::OS);
+                pty::step_summary(&format!(
+                    "### Squads, {name} ({})\n\nINVALID: {e}\n",
+                    std::env::consts::OS
+                ));
+                2
+            }
+        });
     }
+    code
 }
 
 /// Waits up to `limit` for `path` to hold text containing `want`; the last text read.
@@ -120,11 +138,17 @@ fn git(dir: &Path, args: &[&str]) -> Result<String, String> {
     }
 }
 
+/// The `exits` run's squad: no gate, the built-in roles.
+const SQUAD_EXITS: &str = r#"name = "exits"
+[merge]
+requires = ["done:builder", "signal:review-approved@reviewer"]
+"#;
+
 /// A git project with the squad file, committed on main (the burst's starting commit).
-fn make_project(project: &Path) -> Result<(), String> {
+fn make_project(project: &Path, squad: &str) -> Result<(), String> {
     git(project, &["init", "-q", "-b", "main"])?;
     std::fs::create_dir_all(project.join(".fallow")).map_err(|e| e.to_string())?;
-    std::fs::write(project.join(".fallow").join("squad.toml"), SQUAD).map_err(|e| e.to_string())?;
+    std::fs::write(project.join(".fallow").join("squad.toml"), squad).map_err(|e| e.to_string())?;
     std::fs::write(project.join("README.md"), "harness\n").map_err(|e| e.to_string())?;
     git(project, &["add", "."])?;
     git(project, &["commit", "-q", "-m", "start"]).map(|_| ())
@@ -143,7 +167,7 @@ fn run_all(bin: &Path, base: &Path) -> Result<i32, String> {
     for d in [&config, &project] {
         std::fs::create_dir_all(d).map_err(|e| format!("{}: {e}", d.display()))?;
     }
-    make_project(&project)?;
+    make_project(&project, SQUAD)?;
     let me = std::env::current_exe().map_err(|e| e.to_string())?;
     let f = |name: &str| base.join(name).display().to_string();
     // The lead waits for the harness's files instead of typed lines: Fallow types its own
@@ -371,6 +395,212 @@ fn run_all(bin: &Path, base: &Path) -> Result<i32, String> {
         ok(closed_ok),
         ok(gate_ok),
         ok(merge_ok),
+    ));
+    Ok(if pass { 0 } else { 1 })
+}
+
+/// Writes the agents' scripts and a profile for each (`<name>.script`).
+fn write_agents(base: &Path, config: &Path, agents: &[(&str, String)]) -> Result<(), String> {
+    let me = std::env::current_exe().map_err(|e| e.to_string())?;
+    let mut profiles = String::new();
+    for id in ["claude", "codex", "gemini", "aider", "shell"] {
+        profiles.push_str(&format!("[[profile]]\nid = \"{id}\"\nenabled = false\n\n"));
+    }
+    for (id, text) in agents {
+        let script = base.join(format!("{id}.script"));
+        std::fs::write(&script, text).map_err(|e| e.to_string())?;
+        profiles.push_str(&format!(
+            "[[profile]]\nid = \"{id}\"\nname = \"{id}\"\ncommand = {:?}\nargs = [\"mcp-agent\", {:?}]\norchestration = \"claude\"\n\n",
+            me.display().to_string(),
+            script.display().to_string(),
+        ));
+    }
+    std::fs::write(config.join("profiles.toml"), profiles).map_err(|e| e.to_string())
+}
+
+/// Starts the burst from the palette, as `run_all` does (the lead's offer declined first).
+fn start_burst(s: &mut Session) -> Result<(), String> {
+    if s.wait_frame(Duration::from_secs(10)).is_none() {
+        return Err("no first frame".into());
+    }
+    s.expect(b"don't");
+    s.send(b"n");
+    pause(300);
+    s.send(b"\r");
+    s.seen(Duration::from_secs(30))
+        .ok_or("the first session did not offer coordination")?;
+    s.send(ESC);
+    pause(300);
+    s.send(LEAVE);
+    pause(300);
+    s.expect(b"usage.");
+    s.send(CTRL_P);
+    pause(300);
+    s.send(b"coordinate this");
+    pause(300);
+    s.send(b"\r");
+    s.seen(Duration::from_secs(10))
+        .ok_or("the coordination dialog never opened")?;
+    s.expect(b"coordinating");
+    s.send(b"\r");
+    s.seen(Duration::from_secs(30))
+        .ok_or("no countdown in the hint bar")?;
+    Ok(())
+}
+
+fn run_exits(bin: &Path, base: &Path) -> Result<i32, String> {
+    let config = base.join("config");
+    let project = base.join("project");
+    for d in [&config, &project] {
+        std::fs::create_dir_all(d).map_err(|e| format!("{}: {e}", d.display()))?;
+    }
+    make_project(&project, SQUAD_EXITS)?;
+    let f = |name: &str| base.join(name).display().to_string();
+    let start_part = |profile: &str, task: &str, part: &str| {
+        format!(
+            "call session_start {{\"profile\":\"{profile}\",\"project\":\"project\",\"role\":\"builder\",\"first_task\":\"{task}\",\"part\":\"{part}\"}}\n"
+        )
+    };
+    let lead = format!(
+        "print lead-ready\nuntil-file {go}\n{b}write {start_b}\n{c}{d}write {held}\n{r1}write {start_r1}\nuntil-all #2 builder exited with unfinished work|#4 reviewer exited without signalling\ncall task_create {{\"text\":\"zz-build-the-api-again\",\"target\":{{\"session\":3}},\"part\":\"api\"}}\nwrite {rehand}\ncall task_report {{\"task\":1,\"outcome\":\"cancelled\",\"note\":\"handed to #3\"}}\nwrite {withdraw}\n{r2}write {start_r2}\nuntil Every merge condition holds\ncall squad_status {{}}\nwrite {ready}\nprint lead-done\n",
+        go = f("go"),
+        b = start_part("b", "zz-build-the-api", "api"),
+        start_b = f("lead-start-b"),
+        c = start_part("c", "zz-build-the-page", "page"),
+        d = start("d", "builder", None),
+        held = f("lead-held"),
+        r1 = start("r1", "reviewer", None),
+        start_r1 = f("lead-start-r1"),
+        rehand = f("lead-rehand"),
+        withdraw = f("lead-withdraw"),
+        r2 = start("r2", "reviewer", None),
+        start_r2 = f("lead-start-r2"),
+        ready = f("lead-ready-status"),
+    );
+    write_agents(
+        base,
+        &config,
+        &[
+            ("lead", lead),
+            // Exits with its task in progress.
+            ("b", "until zz-build-the-api\nsleep 500\nexit\n".to_string()),
+            (
+                "c",
+                format!(
+                    "report-tasks {}\ncommit-file web.txt\ncommit-file api.txt\n",
+                    f("c-tasks")
+                ),
+            ),
+            ("d", "print idle\n".to_string()),
+            // Exits before its verdict.
+            ("r1", "sleep 3000\nexit\n".to_string()),
+            (
+                "r2",
+                format!(
+                    "sleep 2000\nverdict approved - api and page checked\nwrite {}\n",
+                    f("r2-verdict")
+                ),
+            ),
+        ],
+    )?;
+    println!(
+        "exits: {} (a reviewer and a builder exit mid-work; the lead replaces them)",
+        bin.display()
+    );
+    let cfg = config.display().to_string();
+    let proj = project.display().to_string();
+    let mut s = Session::spawn(bin, &["--config-dir", &cfg, &proj], Duration::from_secs(1))?;
+    let flow = (|| -> Result<(), String> {
+        start_burst(&mut s)?;
+        std::fs::write(base.join("go"), "go").map_err(|e| e.to_string())?;
+        // The new reviewer's start waits for the engineer: approve every waiting start (the
+        // held builder's too) in the Requests tab, which opens first while requests wait.
+        let r2 = wait_for(&base.join("lead-start-r2"), "{", Duration::from_secs(120));
+        if r2.is_empty() {
+            return Err("the lead never asked for a new reviewer".into());
+        }
+        pause(500);
+        s.send(b"o");
+        pause(800);
+        // One press per waiting start; a press with none left does nothing.
+        for _ in 0..3 {
+            s.send(b"y");
+            pause(800);
+        }
+        s.send(ESC);
+        pause(300);
+        let ready = wait_for(
+            &base.join("lead-ready-status"),
+            "\"ready\":true",
+            Duration::from_secs(180),
+        );
+        if !ready.contains("\"ready\":true") {
+            return Err(format!("the merge never became ready: {ready}"));
+        }
+        Ok(())
+    })();
+    let read = |n: &str| std::fs::read_to_string(base.join(n)).unwrap_or_default();
+    let (held, start_r1, rehand, withdraw, start_r2, ready, c_tasks) = (
+        read("lead-held"),
+        read("lead-start-r1"),
+        read("lead-rehand"),
+        read("lead-withdraw"),
+        read("lead-start-r2"),
+        read("lead-ready-status"),
+        read("c-tasks"),
+    );
+    let details = format!(
+        "held: {held:?}\nr1: {start_r1:?}\nrehand: {rehand:?}\nwithdraw: {withdraw:?}\nr2: {start_r2:?}\nready: {ready:?}\nc: {c_tasks:?}"
+    );
+    s.quit_with_sessions();
+    let outcome = s.finish();
+    let mut problems = outcome.problems(None);
+    println!("evidence: {}", outcome.evidence());
+    if let Err(e) = flow {
+        problems.push(e);
+    }
+    if !problems.is_empty() {
+        println!("{details}");
+        return Err(problems.join("; "));
+    }
+    // FR-039: the last start is kept for the reviewer; the extra builder waits for the engineer.
+    let kept_ok = held.contains("pending")
+        && held.contains("kept for reviewer")
+        && start_r1.contains("\"start\"")
+        && !start_r1.contains("pending");
+    // FR-042: the lead was told of #2's task, handed the part again and withdrew the old task.
+    let builder_ok = rehand.contains("\"task\"")
+        && withdraw.contains("cancelled")
+        && c_tasks
+            .lines()
+            .filter(|l| l.starts_with('T') && l.trim_end().ends_with(" done"))
+            .count()
+            >= 2;
+    // FR-041 and FR-039: the new reviewer's start waited (no starts left), and the merge is
+    // ready without the exited reviewer, saying why.
+    let reviewer_ok = start_r2.contains("pending") && ready.contains("#4 exited without it");
+    let ready_ok = ready.contains("\"ready\":true");
+    let pass = kept_ok && builder_ok && reviewer_ok && ready_ok;
+    let result = if pass { "PASS" } else { "FAIL" };
+    let ok = |b: bool| if b { "ok" } else { "WRONG" };
+    println!(
+        "os={} kept_start={} builder_exit={} reviewer_exit={} merge_ready={} result={result}",
+        std::env::consts::OS,
+        ok(kept_ok),
+        ok(builder_ok),
+        ok(reviewer_ok),
+        ok(ready_ok),
+    );
+    if !pass {
+        println!("{details}");
+    }
+    pty::step_summary(&format!(
+        "### Squads, exits ({})\n\n| check | result | expected |\n|---|---|---|\n| the last start kept for the reviewer | {} | extra builder waits, reviewer starts (FR-039) |\n| a builder exits mid-task | {} | lead told, part handed again, task withdrawn (FR-042) |\n| a reviewer exits before its verdict | {} | new reviewer waits for approval; not waited for (FR-041) |\n| the merge | {} | ready |\n\n**{result}**\n",
+        std::env::consts::OS,
+        ok(kept_ok),
+        ok(builder_ok),
+        ok(reviewer_ok),
+        ok(ready_ok),
     ));
     Ok(if pass { 0 } else { 1 })
 }

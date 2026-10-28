@@ -465,6 +465,17 @@ besides the spec, the merge, and decisions brought to them by the lead).
   engineer and the lead are told, until the engineer clears it. When no session of the role
   counts any more, the condition is unmet until a new one gives the signal, so exiting never
   skips it. A restarted session counts again.
+- **FR-042**: When a member other than the lead exits with unfinished work (a task in progress at
+  it, which fails, or one queued for it, which never starts), the lead MUST be told once, naming
+  the tasks and their parts; a task for the next free session goes back to the queue by itself.
+  A withdrawn task MUST NOT count for a `done:` merge condition, and the condition's reason MUST
+  say how many were withdrawn; a failed one counts until it is withdrawn, and with every task
+  withdrawn the condition is unmet. Besides its own tasks, the lead MUST be able to withdraw
+  Fallow's tasks of its burst and any task of it that failed or waits for a session that exited;
+  the engineer's other tasks stay theirs. A session whose task in progress is withdrawn is told.
+  A part belongs to the builder it was last handed to (never the lead or a read-only role), so a
+  repair goes there; a repair of a part whose owner exited MUST tell the lead to hand it to
+  another session.
 
 **Across the feature**
 

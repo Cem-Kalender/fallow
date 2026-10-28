@@ -47,27 +47,44 @@ pub enum Decision {
 const DEADLOCK_REPEAT: Duration = Duration::from_secs(30 * 60);
 
 impl Hub {
-    /// The session a part was handed to first in a burst (FR-025a).
+    /// The session a part was handed to last in a burst, its owner (FR-025a, FR-042).
     fn owner_of(&self, project: ProjectId, part: &str) -> Option<u32> {
         let b = self.burst_of(project)?;
         self.tasks
             .list
             .iter()
             .filter(|t| t.created_at >= b.started && t.part.as_deref() == Some(part))
-            .find_map(|t| t.assigned)
+            // The latest, also one not handed over yet: a part handed again belongs to its new
+            // session (FR-042). Read-only roles (a re-review) never own a part.
+            .rev()
+            .filter_map(|t| {
+                t.assigned.or(match t.target {
+                    super::tasks::Target::Session(s) => Some(s),
+                    super::tasks::Target::NextFree { .. } => None,
+                })
+            })
+            .find(|s| {
+                b.roles.get(s).is_some_and(|r| {
+                    r != "lead"
+                        && b.squad
+                            .role(r)
+                            .is_none_or(|r| r.level != super::squad::Level::ReadOnly)
+                })
+            })
     }
 
     /// A failure in a burst: a round for its part, told to the lead, or the engineer's decision
     /// after the cap (FR-025).
     pub fn repair(
         &mut self,
-        _sessions: &dyn Sessions,
+        sessions: &dyn Sessions,
         project: ProjectId,
         part: Option<String>,
         reason: &str,
         _now: Instant,
     ) {
         let owner = part.as_deref().and_then(|p| self.owner_of(project, p));
+        let owner_gone = owner.is_some_and(|o| !sessions.info(o).is_some_and(|s| s.running));
         let Some(b) = self.bursts.iter_mut().find(|b| b.project == project) else {
             return;
         };
@@ -92,6 +109,7 @@ impl Hub {
             }
         };
         let l = &mut b.repairs[i];
+        l.owner = owner;
         l.last_reason = super::lead::one_line(reason).chars().take(300).collect();
         if l.closed.is_some() {
             return;
@@ -124,6 +142,9 @@ impl Hub {
         l.pending = true;
         let (round, of) = (l.rounds, cap.saturating_add(l.extra));
         let how = match &l.part {
+            Some(p) if owner_gone => format!(
+                "#{owner} that owned it exited: hand it to another session with task_create and part \"{p}\", with your ruling on anything left open"
+            ),
             Some(p) => format!(
                 "hand it to #{owner} with task_create and part \"{p}\", with your ruling on anything left open"
             ),

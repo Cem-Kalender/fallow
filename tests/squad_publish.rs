@@ -679,3 +679,148 @@ fn a_restarted_reviewer_counts_again() {
     verdict(&mut h, &f, 4, "approved", "fine", now);
     assert!(ready(&h), "{}", review_why(&h));
 }
+
+#[test]
+fn a_builder_that_exits_mid_task_leaves_work_the_lead_hands_again() {
+    // FR-042: a failed task blocked done:builder forever, and only its creator could withdraw.
+    let (mut h, mut f, now) = builtin_burst(false);
+    start(&mut h, &mut f, "builder", 2, now);
+    start(&mut h, &mut f, "builder", 3, now);
+    start(&mut h, &mut f, "reviewer", 4, now);
+    let r = h.call(
+        &f,
+        1,
+        "task_create",
+        json!({"text": "build the api", "target": {"session": 2}, "part": "api"}),
+        now,
+    );
+    let Reply::Done(v) = r else { panic!("{r:?}") };
+    let t1 = v["task"].as_u64().unwrap();
+    h.tick(&f, now);
+    // Fallow's own task queued for #2, which the lead did not create.
+    let (t2, _) = h
+        .create_task(
+            &f,
+            fallow::orchestration::Party::Fallow,
+            "fix the api".into(),
+            fallow::orchestration::tasks::Target::Session(2),
+            Vec::new(),
+            now,
+        )
+        .unwrap();
+    exit(&mut h, &mut f, 2);
+    let told = h.burst_of(1).unwrap().lead_updates.join("\n");
+    assert!(
+        told.contains(&format!(
+            "#2 builder exited with unfinished work: T{t1} (part api) failed (the merge counts it until withdrawn); T{t2} will never start"
+        )),
+        "{told}"
+    );
+    // A repair of the part is not sent to the exited owner.
+    h.repair(&f, 1, Some("api".into()), "tests fail", now);
+    let told = h.burst_of(1).unwrap().lead_updates.join("\n");
+    assert!(told.contains("#2 that owned it exited"), "{told}");
+    // The lead hands the part to #3, which finishes it.
+    let r = h.call(
+        &f,
+        1,
+        "task_create",
+        json!({"text": "build the api", "target": {"session": 3}, "part": "api"}),
+        now,
+    );
+    let Reply::Done(v) = r else { panic!("{r:?}") };
+    h.tick(&f, now);
+    done(&mut h, &f, 3, v["task"].as_u64().unwrap(), now);
+    verdict(&mut h, &f, 4, "approved", "fine", now);
+    assert!(!ready(&h), "the failed T{t1} still counts");
+    // A builder cannot withdraw it; the lead withdraws the failed task and Fallow's task.
+    let r = h.call(
+        &f,
+        3,
+        "task_report",
+        json!({"task": t2, "outcome": "cancelled"}),
+        now,
+    );
+    assert!(matches!(r, Reply::Error("not_allowed", _)), "{r:?}");
+    for t in [t1, u64::from(t2)] {
+        let r = h.call(
+            &f,
+            1,
+            "task_report",
+            json!({"task": t, "outcome": "cancelled", "note": "handed to #3"}),
+            now,
+        );
+        assert!(matches!(r, Reply::Done(_)), "T{t}: {r:?}");
+    }
+    assert!(ready(&h), "{:?}", h.readiness(1).unwrap().checks);
+    let why = &h.readiness(1).unwrap().checks[0].why;
+    assert!(why.contains("1 task(s) done, 1 withdrawn"), "{why}");
+    // A re-review task naming the part does not make the reviewer its owner.
+    let r = h.call(
+        &f,
+        1,
+        "task_create",
+        json!({"text": "review the api", "target": {"session": 4}, "part": "api"}),
+        now,
+    );
+    assert!(matches!(r, Reply::Done(_)), "{r:?}");
+    // A repair of the part now goes to its new owner.
+    h.repair(&f, 1, Some("api".into()), "tests fail again", now);
+    let told = h.burst_of(1).unwrap().lead_updates.join("\n");
+    assert!(told.contains("hand it to #3"), "{told}");
+}
+
+#[test]
+fn the_lead_does_not_withdraw_the_engineers_open_tasks() {
+    // Review of FR-042: the engineer's tasks for running sessions stay theirs; a session whose
+    // task the lead withdraws is told.
+    let (mut h, mut f, now) = builtin_burst(false);
+    start(&mut h, &mut f, "builder", 2, now);
+    let (mine, _) = h
+        .create_task(
+            &f,
+            fallow::orchestration::Party::User,
+            "the engineer's".into(),
+            fallow::orchestration::tasks::Target::Session(2),
+            Vec::new(),
+            now,
+        )
+        .unwrap();
+    let r = h.call(
+        &f,
+        1,
+        "task_report",
+        json!({"task": mine, "outcome": "cancelled"}),
+        now,
+    );
+    assert!(matches!(r, Reply::Error("not_allowed", _)), "{r:?}");
+    // Fallow's task in progress at #2: withdrawn by the lead, and #2 hears of it.
+    let (t, _) = h
+        .create_task(
+            &f,
+            fallow::orchestration::Party::Fallow,
+            "fix it".into(),
+            fallow::orchestration::tasks::Target::Session(2),
+            Vec::new(),
+            now,
+        )
+        .unwrap();
+    h.cancel_task(mine);
+    h.tick(&f, now);
+    assert_eq!(
+        h.tasks.get(t).unwrap().state,
+        fallow::orchestration::tasks::State::InProgress
+    );
+    let r = h.call(
+        &f,
+        1,
+        "task_report",
+        json!({"task": t, "outcome": "cancelled"}),
+        now,
+    );
+    assert!(matches!(r, Reply::Done(_)), "{r:?}");
+    let Reply::Done(v) = h.call(&f, 2, "inbox", json!({}), now) else {
+        panic!()
+    };
+    assert!(v.to_string().contains(&format!("\"task\":{t}")), "{v}");
+}

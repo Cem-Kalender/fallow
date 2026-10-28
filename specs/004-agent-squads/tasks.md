@@ -335,6 +335,16 @@ is ready by evidence Fallow checks.
   the lead is told, and the readiness line names it; one that exited asking for changes still
   blocks until the engineer clears it, and a restarted one counts again (FR-041). Tests in `tests/squad_publish.rs`.
 
+- [X] T053 [US3] [US5] A builder that exits mid-task: the lead is told which tasks it left, can
+  withdraw them (also failed ones and Fallow's, not the engineer's open ones), withdrawn tasks no
+  longer count for `done:` and are named in its reason, and repairs follow the part to its latest
+  builder (FR-042). Tests in `tests/squad_publish.rs`.
+
+- [X] T054 Squad harness run `exits` for the run-3 fixes: the last start kept for the reviewer,
+  the engineer approving the extra starts, a reviewer and a builder that exit mid-work (FR-039,
+  FR-041, FR-042), in `xtask/src/squad.rs`. A burst too small for its merge roles is covered by
+  `tests/squad_roles.rs`.
+
 **Checkpoint**: quickstart Q10 passes with no interventions besides the spec and the merge.
 
 ---

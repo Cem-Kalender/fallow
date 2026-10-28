@@ -41,6 +41,7 @@
 //! - `publish <url>`: the `publish` tool (004).
 //! - `start-role <role> <profile> <project> <first task…>`: `session_start` with a role (004).
 //! - `print <text>`
+//! - `exit`: the agent quits at once, as a session closed mid-work (004 FR-041, FR-042).
 //!
 //! After the script it prints `script done` and echoes every typed line as `got <line>`.
 
@@ -243,6 +244,10 @@ pub fn run(args: &[String]) -> ! {
         let (cmd, rest) = line.split_once(' ').unwrap_or((line, ""));
         match (cmd, &mut client) {
             ("print", _) => out(rest),
+            ("exit", _) => {
+                out("exiting");
+                std::process::exit(0);
+            }
             ("sleep", _) => std::thread::sleep(Duration::from_millis(rest.parse().unwrap_or(0))),
             ("commit-file", _) => {
                 let ok = std::fs::write(rest, format!("{rest}\n")).is_ok()

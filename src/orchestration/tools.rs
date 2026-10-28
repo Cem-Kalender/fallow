@@ -146,7 +146,7 @@ const SPECS: &[Spec] = &[
     },
     Spec {
         name: "task_report",
-        description: "Report a task handed to your session as done or failed, with an optional note. The next task for your session follows. A task you created yourself (for example one that reached the wrong session) can be withdrawn with outcome \"cancelled\".",
+        description: "Report a task handed to your session as done or failed, with an optional note. The next task for your session follows. A task you created yourself (for example one that reached the wrong session) can be withdrawn with outcome \"cancelled\", also once it failed; the lead of a burst can also withdraw Fallow's tasks of the burst and any that failed or wait for a session that exited.",
         args: &[
             ("task", "integer", "The task number (T1 is 1)", true),
             (
