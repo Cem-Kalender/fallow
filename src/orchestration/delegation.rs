@@ -286,6 +286,164 @@ impl Hub {
         }
         None
     }
+
+    /// The checks on a builder's done report (005 R-5, R-6, FR-023 to FR-025): `Err` refuses
+    /// the report (a change to its part's criteria or contracts is missing); `Ok` carries what
+    /// Fallow verified. Edits outside the part's files are reported to the lead; edits to the
+    /// manifest, plan or a contract raise a signal from Fallow (R-19).
+    pub fn check_builder_report(
+        &mut self,
+        sessions: &dyn Sessions,
+        caller: u32,
+        commit: &str,
+        now: Instant,
+    ) -> Result<Vec<String>, String> {
+        let Some(b) = self.burst_for(caller) else {
+            return Ok(Vec::new());
+        };
+        if !b.squad.adaptive() || b.lead == caller {
+            return Ok(Vec::new());
+        }
+        let Some((work, part)) = b.assigned.get(&caller).cloned() else {
+            return Ok(Vec::new());
+        };
+        let Some((dir, _)) = sessions.workdir(b.lead) else {
+            return Ok(vec![
+                "not checked: Fallow does not know the lead's folder".into(),
+            ]);
+        };
+        let Some(base) = b.bases.get(&caller).cloned() else {
+            return Ok(vec![
+                "not checked: Fallow does not know where you started".into(),
+            ]);
+        };
+        let Ok(lead_head) = super::git::head(&dir) else {
+            return Ok(Vec::new());
+        };
+        let (project, off) = (b.project, b.switched_off.clone());
+        let mut notes = Vec::new();
+        let m = super::manifest::at(&dir, &lead_head).ok().flatten();
+        // Plan-commit check (R-5): changes to this part's criteria or contracts since the start.
+        if !off.contains(super::burst::OFF_PLAN_COMMIT) {
+            let contracts: Vec<String> = m
+                .as_ref()
+                .and_then(|m| {
+                    part.as_deref()
+                        .map(|p| m.contracts_of(p).map(|c| c.path.clone()).collect())
+                })
+                .unwrap_or_default();
+            let mut paths: Vec<&str> = vec![super::manifest::WORK_FILE];
+            paths.extend(contracts.iter().map(String::as_str));
+            let commits =
+                super::git::commits_touching(&dir, &base, &lead_head, &paths).unwrap_or_default();
+            for c in commits.iter().rev() {
+                let parent = format!("{c}^");
+                let changed = super::git::files_between(&dir, &parent, c).unwrap_or_default();
+                let contract_changed = changed.iter().any(|f| contracts.contains(f));
+                let criteria_changed = changed.iter().any(|f| f == super::manifest::WORK_FILE) && {
+                    let before = super::manifest::at(&dir, &parent).ok().flatten();
+                    let after = super::manifest::at(&dir, c).ok().flatten();
+                    let crit = |m: &Option<Manifest>| {
+                        m.as_ref().map(|m| {
+                            m.criteria(&work, part.as_deref())
+                                .into_iter()
+                                .cloned()
+                                .collect::<Vec<_>>()
+                        })
+                    };
+                    let cons = |m: &Option<Manifest>| {
+                        m.as_ref().map(|m| {
+                            part.as_deref()
+                                .map(|p| m.contracts_of(p).cloned().collect::<Vec<_>>())
+                                .unwrap_or_default()
+                        })
+                    };
+                    crit(&before) != crit(&after) || cons(&before) != cons(&after)
+                };
+                if (contract_changed || criteria_changed)
+                    && !super::git::is_ancestor(&dir, c, commit)
+                {
+                    return Err(format!(
+                        "your work lacks the lead's commit {} that changed {}: merge it into your branch and report again",
+                        &c[..c.len().min(10)],
+                        if contract_changed {
+                            "a contract your part builds against"
+                        } else {
+                            "your part's criteria"
+                        }
+                    ));
+                }
+            }
+            notes.push("the latest changes to your criteria and contracts are in".to_string());
+        }
+        // Ownership (R-6): only the builder's own changes count, not what it merged from the lead.
+        let since = super::git::merge_base(&dir, &lead_head, commit).unwrap_or(base);
+        let mine = super::git::files_between(&dir, &since, commit).unwrap_or_default();
+        let decision: Vec<String> = {
+            let mut v = vec![super::manifest::WORK_FILE.to_string()];
+            if let Some(m) = &m {
+                v.extend(m.docs.iter().cloned());
+                v.extend(m.contracts.iter().map(|c| c.path.clone()));
+            }
+            v
+        };
+        let touched: Vec<String> = mine
+            .iter()
+            .filter(|f| decision.contains(f))
+            .cloned()
+            .collect();
+        if !touched.is_empty() {
+            self.raise_change_by_other(caller, commit, &touched, now);
+            notes.push(format!(
+                "you changed {}, which only the lead changes: this work counts once the lead accepts it",
+                touched.join(", ")
+            ));
+        }
+        if !off.contains(super::burst::OFF_OWNERSHIP) {
+            if let (Some(m), Some(p)) = (
+                &m,
+                part.as_deref().and_then(|p| m.as_ref()?.part(p).cloned()),
+            ) {
+                let own: Vec<String> = p.owns.iter().chain(m.shared.iter()).cloned().collect();
+                let owned = set(&own);
+                let outside: Vec<&String> = mine
+                    .iter()
+                    .filter(|f| !decision.contains(f))
+                    .filter(|f| !owned.as_ref().is_some_and(|o| o.is_match(f.as_str())))
+                    .collect();
+                if !outside.is_empty() {
+                    let named: Vec<String> = outside
+                        .iter()
+                        .take(10)
+                        .map(|f| {
+                            let owner = m
+                                .parts
+                                .iter()
+                                .find(|q| set(&q.owns).is_some_and(|g| g.is_match(f.as_str())))
+                                .map_or("no part".to_string(), |q| format!("part {}", q.id));
+                            format!("{f} ({owner})")
+                        })
+                        .collect();
+                    let who = self
+                        .role_of(caller)
+                        .map_or(format!("#{caller}"), |r| format!("#{caller} {r}"));
+                    self.tell_lead(
+                        project,
+                        format!(
+                            "{who} (part {}) changed files outside its part: {}",
+                            p.id,
+                            named.join(", ")
+                        ),
+                    );
+                    notes.push(format!(
+                        "{} file(s) outside your part were reported to the lead",
+                        outside.len()
+                    ));
+                }
+            }
+        }
+        Ok(notes)
+    }
 }
 
 /// A path a glob certainly matches, for comparing globs without files (`**` and `*` filled in).

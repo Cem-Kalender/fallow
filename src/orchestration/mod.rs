@@ -1733,6 +1733,7 @@ impl Hub {
             changed = true;
         }
         changed |= self.tick_deadlock(sessions, now);
+        changed |= self.tick_signals(now);
         changed |= self.tick_lead(sessions, now);
         for (w, end) in self.events.due(now) {
             changed = true;

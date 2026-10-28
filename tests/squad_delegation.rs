@@ -299,3 +299,181 @@ fn a_squad_written_for_004_keeps_004s_builders() {
         "{r:?}"
     );
 }
+
+const PARTS: &str = r#"
+[[work]]
+id = "cart"
+build = "parts"
+reason = "API and page meet only at the contract"
+
+[[part]]
+id = "api"
+work = "cart"
+owns = ["src/api/**", "tests/api/**"]
+criteria = [{ id = "add", text = "adds" }]
+
+[[part]]
+id = "page"
+work = "cart"
+owns = ["web/**"]
+criteria = [{ id = "shows", text = "shows" }]
+
+[[contract]]
+path = "contracts/cart.yaml"
+between = ["api", "page"]
+
+[[work]]
+id = "extras"
+build = "features"
+reason = "two unrelated features"
+
+[[part]]
+id = "export"
+work = "extras"
+owns = ["src/export/**"]
+
+[[part]]
+id = "import"
+work = "extras"
+owns = ["src/import/**"]
+"#;
+
+#[test]
+fn parallel_parts_start_only_when_prepared() {
+    // T030: FR-004 to FR-006, FR-010.
+    let (mut h, mut f, now) = setup();
+    let mut m = manifest(PARTS);
+    m.commit = Some("c".repeat(40));
+    h.apply_manifest(1, Some(m.clone()));
+    // The files at the lead's commit: the contract is committed.
+    h.bursts[0].manifest_files = vec!["contracts/cart.yaml".into(), "src/api/x.rs".into()];
+    // A part is named, and it must be one of the work's parts.
+    let r = start(
+        &mut h,
+        &mut f,
+        json!({"role": "builder", "work": "cart"}),
+        2,
+        now,
+    );
+    assert!(refused(&r, "give part, one of api, page"), "{r:?}");
+    let r = start(
+        &mut h,
+        &mut f,
+        json!({"role": "builder", "work": "cart", "part": "nope"}),
+        2,
+        now,
+    );
+    assert!(refused(&r, "not a part of cart"), "{r:?}");
+    let ok = |r: &Reply| matches!(r, Reply::Done(v) if v["state"] == "approved");
+    let r = start(
+        &mut h,
+        &mut f,
+        json!({"role": "builder", "work": "cart", "part": "api"}),
+        2,
+        now,
+    );
+    assert!(ok(&r), "{r:?}");
+    let r = start(
+        &mut h,
+        &mut f,
+        json!({"role": "builder", "work": "cart", "part": "api"}),
+        3,
+        now,
+    );
+    assert!(refused(&r, "already has a builder"), "{r:?}");
+    // Features need no contract.
+    let r = start(
+        &mut h,
+        &mut f,
+        json!({"role": "builder", "work": "extras", "part": "export"}),
+        3,
+        now,
+    );
+    assert!(ok(&r), "{r:?}");
+    // The contract must be committed.
+    h.bursts[0].manifest_files = vec!["src/api/x.rs".into()];
+    let r = start(
+        &mut h,
+        &mut f,
+        json!({"role": "builder", "work": "cart", "part": "page"}),
+        4,
+        now,
+    );
+    assert!(refused(&r, "contracts/cart.yaml is not committed"), "{r:?}");
+    // The squad's cap on parallel builders (the burst's allowance by default: 5).
+    h.bursts[0].squad.max_parallel_builders = Some(2);
+    h.bursts[0].manifest_files = vec!["contracts/cart.yaml".into()];
+    let r = start(
+        &mut h,
+        &mut f,
+        json!({"role": "builder", "work": "extras", "part": "import"}),
+        4,
+        now,
+    );
+    assert!(refused(&r, "at most 2 builder(s)"), "{r:?}");
+}
+
+#[test]
+fn overlapping_test_only_and_uncontracted_parts_are_refused() {
+    // T030: FR-004, FR-006.
+    let cases = [
+        // Overlapping ownership, named.
+        (
+            "[[work]]\nid = \"w\"\nbuild = \"features\"\nreason = \"r\"\n[[part]]\nid = \"a\"\nwork = \"w\"\nowns = [\"src/**\"]\n[[part]]\nid = \"b\"\nwork = \"w\"\nowns = [\"src/b/**\"]\n",
+            "a",
+            "both own",
+        ),
+        // A part that owns only tests: one feature split into building and testing.
+        (
+            "[[work]]\nid = \"w\"\nbuild = \"features\"\nreason = \"r\"\n[[part]]\nid = \"a\"\nwork = \"w\"\nowns = [\"src/a/**\"]\n[[part]]\nid = \"b\"\nwork = \"w\"\nowns = [\"tests/**\"]\n",
+            "b",
+            "owns only tests",
+        ),
+        // A part of parallel work without a contract.
+        (
+            "[[work]]\nid = \"w\"\nbuild = \"parts\"\nreason = \"r\"\n[[part]]\nid = \"a\"\nwork = \"w\"\nowns = [\"src/a/**\"]\n[[part]]\nid = \"b\"\nwork = \"w\"\nowns = [\"src/b/**\"]\n",
+            "a",
+            "has no contract",
+        ),
+        // A part that owns nothing.
+        (
+            "[[work]]\nid = \"w\"\nbuild = \"features\"\nreason = \"r\"\n[[part]]\nid = \"a\"\nwork = \"w\"\n",
+            "a",
+            "owns no files",
+        ),
+    ];
+    for (text, part, needle) in cases {
+        let (mut h, mut f, now) = setup();
+        h.apply_manifest(1, Some(manifest(text)));
+        let r = start(
+            &mut h,
+            &mut f,
+            json!({"role": "builder", "work": "w", "part": part}),
+            2,
+            now,
+        );
+        assert!(refused(&r, needle), "{needle}: {r:?}");
+    }
+    // Overlap is found from the files at the commit as well as from the globs.
+    use fallow::orchestration::delegation::{overlap, owns_code};
+    let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+    assert!(overlap(&s(&["src/*.rs"]), &s(&["src/main.rs"]), &[]).len() == 1);
+    assert!(overlap(&s(&["src/a/**"]), &s(&["src/b/**"]), &[]).is_empty());
+    assert_eq!(
+        overlap(
+            &s(&["**/*.rs"]),
+            &s(&["src/**"]),
+            &s(&["src/x.rs", "README.md"])
+        ),
+        ["src/x.rs"]
+    );
+    let tests = s(&["tests/**", "**/*_test.*"]);
+    assert!(owns_code(&s(&["src/a/**", "tests/a/**"]), &tests, &[], &[]));
+    assert!(!owns_code(&s(&["tests/**"]), &tests, &[], &[]));
+    assert!(!owns_code(
+        &s(&["docs/plan.md"]),
+        &tests,
+        &s(&["docs/plan.md"]),
+        &[]
+    ));
+}

@@ -305,6 +305,11 @@ impl AppState {
                         .and_then(|_| s.from.session())
                         .and_then(|from| self.sessions.get(from))
                         .and_then(|from| git::head(&from.cwd).ok());
+                    // A builder's branch names its work and part (005 R-18).
+                    let branch_name = s.assignment.as_ref().map(|(w, p)| match p {
+                        Some(p) => format!("{w}-{p}"),
+                        None => w.clone(),
+                    });
                     let started = self.start_role_session(
                         s.project,
                         &s.profile,
@@ -312,6 +317,7 @@ impl AppState {
                         s.role.clone(),
                         s.args.clone(),
                         base.clone(),
+                        branch_name,
                     );
                     if let (Ok(sid), Some(b)) = (&started, base) {
                         pending_bases.push((*sid, b));
@@ -418,7 +424,12 @@ impl AppState {
             let Some(path) = self.projects.get(job.project).map(|p| p.path.clone()) else {
                 continue;
             };
-            let root = self.sessions.limits.worktree_root.clone();
+            // A run's baseline checkout stays next to its copy (005 R-11).
+            let root = if self.projects.get(job.project).is_some_and(|p| p.temporary) {
+                None
+            } else {
+                self.sessions.limits.worktree_root.clone()
+            };
             let (cwd, commit, dir) = match job.kind {
                 crate::orchestration::gates::Kind::Baseline => {
                     let commit = job.commit.clone().unwrap_or_default();

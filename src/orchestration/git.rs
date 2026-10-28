@@ -170,6 +170,11 @@ pub fn files_at(dir: &Path, commit: &str) -> Result<Vec<String>, String> {
         .collect())
 }
 
+/// The best common ancestor of two commits.
+pub fn merge_base(dir: &Path, a: &str, b: &str) -> Result<String, String> {
+    git(dir, &["merge-base", a, b]).map(|s| s.trim().to_string())
+}
+
 /// Whether `a` is `b` or an ancestor of it.
 pub fn is_ancestor(dir: &Path, a: &str, b: &str) -> bool {
     on_branch(dir, a, b)

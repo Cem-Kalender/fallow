@@ -234,7 +234,7 @@ coordinate through signals and commits.
 
 **Independent Test**: quickstart Q2.
 
-- [ ] T030 [P] [US1] Extend `tests/squad_delegation.rs` for parts and features (FR-004 to FR-006,
+- [X] T030 [P] [US1] Extend `tests/squad_delegation.rs` for parts and features (FR-004 to FR-006,
   FR-010):
   - refusals:
     - `owns` empty;
@@ -244,8 +244,8 @@ coordinate through signals and commits.
     - `max_parallel_builders` reached;
   - features start without contracts;
   - builder branches are named `fallow/<work>-<part>` (research R-18).
-- [ ] T031 [US1] Implement T030 in `src/orchestration/delegation.rs` and `src/session/worktree.rs`.
-- [ ] T032 [P] [US3] Write `tests/squad_signals.rs` (contracts/mcp-tools.md):
+- [X] T031 [US1] Implement T030 in `src/orchestration/delegation.rs` and `src/session/worktree.rs`.
+- [X] T032 [P] [US3] Write `tests/squad_signals.rs` (contracts/mcp-tools.md):
   - `signal_raise` by builders only, to the lead only;
   - `change` needs a diff;
   - `signal_answer`:
@@ -256,9 +256,10 @@ coordinate through signals and commits.
   - `deliver` from a builder only to the lead;
   - `consult_lead` is gone;
   - an unanswered signal is told to the engineer once after `signal_unanswered_min`.
-- [ ] T033 [US3] Implement `src/orchestration/signals.rs` and the tools in
+- [X] T033 [US3] Implement `src/orchestration/signals.rs` and the tools in
   `src/orchestration/tools.rs`; remove `consult_lead`.
-- [ ] T034 [P] [US3] Extend `tests/squad_delegation.rs` with temporary git repositories:
+- [X] T034 [P] [US3] Test with temporary git repositories (in `tests/squad_signals.rs`, which has the
+  repository fixture):
   - the plan-commit check (research R-5):
     - a change to the part's criteria or contract must be in the reported commit, and the refusal
       names it;
@@ -266,9 +267,9 @@ coordinate through signals and commits.
   - the ownership check: files outside `owns` and `shared` are reported to the lead with their owner;
   - a non-lead change to the manifest, docs or a contract becomes a Fallow signal, and the work counts
     after `accept` (R-19).
-- [ ] T035 [US3] Implement T034 in `src/orchestration/delegation.rs`, called from `task_report` and
+- [X] T035 [US3] Implement T034 in `src/orchestration/delegation.rs`, called from `task_report` and
   gate runs.
-- [ ] T036 [US3] Add squad runs to `src/orchestration/runs.rs`, and a `prepared-split` run to
+- [X] T036 [US3] Add squad runs to `src/orchestration/runs.rs`, and a `prepared-split` run to
   `xtask/src/squad.rs`:
   - two parts and a contract;
   - a signal answered by a commit;

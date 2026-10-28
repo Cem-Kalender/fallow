@@ -72,6 +72,7 @@ pub fn run(args: &[String]) -> i32 {
         ("exits", run_exits),
         ("solo-loop", run_solo_loop),
         ("runs", run_runs),
+        ("prepared-split", run_prepared_split),
     ] {
         if only.as_deref().is_some_and(|o| o != name) {
             continue;
@@ -948,6 +949,138 @@ fn run_runs(bin: &Path, base: &Path) -> Result<i32, String> {
         ok(no_text),
         ok(refs_ok),
         ok(copies_ok),
+    ));
+    Ok(if pass { 0 } else { 1 })
+}
+
+/// The `prepared-split` run's squad (005 T036): merge when the work is done.
+const SQUAD_SPLIT: &str = r#"name = "split"
+[merge]
+requires = ["work:done"]
+"#;
+
+/// The manifest the lead commits: two parts with a contract between them.
+const WORK_SPLIT: &str = "[[work]]\\nid = \"cart\"\\nbuild = \"parts\"\\nreason = \"api and page meet at the contract\"\\n\\n[[part]]\\nid = \"api\"\\nwork = \"cart\"\\nowns = [\"api.txt\"]\\ncriteria = [{ id = \"add\", text = \"adds\" }]\\n\\n[[part]]\\nid = \"page\"\\nwork = \"cart\"\\nowns = [\"page.txt\"]\\ncriteria = [{ id = \"shows\", text = \"shows\" }]\\n\\n[[contract]]\\npath = \"contract.txt\"\\nbetween = [\"api\", \"page\"]\\n";
+
+/// 005 T036: a prepared split. The lead commits a manifest with two parts and a contract and
+/// starts a builder for each; the api builder asks a question; the lead answers by committing a
+/// contract change; the api builder's report without that commit is refused, and accepted once
+/// it merged the lead's branch; the page builder's edit of the api's file is reported to the lead;
+/// the work is done.
+fn run_prepared_split(bin: &Path, base: &Path) -> Result<i32, String> {
+    let config = base.join("config");
+    let project = base.join("project");
+    for d in [&config, &project] {
+        std::fs::create_dir_all(d).map_err(|e| format!("{}: {e}", d.display()))?;
+    }
+    make_project(&project, SQUAD_SPLIT)?;
+    let f = |name: &str| base.join(name).display().to_string();
+    let part = |profile: &str, p: &str| {
+        format!(
+            "call session_start {{\"profile\":\"{profile}\",\"project\":\"project\",\"role\":\"builder\",\"work\":\"cart\",\"part\":\"{p}\",\"first_task\":\"zz-{p}\"}}\n"
+        )
+    };
+    let lead = format!(
+        "print lead-ready\nuntil-file {go}\nwrite-commit contract.txt v1\nwrite-commit .fallow/work.toml {work}\n{b}write {start_b}\n{c}write {start_c}\nuntil Signal S1\nwrite-commit contract.txt v2: qty is an integer\nanswer-signal 1 qty is an integer\nwrite {answer}\nwait-ready {ready} 240\nprint lead-done\n",
+        go = f("go"),
+        work = WORK_SPLIT,
+        b = part("b", "api"),
+        start_b = f("lead-start-b"),
+        c = part("c", "page"),
+        start_c = f("lead-start-c"),
+        answer = f("lead-answer"),
+        ready = f("lead-ready-status"),
+    );
+    let builder_b = format!(
+        "call signal_raise {{\"kind\":\"question\",\"text\":\"is qty an integer?\"}}\nwrite {sig}\nuntil Answer to your signal\nwrite-commit api.txt add\nreport-own api.txt\nwrite {first}\nmerge-branches fallow/lead\nreport-own api.txt\nwrite {second}\n",
+        sig = f("b-signal"),
+        first = f("b-first"),
+        second = f("b-second"),
+    );
+    let builder_c = format!(
+        // The contract changes while it works: it takes in the lead's branch before reporting.
+        "until zz-page\nwrite-commit page.txt shows\nwrite-commit api.txt not mine\nuntil-file {answer}\nmerge-branches fallow/lead\nreport-own page.txt api.txt\nwrite {c}\n",
+        answer = f("lead-answer"),
+        c = f("c-report"),
+    );
+    write_agents(
+        base,
+        &config,
+        &[("lead", lead), ("b", builder_b), ("c", builder_c)],
+    )?;
+    println!(
+        "prepared-split: {} (two parts, a contract, a signal answered by a commit)",
+        bin.display()
+    );
+    let cfg = config.display().to_string();
+    let proj = project.display().to_string();
+    let mut s = Session::spawn(bin, &["--config-dir", &cfg, &proj], Duration::from_secs(1))?;
+    let flow = (|| -> Result<(), String> {
+        start_burst(&mut s)?;
+        std::fs::write(base.join("go"), "go").map_err(|e| e.to_string())?;
+        let ready = wait_for(
+            &base.join("lead-ready-status"),
+            "\"ready\":true",
+            Duration::from_secs(300),
+        );
+        if !ready.contains("\"ready\":true") {
+            return Err(format!("the merge never became ready: {ready}"));
+        }
+        Ok(())
+    })();
+    let read = |n: &str| std::fs::read_to_string(base.join(n)).unwrap_or_default();
+    let (start_b, start_c, sig, answer, first, second, c_report, ready) = (
+        read("lead-start-b"),
+        read("lead-start-c"),
+        read("b-signal"),
+        read("lead-answer"),
+        read("b-first"),
+        read("b-second"),
+        read("c-report"),
+        read("lead-ready-status"),
+    );
+    let details = format!(
+        "start b: {start_b:?}\nstart c: {start_c:?}\nsignal: {sig:?}\nanswer: {answer:?}\nfirst: {first:?}\nsecond: {second:?}\nc: {c_report:?}\nready: {ready:?}"
+    );
+    s.quit_with_sessions();
+    let outcome = s.finish();
+    let mut problems = outcome.problems(None);
+    println!("evidence: {}", outcome.evidence());
+    if let Err(e) = flow {
+        problems.push(e);
+    }
+    if !problems.is_empty() {
+        println!("{details}");
+        return Err(problems.join("; "));
+    }
+    let starts_ok = start_b.contains("approved") && start_c.contains("approved");
+    let signal_ok = sig.contains("\"signal\":1") && answer.contains("contract.txt");
+    let refused_ok = first.contains("lacks the lead's commit") && second.contains("done");
+    let owner_ok = c_report.contains("outside your part");
+    let ready_ok = ready.contains("\"condition\":\"work:done\",\"met\":true");
+    let pass = starts_ok && signal_ok && refused_ok && owner_ok && ready_ok;
+    let result = if pass { "PASS" } else { "FAIL" };
+    let ok = |b: bool| if b { "ok" } else { "WRONG" };
+    println!(
+        "os={} parts_started={} signal_answered_by_commit={} report_needs_the_commit={} ownership_reported={} work_done={} result={result}",
+        std::env::consts::OS,
+        ok(starts_ok),
+        ok(signal_ok),
+        ok(refused_ok),
+        ok(owner_ok),
+        ok(ready_ok),
+    );
+    if !pass {
+        println!("{details}");
+    }
+    pty::step_summary(&format!(
+        "### Squads, prepared-split ({})\n\n| check | result | expected |\n|---|---|---|\n| builders for prepared parts | {} | started |\n| a signal answered by a contract commit | {} | answered |\n| a report without that commit | {} | refused, then accepted after the merge |\n| an edit of another part's file | {} | reported to the lead |\n| work:done | {} | met |\n\n**{result}**\n",
+        std::env::consts::OS,
+        ok(starts_ok),
+        ok(signal_ok),
+        ok(refused_ok),
+        ok(owner_ok),
+        ok(ready_ok),
     ));
     Ok(if pass { 0 } else { 1 })
 }

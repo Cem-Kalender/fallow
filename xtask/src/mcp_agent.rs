@@ -44,6 +44,8 @@
 //! - `exit`: the agent quits at once, as a session closed mid-work (004 FR-041, FR-042).
 //! - `report-own <file…>`: reports each of its own tasks in progress done with evidence at
 //!   `HEAD` (the lead's own pieces of work, 005).
+//! - `write-commit <path> <text>`: writes `text` (`\n` for line breaks) to `path` and commits it.
+//! - `answer-signal <n> <text>`: the lead answers signal `n` with its `HEAD` commit (005).
 //!
 //! After the script it prints `script done` and echoes every typed line as `got <line>`.
 
@@ -399,6 +401,33 @@ pub fn run(args: &[String]) -> ! {
                     a["part"] = json!(t);
                 }
                 record(c.call("review_verdict", a), &mut last, n, &out);
+            }
+            ("write-commit", _) => {
+                let (path, text) = rest.split_once(' ').unwrap_or((rest, ""));
+                if let Some(parent) = std::path::Path::new(path).parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                let ok = std::fs::write(path, text.replace("\\n", "\n")).is_ok()
+                    && git_ok(&["add", path])
+                    && git_ok(&["commit", "-q", "-m", &format!("write {path}")]);
+                out(&format!(
+                    "write-commit {path}: {}",
+                    if ok { "ok" } else { "failed" }
+                ));
+            }
+            ("answer-signal", Some((c, _))) => {
+                let (sig, text) = rest.split_once(' ').unwrap_or((rest, "answered"));
+                let head = std::process::Command::new("git")
+                    .args(["rev-parse", "HEAD"])
+                    .output()
+                    .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+                    .unwrap_or_default();
+                let a = json!({
+                    "signal": sig.parse::<u64>().unwrap_or(0),
+                    "text": text,
+                    "commit": head,
+                });
+                record(c.call("signal_answer", a), &mut last, n, &out);
             }
             ("report-own", Some((c, _))) => {
                 let head = std::process::Command::new("git")

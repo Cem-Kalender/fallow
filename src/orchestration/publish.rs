@@ -294,10 +294,24 @@ impl Hub {
                 .filter(|t| t.work.as_deref() == Some(w.id.as_str()))
                 .collect();
             let parts: Vec<&str> = m.parts_of(&w.id).map(|p| p.id.as_str()).collect();
+            // Work behind a change only the lead makes counts once accepted (R-19, FR-024).
+            let waits = |t: &&tasks::Task| {
+                t.evidence.as_ref().is_some_and(|e| {
+                    self.signals.list.iter().any(|s| {
+                        s.by_fallow && s.open() && s.commit.as_deref() == Some(e.commit.as_str())
+                    })
+                })
+            };
             let undone: Vec<String> = mine
                 .iter()
-                .filter(|t| t.state != tasks::State::Done)
-                .map(|t| format!("T{} {}", t.id, t.state.label()))
+                .filter(|t| t.state != tasks::State::Done || waits(t))
+                .map(|t| {
+                    if waits(t) {
+                        format!("T{} waits for the lead to accept a change", t.id)
+                    } else {
+                        format!("T{} {}", t.id, t.state.label())
+                    }
+                })
                 .collect();
             let unbuilt: Vec<&str> = parts
                 .iter()

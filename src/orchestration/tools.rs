@@ -252,9 +252,50 @@ const SPECS: &[Spec] = &[
         ],
     },
     Spec {
-        name: "consult_lead",
-        description: "Ask the lead a question, for example to clarify the spec or your task. Fallow types it into the lead's session, labelled with your session; the lead answers with a delivery. The lead brings the user in when a decision is theirs.",
-        args: &[("question", "string", "The question, at most 2 KiB", true)],
+        name: "signal_raise",
+        description: "Ask the lead for a decision (005): a question, or a proposed change to the plan, the work manifest or a contract with its diff. Only the lead receives it; it answers with a commit that records the decision, which you merge into your branch. Carry on with the work it does not block.",
+        args: &[
+            ("kind", "string", "\"question\" or \"change\"", true),
+            (
+                "text",
+                "string",
+                "What you need decided, at most 2 KiB",
+                true,
+            ),
+            (
+                "diff",
+                "string",
+                "For a change: the proposed diff, at most 8 KiB",
+                false,
+            ),
+            (
+                "work",
+                "string",
+                "The piece of work (default: yours)",
+                false,
+            ),
+            ("part", "string", "The part (default: yours)", false),
+        ],
+    },
+    Spec {
+        name: "signal_answer",
+        description: "The lead answers a signal: give the commit that records the decision in the plan, the manifest or a contract (it must be on your branch and change one of them); without a commit, the answer may only state there is no change. accept = true accepts the work behind a signal Fallow raised about a change by another session.",
+        args: &[
+            ("signal", "integer", "The signal number (S3 is 3)", true),
+            ("text", "string", "The answer, at most 2 KiB", true),
+            ("commit", "string", "The commit with the decision", false),
+            (
+                "accept",
+                "boolean",
+                "Accept the work behind a Fallow signal",
+                false,
+            ),
+        ],
+    },
+    Spec {
+        name: "signal_list",
+        description: "Signals: the lead sees every signal of the burst, others their own, open first, with answers and their commits.",
+        args: &[],
     },
     Spec {
         name: "squad_status",
@@ -495,8 +536,10 @@ pub fn tool_allowed(role: &super::squad::Role, name: &str) -> bool {
     use super::squad::Tool;
     let groups: &[Tool] = match name {
         "whoami" | "session_list" | "squad_status" => &[Tool::Sessions],
-        // Every role but the lead (the lead talks with the user in its own session).
-        "consult_lead" => return role.name != "lead",
+        // Every role but the lead raises signals; the lead answers them (005 FR-021).
+        "signal_raise" => return role.name != "lead",
+        "signal_answer" => return role.name == "lead",
+        "signal_list" => return true,
         "board_post" | "board_read" => &[Tool::Board],
         "event_signal" | "event_wait" | "event_status" => &[Tool::Events],
         "deliver" => &[Tool::Deliver],
@@ -947,6 +990,15 @@ pub(super) fn call(
             if to == caller {
                 return Reply::error("invalid", "that is your own session");
             }
+            // Builders do not message each other; they ask the lead with signals (005 FR-021).
+            if let Some(b) = hub.burst_for(caller) {
+                if b.squad.adaptive() && caller != b.lead && to != b.lead {
+                    return Reply::error(
+                        "not_allowed",
+                        "in this squad you message only the lead; ask for decisions with signal_raise",
+                    );
+                }
+            }
             let text = match board::clean_text(
                 args["text"].as_str().unwrap_or_default(),
                 super::delivery::TEXT_MAX,
@@ -1186,38 +1238,81 @@ pub(super) fn call(
                 }
             }
         }
-        "consult_lead" => {
-            let Some(b) = hub.burst_for(caller) else {
-                return Reply::error("unavailable", "this project is not coordinating");
+        "signal_raise" => {
+            let Some(kind) = args["kind"].as_str().and_then(super::signals::Kind::parse) else {
+                return Reply::error("invalid", "kind: \"question\" or \"change\"");
             };
-            let lead = b.lead;
-            if lead == caller {
-                return Reply::error("invalid", "you are the lead: ask the user in your session");
-            }
-            let q = match board::clean_text(
-                args["question"].as_str().unwrap_or_default(),
-                events::MESSAGE_MAX,
+            let text = match board::clean_text(
+                args["text"].as_str().unwrap_or_default(),
+                super::signals::TEXT_MAX,
             ) {
-                Ok(q) => q,
+                Ok(t) => t,
                 Err((code, m)) => return Reply::error(code, m),
             };
-            let text = format!(
-                "Question from {}: {}\nAnswer it with deliver to session {caller}; bring the user in if the decision is theirs.",
-                me.party().label(),
-                super::lead::one_line(&q)
-            );
-            match hub.request_delivery(
-                sessions,
-                Party::Fallow,
-                lead,
-                text,
-                super::delivery::Purpose::Message,
-                true,
-                now,
-            ) {
-                Ok((id, _)) => Reply::Done(json!({ "delivery": id, "to": lead })),
-                Err(e) => Reply::error("unavailable", e),
+            let diff = match args.get("diff").and_then(Value::as_str) {
+                None => None,
+                Some(d) if d.len() > super::signals::DIFF_MAX => {
+                    return Reply::error("too_large", "the diff is over 8 KiB");
+                }
+                Some(d) => Some(d.to_string()),
+            };
+            let s = |k: &str| args.get(k).and_then(Value::as_str).map(str::to_string);
+            match hub.raise_signal(caller, kind, s("work"), s("part"), text, diff, now) {
+                Ok(id) => Reply::Done(json!({ "signal": id, "to": "the lead" })),
+                Err(r) => r,
             }
+        }
+        "signal_answer" => {
+            let Some(id) = args["signal"].as_u64() else {
+                return Reply::error("invalid", "signal must be a signal number");
+            };
+            let text = match board::clean_text(
+                args["text"].as_str().unwrap_or_default(),
+                super::signals::TEXT_MAX,
+            ) {
+                Ok(t) => t,
+                Err((code, m)) => return Reply::error(code, m),
+            };
+            let commit = args
+                .get("commit")
+                .and_then(Value::as_str)
+                .map(|c| c.trim().to_string())
+                .filter(|c| !c.is_empty());
+            let accept = args.get("accept").and_then(Value::as_bool).unwrap_or(false);
+            match hub.answer_signal(sessions, caller, id, text, commit, accept, now) {
+                Ok(v) => Reply::Done(v),
+                Err(r) => r,
+            }
+        }
+        "signal_list" => {
+            let lead = hub.burst_for(caller).is_some_and(|b| b.lead == caller);
+            let project = hub.burst_for(caller).map(|b| b.project);
+            let mut list: Vec<&super::signals::Signal> = hub
+                .signals
+                .list
+                .iter()
+                .filter(|s| Some(s.project) == project && (lead || s.from == caller))
+                .collect();
+            list.sort_by_key(|s| (!s.open(), s.id));
+            let v: Vec<Value> = list
+                .iter()
+                .map(|s| {
+                    json!({
+                        "signal": s.id,
+                        "from": if s.by_fallow { json!("fallow") } else { json!(s.from) },
+                        "kind": s.kind.label(),
+                        "work": s.work,
+                        "part": s.part,
+                        "text": s.text,
+                        "diff": s.diff,
+                        "commit": s.commit,
+                        "open": s.open(),
+                        "answer": s.answer.as_ref().map(|a| json!({"text": a.text, "commit": a.commit, "accepted": a.accepted})),
+                        "note": NOTE,
+                    })
+                })
+                .collect();
+            Reply::Done(json!({ "signals": v }))
         }
         "review_verdict" => {
             let Some(b) = hub.burst_for(caller) else {
@@ -1412,6 +1507,16 @@ pub(super) fn call(
                         None => e
                             .verified
                             .push("not checked: Fallow does not know this session's folder".into()),
+                    }
+                    // 005: the plan-commit and ownership checks for a builder of delegated work.
+                    let commit = e.commit.clone();
+                    match hub.check_builder_report(sessions, caller, &commit, now) {
+                        Ok(notes) => {
+                            if let Some(e) = ev.as_mut() {
+                                e.verified.extend(notes);
+                            }
+                        }
+                        Err(why) => return Reply::error("invalid", why),
                     }
                 }
             }

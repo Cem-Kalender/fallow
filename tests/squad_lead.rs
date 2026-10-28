@@ -282,29 +282,29 @@ fn a_member_at_a_permission_prompt_and_a_quiet_squad_reach_the_lead() {
 }
 
 #[test]
-fn others_consult_the_lead_and_without_a_lead_the_engineer_hears_it() {
+fn others_signal_the_lead_and_without_a_lead_the_engineer_hears_it() {
+    // 005 FR-021 replaced consult_lead with signals.
     let (mut h, mut f, now) = setup();
     let r = h.call(
         &f,
         2,
-        "consult_lead",
-        json!({"question": "Python or Rust?"}),
+        "signal_raise",
+        json!({"kind": "question", "text": "Python or Rust?"}),
         now,
     );
     assert!(matches!(r, Reply::Done(_)), "{r:?}");
-    let q = h
-        .deliveries
-        .list
-        .iter()
-        .find(|d| d.to == 1 && d.text.starts_with("Question from #2 builder"))
-        .unwrap();
+    let u = h.burst_of(1).unwrap().lead_updates.join("\n");
     assert!(
-        q.text.contains("Python or Rust?") && q.text.contains("deliver to session 2"),
-        "{}",
-        q.text
+        u.contains("Signal S1 from #2 builder") && u.contains("Python or Rust?"),
+        "{u}"
     );
-    assert!(h.ready().contains(&q.id), "typed without the engineer");
-    let r = h.call(&f, 1, "consult_lead", json!({"question": "?"}), now);
+    let r = h.call(
+        &f,
+        1,
+        "signal_raise",
+        json!({"kind": "question", "text": "?"}),
+        now,
+    );
     assert!(
         matches!(r, Reply::Error(..)),
         "the lead asks the user itself: {r:?}"
@@ -369,7 +369,13 @@ fn without_a_lead_the_user_hears_every_line_in_one_alert() {
         json!({"verdict": "approved", "notes": "ok"}),
         now,
     );
-    h.call(&f, 3, "consult_lead", json!({"question": "which?"}), now);
+    h.call(
+        &f,
+        3,
+        "signal_raise",
+        json!({"kind": "question", "text": "which?"}),
+        now,
+    );
     h.tick(&f, now + Duration::from_secs(30));
     let a = h.alerts.join("\n");
     assert!(

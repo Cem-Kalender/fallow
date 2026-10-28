@@ -137,7 +137,8 @@ fn each_role_sees_and_may_call_only_its_tools() {
         "task_list",
         "task_report",
         "review_verdict",
-        "consult_lead",
+        "signal_raise",
+        "signal_list",
     ]);
     let reviewer = set(&[
         "whoami",
@@ -152,13 +153,14 @@ fn each_role_sees_and_may_call_only_its_tools() {
         "task_list",
         "task_report",
         "review_verdict",
-        "consult_lead",
+        "signal_raise",
+        "signal_list",
     ]);
     let expect = |want: &BTreeSet<String>| -> BTreeSet<String> {
         want.intersection(&all).cloned().collect()
     };
     let mut lead = all.clone();
-    lead.remove("consult_lead");
+    lead.remove("signal_raise");
     for (id, want) in [(1, lead), (2, expect(&builder)), (3, expect(&reviewer))] {
         let got = names(&h.accepted(id).tools.unwrap());
         assert_eq!(got, want, "session #{id}");

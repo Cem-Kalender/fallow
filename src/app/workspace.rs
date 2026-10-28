@@ -914,10 +914,11 @@ impl AppState {
         id: &str,
         place: Where,
     ) -> Result<SessionId, String> {
-        self.start_role_session(project, id, place, None, Vec::new(), None)
+        self.start_role_session(project, id, place, None, Vec::new(), None, None)
     }
 
     /// `start_session_in` with a role in a burst and its flags (004 FR-009).
+    #[allow(clippy::too_many_arguments)]
     pub fn start_role_session(
         &mut self,
         project: crate::projects::ProjectId,
@@ -926,6 +927,8 @@ impl AppState {
         role: Option<String>,
         extra_args: Vec<String>,
         base: Option<String>,
+        // 005 R-18: a builder's branch is named after its work and part.
+        branch_name: Option<String>,
     ) -> Result<SessionId, String> {
         let profile = self
             .profiles
@@ -944,12 +947,18 @@ impl AppState {
             .clone()
             .ok_or("Sessions are not available in this mode")?;
         let (project, project_name, project_path) = (p.id, p.name.clone(), p.path.clone());
-        let root = self.sessions.limits.worktree_root.clone();
+        // A run's worktrees stay next to its copy, so they go with it (005 R-11).
+        let root = if p.temporary {
+            None
+        } else {
+            self.sessions.limits.worktree_root.clone()
+        };
         let (cwd, workdir) = match place {
             Where::ProjectFolder => (project_path.clone(), Workdir::ProjectFolder),
             Where::Existing(w) => (w.path.clone(), Workdir::Worktree(w)),
             Where::NewWorktree => {
-                let branch = worktree::next_branch(&project_path, &profile.id, root.as_deref())?;
+                let stem = branch_name.as_deref().unwrap_or(&profile.id);
+                let branch = worktree::next_branch(&project_path, stem, root.as_deref())?;
                 let w =
                     worktree::create_at(&project_path, &branch, root.as_deref(), base.as_deref())
                         .map_err(|e| format!("Could not create a worktree: {e}"))?;
