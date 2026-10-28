@@ -162,6 +162,14 @@ pub fn commits_touching(
     Ok(git(dir, &args)?.lines().map(str::to_string).collect())
 }
 
+/// The files tracked at `commit`.
+pub fn files_at(dir: &Path, commit: &str) -> Result<Vec<String>, String> {
+    Ok(git(dir, &["ls-tree", "-r", "--name-only", commit])?
+        .lines()
+        .map(str::to_string)
+        .collect())
+}
+
 /// Whether `a` is `b` or an ancestor of it.
 pub fn is_ancestor(dir: &Path, a: &str, b: &str) -> bool {
     on_branch(dir, a, b)

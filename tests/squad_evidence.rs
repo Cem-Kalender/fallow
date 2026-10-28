@@ -93,7 +93,15 @@ fn repo(tag: &str) -> (PathBuf, String, String, String) {
 }
 
 fn setup(dir: &Path, c0: &str, cap: u8) -> (Hub, Fake, Instant) {
+    // 004's merge conditions: these tests cover 004's evidence and repairs.
     let mut s = squad::builtin();
+    s.merge_requires = vec![
+        squad::Condition::AllDone("builder".into()),
+        squad::Condition::Signal {
+            event: "review-approved".into(),
+            role: "reviewer".into(),
+        },
+    ];
     s.repair_cap = cap;
     let mut h = Hub::new(OrchestrationSettings::default());
     let mut f = Fake {

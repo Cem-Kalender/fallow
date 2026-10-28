@@ -237,6 +237,13 @@ impl Squad {
         v
     }
 
+    /// Whether the squad follows 005's workflow: its merge waits for the work (`work:done`), so
+    /// the lead builds by default and builders start only for delegated work. A squad written
+    /// for 004 (`done:<role>`) keeps 004's behaviour.
+    pub fn adaptive(&self) -> bool {
+        self.merge_requires.contains(&Condition::WorkDone)
+    }
+
     /// Roles that give review verdicts (they may signal `review-approved`), not the lead.
     pub fn reviewer_roles(&self) -> Vec<&str> {
         self.roles

@@ -101,7 +101,7 @@ it.
 
 **Independent Test**: quickstart Q1.
 
-- [ ] T009 [P] [US1] Write `tests/squad_delegation.rs`:
+- [X] T009 [P] [US1] Write `tests/squad_delegation.rs`:
   - with no manifest, the lead's `whoami` says it builds the work itself;
   - `session_start` for a builder is refused, naming the reason and what a split needs (FR-003);
   - with `build = "builder"`, the first builder starts and a second is refused;
@@ -109,19 +109,19 @@ it.
     work built by the lead;
   - `work:done` holds once those tasks are reported done with evidence;
   - `review:approved` without focuses follows 004's rule.
-- [ ] T010 [US1] Implement the start refusals for `lead` and `builder` decisions in
+- [X] T010 [US1] Implement the start refusals for `lead` and `builder` decisions in
   `src/orchestration/delegation.rs`, and the `work` argument of `session_start` in
   `src/orchestration/tools.rs`.
-- [ ] T011 [US1] Implement:
+- [X] T011 [US1] Implement:
   - the lead's tasks at burst start in `src/orchestration/burst.rs`;
   - `work:done` and `review:approved` readiness in `src/orchestration/publish.rs`.
-- [ ] T012 [US1] Rewrite the lead, builder and reviewer briefings and the `whoami` additions in
+- [X] T012 [US1] Rewrite the lead, builder and reviewer briefings and the `whoami` additions in
   `src/orchestration/briefing.rs` and `tools.rs` (contracts/mcp-tools.md "Briefings"):
   - build yourself unless the work has clean boundaries;
   - use your own subagents to investigate.
-- [ ] T013 [US1] Add the Work section to the Squad tab in `src/ui/orchestration.rs`: each piece of work
+- [X] T013 [US1] Add the Work section to the Squad tab in `src/ui/orchestration.rs`: each piece of work
   with its decision, reason, builder and state, and refused starts with their reason (FR-007).
-- [ ] T014 [US1] Add a `solo-loop` run to `xtask/src/squad.rs`:
+- [X] T014 [US1] Add a `solo-loop` run to `xtask/src/squad.rs`:
   - the built-in squad with no manifest;
   - the lead commits and reports, and a builder start is refused;
   - the gate and the reviewer run;

@@ -127,6 +127,12 @@ const SPECS: &[Spec] = &[
                 false,
             ),
             (
+                "work",
+                "string",
+                "During coordination: the piece of work in .fallow/work.toml this task builds (default: what the target builder was started for)",
+                false,
+            ),
+            (
                 "preconditions",
                 "array",
                 "Events that must be signalled first: [{\"name\": …, \"scope\": \"project\"|\"shared\", \"role\": optional role that must signal it}], at most 8",
@@ -196,6 +202,18 @@ const SPECS: &[Spec] = &[
                 "role",
                 "string",
                 "While the project coordinates (required then): the new session's role in the squad, for example \"builder\" or \"reviewer\"",
+                false,
+            ),
+            (
+                "work",
+                "string",
+                "For a builder (required then): the piece of work in .fallow/work.toml it builds; only work the manifest delegates gets a builder",
+                false,
+            ),
+            (
+                "focus",
+                "string",
+                "For a reviewer: its review focus from .fallow/work.toml [[review]]",
                 false,
             ),
         ],
@@ -636,6 +654,15 @@ pub(super) fn call(
     if let Err(r) = check(spec, &args) {
         return r;
     }
+    // The lead's view follows its latest commit: the manifest is read again when it changed
+    // (005 R-1); a read is one `git rev-parse` when nothing changed.
+    if let Some(project) = hub
+        .burst_for(caller)
+        .filter(|b| b.lead == caller)
+        .map(|b| b.project)
+    {
+        hub.refresh_manifest(sessions, project);
+    }
     let repeat = name == "event_wait"
         && hub.events.recent.get(&caller).is_some_and(|(k, _, _)| {
             Some(k.1.as_str()) == args.get("name").and_then(Value::as_str)
@@ -662,7 +689,29 @@ pub(super) fn call(
                     "lead": b.lead,
                     "allowance_left": hub.starts_left(b),
                     "merge_roles": b.squad.merge_roles(),
+                    "manifest_commit": b.manifest.as_ref().and_then(|m| m.commit.clone()),
                 });
+                // 005: the default and what a builder is for (contracts/mcp-tools.md).
+                if b.squad.adaptive() && caller == b.lead {
+                    v["burst"]["default"] = json!(
+                        "you build each piece of work yourself unless .fallow/work.toml delegates it"
+                    );
+                }
+                if let Some((work, part)) = b.assigned.get(&caller) {
+                    let m = b.manifest.as_ref();
+                    v["work"] = json!({
+                        "work": work,
+                        "part": part,
+                        "owns": m.and_then(|m| part.as_deref().and_then(|p| m.part(p))).map(|p| p.owns.clone()),
+                        "criteria": m.map(|m| {
+                            m.criteria(work, part.as_deref())
+                                .iter()
+                                .map(|c| json!({"id": c.id, "text": c.text, "must_fail": c.must_fail}))
+                                .collect::<Vec<_>>()
+                        }),
+                        "base": b.bases.get(&caller),
+                    });
+                }
                 if let Some(r) = role {
                     v["briefing"] = json!(super::briefing::full(b, r, caller));
                 }
@@ -984,6 +1033,17 @@ pub(super) fn call(
                 Ok(r) => r,
                 Err(why) => return Reply::error("not_allowed", why),
             };
+            // A builder's task builds what it was started for, unless the task names other work.
+            let assignment = match &target {
+                super::tasks::Target::Session(s) => hub.assignment_of(*s),
+                super::tasks::Target::NextFree { .. } => None,
+            };
+            let work = args
+                .get("work")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+                .or_else(|| assignment.as_ref().map(|a| a.0.clone()));
+            let part = part.or_else(|| assignment.and_then(|a| a.1));
             match hub.create_task(sessions, me.party(), text, target, pre, now) {
                 Ok((id, state)) => {
                     if round > 0 {
@@ -992,6 +1052,7 @@ pub(super) fn call(
                     if let Some(t) = hub.tasks.get_mut(id) {
                         t.role_conditions = role_pre;
                         t.part = part;
+                        t.work = work;
                         t.repair_round = round;
                     }
                     Reply::Done(json!({
@@ -1027,6 +1088,7 @@ pub(super) fn call(
                         "assigned": t.assigned,
                         "owner": t.assigned,
                         "part": t.part,
+                        "work": t.work,
                         "evidence": t.evidence.as_ref().map(super::evidence::Evidence::json),
                         "repair_round": t.repair_round,
                         "note": t.note,
@@ -1045,8 +1107,8 @@ pub(super) fn call(
             };
             let part = match args.get("part").and_then(Value::as_str) {
                 None => None,
-                Some(_) if first.is_none() => {
-                    return Reply::error("invalid", "part needs a first_task");
+                Some(_) if first.is_none() && args.get("work").is_none() => {
+                    return Reply::error("invalid", "part needs a first_task or a work");
                 }
                 Some(p) if events::valid_name(p) => Some(p.to_string()),
                 Some(p) => {
@@ -1061,6 +1123,16 @@ pub(super) fn call(
                 Ok(r) => r,
                 Err(why) => return Reply::error("not_allowed", why),
             };
+            // A builder starts for a piece of work the manifest at the lead's latest commit
+            // delegates (005 R-2); the manifest is read again first.
+            if let Some(b) = hub.burst_for(caller) {
+                let project = b.project;
+                hub.refresh_manifest(sessions, project);
+            }
+            let assignment = args
+                .get("work")
+                .and_then(Value::as_str)
+                .map(|w| (w.to_string(), part.clone()));
             match hub.request_start(
                 sessions,
                 &me,
@@ -1068,6 +1140,7 @@ pub(super) fn call(
                 args["project"].as_str().unwrap_or_default(),
                 first,
                 args.get("role").and_then(Value::as_str),
+                assignment,
                 now,
             ) {
                 Ok((id, state, hold)) => {
@@ -1096,7 +1169,21 @@ pub(super) fn call(
                     }
                     Reply::Done(v)
                 }
-                Err(r) => r,
+                Err(r) => {
+                    // Refused starts are shown with their reason (005 FR-007).
+                    if let (Reply::Error("not_allowed", why), Some(b)) = (
+                        &r,
+                        hub.bursts
+                            .iter_mut()
+                            .find(|b| b.roles.contains_key(&caller)),
+                    ) {
+                        b.refused.push(why.clone());
+                        if b.refused.len() > 10 {
+                            b.refused.remove(0);
+                        }
+                    }
+                    r
+                }
             }
         }
         "consult_lead" => {

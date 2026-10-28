@@ -359,6 +359,8 @@ pub struct StartRequest {
     pub bypass: bool,
     /// The part the first task is for, and its repair round (004 run 3).
     pub first_part: Option<(String, u8)>,
+    /// What a builder starts for: a piece of work in the manifest and its part (005 R-2).
+    pub assignment: Option<delegation::Assignment>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -706,6 +708,7 @@ impl Hub {
         project: &str,
         first_task: Option<String>,
         role: Option<&str>,
+        assignment: Option<delegation::Assignment>,
         now: Instant,
     ) -> Result<(u64, StartState, Option<String>), Reply> {
         let Some((pid, pname)) = sessions
@@ -731,7 +734,8 @@ impl Hub {
                 format!("project {proj_name} is missing"),
             ));
         }
-        let (role, args, bypass, warn, hold) = self.start_role(sessions, from, &pid, proj, role)?;
+        let (role, args, bypass, warn, hold) =
+            self.start_role(sessions, from, &pid, proj, role, assignment.as_ref())?;
         if let Some(w) = warn {
             self.notices.push(w);
         }
@@ -816,6 +820,7 @@ impl Hub {
             args,
             bypass,
             first_part: None,
+            assignment,
         });
         if matches!(state, StartState::Refused(_)) {
             self.start_outcome(id);
@@ -886,9 +891,12 @@ impl Hub {
             Err(e) => StartState::Refused(e.clone()),
         };
         let (from, task, part) = (s.from.clone(), s.first_task.clone(), s.first_part.clone());
-        let (role, project) = (s.role.clone(), s.project);
+        let (role, project, assignment) = (s.role.clone(), s.project, s.assignment.clone());
         if let (Ok(sid), Some(r)) = (&result, role) {
             if let Some(b) = self.bursts.iter_mut().find(|b| b.project == project) {
+                if let Some(a) = &assignment {
+                    b.assigned.insert(*sid, a.clone());
+                }
                 let read_only = b.squad.role(&r).is_some_and(|r| !r.level.edits());
                 b.roles.insert(*sid, r);
                 // The first check records the worktree as it starts (FR-013).
@@ -909,6 +917,10 @@ impl Hub {
                 if let Some(task) = self.tasks.get_mut(t) {
                     task.created_by = from;
                     task.approved_handover = true;
+                    if let Some((w, p)) = &assignment {
+                        task.work = Some(w.clone());
+                        task.part.clone_from(p);
+                    }
                     if let Some((p, round)) = part {
                         task.part = Some(p);
                         task.repair_round = round;
@@ -1336,7 +1348,7 @@ impl Hub {
             .tasks
             .list
             .iter()
-            .filter(|t| t.state == tasks::State::InProgress)
+            .filter(|t| t.state == tasks::State::InProgress && !Hub::lead_work(t))
             .filter_map(|t| t.assigned)
             .collect();
         let all = sessions.all();
@@ -1991,6 +2003,7 @@ impl Hub {
         profile: &str,
         project: ProjectId,
         role: Option<&str>,
+        assignment: Option<&delegation::Assignment>,
     ) -> Result<RoleStart, Reply> {
         let Some(b) = self.burst_for(from.id) else {
             return match role {
@@ -2033,6 +2046,69 @@ impl Hub {
                     r.max
                 ),
             ));
+        }
+        // Builders start only for work the manifest delegates (005 FR-001 to FR-006, FR-010).
+        if b.squad.adaptive() && r.level.edits() && name != "lead" {
+            if b.switched_off.contains(burst::OFF_PARALLEL) {
+                return Err(Reply::error(
+                    "not_allowed",
+                    "builders are switched off for this run: you build every piece of work yourself",
+                ));
+            }
+            let cap = b.squad.max_parallel_builders.unwrap_or(b.allowance).max(1);
+            let builders = b
+                .roles
+                .iter()
+                .filter(|(id, role)| {
+                    *role != "lead"
+                        && b.squad.role(role).is_some_and(|x| x.level.edits())
+                        && sessions.info(**id).is_some_and(|s| s.running)
+                })
+                .count()
+                + self
+                    .starts
+                    .iter()
+                    .filter(|s| {
+                        s.project == b.project
+                            && s.assignment.is_some()
+                            && matches!(s.state, StartState::Pending | StartState::Approved)
+                    })
+                    .count();
+            if builders >= usize::from(cap) {
+                return Err(Reply::error(
+                    "not_allowed",
+                    format!("at most {cap} builder(s) run at once in this squad"),
+                ));
+            }
+            let assigned = |work: &str, part: Option<&str>| {
+                b.assigned
+                    .iter()
+                    .filter(|(id, (w, p))| {
+                        w == work
+                            && (part.is_none() || p.as_deref() == part)
+                            && sessions.info(**id).is_some_and(|s| s.running)
+                    })
+                    .count()
+                    + self
+                        .starts
+                        .iter()
+                        .filter(|s| {
+                            s.project == b.project
+                                && matches!(s.state, StartState::Pending | StartState::Approved)
+                                && s.assignment.as_ref().is_some_and(|(w, p)| {
+                                    w == work && (part.is_none() || p.as_deref() == part)
+                                })
+                        })
+                        .count()
+            };
+            if let Some(why) = self.delegation_refusal(
+                b,
+                assignment.map(|a| a.0.as_str()),
+                assignment.and_then(|a| a.1.as_deref()),
+                &assigned,
+            ) {
+                return Err(Reply::error("not_allowed", why));
+            }
         }
         // Beyond the burst's starts, or using a start kept for a role the merge still needs a
         // session of, the start waits for the user instead of failing (004 run 3).

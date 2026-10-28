@@ -149,23 +149,29 @@ pub struct Job {
     pub lead: u32,
 }
 
+/// A task that builds the work: handed to a builder (a role that edits, not a gate), or one of
+/// the lead's own pieces of work (005 R-16).
+fn work_task(b: &super::burst::Burst, t: &tasks::Task) -> bool {
+    t.assigned.and_then(|a| b.roles.get(&a)).is_some_and(|r| {
+        r != GATE_ROLE
+            && b.squad.role(r).is_some_and(|role| role.level.edits())
+            && (r != "lead" || t.work.is_some())
+    })
+}
+
 impl Hub {
-    /// Tasks handed to builders in a burst (roles that edit, not the lead, not gates): how many
-    /// in all, and how many are done.
+    /// Work tasks in a burst: tasks handed to builders (roles that edit, not gates), and the
+    /// lead's own pieces of work (005 R-16: the lead builds by default). How many in all, and
+    /// how many are done.
     fn builder_tasks(&self, project: ProjectId) -> (usize, usize) {
         let Some(b) = self.burst_of(project) else {
             return (0, 0);
-        };
-        let builder = |id: u32| {
-            b.roles.get(&id).is_some_and(|r| {
-                r != "lead" && r != GATE_ROLE && b.squad.role(r).is_some_and(|r| r.level.edits())
-            })
         };
         let handed: Vec<&tasks::Task> = self
             .tasks
             .list
             .iter()
-            .filter(|t| t.created_at >= b.started && t.assigned.is_some_and(builder))
+            .filter(|t| t.created_at >= b.started && work_task(b, t))
             .filter(|t| !matches!(t.state, tasks::State::Cancelled(_)))
             .collect();
         let done = handed
@@ -203,13 +209,7 @@ impl Hub {
             .list
             .iter()
             .filter(|t| t.created_at >= b.started && t.state == tasks::State::Done)
-            .filter(|t| {
-                t.assigned.and_then(|a| b.roles.get(&a)).is_some_and(|r| {
-                    r != "lead"
-                        && r != GATE_ROLE
-                        && b.squad.role(r).is_some_and(|r| r.level.edits())
-                })
-            })
+            .filter(|t| work_task(b, t))
             .filter_map(|t| {
                 t.assigned
                     .zip(t.evidence.as_ref().map(|e| e.commit.clone()))

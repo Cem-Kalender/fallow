@@ -325,7 +325,7 @@ fn session_start_needs_a_role_within_the_squads_limits() {
 #[test]
 fn role_flags_are_resolved_and_a_bypass_waits_for_the_engineer() {
     // FR-008, FR-014.
-    let mut s = squad::builtin();
+    let mut s = classic();
     s.roles
         .iter_mut()
         .find(|r| r.name == "reviewer")

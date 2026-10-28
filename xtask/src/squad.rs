@@ -62,6 +62,7 @@ pub fn run(args: &[String]) -> i32 {
     for (name, run) in [
         ("squad", run_all as fn(&Path, &Path) -> Result<i32, String>),
         ("exits", run_exits),
+        ("solo-loop", run_solo_loop),
     ] {
         let base = std::env::temp_dir().join(format!("fallow-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&base);
@@ -137,6 +138,19 @@ fn git(dir: &Path, args: &[&str]) -> Result<String, String> {
         ))
     }
 }
+
+/// The `solo-loop` run's squad (005): the built-in roles and merge, plus a gate.
+const SQUAD_SOLO: &str = r#"name = "solo"
+[[gate]]
+name = "tests"
+command = "test ! -f gate.fail"
+windows = "if (Test-Path gate.fail) { exit 1 }"
+timeout_min = 5
+baseline = true
+
+[merge]
+requires = ["gate:tests", "work:done", "review:approved"]
+"#;
 
 /// The `exits` run's squad: no gate, the built-in roles.
 const SQUAD_EXITS: &str = r#"name = "exits"
@@ -600,6 +614,118 @@ fn run_exits(bin: &Path, base: &Path) -> Result<i32, String> {
         ok(kept_ok),
         ok(builder_ok),
         ok(reviewer_ok),
+        ok(ready_ok),
+    ));
+    Ok(if pass { 0 } else { 1 })
+}
+
+/// 005 T014: one loop by default. The lead builds the work itself (no manifest), a builder's
+/// start is refused with the reason, the lead reports its own piece with evidence, Fallow runs
+/// the final gate on the lead's commit, a reviewer approves, and the merge is ready.
+fn run_solo_loop(bin: &Path, base: &Path) -> Result<i32, String> {
+    let config = base.join("config");
+    let project = base.join("project");
+    for d in [&config, &project] {
+        std::fs::create_dir_all(d).map_err(|e| format!("{}: {e}", d.display()))?;
+    }
+    make_project(&project, SQUAD_SOLO)?;
+    let f = |name: &str| base.join(name).display().to_string();
+    let lead = format!(
+        "print lead-ready\nuntil-file {go}\ncall whoami {{}}\nwrite {whoami}\ncall session_start {{\"profile\":\"b\",\"project\":\"project\",\"role\":\"builder\",\"work\":\"feature\"}}\nwrite {builder}\ncommit-file feature.txt\nreport-own feature.txt\nwrite {report}\n{r}write {start_r}\nuntil Every merge condition holds\ncall squad_status {{}}\nwrite {ready}\nprint lead-done\n",
+        go = f("go"),
+        whoami = f("lead-whoami"),
+        builder = f("lead-builder"),
+        report = f("lead-report"),
+        r = start("r", "reviewer", None),
+        start_r = f("lead-start-r"),
+        ready = f("lead-ready-status"),
+    );
+    write_agents(
+        base,
+        &config,
+        &[
+            ("lead", lead),
+            ("b", "print idle\n".to_string()),
+            (
+                "r",
+                format!(
+                    "wait-loop gate-tests-passed 300 {}\nverdict approved - feature checked\nwrite {}\n",
+                    f("r-gate"),
+                    f("r-verdict")
+                ),
+            ),
+        ],
+    )?;
+    println!(
+        "solo-loop: {} (the lead builds alone; the gate and a reviewer check it)",
+        bin.display()
+    );
+    let cfg = config.display().to_string();
+    let proj = project.display().to_string();
+    let mut s = Session::spawn(bin, &["--config-dir", &cfg, &proj], Duration::from_secs(1))?;
+    let flow = (|| -> Result<(), String> {
+        start_burst(&mut s)?;
+        std::fs::write(base.join("go"), "go").map_err(|e| e.to_string())?;
+        let ready = wait_for(
+            &base.join("lead-ready-status"),
+            "\"ready\":true",
+            Duration::from_secs(240),
+        );
+        if !ready.contains("\"ready\":true") {
+            return Err(format!("the merge never became ready: {ready}"));
+        }
+        Ok(())
+    })();
+    let read = |n: &str| std::fs::read_to_string(base.join(n)).unwrap_or_default();
+    let (whoami, builder, report, start_r, ready, r_gate) = (
+        read("lead-whoami"),
+        read("lead-builder"),
+        read("lead-report"),
+        read("lead-start-r"),
+        read("lead-ready-status"),
+        read("r-gate"),
+    );
+    let details = format!(
+        "whoami: {whoami:?}\nbuilder: {builder:?}\nreport: {report:?}\nreviewer: {start_r:?}\nready: {ready:?}\nr gate: {r_gate:?}"
+    );
+    s.quit_with_sessions();
+    let outcome = s.finish();
+    let mut problems = outcome.problems(None);
+    println!("evidence: {}", outcome.evidence());
+    if let Err(e) = flow {
+        problems.push(e);
+    }
+    if !problems.is_empty() {
+        println!("{details}");
+        return Err(problems.join("; "));
+    }
+    let default_ok = whoami.contains("build each piece of work yourself");
+    let refused_ok = builder.contains("not_allowed") && builder.contains("built by the lead");
+    let report_ok = report.contains("done");
+    let gate_ok = r_gate.contains("status=signalled") && ready.contains("\"class\":\"pass\"");
+    let ready_ok = ready.contains("\"ready\":true") && ready.contains("work:done");
+    let pass = default_ok && refused_ok && report_ok && gate_ok && ready_ok;
+    let result = if pass { "PASS" } else { "FAIL" };
+    let ok = |b: bool| if b { "ok" } else { "WRONG" };
+    println!(
+        "os={} lead_default={} builder_refused={} own_report={} gate={} merge_ready={} result={result}",
+        std::env::consts::OS,
+        ok(default_ok),
+        ok(refused_ok),
+        ok(report_ok),
+        ok(gate_ok),
+        ok(ready_ok),
+    );
+    if !pass {
+        println!("{details}");
+    }
+    pty::step_summary(&format!(
+        "### Squads, solo-loop ({})\n\n| check | result | expected |\n|---|---|---|\n| the lead's briefing | {} | builds each piece itself (FR-001) |\n| a builder without delegated work | {} | refused with the reason (FR-003) |\n| the lead reports its own piece | {} | done with evidence |\n| the final gate on the lead's commit | {} | pass |\n| the merge | {} | ready on work:done and review:approved |\n\n**{result}**\n",
+        std::env::consts::OS,
+        ok(default_ok),
+        ok(refused_ok),
+        ok(report_ok),
+        ok(gate_ok),
         ok(ready_ok),
     ));
     Ok(if pass { 0 } else { 1 })

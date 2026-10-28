@@ -42,6 +42,8 @@
 //! - `start-role <role> <profile> <project> <first task…>`: `session_start` with a role (004).
 //! - `print <text>`
 //! - `exit`: the agent quits at once, as a session closed mid-work (004 FR-041, FR-042).
+//! - `report-own <file…>`: reports each of its own tasks in progress done with evidence at
+//!   `HEAD` (the lead's own pieces of work, 005).
 //!
 //! After the script it prints `script done` and echoes every typed line as `got <line>`.
 
@@ -397,6 +399,35 @@ pub fn run(args: &[String]) -> ! {
                     a["part"] = json!(t);
                 }
                 record(c.call("review_verdict", a), &mut last, n, &out);
+            }
+            ("report-own", Some((c, _))) => {
+                let head = std::process::Command::new("git")
+                    .args(["rev-parse", "HEAD"])
+                    .output()
+                    .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+                    .unwrap_or_default();
+                let files: Vec<&str> = rest.split_whitespace().collect();
+                let mine = c
+                    .call("task_list", json!({"mine": true}))
+                    .unwrap_or(Value::Null);
+                let mut reported = Vec::new();
+                for t in mine["tasks"].as_array().into_iter().flatten() {
+                    if t["state"] == "in progress" {
+                        let a = json!({
+                            "task": t["id"],
+                            "outcome": "done",
+                            "note": "done by mcp-agent",
+                            "evidence": {
+                                "commit": head,
+                                "commands": [{"command": "scripted", "result": "ok"}],
+                                "files": files,
+                            }
+                        });
+                        record(c.call("task_report", a), &mut last, n, &out);
+                        reported.push(t["id"].to_string());
+                    }
+                }
+                out(&format!("reported own tasks: {}", reported.join(" ")));
             }
             ("report-evidence", Some((c, _))) => {
                 let mut p = rest.split_whitespace();

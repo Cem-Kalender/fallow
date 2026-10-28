@@ -90,8 +90,39 @@ pub struct Burst {
     pub focus: HashMap<u32, String>,
     /// What the burst is for: a recorded run's fixed description (005 R-13).
     pub description: Option<String>,
+    /// The lead's commit the manifest was last read at, and the files tracked there.
+    pub manifest_seen: Option<String>,
+    pub manifest_files: Vec<String>,
+    /// What each builder session is for: a piece of work and its part (005 R-2).
+    pub assigned: HashMap<u32, super::delegation::Assignment>,
+    /// The latest refused builder starts, for the Squad tab (005 FR-007).
+    pub refused: Vec<String>,
+    /// Components switched off for a recorded run (005 FR-017).
+    pub switched_off: BTreeSet<&'static str>,
     pub(crate) warned: bool,
 }
+
+/// Components a recorded run can switch off (005 FR-017, research R-17).
+pub const OFF_REVIEWER: &str = "reviewer";
+pub const OFF_GATES: &str = "gates";
+pub const OFF_CONTRACTS: &str = "contracts";
+pub const OFF_PLAN_COMMIT: &str = "plan_commit_check";
+pub const OFF_CRITERIA: &str = "criteria_precondition";
+pub const OFF_OWNERSHIP: &str = "ownership_check";
+pub const OFF_VERDICT: &str = "verdict_check";
+pub const OFF_LEAD_UPDATES: &str = "lead_updates";
+pub const OFF_PARALLEL: &str = "parallel_builders";
+pub const COMPONENTS: &[&str] = &[
+    OFF_REVIEWER,
+    OFF_GATES,
+    OFF_CONTRACTS,
+    OFF_PLAN_COMMIT,
+    OFF_CRITERIA,
+    OFF_OWNERSHIP,
+    OFF_VERDICT,
+    OFF_LEAD_UPDATES,
+    OFF_PARALLEL,
+];
 
 pub const DEFAULT_ALLOWANCE: u8 = 3;
 const WARN_BEFORE: Duration = Duration::from_secs(600);
@@ -188,6 +219,11 @@ impl Hub {
             manifest: None,
             focus: HashMap::new(),
             description: None,
+            manifest_seen: None,
+            manifest_files: Vec::new(),
+            assigned: HashMap::new(),
+            refused: Vec::new(),
+            switched_off: BTreeSet::new(),
             warned: false,
         };
         // A squad whose merge needs more sessions than the burst may start (004 run 3).
@@ -201,7 +237,10 @@ impl Hub {
         }
         let note = super::briefing::common_note(&burst);
         let project_name = burst.project_name.clone();
+        let project = burst.project;
         self.bursts.push(burst);
+        // The lead builds the work until a manifest delegates a piece (005 FR-001).
+        self.apply_manifest(project, None);
         // Sessions that connected before the burst got no briefing with their connection: tell
         // them, as the engineer's own action (R-3).
         let connected: Vec<u32> = sessions

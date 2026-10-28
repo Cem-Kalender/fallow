@@ -950,6 +950,9 @@ pub fn squad_lines(state: &AppState, v: &OrchView) -> Vec<Line<'static>> {
             style,
         ));
     }
+    if b.squad.adaptive() {
+        lines.extend(work_lines(state, b));
+    }
     // Repair loops follow the sessions in the selection (r / t / Delete decide stopped ones).
     let n = squad_sessions(state).len();
     if !b.repairs.is_empty() {
@@ -1020,6 +1023,89 @@ pub fn squad_lines(state: &AppState, v: &OrchView) -> Vec<Line<'static>> {
             format!("  {verdict}"),
             if r.ready { bold } else { dim },
         ));
+    }
+    lines
+}
+
+/// The Work section (005 FR-007): each piece of work, how it is built and why, who builds it
+/// and its state; refused starts with their reason.
+fn work_lines(state: &AppState, b: &crate::orchestration::burst::Burst) -> Vec<Line<'static>> {
+    use crate::orchestration::tasks::State;
+    let dim = Style::default().add_modifier(Modifier::DIM);
+    let bold = Style::default().add_modifier(Modifier::BOLD);
+    let mut lines = vec![Line::raw("")];
+    let tasks = state.hub.as_ref().map(|h| &h.tasks.list);
+    let state_of = |work: &str| -> String {
+        let mine: Vec<&crate::orchestration::tasks::Task> = tasks
+            .into_iter()
+            .flatten()
+            .filter(|t| {
+                t.created_at >= b.started
+                    && t.work.as_deref() == Some(work)
+                    && !matches!(t.state, State::Cancelled(_))
+            })
+            .collect();
+        if mine.is_empty() {
+            "not started".into()
+        } else if mine.iter().all(|t| t.state == State::Done) {
+            "done".into()
+        } else {
+            let open = mine.iter().filter(|t| t.state != State::Done).count();
+            format!("{open} open task(s)")
+        }
+    };
+    let builders = |work: &str| -> String {
+        let mut ids: Vec<String> = b
+            .assigned
+            .iter()
+            .filter(|(_, (w, _))| w == work)
+            .map(|(id, (_, p))| match p {
+                Some(p) => format!("#{id} {p}"),
+                None => format!("#{id}"),
+            })
+            .collect();
+        ids.sort();
+        if ids.is_empty() {
+            String::new()
+        } else {
+            format!(" · {}", ids.join(", "))
+        }
+    };
+    match &b.manifest {
+        None => {
+            lines.push(Line::styled(
+                "Work: no .fallow/work.toml at the lead's commit: the lead builds everything",
+                bold,
+            ));
+            lines.push(Line::raw(format!(
+                "  the work      lead      {}",
+                state_of(crate::orchestration::manifest::BURST_WORK)
+            )));
+        }
+        Some(m) => {
+            lines.push(Line::styled(
+                format!(
+                    "Work (manifest at {})",
+                    m.commit.as_deref().map_or("?", |c| &c[..c.len().min(10)])
+                ),
+                bold,
+            ));
+            for w in &m.work {
+                lines.push(Line::raw(format!(
+                    "  {:<12} {:<9} {}{}",
+                    w.id,
+                    w.build.label(),
+                    state_of(&w.id),
+                    builders(&w.id)
+                )));
+                if let Some(r) = &w.reason {
+                    lines.push(Line::styled(format!("      why: {r}"), dim));
+                }
+            }
+        }
+    }
+    for r in b.refused.iter().rev().take(3) {
+        lines.push(Line::styled(format!("  refused: {r}"), dim));
     }
     lines
 }
