@@ -152,25 +152,29 @@ committed, which is exactly the repository-carried state the spec asks for.
 
 **Decision**: only in recorded runs, Fallow gives Claude Code sessions a status line through the
 session's settings on its command line: `--settings` with a `statusLine` command that runs `fallow
-usage-report <token>`. Claude Code runs it after each response with JSON on standard input;
-`usage-report` sends `cost.total_cost_usd`, `model.id` and `version` to Fallow and prints a short line.
-- Every run session, plain ones included, gets a usage-only link: a token and the local channel
-  without MCP tools (session/mod.rs `orchestrate()` gains this mode), so plain runs report too.
+usage-report`. Claude Code runs it after each response with its session JSON on standard input;
+`usage-report` prints one short marker line, `fallow-usage cost=<usd> model=<id> version=<v>`, which
+Claude Code shows at the bottom of its screen. Fallow reads the latest marker from the session's
+screen in memory, as it reads permission prompts (FR-035 of 004).
+- No connection, token, file or transcript is involved, so plain sessions need no link to Fallow.
+  (Implementation note: the first design sent the report over the session's local channel, but a
+  second hello for a session replaces its MCP connection, which would have cut the lead off.)
+- The model is kept only when it looks like a provider's model id and the version only when it
+  starts with a digit, so a custom alias or text never reaches a record (the marker test).
 - The command path is written with forward slashes and quoted, since Claude Code runs status line
   commands through Git Bash on Windows (Verify item).
-- `--settings` is placed before 003's list flags; if the profile passes its own `--settings`, Fallow
-  adds none and cost is unknown for that session.
-- It replaces the engineer's own status line in run sessions only; bursts outside runs are untouched.
+- `--settings` is added only when the profile passes none; otherwise cost is unknown for that
+  session. It replaces the engineer's own status line in run sessions only.
 - Cumulative tokens: the status line's `context_window` totals describe the current context, not the
   session's use, so tokens are recorded as unknown (FR-015); cost is Claude Code's own estimate.
-- Codex and Gemini: unknown until a documented report exists (Verify item). No transcripts or network
-  data are read.
+- An agent could print a fake marker; the figure is the agent's report either way.
+- Codex and Gemini: unknown until a documented report exists (Verify item).
 
-**Rationale**: the agent's own report, over Fallow's local channel (Principle VII), with no new
-dependency, limited to runs where it is needed.
+**Rationale**: the agent's own report, read where Fallow already reads session output (in memory,
+Principle VII), with no new dependency and no change to the channel.
 
-**Alternatives**: reading transcripts (forbidden); OpenTelemetry export (needs a network listener);
-estimates (FR-015 forbids them).
+**Alternatives**: the local channel (replaces the session's MCP connection); reading transcripts
+(forbidden); OpenTelemetry export (needs a network listener); estimates (FR-015 forbids them).
 
 ## R-11 The task set, run copies and hidden tests
 

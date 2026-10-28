@@ -96,6 +96,14 @@ pub enum PromptKind {
     ),
     /// 004: extend a project's burst by a new duration (at most 8 h).
     ExtendBurst(crate::projects::ProjectId),
+    /// 005: register a task set folder.
+    RegisterTaskSet,
+    /// 005: `<task> <plain|solo|squad> [off=a,b] [agent=id] [norecord]`.
+    StartRun,
+    /// 005: `[tasks=a,b|all] [modes=plain,solo,squad] [repeats=3] [off=a,b]`.
+    StartSeries,
+    /// 005: the memory budget in MB (0: automatic).
+    MemoryBudget,
 }
 
 impl PromptKind {
@@ -114,6 +122,14 @@ impl PromptKind {
                 "Signal an event: type its name (and an optional message), then Enter"
             }
             PromptKind::EditDelivery(..) => "Text to deliver (Enter approves)",
+            PromptKind::RegisterTaskSet => "Register a task set (folder with taskset.toml)",
+            PromptKind::StartRun => {
+                "Start a run: <task> <plain|solo|squad> [off=reviewer,gates,…] [agent=claude] [norecord]"
+            }
+            PromptKind::StartSeries => {
+                "Start a series: [tasks=a,b|all] [modes=plain,solo,squad] [repeats=3] [off=…]"
+            }
+            PromptKind::MemoryBudget => "Memory budget for sessions in MB (0: automatic)",
             PromptKind::ExtendBurst(_) => {
                 "Coordinate for another (30m, 2h, 4h30m; at most 8h from now)"
             }
@@ -152,6 +168,14 @@ pub enum Pending {
         project: crate::projects::ProjectId,
         commit: String,
     },
+    /// 005 FR-013: close a finished run's sessions (named in the dialog) and run its hidden
+    /// tests.
+    EndRun {
+        run: u64,
+        sessions: Vec<u32>,
+    },
+    /// 005: delete a run record.
+    DeleteRecord(u32),
 }
 
 const DOUBLE_CLICK: Duration = Duration::from_millis(400);
@@ -480,6 +504,44 @@ impl AppState {
                 self.overlay = Overlay::Orch(view.clone());
                 Ok(())
             }
+            PromptKind::RegisterTaskSet => {
+                let r = self.register_task_set(std::path::Path::new(text.trim()));
+                super::diag::mark("run_register", u64::from(r.is_ok()));
+                let msg = r?;
+                self.say(msg);
+                Ok(())
+            }
+            PromptKind::StartRun => {
+                let r = super::runs::parse_run_line(text, self.task_sets())
+                    .and_then(|plan| self.start_run(plan));
+                super::diag::mark("run_start", r.as_ref().map_or(0, |id| *id));
+                r.map(|_| ())
+            }
+            PromptKind::StartSeries => {
+                let (set, tasks, modes, repeats, off) =
+                    super::runs::parse_series_line(text, self.task_sets())?;
+                let n = self.start_series(set, tasks, modes, repeats, off)?;
+                self.say(format!(
+                    "Series of {n} runs started, one at a time in a shuffled order"
+                ));
+                Ok(())
+            }
+            PromptKind::MemoryBudget => {
+                let mb: u64 = text
+                    .trim()
+                    .parse()
+                    .map_err(|_| "a number of MB, 0 for automatic".to_string())?;
+                self.orch_settings.memory_budget_mb = mb;
+                if let Some(h) = self.hub.as_mut() {
+                    h.settings.memory_budget_mb = mb;
+                }
+                self.say(if mb == 0 {
+                    "Memory budget: automatic".to_string()
+                } else {
+                    format!("Memory budget: {mb} MB")
+                });
+                Ok(())
+            }
             PromptKind::ExtendBurst(project) => {
                 let d = crate::cli::duration(text.trim())
                     .map_err(|e| e.replace("--coordinate: ", ""))?;
@@ -662,6 +724,16 @@ impl AppState {
                     }
                     Pending::CloseBuffer(i) => self.editor.close(i),
                     Pending::Merge { project, commit } => self.merge_now(project, &commit),
+                    Pending::EndRun { run, sessions } => self.close_run(run, &sessions, token),
+                    Pending::DeleteRecord(n) => {
+                        match crate::config::cache_root()
+                            .ok_or_else(|| "no cache folder".to_string())
+                            .and_then(|c| crate::orchestration::record::delete(&c, n))
+                        {
+                            Ok(()) => self.say(format!("Deleted run record {n}")),
+                            Err(e) => self.say(e),
+                        }
+                    }
                     Pending::RemoveProject(id) => self.remove_project(id),
                     Pending::Delete(path) => match fileops::delete(&path, token) {
                         Ok(()) => {

@@ -8,6 +8,7 @@ pub mod events;
 pub mod keymap;
 pub mod orchestration;
 pub mod project_list;
+pub mod runs;
 pub mod state;
 pub mod workspace;
 

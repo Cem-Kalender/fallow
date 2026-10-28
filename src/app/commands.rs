@@ -612,6 +612,18 @@ pub const COMMANDS: &[Command] = &[
         Global,
         "",
     )),
+    // 005: runs and comparisons (contracts/ui-commands.md).
+    on(cmd("runs.register", "Register a task set…", Global, "")),
+    on(cmd("runs.start", "Start a run…", Global, "")),
+    on(cmd("runs.series", "Start a series…", Global, "")),
+    on(cmd("runs.end", "End the run", Global, "")),
+    on(cmd("runs.open", "Open runs", Global, "")),
+    on(cmd(
+        "orch.memory_budget",
+        "Set the memory budget…",
+        Global,
+        "",
+    )),
     on(cmd(
         "squad.create",
         "Create squad file (.fallow/squad.toml) for this project",

@@ -202,6 +202,8 @@ pub struct AppState {
     /// 004: bursts and gate runs started in this run (`--bench-stats`).
     pub bursts_started: u64,
     pub gates_started: u64,
+    /// 005: recorded runs and series.
+    pub runs: super::runs::Runs,
 }
 
 impl AppState {
@@ -258,6 +260,7 @@ impl AppState {
             ro_checks: Default::default(),
             bursts_started: 0,
             gates_started: 0,
+            runs: Default::default(),
         }
     }
 

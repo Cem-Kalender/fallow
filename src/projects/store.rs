@@ -186,7 +186,7 @@ fn quote(s: &str) -> String {
 pub fn render(list: &ProjectList) -> String {
     let mut out = String::from(HEADER);
     let written: Vec<usize> = (0..list.projects.len())
-        .filter(|&i| list.projects[i].path.to_str().is_some())
+        .filter(|&i| list.projects[i].path.to_str().is_some() && !list.projects[i].temporary)
         .collect();
     if let Some(sel) = list.selected {
         if let Some(i) = written.iter().position(|&w| w == sel) {

@@ -139,6 +139,11 @@ pub fn cache_dir_for(
     }
 }
 
+/// `<platform cache dir>/fallow/`: Fallow's cache folder (005: run records and run copies).
+pub fn cache_root() -> Option<PathBuf> {
+    run_dir().and_then(|d| d.parent().map(Path::to_path_buf))
+}
+
 /// `<platform cache dir>/fallow/run/`: the orchestration channel and per-run agent files live
 /// here while Fallow runs (003 research R-2).
 pub fn run_dir() -> Option<PathBuf> {

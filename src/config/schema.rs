@@ -42,6 +42,12 @@ pub struct OrchestrationSettings {
     pub rate_per_min: u64,
     pub board_messages: u64,
     pub activity_entries: u64,
+    /// 005: registered task set folders (FR-011).
+    pub task_sets: Vec<String>,
+    /// 005: memory for sessions in MB (FR-037); 0: 75% of total memory minus Fallow's own.
+    pub memory_budget_mb: u64,
+    /// 005: the expected size of a session not measured yet, in MB (research R-14).
+    pub session_size_mb: u64,
 }
 
 impl Default for OrchestrationSettings {
@@ -55,6 +61,9 @@ impl Default for OrchestrationSettings {
             rate_per_min: 30,
             board_messages: 1000,
             activity_entries: 5000,
+            task_sets: Vec::new(),
+            memory_budget_mb: 0,
+            session_size_mb: 700,
         }
     }
 }
@@ -266,6 +275,9 @@ struct RawOrchestration {
     rate_per_min: Option<Spanned<i64>>,
     board_messages: Option<Spanned<i64>>,
     activity_entries: Option<Spanned<i64>>,
+    task_sets: Option<Vec<String>>,
+    memory_budget_mb: Option<Spanned<i64>>,
+    session_size_mb: Option<Spanned<i64>>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -403,6 +415,9 @@ pub(crate) const SETTINGS_SHAPE: Shape = Shape::Table(&[
             ("rate_per_min", Shape::Leaf),
             ("board_messages", Shape::Leaf),
             ("activity_entries", Shape::Leaf),
+            ("task_sets", Shape::Leaf),
+            ("memory_budget_mb", Shape::Leaf),
+            ("session_size_mb", Shape::Leaf),
         ]),
     ),
 ]);
@@ -550,6 +565,23 @@ pub(crate) fn apply_settings(base: &mut Settings, raw: RawSettings) -> Vec<Inval
             5000,
             "500..=5000",
             &mut b.activity_entries,
+        );
+        if let Some(t) = o.task_sets {
+            b.task_sets = t;
+        }
+        int(
+            o.memory_budget_mb,
+            0,
+            1_048_576,
+            "0..=1048576 (0: automatic)",
+            &mut b.memory_budget_mb,
+        );
+        int(
+            o.session_size_mb,
+            50,
+            16_384,
+            "50..=16384",
+            &mut b.session_size_mb,
         );
     }
     if let Some(sx) = raw.sessions {

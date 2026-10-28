@@ -67,6 +67,9 @@ pub enum Action {
     Version,
     /// `fallow mcp-bridge …`: the stdio MCP server agents start (003). Internal.
     Bridge(Vec<OsString>),
+    /// `fallow usage-report`: a recorded run's status line command (005 research R-10).
+    /// Internal.
+    UsageReport,
 }
 
 /// Parses the arguments after the program name. `Err` carries a one-line message; the caller
@@ -85,6 +88,9 @@ where
             .is_none_or(|a| a.to_string_lossy().starts_with("--"))
     {
         return Ok(Action::Bridge(all[1..].to_vec()));
+    }
+    if all.len() == 1 && all[0] == "usage-report" {
+        return Ok(Action::UsageReport);
     }
     let mut args = all.into_iter();
     let mut only_positional = false;

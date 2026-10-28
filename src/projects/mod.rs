@@ -18,6 +18,8 @@ pub struct ProjectEntry {
     pub present: bool,
     /// The editor view's lazy tree, created on first use.
     pub editor: Option<EditorProject>,
+    /// 005: a run's own copy of a project, listed while the run lasts and never saved.
+    pub temporary: bool,
 }
 
 impl ProjectEntry {
@@ -124,12 +126,27 @@ impl ProjectList {
             name,
             present,
             editor: None,
+            temporary: false,
         });
         let i = self.projects.len() - 1;
         if select || self.selected.is_none() {
             self.selected = Some(i);
         }
         i
+    }
+
+    /// Adds a run's copy as a temporary entry (005 R-11): listed, never saved, not selected.
+    pub fn push_temporary(&mut self, path: PathBuf, name: &str) -> ProjectId {
+        let i = self.push(path, Some(name.to_string()), false);
+        self.projects[i].temporary = true;
+        self.projects[i].id
+    }
+
+    /// Removes a temporary entry by id; others stay.
+    pub fn remove_temporary(&mut self, id: ProjectId) {
+        if let Some(i) = self.projects.iter().position(|p| p.id == id && p.temporary) {
+            self.remove(i);
+        }
     }
 
     /// Removes an entry from the list. The folder is never touched.

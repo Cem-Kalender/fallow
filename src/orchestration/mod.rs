@@ -334,6 +334,10 @@ pub struct Hub {
     pub pending_repairs: Vec<(ProjectId, Option<String>, String)>,
     /// Reports to type into the sessions that created the tasks (004): session, text.
     pub pending_reports: Vec<(u32, String)>,
+    /// Builders' signals to the lead (005 R-4).
+    pub signals: signals::Signals,
+    /// Starts waiting for memory (005 FR-038): start request id, shortfall in MB.
+    pub memory_waits: Vec<(u64, u64)>,
     next_start: u64,
 }
 
@@ -432,6 +436,8 @@ impl Hub {
             end_gates: Vec::new(),
             pending_repairs: Vec::new(),
             pending_reports: Vec::new(),
+            signals: Default::default(),
+            memory_waits: Vec::new(),
             next_start: 0,
             settings,
             channel: None,

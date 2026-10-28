@@ -792,6 +792,30 @@ impl AppState {
                 return Some(true);
             }
             "orch.coordinate" => return Some(self.open_burst()),
+            "runs.register" | "runs.start" | "runs.series" | "orch.memory_budget" => {
+                use super::editing::PromptKind;
+                let kind = match id {
+                    "runs.register" => PromptKind::RegisterTaskSet,
+                    "runs.start" => PromptKind::StartRun,
+                    "runs.series" => PromptKind::StartSeries,
+                    _ => PromptKind::MemoryBudget,
+                };
+                self.overlay = Overlay::Prompt {
+                    kind,
+                    input: LineInput::default(),
+                    error: None,
+                };
+                return Some(true);
+            }
+            "runs.end" => return Some(self.end_run_now()),
+            "runs.open" => {
+                self.discard_leftover_copies();
+                self.overlay = Overlay::Orch(OrchView {
+                    tab: Tab::Runs,
+                    ..OrchView::default()
+                });
+                return Some(true);
+            }
             "squad.create" => return Some(self.create_squad_file()),
             "orch.end" => {
                 let project = self
@@ -873,6 +897,8 @@ impl AppState {
                 if v.tab == Tab::Requests =>
             {
                 let (sel, view) = (v.selected, v.clone());
+                // A decision during a run is an intervention (005 FR-014).
+                self.note_intervention(None);
                 let ids = crate::ui::orchestration::requests_shown(self);
                 let Some(&r) = ids.get(sel.min(ids.len().saturating_sub(1))) else {
                     return Some(false);
@@ -967,6 +993,27 @@ impl AppState {
                 }
             }
             "orch.grant_new" => return Some(self.open_grant(None)),
+            "orch.delete" if v.tab == Tab::Runs => {
+                // 005: delete a record, confirmed.
+                let records = crate::config::cache_root()
+                    .map(|c| crate::orchestration::record::list(&c))
+                    .unwrap_or_default();
+                if let Some((n, _)) = records.get(v.selected) {
+                    let n = *n;
+                    let view = v.clone();
+                    let d = crate::ui::confirm::Dialog::new(
+                        "Delete a run record",
+                        &format!("delete run record {n}"),
+                        vec![format!("Run record {n} is deleted from Fallow's cache.")],
+                        "Delete",
+                    );
+                    self.overlay = Overlay::Confirm {
+                        dialog: d,
+                        action: super::editing::Pending::DeleteRecord(n),
+                    };
+                    let _ = view;
+                }
+            }
             "orch.repair_again" | "orch.take_over" | "orch.delete" if v.tab == Tab::Squad => {
                 use crate::orchestration::repair::Decision;
                 let sel = v.selected;

@@ -179,6 +179,10 @@ impl AppState {
             crate::session::attention::on_input(s, Instant::now());
             s.last_key = Some(Instant::now());
             s.write(&bytes);
+            // A line the engineer sends into a run's session is an intervention (005 FR-014).
+            if key.code == crossterm::event::KeyCode::Enter && self.in_run(id) {
+                self.note_intervention(Some(id));
+            }
         }
         false
     }
@@ -1078,6 +1082,8 @@ impl AppState {
         if let Some(hub) = self.hub.as_mut() {
             hub.session_ended(id);
         }
+        // A hidden test's exit code is its outcome (005 FR-013).
+        self.run_session_exited(id, code.map(|c| c as i32));
         if let Some(pid) = self.sessions.exited(id, code) {
             if let Some(tx) = &self.requests {
                 let _ = tx.send(crate::procmon::worker::Request::Untrack { pid });

@@ -26,6 +26,7 @@ fn main() -> ExitCode {
                 }
             };
         }
+        Ok(cli::Action::UsageReport) => return fallow::orchestration::usage::run_report(),
         Ok(cli::Action::Version) => {
             println!("fallow {}", env!("CARGO_PKG_VERSION"));
             return ExitCode::SUCCESS;

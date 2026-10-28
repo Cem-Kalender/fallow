@@ -114,6 +114,7 @@ pub fn run(
         dirty |= state.tick_sessions();
         dirty |= state.tick();
         dirty |= state.tick_hub();
+        dirty |= state.tick_runs();
     }
     super::diag::flush();
     Ok(())

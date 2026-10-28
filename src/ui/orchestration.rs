@@ -23,16 +23,19 @@ pub enum Tab {
     Queue,
     Permissions,
     Activity,
+    /// 005: recorded runs compared side by side.
+    Runs,
 }
 
 impl Tab {
-    pub const ALL: [Tab; 6] = [
+    pub const ALL: [Tab; 7] = [
         Tab::Squad,
         Tab::Requests,
         Tab::Board,
         Tab::Queue,
         Tab::Permissions,
         Tab::Activity,
+        Tab::Runs,
     ];
 
     pub fn title(self) -> &'static str {
@@ -43,6 +46,7 @@ impl Tab {
             Tab::Queue => "Queue",
             Tab::Permissions => "Permissions",
             Tab::Activity => "Activity",
+            Tab::Runs => "Runs",
         }
     }
 
@@ -649,6 +653,7 @@ pub fn draw(f: &mut Frame<'_>, area: Rect, state: &AppState, v: &OrchView) {
         Tab::Board => board_lines(state, v, body.width as usize),
         Tab::Activity => activity_lines(state, v),
         Tab::Squad => squad_lines(state, v),
+        Tab::Runs => runs_lines(state, v),
         Tab::Requests => requests_lines(state, v, body.width as usize),
         Tab::Queue => queue_lines(state, v, body.width as usize),
         Tab::Permissions => permissions_lines(state, v),
@@ -1106,6 +1111,111 @@ fn work_lines(state: &AppState, b: &crate::orchestration::burst::Burst) -> Vec<L
     }
     for r in b.refused.iter().rev().take(3) {
         lines.push(Line::styled(format!("  refused: {r}"), dim));
+    }
+    lines
+}
+
+/// The Runs tab (005 FR-019): the run in progress, then recorded runs grouped by task and mode.
+pub fn runs_lines(state: &AppState, v: &OrchView) -> Vec<Line<'static>> {
+    use crate::orchestration::record;
+    let dim = Style::default().add_modifier(Modifier::DIM);
+    let bold = Style::default().add_modifier(Modifier::BOLD);
+    let sel = Style::default().add_modifier(Modifier::REVERSED);
+    let mut lines = Vec::new();
+    if let Some(r) = state.runs.run.as_ref().filter(|r| r.in_progress()) {
+        lines.push(Line::styled(
+            format!(
+                "Run {} in progress: {} as {} · {:?}",
+                r.id,
+                r.task.name,
+                r.plan.mode.label(),
+                r.stage
+            ),
+            bold,
+        ));
+    }
+    if let Some(s) = &state.runs.series {
+        lines.push(Line::raw(format!(
+            "Series: {} done, {} to go",
+            s.done,
+            s.queue.len()
+        )));
+    }
+    let cache = crate::config::cache_root();
+    let records = cache.as_deref().map(record::list).unwrap_or_default();
+    let (n, size) = cache.as_deref().map_or((0, 0), record::usage);
+    lines.push(Line::styled(
+        format!(
+            "Recorded runs: {n} ({:.1} KB) · Enter details · Delete deletes a record · palette: Start a run… / Start a series…",
+            size as f64 / 1024.0
+        ),
+        dim,
+    ));
+    lines.push(Line::raw(""));
+    // Task names by fingerprint, from the registered task sets (never stored in records).
+    let names: Vec<(String, String)> = state
+        .runs
+        .sets
+        .iter()
+        .flat_map(|s| s.tasks.iter())
+        .filter_map(|t| {
+            crate::orchestration::runs::task_fingerprint(t)
+                .ok()
+                .map(|f| (f, t.name.clone()))
+        })
+        .collect();
+    let name = |fp: &str| {
+        names.iter().find(|(f, _)| f == fp).map_or_else(
+            || format!("task {}", &fp[..fp.len().min(8)]),
+            |(_, n)| n.clone(),
+        )
+    };
+    lines.push(Line::styled(
+        format!(
+            "{:<20} {:<6} {:>4} {:>7} {:>9} {:>11} {:>7} {:>10}",
+            "task", "mode", "runs", "passed", "median", "spread", "interv.", "cost/pass"
+        ),
+        bold,
+    ));
+    for g in record::groups(&records) {
+        lines.push(Line::raw(format!(
+            "{:<20} {:<6} {:>4} {:>7} {:>8}s {:>5}-{:<5} {:>7} {:>10}",
+            name(&g.task_fp),
+            g.mode,
+            g.runs,
+            format!("{}/{}", g.passing, g.runs),
+            g.median_s,
+            g.min_s,
+            g.max_s,
+            g.interventions,
+            g.cost_per_pass
+                .map_or("unknown".to_string(), |c| format!("${c:.2}")),
+        )));
+    }
+    lines.push(Line::raw(""));
+    lines.push(Line::styled("Records", bold));
+    for (i, (n, r)) in records.iter().enumerate() {
+        lines.push(Line::styled(
+            format!(
+                "  #{n:<4} {:<20} {:<6} {:>5}s  hidden {}/{}  sessions {}{}",
+                name(&r.fingerprints.task),
+                r.mode,
+                r.duration_s,
+                r.hidden.passed,
+                r.hidden.passed + r.hidden.failed,
+                r.sessions.len(),
+                if r.switched_off.is_empty() {
+                    String::new()
+                } else {
+                    format!("  off: {}", r.switched_off.join(","))
+                }
+            ),
+            if i == v.selected {
+                sel
+            } else {
+                Style::default()
+            },
+        ));
     }
     lines
 }

@@ -42,6 +42,7 @@ const BACKTAB: &[u8] = b"\x1b[Z";
 
 pub fn run(args: &[String]) -> i32 {
     let mut bin = pty::default_binary();
+    let mut only: Option<String> = None;
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
@@ -49,6 +50,13 @@ pub fn run(args: &[String]) -> i32 {
                 Some(b) => bin = PathBuf::from(b),
                 None => {
                     eprintln!("--bin needs a value");
+                    return 2;
+                }
+            },
+            "--only" => match it.next() {
+                Some(n) => only = Some(n.clone()),
+                None => {
+                    eprintln!("--only needs a scenario name");
                     return 2;
                 }
             },
@@ -63,7 +71,11 @@ pub fn run(args: &[String]) -> i32 {
         ("squad", run_all as fn(&Path, &Path) -> Result<i32, String>),
         ("exits", run_exits),
         ("solo-loop", run_solo_loop),
+        ("runs", run_runs),
     ] {
+        if only.as_deref().is_some_and(|o| o != name) {
+            continue;
+        }
         let base = std::env::temp_dir().join(format!("fallow-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&base);
         let result = run(&bin, &base);
@@ -727,6 +739,215 @@ fn run_solo_loop(bin: &Path, base: &Path) -> Result<i32, String> {
         ok(report_ok),
         ok(gate_ok),
         ok(ready_ok),
+    ));
+    Ok(if pass { 0 } else { 1 })
+}
+
+/// The `runs` run's squad (005): the built-in roles and merge, a one-minute idle end.
+const SQUAD_RUNS: &str = r#"name = "runs"
+run_idle_end_min = 1
+[merge]
+requires = ["work:done", "review:approved"]
+"#;
+
+/// 005 T029: a recorded plain run and a recorded solo run of one task, each in its own copy,
+/// scored by two hidden tests (one passes, one fails), with records holding no names.
+fn run_runs(bin: &Path, base: &Path) -> Result<i32, String> {
+    let config = base.join("config");
+    let project = base.join("project");
+    let tasks = base.join("tasks");
+    let cache = base.join("cache");
+    for d in [&config, &project, &tasks, &cache] {
+        std::fs::create_dir_all(d).map_err(|e| format!("{}: {e}", d.display()))?;
+    }
+    make_project(&project, SQUAD_RUNS)?;
+    let start = git(&project, &["rev-parse", "HEAD"])?;
+    let refs_before = git(&project, &["for-each-ref"])?;
+    std::fs::create_dir_all(tasks.join("feature/hidden")).map_err(|e| e.to_string())?;
+    std::fs::write(
+        tasks.join("feature/description.md"),
+        "zz-run-task: add a file named feature.txt.\n",
+    )
+    .map_err(|e| e.to_string())?;
+    std::fs::write(tasks.join("feature/hidden/check.txt"), "hidden\n")
+        .map_err(|e| e.to_string())?;
+    let pass_sh = "test -f feature.txt && test -f hidden_check.txt";
+    let pass_ps =
+        "if ((Test-Path feature.txt) -and (Test-Path hidden_check.txt)) { exit 0 } else { exit 1 }";
+    let fail_sh = "test -f nothing.txt";
+    let fail_ps = "if (Test-Path nothing.txt) { exit 0 } else { exit 1 }";
+    let toml_path = project.display().to_string().replace('\\', "/");
+    std::fs::write(
+        tasks.join("taskset.toml"),
+        format!(
+            "[[task]]\nname = \"feature\"\nproject = \"{toml_path}\"\nstart = \"{start}\"\ndescription = \"feature/description.md\"\ntime_limit_min = 10\nhidden = [{{ from = \"feature/hidden/check.txt\", to = \"hidden_check.txt\" }}]\ntests = [\n  {{ command = \"{pass_sh}\", windows = \"{pass_ps}\" }},\n  {{ command = \"{fail_sh}\", windows = \"{fail_ps}\" }},\n]\n"
+        ),
+    )
+    .map_err(|e| e.to_string())?;
+    // The agent: waits for the typed description (and says so in a folder), commits
+    // feature.txt, then idles.
+    let typed_dir = base.join("typed");
+    std::fs::create_dir_all(&typed_dir).map_err(|e| e.to_string())?;
+    write_agents(
+        base,
+        &config,
+        &[(
+            "agent",
+            format!(
+                "until When you are finished\ndone-in {}\ncommit-file feature.txt\nprint zz-agent-done\n",
+                typed_dir.display()
+            ),
+        )],
+    )?;
+    println!(
+        "runs: {} (a plain and a solo run, hidden tests, records)",
+        bin.display()
+    );
+    let cfg = config.display().to_string();
+    let proj = project.display().to_string();
+    let env_key = if cfg!(windows) {
+        "LOCALAPPDATA"
+    } else if cfg!(target_os = "macos") {
+        "HOME"
+    } else {
+        "XDG_CACHE_HOME"
+    };
+    let diag = base.join("diag.log");
+    let mut s = Session::spawn_env(
+        bin,
+        &["--config-dir", &cfg, &proj],
+        &[
+            (env_key, cache.display().to_string()),
+            ("FALLOW_DIAG_LOG", diag.display().to_string()),
+        ],
+        Duration::from_secs(1),
+    )?;
+    let cache_root = if cfg!(target_os = "macos") {
+        cache.join("Library").join("Caches").join("fallow")
+    } else {
+        cache.join("fallow")
+    };
+    let records = cache_root.join("runs").join("v1");
+    let palette = |s: &mut Session, command: &[u8], value: &[u8]| {
+        s.send(CTRL_P);
+        pause(400);
+        s.send(command);
+        pause(400);
+        s.send(b"\r");
+        pause(600);
+        s.send(value);
+        pause(300);
+        s.send(b"\r");
+        pause(600);
+    };
+    let wait_record = |n: u32| {
+        let path = records.join(format!("{n}.json"));
+        let until = Instant::now() + Duration::from_secs(300);
+        while Instant::now() < until {
+            if path.exists() {
+                return std::fs::read_to_string(&path).unwrap_or_default();
+            }
+            std::thread::sleep(Duration::from_millis(500));
+        }
+        String::new()
+    };
+    let flow = (|| -> Result<(String, String), String> {
+        if s.wait_frame(Duration::from_secs(10)).is_none() {
+            return Err("no first frame".into());
+        }
+        palette(
+            &mut s,
+            b"register a task",
+            tasks.display().to_string().as_bytes(),
+        );
+        let mut recs = Vec::new();
+        for (n, mode) in [(1u32, "plain"), (2, "solo")] {
+            palette(
+                &mut s,
+                b"start a run",
+                format!("feature {mode} agent=agent").as_bytes(),
+            );
+            // The agent got the description typed into it.
+            let until = Instant::now() + Duration::from_secs(60);
+            while std::fs::read_dir(&typed_dir).map_or(0, |d| d.count()) < n as usize {
+                if Instant::now() > until {
+                    return Err(format!("the {mode} run's agent never got its description"));
+                }
+                pause(300);
+            }
+            // The run ends after a minute idle and asks once to close its sessions: `y`
+            // confirms (with no dialog open it does nothing here).
+            let path = records.join(format!("{n}.json"));
+            let until = Instant::now() + Duration::from_secs(300);
+            while !path.exists() {
+                if Instant::now() > until {
+                    return Err(format!("no record for the {mode} run"));
+                }
+                s.send(b"y");
+                pause(3000);
+            }
+            pause(500);
+            recs.push(wait_record(n));
+        }
+        Ok((recs.remove(0), recs.remove(0)))
+    })();
+    s.quit_with_sessions();
+    let outcome = s.finish();
+    let mut problems = outcome.problems(None);
+    println!("evidence: {}", outcome.evidence());
+    let (plain, solo) = match flow {
+        Ok(r) => r,
+        Err(e) => {
+            // Timings only (event names and numbers): which run step was reached.
+            let trace = std::fs::read_to_string(&diag).unwrap_or_default();
+            let steps: Vec<&str> = trace.lines().filter(|l| l.contains(" run_")).collect();
+            println!("run steps: {steps:?}");
+            problems.push(e);
+            (String::new(), String::new())
+        }
+    };
+    if !problems.is_empty() {
+        return Err(problems.join("; "));
+    }
+    let v = |t: &str| serde_json::from_str::<serde_json::Value>(t).unwrap_or_default();
+    let (p, q) = (v(&plain), v(&solo));
+    let modes_ok = p["mode"] == "plain" && q["mode"] == "solo";
+    let hidden_ok = [&p, &q]
+        .iter()
+        .all(|r| r["hidden"]["passed"] == 1 && r["hidden"]["failed"] == 1);
+    let same_task = p["fingerprints"] == q["fingerprints"] && p["start_commit"] == start.trim();
+    let no_text = ![&plain, &solo].iter().any(|t| {
+        // The task name, its description, and the user profile's name as an agent value.
+        t.contains("feature") || t.contains("zz-run-task") || t.contains("\"agent\": \"agent\"")
+    });
+    let refs_ok = git(&project, &["for-each-ref"])? == refs_before;
+    let work = cache_root.join("runs").join("work");
+    let copies_ok = std::fs::read_dir(&work).map_or(true, |d| d.count() == 0);
+    let pass = modes_ok && hidden_ok && same_task && no_text && refs_ok && copies_ok;
+    let result = if pass { "PASS" } else { "FAIL" };
+    let ok = |b: bool| if b { "ok" } else { "WRONG" };
+    println!(
+        "os={} modes={} hidden_tests={} same_task={} no_text={} project_untouched={} copies_removed={} result={result}",
+        std::env::consts::OS,
+        ok(modes_ok),
+        ok(hidden_ok),
+        ok(same_task),
+        ok(no_text),
+        ok(refs_ok),
+        ok(copies_ok),
+    );
+    if !pass {
+        println!("plain: {plain}\nsolo: {solo}");
+    }
+    pty::step_summary(&format!(
+        "### Squads, runs ({})\n\n| check | result | expected |\n|---|---|---|\n| a plain and a solo run recorded | {} | records with their mode |\n| hidden tests on what the run left | {} | 1 passed, 1 failed |\n| the same task and start | {} | equal fingerprints |\n| records hold no names or text | {} | none |\n| the project's branches | {} | unchanged (runs use their own copy) |\n| run copies | {} | removed |\n\n**{result}**\n",
+        std::env::consts::OS,
+        ok(modes_ok),
+        ok(hidden_ok),
+        ok(same_task),
+        ok(no_text),
+        ok(refs_ok),
+        ok(copies_ok),
     ));
     Ok(if pass { 0 } else { 1 })
 }

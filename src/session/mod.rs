@@ -148,6 +148,10 @@ pub struct Session {
     pub extra_args: Vec<String>,
     /// The command line of the current run, as started (FR-014); the bridge token is hidden.
     pub command_line: Option<String>,
+    /// 005: started without Fallow's orchestration tools (a plain run's session).
+    pub orch_off: bool,
+    /// 005: started with the usage status line (a recorded run's session, research R-10).
+    pub status_line: bool,
 }
 
 impl Session {
@@ -223,6 +227,8 @@ impl Session {
             role: None,
             extra_args: Vec::new(),
             command_line: None,
+            orch_off: false,
+            status_line: false,
         }
     }
 
@@ -284,6 +290,12 @@ impl Session {
 /// The confirmation subject for stopping session `id`.
 pub fn stop_subject(id: SessionId) -> String {
     format!("stop session #{id}")
+}
+
+/// The confirmation subject for closing a run's sessions (005 FR-013): names each of them.
+pub fn run_subject(run: u64, ids: &[SessionId]) -> String {
+    let list: Vec<String> = ids.iter().map(|i| format!("#{i}")).collect();
+    format!("close run {run}'s sessions {}", list.join(", "))
 }
 
 /// The confirmation subject for force-stopping session `id`.
@@ -399,6 +411,20 @@ impl SessionManager {
         extra_args: Vec<String>,
         events: &Sender<AppEvent>,
     ) -> Result<SessionId, String> {
+        self.start_run_session(req, role, extra_args, false, false, events)
+    }
+
+    /// `start_with` for a run's session (005 R-13): `orch_off` starts it without Fallow's
+    /// orchestration tools (a plain run), `status_line` adds the usage status line (R-10).
+    pub fn start_run_session(
+        &mut self,
+        req: StartRequest,
+        role: Option<String>,
+        extra_args: Vec<String>,
+        orch_off: bool,
+        status_line: bool,
+        events: &Sender<AppEvent>,
+    ) -> Result<SessionId, String> {
         if self.running() >= self.limits.max_sessions {
             return Err(format!(
                 "{} sessions are running, the limit is {} (sessions.max_sessions)",
@@ -440,6 +466,8 @@ impl SessionManager {
             role,
             extra_args,
             command_line: None,
+            orch_off,
+            status_line,
         };
         self.spawn_into(&mut s, req.rows, req.cols, events);
         self.sessions.push(s);
@@ -457,11 +485,28 @@ impl SessionManager {
         };
         let mut args = resolved.prefix_args;
         args.extend(s.profile.args.iter().cloned());
+        // A recorded run's Claude Code session reports its cost on its status line (005 R-10).
+        if s.status_line && s.profile.orchestration == profiles::Style::Claude {
+            let exe = self
+                .bridge
+                .as_ref()
+                .map(|b| b.exe.clone())
+                .or_else(|| std::env::current_exe().ok());
+            if let Some(extra) =
+                exe.and_then(|e| crate::orchestration::usage::status_line_args(&e, &s.profile.args))
+            {
+                args.extend(extra);
+            }
+        }
         args.extend(s.extra_args.iter().cloned());
         let mut env = s.profile.env.clone();
         s.orch.cleanup();
         s.orch.unsupported = None;
-        self.orchestrate(s, &mut args, &mut env);
+        if s.orch_off {
+            s.orch.unsupported = Some("a plain run: no orchestration tools".into());
+        } else {
+            self.orchestrate(s, &mut args, &mut env);
+        }
         if !s.extra_args.is_empty() {
             // A role's tool lists and the per-run ones become one occurrence each (004 T005).
             args = crate::orchestration::roles::merge_list_flags(args);
@@ -694,6 +739,21 @@ impl SessionManager {
         let p = s.pty.as_mut().ok_or("the session is not running")?;
         p.kill();
         Ok(())
+    }
+
+    /// A run's end confirmed (005 FR-013): graceful stop of exactly the sessions the
+    /// confirmation named. One confirmation names every target and the action (constitution IV).
+    pub fn stop_run_confirmed(&mut self, run: u64, ids: &[SessionId], token: ConfirmedToken) {
+        if token.subject() != run_subject(run, ids) {
+            return;
+        }
+        for s in self.sessions.iter_mut().filter(|s| ids.contains(&s.id)) {
+            if let Some(p) = &mut s.pty {
+                p.terminate();
+                s.stop_requested = Some(Instant::now());
+                s.set_state(SessionState::Stopping);
+            }
+        }
     }
 
     /// Quit confirmed: graceful stop of every running session (one confirmation covers all,

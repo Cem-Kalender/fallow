@@ -137,19 +137,19 @@ it.
 
 **Independent Test**: quickstart Q5 with plain and solo.
 
-- [ ] T015 [P] [US2] Write the task set tests in `tests/squad_runs.rs` (contracts/task-set.md):
+- [X] T015 [P] [US2] Write the task set tests in `tests/squad_runs.rs` (contracts/task-set.md):
   - parsing and errors with line numbers;
   - fingerprints of the description and of the hidden tests stable under CRLF/LF (FR-016);
   - the run copy holds only history up to `start`, has the `setup` files, and leaves the engineer's
     repository's refs unchanged (FR-011a).
-- [ ] T016 [US2] Implement task sets in `src/orchestration/runs.rs`:
+- [X] T016 [US2] Implement task sets in `src/orchestration/runs.rs`:
   - parsing and fingerprints;
   - registration in the setting `orchestration.task_sets`, with the hidden-tests notice.
-- [ ] T017 [US2] Implement run copies in `src/orchestration/runs.rs` and `src/session/worktree.rs`:
+- [X] T017 [US2] Implement run copies in `src/orchestration/runs.rs` and `src/session/worktree.rs`:
   - a new repository under the cache, fetching only `start`, with the setup files;
   - worktrees from the copy;
   - removal after the run.
-- [ ] T018 [P] [US2] Write the run lifecycle tests in `tests/squad_runs.rs`:
+- [X] T018 [P] [US2] Write the run lifecycle tests in `tests/squad_runs.rs`:
   - plain: the session starts with the `edit-run` flags and a usage-only link, and has no MCP tools
     (FR-012);
   - the description and the closing line are typed;
@@ -162,31 +162,33 @@ it.
     are recorded;
   - a build failure counts every hidden test as failed;
   - a run in progress at exit is discarded (FR-019a).
-- [ ] T019 [US2] Add the usage-only link (token and channel, no MCP tools) for plain run sessions in
-  `src/session/mod.rs`, and plain starts in `src/app/orchestration.rs`.
-- [ ] T020 [US2] Implement the run lifecycle in `src/orchestration/runs.rs` and
+- [X] T019 [US2] Add run sessions in `src/session/mod.rs` (without orchestration tools for plain runs,
+  with the usage status line for recorded runs; research R-10 reads the report from the screen, so
+  no link is needed), and plain starts in `src/app/runs.rs`.
+- [X] T020 [US2] Implement the run lifecycle in `src/orchestration/runs.rs` and
   `src/app/orchestration.rs`:
   - running → ended → testing → recorded | discarded;
   - the end rule in `tick`;
   - the close confirmation (Principle IV: one dialog naming the sessions and the action);
   - hidden tests as gate sessions in the lead's worktree;
   - solo runs as a burst with the run's settings and an allowance that needs no approval.
-- [ ] T021 [US2] Count interventions in `src/app/orchestration.rs` and `src/app/workspace.rs` (FR-014):
+- [X] T021 [US2] Count interventions in `src/app/orchestration.rs` and `src/app/workspace.rs` (FR-014):
   - each line the engineer sends into a run session;
   - each approval or decision during a run;
   - not the close confirmation.
-- [ ] T022 [P] [US2] Write the usage tests in `tests/squad_runs.rs` (research R-10):
+- [X] T022 [P] [US2] Write the usage tests in `tests/squad_runs.rs` (research R-10):
   - `usage-report` parses `cost.total_cost_usd`, `model.id` and `version` and forwards them;
   - cost and tokens are unknown when missing;
   - `--settings` comes before the list flags;
   - no status line when the profile passes its own `--settings`;
   - the command path uses forward slashes and is quoted;
   - only run sessions get it.
-- [ ] T023 [US2] Implement:
-  - `src/orchestration/usage.rs`;
+- [X] T023 [US2] Implement:
+  - `src/orchestration/usage.rs` (the marker, reading it from the screen, the status line
+    arguments);
   - `fallow usage-report` in `src/cli.rs` and `src/main.rs`;
-  - the status line settings for run sessions in `src/orchestration/inject.rs`.
-- [ ] T024 [P] [US2] Write the record tests in `tests/squad_runs.rs` (contracts/run-record.md):
+  - the status line for run sessions in `src/session/mod.rs`.
+- [X] T024 [P] [US2] Write the record tests in `tests/squad_runs.rs` (contracts/run-record.md):
   - only the listed fields;
   - parts and roles as numbers;
   - fixed outcome values;
@@ -195,18 +197,18 @@ it.
   - **the constitution's marker test**: markers in the task name and description, the part, role and
     focus names, messages, signals, reviews, test names, paths, session output and a custom model
     alias never appear in the record.
-- [ ] T025 [US2] Implement `src/orchestration/record.rs`:
+- [X] T025 [US2] Implement `src/orchestration/record.rs`:
   - collect per part and per role the time working and blocked (FR-014's definition), signals, repair
     rounds, gate and review outcomes, and cost;
   - write the record once the hidden tests finish;
   - list and delete.
-- [ ] T026 [US2] Implement series in `src/orchestration/runs.rs`, with tests in `tests/squad_runs.rs`
+- [X] T026 [US2] Implement series in `src/orchestration/runs.rs`, with tests in `tests/squad_runs.rs`
   (FR-018):
   - a shuffled order seeded from the clock;
   - repeats per task and mode (default 3);
   - one run at a time;
   - waiting at each end for the close confirmation.
-- [ ] T027 [US2] Add the Runs tab and the palette commands in `src/ui/orchestration.rs` and
+- [X] T027 [US2] Add the Runs tab and the palette commands in `src/ui/orchestration.rs` and
   `src/app/orchestration.rs` (contracts/ui-commands.md):
   - commands: Register a task set, Start a run, Start a series, End the run, Open runs;
   - grouping by task fingerprint, durations and mode, showing pass rate, median time, interventions,
@@ -214,9 +216,9 @@ it.
   - a delete confirmation;
   - the count and size of records;
   - task names by fingerprint match.
-- [ ] T028 [US2] Remove the copy of a discarded run lazily, when the Runs tab opens or a run starts,
+- [X] T028 [US2] Remove the copy of a discarded run lazily, when the Runs tab opens or a run starts,
   never at startup (Principle II), in `src/orchestration/runs.rs`.
-- [ ] T029 [US2] Add a `runs` run to `xtask/src/squad.rs` with a tiny task set:
+- [X] T029 [US2] Add a `runs` run to `xtask/src/squad.rs` with a tiny task set:
   - one plain and one solo run, recorded, with two hidden test commands (one passes, one fails);
   - check the records and the counts;
   - check that the project's branches are unchanged and that the copies are removed.

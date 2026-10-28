@@ -121,12 +121,33 @@ impl Session {
         Self::spawn_wrapped(&[], bin, args, warmup)
     }
 
+    /// Like `spawn`, with extra environment variables (005: a cache folder of the harness's own,
+    /// so run records never reach the user's).
+    pub fn spawn_env(
+        bin: &Path,
+        args: &[&str],
+        env: &[(&str, String)],
+        warmup: Duration,
+    ) -> Result<Session, String> {
+        Self::spawn_full(&[], bin, args, env, warmup)
+    }
+
     /// Like `spawn`, but runs `wrapper... bin args` (the egress test runs Fallow under
     /// `strace`). The session's `pid` is then the wrapper's; Fallow's own PID is in the stats.
     pub fn spawn_wrapped(
         wrapper: &[&str],
         bin: &Path,
         args: &[&str],
+        warmup: Duration,
+    ) -> Result<Session, String> {
+        Self::spawn_full(wrapper, bin, args, &[], warmup)
+    }
+
+    fn spawn_full(
+        wrapper: &[&str],
+        bin: &Path,
+        args: &[&str],
+        env: &[(&str, String)],
         warmup: Duration,
     ) -> Result<Session, String> {
         let bin = std::path::absolute(bin).map_err(|e| format!("binary {}: {e}", bin.display()))?;
@@ -173,6 +194,9 @@ impl Session {
         cmd.cwd(&cwd);
         if cfg!(unix) {
             cmd.env("TERM", "xterm-256color");
+        }
+        for (k, v) in env {
+            cmd.env(k, v);
         }
         let writer = pair
             .master
