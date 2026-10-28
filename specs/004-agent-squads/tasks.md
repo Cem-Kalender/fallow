@@ -331,6 +331,10 @@ is ready by evidence Fallow checks.
   `session_list` and `squad_status` show branches, and `squad_status` a row per member (parts,
   latest reported commit, tasks). Tests in `tests/squad_roles.rs` and `squad_lead.rs`.
 
+- [X] T052 [US3] [US6] A reviewer that exits without a verdict is no longer waited for by the merge;
+  the lead is told, and the readiness line names it; one that exited asking for changes still
+  blocks until the engineer clears it, and a restarted one counts again (FR-041). Tests in `tests/squad_publish.rs`.
+
 **Checkpoint**: quickstart Q10 passes with no interventions besides the spec and the merge.
 
 ---

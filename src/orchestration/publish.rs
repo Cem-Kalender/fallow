@@ -70,6 +70,22 @@ fn counting(b: &Burst, role: &str) -> BTreeSet<u32> {
         .collect()
 }
 
+/// `id` asked for changes and that request stands: it is the opposite of `event`.
+pub(crate) fn objects(b: &Burst, id: u32, event: &str) -> bool {
+    event == "review-approved"
+        && b.signed
+            .get("review-changes-requested")
+            .is_some_and(|s| s.contains(&id))
+}
+
+/// `id` exited without giving `event` and without an objection that stands: no longer waited
+/// for (FR-041). An objection keeps the merge waiting until the engineer clears it.
+pub(crate) fn dropped(b: &Burst, id: u32, event: &str) -> bool {
+    b.exited.contains(&id)
+        && !b.signed.get(event).is_some_and(|s| s.contains(&id))
+        && !objects(b, id, event)
+}
+
 impl Hub {
     /// The merge readiness of a project's burst (data-model "MergeReadiness").
     pub fn readiness(&self, project: ProjectId) -> Option<Readiness> {
@@ -121,19 +137,51 @@ impl Hub {
                     }
                 }
                 Condition::Signal { event, role } => {
-                    let who = counting(b, role);
                     let signed = b.signed.get(event).cloned().unwrap_or_default();
+                    // A session that exited without the signal can never give it: the merge
+                    // no longer waits for it; one that gave it before exiting still counts.
+                    let (gone, who): (BTreeSet<u32>, BTreeSet<u32>) = counting(b, role)
+                        .into_iter()
+                        .partition(|id| dropped(b, *id, event));
+                    let stands: Vec<String> = who
+                        .iter()
+                        .filter(|id| b.exited.contains(id) && objects(b, **id, event))
+                        .map(|id| format!("#{id}"))
+                        .collect();
+                    let gone = if gone.is_empty() {
+                        String::new()
+                    } else {
+                        format!(
+                            " ({} exited without it)",
+                            gone.iter()
+                                .map(|id| format!("#{id}"))
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        )
+                    };
                     let missing: Vec<String> = who
                         .iter()
                         .filter(|id| !signed.contains(id))
                         .map(|id| format!("#{id}"))
                         .collect();
                     if who.is_empty() {
-                        (false, format!("no {role} session whose signals count"))
+                        (
+                            false,
+                            format!("no {role} session whose signals count{gone}"),
+                        )
                     } else if missing.is_empty() {
-                        (true, format!("signalled by every {role}"))
+                        (true, format!("signalled by every {role}{gone}"))
+                    } else if !stands.is_empty() {
+                        (
+                            false,
+                            format!(
+                                "waiting for {}{gone}; {} exited asking for changes (the user clears review-changes-requested to drop it)",
+                                missing.join(", "),
+                                stands.join(", ")
+                            ),
+                        )
                     } else {
-                        (false, format!("waiting for {}", missing.join(", ")))
+                        (false, format!("waiting for {}{gone}", missing.join(", ")))
                     }
                 }
             };

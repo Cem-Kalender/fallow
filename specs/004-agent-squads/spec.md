@@ -459,6 +459,12 @@ besides the spec, the merge, and decisions brought to them by the lead).
   approval, or a role the merge needs with no session and no starts left), Fallow MUST tell the
   engineer once and the lead once, instead of repeated status or waiting notices. A quiet-time
   status (FR-037) MUST NOT be repeated unchanged.
+- **FR-041**: A `signal:` merge condition MUST stop waiting for a session of its role that exited
+  without giving the signal, and the lead MUST be told once; a signal given before the session
+  exited still counts, and so does a request for changes: it keeps the merge waiting, and the
+  engineer and the lead are told, until the engineer clears it. When no session of the role
+  counts any more, the condition is unmet until a new one gives the signal, so exiting never
+  skips it. A restarted session counts again.
 
 **Across the feature**
 

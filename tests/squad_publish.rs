@@ -554,3 +554,128 @@ fn a_squad_may_merge_automatically() {
     let s = squad::parse(".fallow/squad.toml", text, &[]).unwrap();
     assert_eq!(s.merge, squad::Merge::Automatic);
 }
+
+/// `id` exits: its session stops running and Fallow hears of it.
+fn exit(h: &mut Hub, f: &mut Fake, id: u32) {
+    f.0.iter_mut()
+        .filter(|s| s.id == id)
+        .for_each(|s| s.running = false);
+    h.session_ended(id);
+}
+
+fn review_why(h: &Hub) -> String {
+    h.readiness(1)
+        .unwrap()
+        .checks
+        .into_iter()
+        .find(|c| c.condition.contains("review-approved"))
+        .unwrap()
+        .why
+}
+
+#[test]
+fn a_reviewer_that_exits_without_a_verdict_is_not_waited_for() {
+    // 004 run 3: the merge waited for an exited reviewer forever.
+    let (mut h, mut f, now) = builtin_burst(false);
+    start(&mut h, &mut f, "builder", 2, now);
+    start(&mut h, &mut f, "reviewer", 3, now);
+    start(&mut h, &mut f, "reviewer", 4, now);
+    let t = hand(&mut h, &f, 2, now);
+    done(&mut h, &f, 2, t, now);
+    verdict(&mut h, &f, 3, "approved", "fine", now);
+    assert!(!ready(&h));
+    // #4 exits without a verdict: #3's approval is enough, and the lead is told.
+    exit(&mut h, &mut f, 4);
+    assert!(ready(&h), "{}", review_why(&h));
+    assert!(review_why(&h).contains("#4 exited without it"));
+    let told = h.burst_of(1).unwrap().lead_updates.join("\n");
+    assert!(
+        told.contains("#4 reviewer exited without signalling review-approved"),
+        "{told}"
+    );
+    // A reviewer that approved and then exited still counts, and the lead is not told.
+    exit(&mut h, &mut f, 3);
+    assert!(ready(&h), "{}", review_why(&h));
+    assert!(
+        !h.burst_of(1)
+            .unwrap()
+            .lead_updates
+            .join("\n")
+            .contains("#3 reviewer exited")
+    );
+}
+
+#[test]
+fn when_every_reviewer_exits_without_approving_the_merge_needs_a_new_one() {
+    let (mut h, mut f, now) = builtin_burst(false);
+    start(&mut h, &mut f, "builder", 2, now);
+    start(&mut h, &mut f, "reviewer", 3, now);
+    let t = hand(&mut h, &f, 2, now);
+    done(&mut h, &f, 2, t, now);
+    // The only reviewer exits without a verdict: the approval is still needed.
+    exit(&mut h, &mut f, 3);
+    assert!(!ready(&h), "the approval cannot be skipped");
+    let why = review_why(&h);
+    assert!(
+        why.contains("no reviewer session") && why.contains("#3 exited"),
+        "{why}"
+    );
+    // A new reviewer's approval opens the merge.
+    start(&mut h, &mut f, "reviewer", 4, now);
+    assert!(!ready(&h));
+    verdict(&mut h, &f, 4, "approved", "fixed", now);
+    assert!(ready(&h), "{}", review_why(&h));
+}
+
+#[test]
+fn an_exited_reviewers_request_for_changes_stands_until_the_user_clears_it() {
+    // Review: another reviewer's approval does not overrule it, it may predate the repair.
+    let (mut h, mut f, now) = builtin_burst(false);
+    start(&mut h, &mut f, "builder", 2, now);
+    start(&mut h, &mut f, "reviewer", 3, now);
+    start(&mut h, &mut f, "reviewer", 4, now);
+    let t = hand(&mut h, &f, 2, now);
+    done(&mut h, &f, 2, t, now);
+    verdict(&mut h, &f, 4, "changes-requested", "missing tests", now);
+    exit(&mut h, &mut f, 4);
+    verdict(&mut h, &f, 3, "approved", "fine", now);
+    assert!(!ready(&h), "{}", review_why(&h));
+    assert!(review_why(&h).contains("#4 exited asking for changes"));
+    assert!(
+        h.alerts
+            .iter()
+            .any(|a| a.contains("#4 reviewer exited asking for changes")),
+        "{:?}",
+        h.alerts
+    );
+    let told = h.burst_of(1).unwrap().lead_updates.join("\n");
+    assert!(told.contains("its objection stands"), "{told}");
+    // The user clears the request: #4 no longer counts, #3's approval opens the merge.
+    let key = h
+        .event_list(Some(1))
+        .into_iter()
+        .find(|k| k.1 == "review-changes-requested")
+        .unwrap();
+    h.clear_event(&key);
+    assert!(ready(&h), "{}", review_why(&h));
+}
+
+#[test]
+fn a_restarted_reviewer_counts_again() {
+    // Review: a restart keeps the session's number.
+    let (mut h, mut f, now) = builtin_burst(false);
+    start(&mut h, &mut f, "builder", 2, now);
+    start(&mut h, &mut f, "reviewer", 3, now);
+    start(&mut h, &mut f, "reviewer", 4, now);
+    let t = hand(&mut h, &f, 2, now);
+    done(&mut h, &f, 2, t, now);
+    exit(&mut h, &mut f, 4);
+    f.0.iter_mut()
+        .filter(|s| s.id == 4)
+        .for_each(|s| s.running = true);
+    h.tick(&f, now);
+    verdict(&mut h, &f, 3, "approved", "fine", now);
+    assert!(!ready(&h), "the restarted #4 is waited for again");
+    verdict(&mut h, &f, 4, "approved", "fine", now);
+    assert!(ready(&h), "{}", review_why(&h));
+}

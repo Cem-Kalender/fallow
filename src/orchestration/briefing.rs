@@ -201,6 +201,7 @@ mod tests {
             ready_told: false,
             last_status: String::new(),
             user_told: None,
+            exited: Default::default(),
             warned: false,
         }
     }

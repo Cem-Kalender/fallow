@@ -1654,7 +1654,11 @@ impl Hub {
     /// Periodic work: waits that reached their limit, progress for parked waits, and (later
     /// stories) expiries and the queue. Returns true when something visible changed.
     pub fn tick(&mut self, sessions: &dyn Sessions, now: Instant) -> bool {
-        let _ = sessions;
+        // A restarted session keeps its number: it counts again (review).
+        for b in &mut self.bursts {
+            b.exited
+                .retain(|id| !sessions.info(*id).is_some_and(|s| s.running));
+        }
         let mut changed = self.tick_bursts(now);
         changed |= self.tick_gates(now);
         for (to, text) in std::mem::take(&mut self.pending_reports) {
@@ -1786,8 +1790,50 @@ impl Hub {
         changed
     }
 
-    /// A session ended: its link closes and its waits and interests go.
+    /// A session ended: its link closes and its waits and interests go. A burst member that
+    /// exited without a signal the merge needs from its role is no longer waited for, and the
+    /// lead is told (004 run 3).
     pub fn session_ended(&mut self, id: u32) {
+        if let Some(i) = self.bursts.iter().position(|b| b.roles.contains_key(&id)) {
+            self.bursts[i].exited.insert(id);
+            let b = &self.bursts[i];
+            let role = b.roles[&id].clone();
+            let (mut gone, mut stands): (Vec<String>, bool) = (Vec::new(), false);
+            for c in &b.squad.merge_requires {
+                if let squad::Condition::Signal { event, role: r } = c {
+                    if *r != role || b.tainted.contains_key(&id) {
+                        continue;
+                    }
+                    if publish::objects(b, id, event) {
+                        stands = true;
+                    } else if publish::dropped(b, id, event) && !gone.contains(event) {
+                        gone.push(event.clone());
+                    }
+                }
+            }
+            let (project, name) = (b.project, b.project_name.clone());
+            if stands {
+                // Another reviewer's approval does not overrule it: it may predate the repair
+                // (review). The engineer decides.
+                self.alerts.push(format!(
+                    "{name}: #{id} {role} exited asking for changes; the merge waits for its objection until you clear review-changes-requested (Queue tab)"
+                ));
+                self.tell_lead(
+                    project,
+                    format!(
+                        "#{id} {role} exited asking for changes; its objection stands until the user clears it. Have the changes made, and a {role} review them, then bring it to the user."
+                    ),
+                );
+            } else if !gone.is_empty() {
+                self.tell_lead(
+                    project,
+                    format!(
+                        "#{id} {role} exited without signalling {}; the merge no longer waits for it. If the merge needs a {role}, start one with session_start.",
+                        gone.join(" or ")
+                    ),
+                );
+            }
+        }
         self.events.drop_where(|w| w.session == id);
         self.events.recent.remove(&id);
         self.events.interests.remove(&id);

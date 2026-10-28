@@ -81,6 +81,9 @@ pub struct Burst {
     /// that only the user can clear, once told (004 run 3).
     pub last_status: String,
     pub user_told: Option<String>,
+    /// Sessions of the burst that exited: a `signal:` condition stops waiting for one that
+    /// exited without that signal (004 run 3).
+    pub exited: BTreeSet<u32>,
     pub(crate) warned: bool,
 }
 
@@ -175,6 +178,7 @@ impl Hub {
             ready_told: false,
             last_status: String::new(),
             user_told: None,
+            exited: BTreeSet::new(),
             warned: false,
         };
         // A squad whose merge needs more sessions than the burst may start (004 run 3).
