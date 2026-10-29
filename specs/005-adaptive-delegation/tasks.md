@@ -306,7 +306,7 @@ coordinate through signals and commits.
 **Goal**: every component can be switched off for a recorded run, with the effect in the spec's FR-017
 table.
 
-- [ ] T039 [P] [US2] Write a test per component in `tests/squad_runs.rs`:
+- [X] T039 [P] [US2] Write a test per component in `tests/squad_runs.rs`:
   - reviewer;
   - gates (the hidden tests still run);
   - contracts;
@@ -318,7 +318,7 @@ table.
   - parallel builders.
 
   Each test also checks that the record names the components that were off.
-- [ ] T040 [US2] Implement the switches (research R-17):
+- [X] T040 [US2] Implement the switches (research R-17):
   - the burst's `switched_off` set in `src/orchestration/burst.rs`, read by each check in
     `delegation.rs`, `publish.rs` and `lead.rs`;
   - the choice in the Start a run dialog in `src/app/orchestration.rs`.

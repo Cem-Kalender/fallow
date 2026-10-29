@@ -616,3 +616,230 @@ fn a_plain_run_goes_from_its_copy_to_its_record() {
     assert!(s.projects.projects.iter().all(|p| !p.temporary));
     let _ = std::fs::remove_dir_all(&base);
 }
+
+mod off {
+    //! T039: each component switched off for a recorded run, with the effect in FR-017.
+    use std::time::{Duration, Instant};
+
+    use fallow::config::schema::OrchestrationSettings;
+    use fallow::orchestration::burst::{self, BurstRequest};
+    use fallow::orchestration::identity::Peer;
+    use fallow::orchestration::{Hub, Reply, SessionInfo, Sessions, manifest, squad};
+    use fallow::session::profiles::{AgentProfile, builtins};
+    use serde_json::json;
+
+    pub struct Fake(pub Vec<SessionInfo>);
+
+    fn info(id: u32) -> SessionInfo {
+        SessionInfo {
+            id,
+            project: 1,
+            project_name: "api".into(),
+            profile_id: "claude".into(),
+            profile: "Claude Code".into(),
+            state: "working".into(),
+            running: true,
+            idle: true,
+            role: None,
+        }
+    }
+
+    impl Sessions for Fake {
+        fn info(&self, id: u32) -> Option<SessionInfo> {
+            self.0.iter().find(|s| s.id == id).cloned()
+        }
+        fn all(&self) -> Vec<SessionInfo> {
+            self.0.clone()
+        }
+        fn verify(&self, _: u32, _: &str, _: Peer) -> Result<(), String> {
+            Ok(())
+        }
+        fn profiles(&self) -> Vec<(String, String)> {
+            builtins().into_iter().map(|p| (p.id, p.name)).collect()
+        }
+        fn profile(&self, id: &str) -> Option<AgentProfile> {
+            builtins().into_iter().find(|p| p.id == id)
+        }
+    }
+
+    fn setup(off: &[&'static str], s: squad::Squad) -> (Hub, Fake, Instant) {
+        let mut h = Hub::new(OrchestrationSettings::default());
+        let f = Fake(vec![info(1)]);
+        let now = Instant::now();
+        h.start_burst(
+            &f,
+            BurstRequest {
+                lead: 1,
+                duration: Duration::from_secs(3600),
+                allowance: Some(5),
+                squad: s,
+                start_commit: Some("a".repeat(40)),
+                target_branch: None,
+                has_remote: false,
+                spec_kit: false,
+                max_sessions: 8,
+            },
+            now,
+        )
+        .unwrap();
+        h.bursts[0].switched_off = off.iter().copied().collect();
+        (h, f, now)
+    }
+
+    fn start(h: &mut Hub, f: &mut Fake, args: serde_json::Value, id: u32, now: Instant) -> Reply {
+        let mut a = json!({"profile": "claude", "project": "api"});
+        for (k, v) in args.as_object().unwrap() {
+            a[k] = v.clone();
+        }
+        let r = h.call(f, 1, "session_start", a, now);
+        if let Reply::Done(v) = &r {
+            f.0.push(info(id));
+            h.start_done(f, v["start"].as_u64().unwrap(), Ok(id), now);
+        }
+        r
+    }
+
+    fn conditions(h: &Hub) -> Vec<String> {
+        h.readiness(1)
+            .unwrap()
+            .checks
+            .into_iter()
+            .map(|c| c.condition)
+            .collect()
+    }
+
+    #[test]
+    fn reviewer_off_starts_none_and_drops_the_review() {
+        let (mut h, mut f, now) = setup(&[burst::OFF_REVIEWER], squad::builtin());
+        let r = start(&mut h, &mut f, json!({"role": "reviewer"}), 3, now);
+        assert!(
+            matches!(&r, Reply::Error("not_allowed", m) if m.contains("switched off")),
+            "{r:?}"
+        );
+        assert_eq!(conditions(&h), ["work:done"]);
+    }
+
+    #[test]
+    fn gates_off_run_none_and_drop_their_conditions() {
+        let mut s = squad::builtin();
+        s.gates.push(squad::Gate {
+            name: "tests".into(),
+            command: "true".into(),
+            windows: None,
+            macos: None,
+            linux: None,
+            timeout_min: 5,
+            baseline: true,
+            failures: squad::Failures::ExitCode,
+        });
+        s.merge_requires
+            .push(squad::Condition::Gate("tests".into()));
+        let (h, _, _) = setup(&[burst::OFF_GATES], s.clone());
+        assert!(h.gates_due(&|_, _| Some("b".repeat(40))).is_empty());
+        assert!(!conditions(&h).contains(&"gate:tests".to_string()));
+        let (h, _, _) = setup(&[], s);
+        assert!(
+            !h.gates_due(&|_, _| Some("b".repeat(40))).is_empty(),
+            "on: the baseline runs"
+        );
+    }
+
+    #[test]
+    fn contracts_off_and_criteria_off_let_unprepared_parts_start() {
+        let text = "[[work]]\nid = \"w\"\nbuild = \"parts\"\nreason = \"r\"\n[[part]]\nid = \"a\"\nwork = \"w\"\nowns = [\"src/a/**\"]\n[[part]]\nid = \"b\"\nwork = \"w\"\nowns = [\"src/b/**\"]\n";
+        let m = manifest::parse(manifest::WORK_FILE, text).unwrap();
+        for (off, ok) in [
+            (vec![], false),
+            (vec![burst::OFF_CONTRACTS], false),
+            (vec![burst::OFF_CONTRACTS, burst::OFF_CRITERIA], true),
+        ] {
+            let (mut h, mut f, now) = setup(&off, squad::builtin());
+            h.apply_manifest(1, Some(m.clone()));
+            let r = start(
+                &mut h,
+                &mut f,
+                json!({"role": "builder", "work": "w", "part": "a"}),
+                2,
+                now,
+            );
+            assert_eq!(matches!(r, Reply::Done(_)), ok, "{off:?}: {r:?}");
+        }
+    }
+
+    #[test]
+    fn verdict_check_off_counts_any_approval() {
+        let (mut h, mut f, now) = setup(&[burst::OFF_VERDICT], squad::builtin());
+        start(&mut h, &mut f, json!({"role": "reviewer"}), 3, now);
+        let r = h.call(
+            &f,
+            3,
+            "review_verdict",
+            json!({"verdict": "approved", "notes": "fine"}),
+            now,
+        );
+        assert!(matches!(r, Reply::Done(_)), "{r:?}");
+    }
+
+    #[test]
+    fn lead_updates_off_type_nothing_into_the_lead() {
+        let (mut h, mut f, now) = setup(&[burst::OFF_LEAD_UPDATES], squad::builtin());
+        start(&mut h, &mut f, json!({"role": "reviewer"}), 3, now);
+        h.call(
+            &f,
+            3,
+            "signal_raise",
+            json!({"kind": "question", "text": "which?"}),
+            now,
+        );
+        h.tick(&f, now + Duration::from_secs(30));
+        assert!(
+            h.deliveries.list.iter().all(|d| d.to != 1),
+            "nothing typed into the lead"
+        );
+        // The lead still sees it through its tools.
+        let Reply::Done(v) = h.call(&f, 1, "signal_list", json!({}), now) else {
+            panic!()
+        };
+        assert_eq!(v["signals"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn parallel_builders_off_leave_every_piece_to_the_lead() {
+        let (mut h, mut f, now) = setup(&[burst::OFF_PARALLEL], squad::builtin());
+        h.apply_manifest(
+            1,
+            Some(
+                manifest::parse(
+                    manifest::WORK_FILE,
+                    "[[work]]\nid = \"w\"\nbuild = \"builder\"\nreason = \"r\"\ncriteria = [{ id = \"c\", text = \"t\" }]\n",
+                )
+                .unwrap(),
+            ),
+        );
+        let r = start(
+            &mut h,
+            &mut f,
+            json!({"role": "builder", "work": "w"}),
+            2,
+            now,
+        );
+        assert!(
+            matches!(&r, Reply::Error("not_allowed", m) if m.contains("switched off")),
+            "{r:?}"
+        );
+    }
+}
+
+#[test]
+fn the_record_names_the_components_switched_off() {
+    // T039: FR-017.
+    let mut r = run(task());
+    r.plan.off = [
+        fallow::orchestration::burst::OFF_REVIEWER,
+        fallow::orchestration::burst::OFF_LEAD_UPDATES,
+    ]
+    .into();
+    let rec = record_of(&r, 1, 0);
+    assert_eq!(rec.switched_off, ["lead_updates", "reviewer"]);
+    rec.check().unwrap();
+}

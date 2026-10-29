@@ -465,3 +465,29 @@ fn edits_outside_the_part_and_to_decisions_are_reported() {
     assert!(!why.contains("waits for the lead"), "{why}");
     let _ = std::fs::remove_dir_all(&f.dir);
 }
+
+#[test]
+fn the_plan_commit_and_ownership_checks_can_be_switched_off() {
+    // T039: FR-017.
+    use fallow::orchestration::burst;
+    let (mut h, f, now) = setup("off");
+    h.bursts[0].switched_off = [burst::OFF_PLAN_COMMIT, burst::OFF_OWNERSHIP].into();
+    builder_branch(&f, &mut h);
+    hand_api(&mut h, &f, now);
+    let c = on_branch(&f.dir, "fallow/cart-api-1", "web/cart.html", "<p>\n");
+    std::fs::write(f.dir.join("contracts/cart.yaml"), "v2\n").unwrap();
+    git(&f.dir, &["commit", "-qam", "contract v2"]);
+    let r = report(&mut h, &f, &c, now);
+    assert!(
+        matches!(r, Reply::Done(_)),
+        "accepted without the contract commit: {r:?}"
+    );
+    assert!(
+        !h.burst_of(1)
+            .unwrap()
+            .lead_updates
+            .join("\n")
+            .contains("outside its part")
+    );
+    let _ = std::fs::remove_dir_all(&f.dir);
+}

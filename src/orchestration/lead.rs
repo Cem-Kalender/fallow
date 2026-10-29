@@ -227,6 +227,14 @@ impl Hub {
                     }
                 }
             }
+            // Lead updates switched off for a recorded run (005 FR-017): nothing is typed.
+            if self.bursts[i]
+                .switched_off
+                .contains(super::burst::OFF_LEAD_UPDATES)
+            {
+                self.bursts[i].lead_updates.clear();
+                continue;
+            }
             // The grouped update (FR-033).
             if self.bursts[i].lead_updates.is_empty()
                 || now.saturating_duration_since(self.bursts[i].last_sent) < GROUP_EVERY

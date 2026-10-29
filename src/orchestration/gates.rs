@@ -237,6 +237,10 @@ impl Hub {
     ) -> Vec<Job> {
         let mut jobs = Vec::new();
         for b in &self.bursts {
+            // Gates switched off for a recorded run (005 FR-017): none runs.
+            if b.switched_off.contains(super::burst::OFF_GATES) {
+                continue;
+            }
             let (handed, done) = self.builder_tasks(b.project);
             for g in &b.squad.gates {
                 let runs: Vec<&GateRun> = b.gate_runs.iter().filter(|r| r.gate == g.name).collect();

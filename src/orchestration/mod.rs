@@ -2061,6 +2061,15 @@ impl Hub {
                 ),
             ));
         }
+        // A reviewer switched off for a recorded run (005 FR-017).
+        if b.switched_off.contains(burst::OFF_REVIEWER)
+            && roles::may_signal(&b.squad, r, "review-approved")
+        {
+            return Err(Reply::error(
+                "not_allowed",
+                "reviewers are switched off for this run",
+            ));
+        }
         // Builders start only for work the manifest delegates (005 FR-001 to FR-006, FR-010).
         if b.squad.adaptive() && r.level.edits() && name != "lead" {
             if b.switched_off.contains(burst::OFF_PARALLEL) {

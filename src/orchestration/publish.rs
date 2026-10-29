@@ -146,6 +146,15 @@ impl Hub {
         let b = self.burst_of(project)?;
         let mut checks = Vec::new();
         for c in &b.squad.merge_requires {
+            // Components switched off for a recorded run drop their conditions (005 FR-017).
+            let review = matches!(c, Condition::ReviewApproved)
+                || matches!(c, Condition::Signal { event, .. } if event.starts_with("review-"));
+            if (review && b.switched_off.contains(super::burst::OFF_REVIEWER))
+                || (matches!(c, Condition::Gate(_))
+                    && b.switched_off.contains(super::burst::OFF_GATES))
+            {
+                continue;
+            }
             let (met, why) = match c {
                 Condition::Gate(g) => {
                     match b
