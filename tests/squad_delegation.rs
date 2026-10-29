@@ -122,6 +122,15 @@ fn without_a_manifest_the_lead_builds_the_work_itself() {
         "{briefing}"
     );
     assert!(briefing.contains("subagents"), "{briefing}");
+    // T050: the manifest's format is briefed, and the example in it is a valid manifest.
+    let example = briefing
+        .split_once("The format of .fallow/work.toml")
+        .and_then(|(_, r)| r.split_once('\n'))
+        .and_then(|(_, r)| r.split_once("Optional at the top"))
+        .map(|(e, _)| e)
+        .expect("the format is briefed");
+    let m = manifest::parse(manifest::WORK_FILE, example);
+    assert!(m.is_ok(), "{m:?}\n{example}");
     assert_eq!(w["burst"]["manifest_commit"], Value::Null);
     // The lead's task for the whole work: in progress, never typed into its session.
     let t = lead_tasks(&h);

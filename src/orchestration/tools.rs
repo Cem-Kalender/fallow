@@ -555,6 +555,7 @@ pub fn squad_status(
         "squad": b.squad.name,
         "lead": b.lead,
         "manifest_commit": b.manifest.as_ref().and_then(|m| m.commit.clone()),
+        "manifest_problems": b.manifest_problems.as_ref().map(|(_, p)| p.clone()),
         "work": work,
         "open_signals": signals,
         "switched_off": b.switched_off.iter().collect::<Vec<_>>(),
@@ -821,6 +822,7 @@ pub(super) fn call(
                     "allowance_left": hub.starts_left(b),
                     "merge_roles": b.squad.merge_roles(),
                     "manifest_commit": b.manifest.as_ref().and_then(|m| m.commit.clone()),
+                    "manifest_problems": b.manifest_problems.as_ref().map(|(_, p)| p.clone()),
                 });
                 // 005: the default and what a builder is for (contracts/mcp-tools.md).
                 if b.squad.adaptive() && caller == b.lead {

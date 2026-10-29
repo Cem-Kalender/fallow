@@ -547,3 +547,70 @@ fn the_plan_commit_and_ownership_checks_can_be_switched_off() {
     );
     let _ = std::fs::remove_dir_all(&f.dir);
 }
+
+#[test]
+fn a_manifest_with_problems_is_named_where_it_blocks() {
+    // T050: a lead that wrote the manifest in a format of its own was refused with "there is no
+    // .fallow/work.toml"; the refusal and the squad status now name the problems.
+    let (mut h, f, now) = setup("problems");
+    std::fs::write(
+        f.dir.join(".fallow/work.toml"),
+        "[[work]]\nname = \"cart\"\nbuild = \"parts\"\n",
+    )
+    .unwrap();
+    git(
+        &f.dir,
+        &["commit", "-q", "-am", "a manifest in another format"],
+    );
+    let r = h.call(
+        &f,
+        1,
+        "session_start",
+        json!({"profile": "claude", "project": "api", "role": "builder", "work": "cart", "part": "api"}),
+        now,
+    );
+    let Reply::Error("not_allowed", m) = &r else {
+        panic!("{r:?}")
+    };
+    assert!(
+        m.contains("has problems") && m.contains("unknown field `name`"),
+        "{m}"
+    );
+    assert!(!m.contains("there is no"), "{m}");
+    // A reviewer with a focus is told the problems, not that the focus does not exist.
+    let r = h.call(
+        &f,
+        1,
+        "session_start",
+        json!({"profile": "claude", "project": "api", "role": "reviewer", "focus": "security"}),
+        now,
+    );
+    assert!(
+        matches!(&r, Reply::Error(_, m) if m.contains("has problems") && !m.contains("focuses: none")),
+        "{r:?}"
+    );
+    let Reply::Done(s) = h.call(&f, 1, "squad_status", json!({}), now) else {
+        panic!()
+    };
+    assert!(
+        s["manifest_problems"].to_string().contains("unknown field"),
+        "{s}"
+    );
+    let Reply::Done(w) = h.call(&f, 1, "whoami", json!({}), now) else {
+        panic!()
+    };
+    assert!(
+        w["burst"]["manifest_problems"]
+            .to_string()
+            .contains("unknown field"),
+        "{w}"
+    );
+    // Fixed and committed: the problems are gone.
+    std::fs::write(f.dir.join(".fallow/work.toml"), WORK).unwrap();
+    git(&f.dir, &["commit", "-q", "-am", "the manifest fixed"]);
+    let Reply::Done(s) = h.call(&f, 1, "squad_status", json!({}), now) else {
+        panic!()
+    };
+    assert!(s["manifest_problems"].is_null(), "{s}");
+    let _ = std::fs::remove_dir_all(&f.dir);
+}

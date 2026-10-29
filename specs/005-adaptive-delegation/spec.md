@@ -382,6 +382,9 @@ waits with a stated reason and starts when a session ends.
   the pieces of work and how each is built, the parts with their owned files, each piece's acceptance
   criteria, the contracts between parts and the reviewers' focuses. Prose (in Spec Kit projects the
   spec, plan and tasks) stays in documents the manifest refers to; Fallow reads only the manifest.
+  The lead's briefing MUST show the manifest's format. A manifest with problems counts as absent,
+  and every refusal or status it causes (a refused builder, the squad status) MUST name its problems
+  with file and line, not report the manifest as missing.
 - **FR-021**: Builders MUST raise decisions only as structured signals to the lead: a question, or a
   proposed change to the plan, manifest or a contract with its diff. Builders MUST NOT be able to
   message each other.

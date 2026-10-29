@@ -1105,10 +1105,28 @@ fn work_lines(state: &AppState, b: &crate::orchestration::burst::Burst) -> Vec<L
     };
     match &b.manifest {
         None => {
-            lines.push(Line::styled(
-                "Work: no .fallow/work.toml at the lead's commit: the lead builds everything",
-                bold,
-            ));
+            match &b.manifest_problems {
+                // T050: a manifest with problems is not shown as missing (FR-020).
+                Some((commit, problems)) => {
+                    lines.push(Line::styled(
+                        format!(
+                            "Work: .fallow/work.toml at {} has problems, so the lead builds everything:",
+                            &commit[..commit.len().min(10)]
+                        ),
+                        bold,
+                    ));
+                    for p in problems.iter().take(3) {
+                        lines.push(Line::raw(format!("  {p}")));
+                    }
+                    if problems.len() > 3 {
+                        lines.push(Line::raw(format!("  … and {} more", problems.len() - 3)));
+                    }
+                }
+                None => lines.push(Line::styled(
+                    "Work: no .fallow/work.toml at the lead's commit: the lead builds everything",
+                    bold,
+                )),
+            }
             lines.push(Line::raw(format!(
                 "  the work      lead      {}",
                 state_of(crate::orchestration::manifest::BURST_WORK)

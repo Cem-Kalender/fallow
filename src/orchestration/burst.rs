@@ -95,6 +95,9 @@ pub struct Burst {
     /// When the lead's head was last looked at, so routine calls read it at most every 2 s.
     pub manifest_checked: Option<Instant>,
     pub manifest_files: Vec<String>,
+    /// The problems of the manifest at the lead's latest commit, when it has any: it then
+    /// counts as absent, and refusals name them (T050).
+    pub manifest_problems: Option<(String, Vec<String>)>,
     /// What each builder session is for: a piece of work and its part (005 R-2).
     pub assigned: HashMap<u32, super::delegation::Assignment>,
     /// The latest refused builder starts, for the Squad tab (005 FR-007).
@@ -224,6 +227,7 @@ impl Hub {
             manifest_seen: None,
             manifest_checked: None,
             manifest_files: Vec::new(),
+            manifest_problems: None,
             assigned: HashMap::new(),
             refused: Vec::new(),
             switched_off: BTreeSet::new(),

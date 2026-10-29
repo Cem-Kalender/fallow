@@ -47,7 +47,23 @@ impl Hub {
         if b.manifest_seen.as_deref() == Some(head.as_str()) {
             return;
         }
-        match super::manifest::at(&dir, &head) {
+        // A file git could not read is no problem of the manifest: nothing changes, and the
+        // next call reads it again (005 review).
+        let Ok(text) = super::git::show(&dir, &head, super::manifest::WORK_FILE) else {
+            return;
+        };
+        let read = text
+            .map(|t| {
+                super::manifest::parse(super::manifest::WORK_FILE, &t).map(|mut m| {
+                    m.commit = Some(head.clone());
+                    m
+                })
+            })
+            .transpose();
+        if let Some(b) = self.bursts.iter_mut().find(|b| b.project == project) {
+            b.manifest_problems = read.as_ref().err().map(|p| (head.clone(), p.clone()));
+        }
+        match read {
             Ok(m) => self.apply_manifest(project, m),
             Err(problems) => {
                 // A manifest with errors counts as absent; the lead is told once per commit.
@@ -185,6 +201,9 @@ impl Hub {
             ));
         };
         let Some(m) = &b.manifest else {
+            if let Some(why) = manifest_problem(b) {
+                return Some(format!("{work} is built by the lead: {why}"));
+            }
             return Some(format!(
                 "{work} is built by the lead: there is no .fallow/work.toml at your latest commit. {how}."
             ));
@@ -467,6 +486,17 @@ impl Hub {
         }
         Ok(notes)
     }
+}
+
+/// Why the manifest at the lead's latest commit counts as absent, when it has problems: for
+/// every refusal it causes (FR-020, T050).
+pub(crate) fn manifest_problem(b: &super::burst::Burst) -> Option<String> {
+    let (commit, problems) = b.manifest_problems.as_ref()?;
+    Some(format!(
+        "your .fallow/work.toml at {} has problems, so Fallow treats it as absent: {}. Fix them and commit; the format is in your briefing (whoami).",
+        &commit[..commit.len().min(10)],
+        problems.join("; ")
+    ))
 }
 
 /// A path a glob certainly matches, for comparing globs without files (`**` and `*` filled in).

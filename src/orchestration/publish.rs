@@ -619,6 +619,13 @@ impl Hub {
                 "a reviewer starts with a focus from .fallow/work.toml: {}",
                 reviews.join(", ")
             )),
+            (true, Some(f)) if !reviews.contains(&f) && b.manifest.is_none() => {
+                Err(super::delegation::manifest_problem(b).unwrap_or_else(|| {
+                    format!(
+                        "no review focus {f:?}: there is no .fallow/work.toml at the lead's commit"
+                    )
+                }))
+            }
             (true, Some(f)) if !reviews.contains(&f) => Err(format!(
                 "no review focus {f:?} in .fallow/work.toml (focuses: {})",
                 if reviews.is_empty() {

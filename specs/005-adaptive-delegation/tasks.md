@@ -387,7 +387,9 @@ table.
   - `--settings` with `statusLine` on Windows;
   - the footprint of a Claude Code session on Linux, which replaces the 700 MB default.
 - [ ] T050 Run quickstart Q1–Q7 manually on Windows and on the Linux VPS, and record the results in
-  `specs/005-adaptive-delegation/quickstart.md`.
+  `specs/005-adaptive-delegation/quickstart.md`. Found in Q2 (2026-10-29): the lead was never told
+  the manifest's format, and a manifest with problems was refused as "no .fallow/work.toml"; fixed
+  (FR-020: the format briefed, problems named in refusals and the squad status).
 - [ ] T051 Run the comparison series on the engineer's task set (SC-001 to SC-004), and report the
   results as measured on that set in `specs/005-adaptive-delegation/results.md`.
 

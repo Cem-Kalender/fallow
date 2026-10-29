@@ -2,7 +2,9 @@
 
 Written and committed by the lead; read by Fallow at a commit, never written by Fallow. Errors are
 reported with file and line, and a manifest with errors counts as absent (every piece of work is then
-built by the lead).
+built by the lead). The errors are told to the lead once per commit, named in any builder start they
+refuse, and listed in `squad_status` and `whoami` as `manifest_problems`. The lead's briefing shows
+the format below in short (T050: a lead without it had to guess).
 
 ```toml
 # Prose lives in these documents; Fallow reads only this file.

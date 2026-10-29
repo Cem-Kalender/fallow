@@ -10,8 +10,8 @@
 | `review_verdict` | reviewer | Adds `checks: [{criterion, ran, expect: "pass" \| "fail", result: "pass" \| "fail"}]`. Without a check per criterion of the reviewed work and one with `expect: "fail"`, the verdict is recorded as `incomplete`, does not count, and the reply says what is missing (R-7). A reviewer started with a focus approves for that focus; `review:approved` needs one per focus (R-16). |
 | `deliver` | builder | May target only the lead (FR-021). |
 | `consult_lead` (004) | | Removed; use `signal_raise`. |
-| `whoami` | all | The lead's adds the manifest commit and the default ("you build each piece yourself unless the manifest records otherwise"). A builder's adds its work, part, owned globs, criteria and base. |
-| `squad_status` | all | Adds the manifest commit, each piece of work with its build decision and reason, builder, base, branch, latest reported commit and evidence, open signals, switched-off components, memory budget use and waiting starts (FR-033). |
+| `whoami` | all | The lead's adds the manifest commit, its problems when it has any, the manifest's format, and the default ("you build each piece yourself unless the manifest records otherwise"). A builder's adds its work, part, owned globs, criteria and base. |
+| `squad_status` | all | Adds the manifest commit and its problems when it has any, each piece of work with its build decision and reason, builder, base, branch, latest reported commit and evidence, open signals, switched-off components, memory budget use and waiting starts (FR-033). |
 
 ## Briefings (changes)
 
