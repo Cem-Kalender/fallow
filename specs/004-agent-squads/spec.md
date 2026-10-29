@@ -533,6 +533,19 @@ besides the spec, the merge, and decisions brought to them by the lead).
   engineer intervenes only for the goal, the merge, and decisions Fallow or the lead brings to them;
   every intervention is counted and recorded.
 
+## Changed by feature 005 (adaptive delegation)
+
+Feature 005 (`specs/005-adaptive-delegation/spec.md`, "Changes to earlier features") changes this
+feature's defaults:
+- The built-in squad's merge needs `work:done` and `review:approved`, and the lead builds every
+  piece of work unless the work manifest (`.fallow/work.toml`) delegates it (replaces the
+  built-in squad of FR-019 and the task ranges of the Spec Kit pipeline).
+- `consult_lead` (FR-034) and deliveries between builders are replaced by signals to the lead.
+- Built-in reviewers run at the `check` level (commands, no edit tools).
+- For squads following 005's workflow, the lead no longer receives the quiet-time status (FR-037)
+  or the everyone-waiting notice (FR-026, now told to the engineer). Squad files written for 004
+  (`done:<role>`) keep this feature's behaviour.
+
 ## Assumptions
 
 - Specified on branch `001-llm-aware-tui-editor`, where all work happens for now (user instruction).

@@ -1719,6 +1719,14 @@ impl AppState {
         if let Some(s) = self.sessions.get_mut(lead) {
             s.role = Some("lead".into());
         }
+        // 005 FR-036: work from before (a restart): what the repository still holds, and what
+        // was lost with Fallow's memory.
+        if let Some(text) = crate::orchestration::delegation::previous_work(&path) {
+            if let Some(h) = self.hub.as_mut() {
+                h.alerts.push(text.clone());
+                h.tell_lead_pub(project, text);
+            }
+        }
         self.take_hub_notices();
         Ok(())
     }

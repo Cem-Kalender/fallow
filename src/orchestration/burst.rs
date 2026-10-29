@@ -384,6 +384,12 @@ impl Hub {
         b.roles.retain(|_, r| r != "lead");
         b.roles.insert(session, "lead".into());
         b.lead = session;
+        // The new lead learns where things stand from Fallow and the repository (005 FR-033).
+        let text = format!(
+            "You are now the lead of the coordination in {}. Call Fallow's whoami for your briefing and squad_status for where the work stands: the manifest commit, each piece of work with its builder and state, open signals and what the merge needs. Everything decided is in the repository.",
+            b.project_name
+        );
+        self.pending_reports.push((session, text));
         Ok(())
     }
 

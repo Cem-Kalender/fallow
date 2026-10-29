@@ -559,3 +559,177 @@ fn what_only_the_user_can_clear_goes_to_the_user_once() {
         h.alerts
     );
 }
+
+mod adaptive {
+    //! 005 T041: in an adaptive squad the lead hears only what needs a decision, a new lead
+    //! learns where things stand, and work from before a restart is found (FR-033 to FR-036).
+    use std::time::{Duration, Instant};
+
+    use fallow::config::schema::OrchestrationSettings;
+    use fallow::orchestration::burst::BurstRequest;
+    use fallow::orchestration::identity::Peer;
+    use fallow::orchestration::{Hub, Reply, SessionInfo, Sessions, delegation, manifest, squad};
+    use fallow::session::profiles::{AgentProfile, builtins};
+    use serde_json::json;
+
+    pub struct Fake(pub Vec<SessionInfo>);
+
+    fn info(id: u32) -> SessionInfo {
+        SessionInfo {
+            id,
+            project: 1,
+            project_name: "api".into(),
+            profile_id: "claude".into(),
+            profile: "Claude Code".into(),
+            state: "working".into(),
+            running: true,
+            idle: true,
+            role: None,
+        }
+    }
+
+    impl Sessions for Fake {
+        fn info(&self, id: u32) -> Option<SessionInfo> {
+            self.0.iter().find(|s| s.id == id).cloned()
+        }
+        fn all(&self) -> Vec<SessionInfo> {
+            self.0.clone()
+        }
+        fn verify(&self, _: u32, _: &str, _: Peer) -> Result<(), String> {
+            Ok(())
+        }
+        fn profiles(&self) -> Vec<(String, String)> {
+            builtins().into_iter().map(|p| (p.id, p.name)).collect()
+        }
+        fn profile(&self, id: &str) -> Option<AgentProfile> {
+            builtins().into_iter().find(|p| p.id == id)
+        }
+    }
+
+    fn setup() -> (Hub, Fake, Instant) {
+        let mut h = Hub::new(OrchestrationSettings::default());
+        let f = Fake(vec![info(1)]);
+        let now = Instant::now();
+        h.start_burst(
+            &f,
+            BurstRequest {
+                lead: 1,
+                duration: Duration::from_secs(4 * 3600),
+                allowance: Some(5),
+                squad: squad::builtin(),
+                start_commit: None,
+                target_branch: None,
+                has_remote: false,
+                spec_kit: false,
+                max_sessions: 8,
+            },
+            now,
+        )
+        .unwrap();
+        (h, f, now)
+    }
+
+    fn typed_to(h: &Hub, id: u32) -> Vec<String> {
+        h.deliveries
+            .list
+            .iter()
+            .filter(|d| d.to == id)
+            .map(|d| d.text.clone())
+            .collect()
+    }
+
+    #[test]
+    fn the_lead_hears_only_what_needs_a_decision() {
+        // FR-035: no quiet-time status, no waiting nudges; everyone-waiting goes to the
+        // engineer.
+        let (mut h, mut f, now) = setup();
+        let r = h.call(
+            &f,
+            1,
+            "session_start",
+            json!({"profile": "claude", "project": "api", "role": "reviewer"}),
+            now,
+        );
+        let Reply::Done(v) = r else { panic!("{r:?}") };
+        f.0.push(info(3));
+        h.start_done(&f, v["start"].as_u64().unwrap(), Ok(3), now);
+        for m in [1, 11, 20, 45, 70] {
+            h.tick(&f, now + Duration::from_secs(m * 60));
+        }
+        let typed = typed_to(&h, 1).join("\n");
+        assert!(!typed.contains("Status:"), "{typed}");
+        assert!(!typed.contains("have waited"), "{typed}");
+        assert!(
+            h.alerts.iter().any(|a| a.contains("have waited")),
+            "{:?}",
+            h.alerts
+        );
+        // A signal is a decision: it reaches the lead once.
+        h.call(
+            &f,
+            3,
+            "signal_raise",
+            json!({"kind": "question", "text": "scope?"}),
+            now + Duration::from_secs(79 * 60),
+        );
+        h.tick(&f, now + Duration::from_secs(80 * 60));
+        let typed = typed_to(&h, 1).join("\n");
+        assert_eq!(typed.matches("Signal S1").count(), 1, "{typed}");
+    }
+
+    #[test]
+    fn a_new_lead_learns_where_things_stand() {
+        // FR-033, FR-034.
+        let (mut h, mut f, now) = setup();
+        f.0.push(info(5));
+        h.set_lead(1, 5).unwrap();
+        h.tick(&f, now);
+        let typed = typed_to(&h, 5).join("\n");
+        assert!(
+            typed.contains("You are now the lead") && typed.contains("squad_status"),
+            "{typed}"
+        );
+        let Reply::Done(v) = h.call(&f, 5, "squad_status", json!({}), now) else {
+            panic!()
+        };
+        for k in [
+            "manifest_commit",
+            "work",
+            "open_signals",
+            "switched_off",
+            "memory",
+            "members",
+        ] {
+            assert!(v.get(k).is_some(), "squad_status lacks {k}: {v}");
+        }
+        assert_eq!(v["work"][0]["build"], "lead");
+        assert_eq!(v["lead"], 5);
+    }
+
+    #[test]
+    fn work_from_before_a_restart_is_found_by_its_branches() {
+        // FR-036, R-18.
+        let m = manifest::parse(
+            manifest::WORK_FILE,
+            "[[work]]\nid = \"cart\"\nbuild = \"parts\"\nreason = \"r\"\n[[part]]\nid = \"api\"\nwork = \"cart\"\nowns = [\"src/**\"]\n[[work]]\nid = \"docs\"\nbuild = \"builder\"\nreason = \"r\"\n",
+        )
+        .unwrap();
+        let b = |n: &str| (n.to_string(), "0123456789abcdef".to_string());
+        let found = delegation::previous_branches(
+            &m,
+            &[
+                b("fallow/cart-api-1"),
+                b("fallow/docs-2"),
+                b("fallow/claude-1"),
+                b("fallow/cart-page-1"),
+            ],
+        );
+        assert_eq!(
+            found,
+            [
+                "fallow/cart-api-1 at 0123456789",
+                "fallow/docs-2 at 0123456789"
+            ]
+        );
+    }
+}

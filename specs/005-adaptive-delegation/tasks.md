@@ -331,7 +331,7 @@ table.
 
 **Independent Test**: quickstart Q4.
 
-- [ ] T041 [P] [US5] Extend `tests/squad_lead.rs`:
+- [X] T041 [P] [US5] Extend `tests/squad_lead.rs`:
   - no quiet-time status, and no deadlock notice to the lead;
   - each event FR-035 lists gives one line;
   - a lead named with `L` gets the briefing;
@@ -339,11 +339,11 @@ table.
     latest commit and evidence, open signals, switched-off components and the memory state (FR-033);
   - starting a burst on a project with open manifest work shows each branch and what was lost
     (FR-036).
-- [ ] T042 [US5] Implement T041 in `src/orchestration/lead.rs`, `repair.rs`, `tools.rs` and
+- [X] T042 [US5] Implement T041 in `src/orchestration/lead.rs`, `repair.rs`, `tools.rs` and
   `burst.rs`:
   - remove 004's quiet-status and lead-deadlock paths;
   - keep the everyone-waiting notice to the engineer.
-- [ ] T043 [US5] Retire the 004 tests that assert quiet-time status to the lead, and update 004's spec
+- [X] T043 [US5] Retire the 004 tests that assert quiet-time status to the lead, and update 004's spec
   "Changes to earlier features" cross-reference in `specs/004-agent-squads/spec.md` (FR-037, FR-040
   superseded by 005).
 

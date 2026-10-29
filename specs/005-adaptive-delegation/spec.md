@@ -470,6 +470,11 @@ waits with a stated reason and starts when a session ends.
 - **004 repository access (FR-030)**: extended by FR-040; recorded runs never touch the engineer's
   repository (FR-011a).
 - **004 start allowance and kept starts (FR-039)**: stay; the memory budget (FR-037) applies as well.
+- **Squads written for 004 (implementation decision, 2026-10-29)**: 005's workflow applies to squads
+  whose merge needs `work:done`, which the built-in squad now does. A squad file whose merge needs
+  004's `done:<role>` keeps 004's behaviour: builders start without a manifest, the lead gets no
+  task of its own, and its lead still receives 004's quiet-time status. Everything else of 005
+  (signals, the check level, verdict checks, runs) applies to every squad.
 
 ### Key Entities
 

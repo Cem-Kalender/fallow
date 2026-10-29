@@ -503,3 +503,57 @@ pub fn owns_code(owns: &[String], tests: &[String], docs: &[String], files: &[St
     let existing: Vec<&String> = files.iter().filter(|f| own.is_match(f)).collect();
     existing.iter().any(|f| !not_code(f)) || owns.iter().any(|g| !not_code(&sample(g)))
 }
+
+/// Builder branches from before for the manifest's work (`fallow/<work>-<part>-<n>`), with their
+/// latest commit, as the repository holds them after a restart of Fallow (005 FR-036, R-18).
+pub fn previous_branches(m: &Manifest, branches: &[(String, String)]) -> Vec<String> {
+    let mut out = Vec::new();
+    for (name, commit) in branches {
+        let Some(rest) = name.strip_prefix(crate::session::worktree::PREFIX) else {
+            continue;
+        };
+        let stem = rest.rsplit_once('-').map_or(rest, |(s, n)| {
+            if n.chars().all(|c| c.is_ascii_digit()) {
+                s
+            } else {
+                rest
+            }
+        });
+        let known = m.work.iter().any(|w| {
+            stem == w.id
+                || m.parts_of(&w.id)
+                    .any(|p| stem == format!("{}-{}", w.id, p.id))
+        });
+        if known {
+            out.push(format!("{name} at {}", &commit[..commit.len().min(10)]));
+        }
+    }
+    out
+}
+
+/// The notice for a burst that starts where an earlier one left work (FR-036), if any.
+pub fn previous_work(project: &std::path::Path) -> Option<String> {
+    let head = super::git::head(project).ok()?;
+    let m = super::manifest::at(project, &head).ok().flatten()?;
+    let out = std::process::Command::new("git")
+        .current_dir(project)
+        .args([
+            "for-each-ref",
+            "--format=%(refname:short) %(objectname)",
+            "refs/heads/fallow/",
+        ])
+        .output()
+        .ok()?;
+    let branches: Vec<(String, String)> = String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter_map(|l| l.split_once(' '))
+        .map(|(a, b)| (a.to_string(), b.to_string()))
+        .collect();
+    let found = previous_branches(&m, &branches);
+    (!found.is_empty()).then(|| {
+        format!(
+            "Work from an earlier coordination is in the repository: {}. Permissions, tasks and signals from before were lost: start builders again for what is open (they can continue from those branches) or build it yourself.",
+            found.join(", ")
+        )
+    })
+}

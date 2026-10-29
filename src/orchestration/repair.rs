@@ -261,11 +261,12 @@ impl Hub {
     /// repeated at most every 30 minutes (FR-026, research R-7).
     pub(crate) fn tick_deadlock(&mut self, sessions: &dyn Sessions, now: Instant) -> bool {
         let mut notices = Vec::new();
+        // The lead's own piece of work is standing, not a sign that it works (005 R-16).
         let busy: Vec<u32> = self
             .tasks
             .list
             .iter()
-            .filter(|t| t.state == tasks::State::InProgress)
+            .filter(|t| t.state == tasks::State::InProgress && !Hub::lead_work(t))
             .filter_map(|t| t.assigned)
             .collect();
         for i in 0..self.bursts.len() {
@@ -330,8 +331,14 @@ impl Hub {
         let changed = !notices.is_empty();
         for (project, n) in notices {
             // A nudge, not news: it does not make the quiet-time status new again (review).
+            // 005 FR-035: in an adaptive squad the lead hears only what needs its decision; the
+            // engineer hears that everyone waits.
             if let Some(b) = self.bursts.iter_mut().find(|b| b.project == project) {
-                b.lead_updates.push(n);
+                if b.squad.adaptive() {
+                    self.alerts.push(n);
+                } else {
+                    b.lead_updates.push(n);
+                }
             }
         }
         changed

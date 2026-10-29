@@ -69,6 +69,11 @@ impl Hub {
         }
     }
 
+    /// `tell_lead` for the app (a burst's start after a restart, 005 FR-036).
+    pub fn tell_lead_pub(&mut self, project: ProjectId, line: String) {
+        self.tell_lead(project, line);
+    }
+
     /// What the merge still needs, in one line.
     fn merge_summary(&self, project: ProjectId) -> String {
         let Some(r) = self.readiness(project) else {
@@ -186,8 +191,10 @@ impl Hub {
             } else if !ready {
                 self.bursts[i].ready_told = false;
             }
-            // Nothing for a long while and work open: a status (FR-037).
-            let quiet = now.saturating_duration_since(self.bursts[i].last_update) >= QUIET_STATUS;
+            // Nothing for a long while and work open: a status (FR-037). Not in an adaptive squad:
+            // the lead hears only what needs a decision (005 FR-035).
+            let quiet = !self.bursts[i].squad.adaptive()
+                && now.saturating_duration_since(self.bursts[i].last_update) >= QUIET_STATUS;
             if quiet && !ready && self.bursts[i].lead_updates.is_empty() {
                 self.bursts[i].last_update = now;
                 if let Some(why) = self.user_blocker(sessions, project) {

@@ -482,9 +482,83 @@ pub fn squad_status(
         .iter()
         .map(|c| json!({ "condition": c.condition, "met": c.met, "why": c.why }))
         .collect();
+    // 005 FR-033: the work as the manifest decides it, with who builds what and how far it is.
+    let work: Vec<Value> = match &b.manifest {
+        None => vec![json!({
+            "work": super::manifest::BURST_WORK,
+            "build": "lead",
+            "builders": [b.lead],
+        })],
+        Some(m) => m
+            .work
+            .iter()
+            .map(|w| {
+                let mut builders: Vec<Value> = b
+                    .assigned
+                    .iter()
+                    .filter(|(_, (x, _))| *x == w.id)
+                    .map(|(id, (_, p))| {
+                        json!({
+                            "session": id,
+                            "part": p,
+                            "base": b.bases.get(id),
+                            "branch": sessions.workdir(*id).and_then(|(_, br)| br),
+                        })
+                    })
+                    .collect();
+                builders.sort_by_key(|v| v["session"].as_u64());
+                let tasks: Vec<String> = hub
+                    .tasks
+                    .list
+                    .iter()
+                    .filter(|t| {
+                        t.created_at >= b.started && t.work.as_deref() == Some(w.id.as_str())
+                    })
+                    .map(|t| {
+                        format!(
+                            "T{} {}{}",
+                            t.id,
+                            t.state.label(),
+                            t.evidence.as_ref().map_or(String::new(), |e| format!(
+                                " at {}",
+                                &e.commit[..e.commit.len().min(10)]
+                            ))
+                        )
+                    })
+                    .collect();
+                json!({
+                    "work": w.id,
+                    "build": w.build.label(),
+                    "reason": w.reason,
+                    "parts": m.parts_of(&w.id).map(|p| p.id.clone()).collect::<Vec<_>>(),
+                    "builders": builders,
+                    "tasks": tasks,
+                })
+            })
+            .collect(),
+    };
+    let signals: Vec<Value> = hub
+        .signals
+        .open_in(project)
+        .map(|s| {
+            json!({
+                "signal": s.id,
+                "from": if s.by_fallow { json!("fallow") } else { json!(s.from) },
+                "kind": s.kind.label(),
+                "work": s.work,
+                "part": s.part,
+                "waiting_min": now.saturating_duration_since(s.raised).as_secs() / 60,
+            })
+        })
+        .collect();
     Some(json!({
         "squad": b.squad.name,
         "lead": b.lead,
+        "manifest_commit": b.manifest.as_ref().and_then(|m| m.commit.clone()),
+        "work": work,
+        "open_signals": signals,
+        "switched_off": b.switched_off.iter().collect::<Vec<_>>(),
+        "memory": hub.memory_status(project),
         "ends_in_min": b.ends.saturating_duration_since(now).as_secs() / 60,
         "starts_left": hub.starts_left(b),
         "waits_for_user": hub.user_blocker(sessions, project),
