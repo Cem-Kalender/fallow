@@ -1,6 +1,7 @@
 # Constitution Proposal: Fallow, the Orchestrator
 
-**Status**: PROPOSED, waiting for the project owner's approval.
+**Status**: RATIFIED 2026-10-29 by the project owner, as written. Applied to
+`.specify/memory/constitution.md` (v6.0.0).
 
 **Proposed version**: 5.0.0 → **6.0.0** (MAJOR: the constitution is replaced. Every principle is
 redefined or removed, and the budgets change.)

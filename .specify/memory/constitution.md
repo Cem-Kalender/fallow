@@ -1,222 +1,206 @@
 <!--
 Sync Impact Report
 ==================
-Version change: 4.0.0 → 5.0.0
-Bump rationale: MAJOR. Principle VII is redefined: run records of runs the engineer chose to record
-(fingerprints, identifiers, durations, counts, fixed-value outcomes and reported token and cost
-figures, never any text, names or paths) may be kept on disk in Fallow's own cache directory.
-Approved by the project owner on 2026-10-28. Source: specs/005-adaptive-delegation/
-constitution-amendment.md.
+Version change: 5.0.0 → 6.0.0
+Bump rationale: MAJOR. The constitution is replaced: Fallow becomes a headless orchestrator with a
+local run page (feature 006, FR-034). Approved by the project owner on 2026-10-29. Source:
+specs/006-headless-orchestrator/constitution-proposal.md.
 
 Modified principles:
-  - VII. Privacy by Construction: signals join the memory-only orchestration data; one exception
-    for run records.
+  - I. Memory Efficiency First → VIII. Small and Measured (new budgets for Fallow's own process)
+  - II. Instant Startup → VIII (page ready within 500 ms, activity within 2 s)
+  - IV. Observability Over Control → I. Verified, Not Trusted; II. The Engineer Decides
+  - V. Least Privilege → VI. Least Privilege (agents and roles)
+  - VI. Benchmarked Performance Claims → VIII (extended to effectiveness claims)
+  - VII. Privacy by Construction → V. Local and Private by Construction
 
-Added sections: none (one new quality gate in Development Workflow & Quality Gates: the run-record
-marker test).
-Removed sections: none
+Added sections: III. Coordination in Code, Decisions in the Repo; IV. Simplest Setup First;
+VII. Runs Survive; Budgets & Measurement (replaces Performance Budgets & Measurement).
+Removed sections: III. Terminal-Only.
 
 Templates requiring updates: none. plan-template.md, spec-template.md and tasks-template.md read
 the constitution at runtime.
 
-Previous amendment (4.0.0): MAJOR. Principle IV redefined (Fallow sessions, standing permissions,
-destructive actions); II, V and VII adjusted for the orchestration channel. Source:
-specs/003-agent-orchestration/constitution-amendment.md.
+Follow-up TODOs: the new benchmarks and CI gates (VIII, quality gates) are built in feature 006;
+until then the v5.0.0 benchmark jobs still run against the old binary.
 
-Previous amendment (3.0.1): PATCH. The startup budget statistic (p95 of 30 runs after 3
-warm-ups, one automatic retry).
-
-Previous amendment (3.0.0): MAJOR. Principle VII: environment values are never parsed, stored,
-displayed or logged; macOS KERN_PROCARGS2 exception with a wiped buffer and the SC-007 canary.
-
-Follow-up TODOs: none.
+Previous amendment (5.0.0): MAJOR. Principle VII redefined for run records. Source:
+specs/005-adaptive-delegation/constitution-amendment.md.
 -->
 
 # Fallow Constitution
 
-Fallow is a terminal-based IDE for agentic workflows. It shows developers what LLM-driven
-processes on their machine are doing, while staying small, fast, local, and unprivileged.
+Fallow takes a coding task from a plan the engineer approved to a result it has verified itself,
+running AI coding agents as non-interactive steps. It involves the engineer only where the
+decision is theirs, shows everything the agents did on a local page, and runs on the engineer's
+own machine with the engineer's own rights.
 
 ## Core Principles
 
-### I. Memory Efficiency First (NON-NEGOTIABLE)
+### I. Verified, Not Trusted (NON-NEGOTIABLE)
 
-Memory efficiency is the primary design constraint and outranks feature completeness.
+- An agent's claim (done, a commit, files changed, tests passing, a verdict) MUST NOT count until
+  Fallow has checked it itself: the commit on the step's branch, the files changed, the gates run
+  by Fallow against a baseline, and the verdict complete for every criterion, including the cases
+  that must fail.
+- Gates are commands the project declares. Only Fallow runs them, and only Fallow reports their
+  outcome.
+- A reviewer never reviews its own work, and runs with rights that do not allow edits. A reviewer
+  whose working copy changes stops counting.
+- What Fallow cannot verify (for example, a command that writes outside the working copy) MUST be
+  stated where it matters, never implied to be checked.
 
-- Resident set size (RSS) MUST stay under **50 MB** when Fallow is idle.
-- RSS MUST stay under **150 MB** with the reference large project open.
-- A feature that pushes either measurement over budget MUST be rejected, or shipped as
-  opt-in and disabled by default. Opt-in features MUST document their memory cost.
-- When a design trade-off pits memory against speed or convenience, memory wins unless a
-  constitution amendment says otherwise.
+Rationale: agents report success they have not achieved. Fallow's value is that a result it
+offers to merge has been checked by something other than the agent that produced it.
 
-Rationale: Fallow runs alongside memory-hungry agents and toolchains; its value depends on
-being cheap enough to leave open permanently.
+### II. The Engineer Decides
 
-### II. Instant Startup, No Implicit Background Work
+- Nothing reaches the target branch without the engineer's explicit merge. With a protected
+  remote branch, Fallow only opens a pull request: it never pushes to the target branch,
+  force-pushes, bypasses protection or approves its own pull request.
+- Agent steps start only after the engineer approved the plan, apart from the planning
+  conversation the engineer started. The approval covers that run's steps, within its caps.
+- The engineer sets how much is decided without them (the autonomy level). Questions reserved for
+  the engineer are never answered on their behalf, and a waiting question blocks only the work that
+  depends on it.
+- The engineer can always see the run, pause or stop any part of it, overrule a decision, and take
+  over a part. Every steering action is recorded.
+- Destructive actions (stopping a run, deleting run data, discarding branches) MUST be confirmed
+  per action, naming what is affected.
 
-- Time from process launch to first interactive frame MUST be under **100 ms**.
-- Fallow MUST NOT perform background indexing, crawling, or scanning unless the user has
-  explicitly enabled it. Such features are opt-in and off by default.
-- Work needed at startup MUST be lazy: deferred until the user requests the view that
-  needs it.
-- The orchestration channel and its state are created when the first session that uses them
-  starts, never at Fallow's startup and never before the first frame.
+Rationale: autonomy is acceptable only when the engineer keeps the decisions that matter and can
+step in precisely.
 
-Rationale: a tool that is slow to open stops being opened; hidden background work silently
-erodes both the startup and memory budgets.
+### III. Coordination in Code, Decisions in the Repo
 
-### III. Terminal-Only
+- Fallow, not the agents, decides which step runs next, from state it has verified.
+- Agents MUST NOT message each other or the engineer. During a step an agent may read the plan,
+  report progress, and ask Fallow for a decision.
+- Decisions MUST be recorded as commits to the plan, the criteria or a contract. A message may
+  point to the commit, never replace it.
+- When a decision changes what a part builds against, every affected part MUST be reopened and
+  verified again, including parts already done.
+- Acceptance criteria are named by part (`part/id`), so no answer is ambiguous.
 
-- Fallow MUST run entirely inside a terminal emulator.
-- No GUI toolkit, no Electron, no webview, and no bundled browser runtime may be added as a
-  dependency, direct or transitive.
+Rationale: in T050 Q2, agents that coordinated by messages stayed isolated, and the engineer
+became the router. State that lives in code and in the repository needs no one to carry it.
 
-Rationale: the terminal is where agentic workflows already live, and avoiding browser
-runtimes is a precondition for meeting Principles I and II.
+### IV. Simplest Setup First
 
-### IV. Observability Over Control
+- A run builds with one builder by default, with gates and an independent reviewer.
+- Work is split into parallel parts only when the approved plan declares it: owned files with no
+  overlap, each part owning its code and its tests, and a committed contract for each boundary.
+- Investigation happens inside a step (the agent's own subagents), never as extra steps.
+- Every orchestration component MUST be possible to switch off for a recorded run, so its effect
+  can be measured.
 
-- Fallow's job is to show what LLM processes are doing, and to run the agent sessions the user
-  starts in it.
-- For processes Fallow did not start, nothing changes: Fallow MUST NOT kill, signal, suspend,
-  re-prioritize, inject into, or otherwise modify them without explicit, per-action user
-  confirmation.
-- For **Fallow sessions** (processes Fallow started at the user's request, and their children):
-  - The user's own typing and pasting into a focused session is not an action by Fallow.
-  - Text that another agent asks Fallow to deliver into a session is input on the user's behalf.
-    It MUST be approved per action, **or** covered by a standing permission that the user granted
-    and that is scoped by source, target and action, limited in time (at most 8 hours), visible at
-    all times while active, revocable at once, and announced each time it is used.
-  - Every delivered text MUST carry a sender label set by Fallow that an agent cannot forge.
-- **Destructive actions** (kill, force kill, suspend, resume, re-prioritize) on any process,
-  including Fallow sessions, MUST be confirmed per action. A confirmation MUST name the target and
-  the action before it executes. There is no "don't ask again" and no standing permission for
-  them.
+Rationale: more agents cost more and fail in more ways. They are added only where the plan says
+the work divides cleanly and measurement says it pays.
 
-Rationale: users must be able to trust that watching a process never changes its behavior, and that
-agents can only influence each other within limits the user set and can see.
+### V. Local and Private by Construction
 
-### V. Least Privilege, Read-Only by Default
+- Fallow runs on the engineer's machine, for the engineer only. It sends no telemetry, crash
+  reports, update checks or remote logs.
+- The run page MUST be served only on the loopback interface, to the engineer only:
+  - a secret per launch, required on every request;
+  - requests from other origins and other host names rejected.
 
-- Fallow's default mode MUST be read-only with respect to the system: it does not write to
-  files, processes, or settings outside its own config and cache directories.
-- Fallow MUST NOT require root, administrator, or elevated privileges for any core feature.
-  When data is unavailable without elevation, Fallow MUST degrade gracefully and say so,
-  not prompt for elevation.
-- Any write capability MUST be opt-in and scoped to an explicit user action.
-- Starting a process is a write capability. Fallow MAY start a process only when the user
-  explicitly starts or restarts a session, or when an agent's request is approved by the user or
-  covered by a standing permission with a session limit (Principle IV). It never starts processes
-  on its own, and never with more privileges than its own.
+  The page MUST load nothing from outside Fallow.
+- Fallow itself MUST NOT make network requests. The traffic of a run is:
+  - the agents' own traffic to their providers;
+  - the engineer's own git and remote tools, which Fallow runs with the engineer's credentials only
+    to publish a run (push its branch, open its pull request, read branch rules and check results).
+- Fallow MUST NOT read secret values (credential files, keychains, tokens, API keys), and never
+  stores or displays environment variable values.
+- Run data (state, steps, agent activity, decisions, steering actions) MAY be kept on disk in
+  Fallow's own data directory, readable by the current user only, until the engineer deletes it.
+  Fallow shows what it holds and how large it is.
+- Run records used for comparisons hold only numbers, identifiers, fingerprints and fixed-value
+  outcomes, never text, paths or output, as in v5.0.0.
 
-Rationale: a monitoring tool with broad privileges is an attack surface; staying unprivileged
-keeps it safe to install anywhere.
+Rationale: Fallow handles source code, agent output and credentials-adjacent data; it earns trust
+by keeping all of it on the machine, and by publishing only through tools and rights the engineer
+already has.
 
-### VI. Benchmarked Performance Claims
+### VI. Least Privilege
 
-- Every performance claim (in docs, release notes, specs, or UI) MUST be backed by an
-  automated benchmark that runs in CI.
-- The budgets in Principles I and II MUST each have a CI benchmark that fails the build when
-  the budget is exceeded.
-- A claim without a corresponding benchmark MUST be removed or reworded as unmeasured.
+- Fallow MUST NOT require elevated privileges, and runs every agent with the engineer's rights or
+  fewer.
+- Each role's rights are fixed by Fallow and enforced by the agent's own options: builders edit
+  and run commands, reviewers run commands without editing, and the planner edits only the plan.
+- Options that make an agent skip its own permission checks MUST NOT be used unless the engineer
+  turned them on explicitly for that run.
+- Fallow writes only to its own data and config directories, the working copies and branches of
+  its runs, and the files its agents are allowed to change there.
 
-Rationale: performance budgets that are not measured continuously regress silently.
+Rationale: a program that starts agents on its own must give each of them no more power than its
+step needs.
 
-### VII. Privacy by Construction
+### VII. Runs Survive
 
-- No user data, file contents, process details or network payloads ever leave the machine:
-  no telemetry, no crash upload, no update ping, no remote logging.
-- The only permitted outbound traffic is forward DNS resolution of the configured LLM provider
-  hostnames. It MUST be possible to disable it with a configuration setting. Fallow MUST NOT
-  perform reverse lookups of the user's connections or resolve any other hostname.
-- Fallow MUST NOT read secret values (credential files, keychains, tokens, API keys).
-- Fallow never parses, stores, displays or logs environment variable values. On platforms where
-  a command-line read unavoidably returns them, the buffer is wiped before the call returns, and
-  the SC-007 canary test runs on that platform.
-- Fallow MUST NOT inspect network payloads.
-- Fallow MAY open **one local channel** for its own sessions to reach it (a Unix domain socket or a
-  Windows named pipe, or the agent's standard input and output), restricted to the current user.
-  It MUST NOT open any network socket for this, including on the loopback interface. Only processes
-  Fallow started may use the channel, each only as itself. Fallow never makes network requests on
-  an agent's behalf.
-- Messages, events, tasks, signals, permissions and the activity log of orchestration, and the
-  output of sessions, are kept in memory only. They MUST NOT be written to disk, logged or sent
-  anywhere.
-- One exception: **run records**. For a run the engineer chose to record, Fallow MAY keep a record
-  on disk in its own cache directory, readable by the current user only. A record holds only:
-  - the run's mode and the components switched off, as fixed values;
-  - fingerprints (one-way hashes) of the task description and of the hidden tests, never the text;
-  - identifiers of the agent, model and version of each session, and of the starting and final
-    commits;
-  - the start time and durations;
-  - per part and per role, referred to by number, the counts (signals, repair rounds,
-    interventions, hidden tests passed and failed) and gate and review outcomes as fixed values;
-  - token and cost figures as agents reported them.
+- A run's state MUST be kept on disk after every change.
+- A stopped or crashed Fallow resumes every run where it was, without repeating a completed step
+  and without losing history.
+- A run never depends on the page being open.
 
-  A run record MUST NOT contain any text written by the engineer or an agent (task names or
-  descriptions, part, role or focus names, messages, tasks, signals, reviews, notes), session
-  output, file contents, test names, paths of any kind, command lines or environment values. Run
-  records are never sent anywhere. Fallow writes none unless the engineer chose to record the run;
-  they are kept until the engineer deletes them, and Fallow shows how many it holds and their size.
-- Detection of LLM processes MUST rely only on process metadata (name, PID, executable path,
-  command line, parent/child relationships, resource usage) and connection endpoints
-  (remote host, port, protocol).
+Rationale: autonomous runs take long; anything that loses them on a restart forces the engineer
+back into watching.
 
-Rationale: Fallow observes processes that handle source code and credentials; it earns trust
-only by being structurally unable to leak them. Resolving a fixed public list of provider
-hostnames reveals nothing about the user beyond the fact that Fallow is running.
+### VIII. Small and Measured
 
-## Performance Budgets & Measurement
+- Fallow's own process (not its agents) MUST stay under **60 MB** resident memory when idle, and
+  under **200 MB** with a run of 4 concurrent agent steps.
+- The page MUST be reachable within **500 ms** of Fallow starting, and an agent's activity MUST
+  appear on it within **2 s**.
+- Every performance claim MUST be backed by an automated benchmark that runs in CI and fails the
+  build when its budget is exceeded.
+- Every claim about effectiveness ("solo beats plain", "a split pays") MUST come from recorded runs
+  on a task set with hidden tests, naming the task set and the number of runs.
+
+Rationale: Fallow runs next to memory-hungry agents and must stay cheap, and claims about agent
+orchestration are easy to make and hard to earn.
+
+## Budgets & Measurement
 
 | Metric | Budget | Measured as |
 |---|---|---|
-| Idle memory | < 50 MB RSS | Peak RSS after startup with no project open, settled |
-| Loaded memory | < 150 MB RSS | Peak RSS with the reference large project open |
-| Startup | < 100 ms | Process launch to first interactive frame; p95 of 30 runs after 3 warm-ups |
+| Idle memory | < 60 MB RSS | Fallow's process, settled, with no run active |
+| Running memory | < 200 MB RSS | Fallow's process during the reference run with 4 concurrent steps (agents excluded) |
+| Page ready | < 500 ms | Process launch to the page answering; p95 of 30 launches after 3 warm-ups |
+| Activity latency | < 2 s | An agent's output event to its appearance on the page; p95 over the reference run |
 
-- Startup statistic: the budget is met when the **95th percentile of 30 measured launches**,
-  taken after 3 unmeasured warm-up launches, is under 100 ms. Shared CI runners are noisy, so a
-  failing benchmark job is re-run **once** automatically; the second result is final.
-- Budgets are measured on the CI benchmark runner, with background features at their
-  defaults (off).
-- The reference large project MUST be a pinned, versioned fixture in the benchmark suite.
-  Changing the fixture is a change to the budget and requires a constitution amendment.
-- Opt-in features MUST be benchmarked separately and their cost published; they never
-  count against the default budgets but MUST NOT be enabled by default to dodge them.
+- The reference run is a pinned, versioned fixture with scripted agents. Changing it changes the
+  budgets and requires an amendment.
+- A failing benchmark job on a shared CI runner is re-run once automatically; the second result
+  is final.
 
 ## Development Workflow & Quality Gates
 
-- Every specification and plan MUST include a Constitution Check that states its expected
-  impact on memory, startup, privileges, and data access.
-- Every pull request MUST pass the CI benchmark gates (Principle VI) before merge.
-- Adding a dependency MUST be justified in the PR against Principles I–III and VII,
-  including its effect on binary size, memory, and startup.
-- Any code path that acts on another process MUST be covered by a test proving it is
-  unreachable without user confirmation (Principle IV).
-- Any code path that types into a Fallow session on another agent's behalf MUST be covered by a
-  test proving it is unreachable without a per-action approval or a matching, unexpired standing
-  permission.
-- CI MUST verify that Fallow never opens a listening network socket, alongside the egress test.
-- CI MUST verify that a run record holds only the fields Principle VII allows, using a run whose
-  task name and description, part, role and focus names, messages, tasks, signals, reviews, test
-  names, paths and session output contain marker text that must not appear in the record.
-- Any code path that opens a network connection MUST be treated as a constitution violation,
-  except forward DNS resolution of configured provider hostnames as permitted by Principle VII.
-  Any further exception requires an amendment.
+- Every specification and plan MUST include a Constitution Check against these principles.
+- Every pull request MUST pass the CI benchmark gates (VIII).
+- Adding a dependency MUST be justified against V, VI and VIII, including its effect on memory,
+  startup and what it sends over the network.
+- CI MUST verify that:
+  - injected false claims are never accepted (I): a missing commit, unchanged files, failing gates
+    and an incomplete verdict;
+  - no code path pushes to a target branch, force-pushes or approves a pull request (II);
+  - the page listens on loopback only, rejects requests without the secret or from another origin
+    or host name, and loads no external resources (V);
+  - Fallow's own process opens no outbound connection (V);
+  - a run interrupted at each stage resumes without repeating a completed step (VII);
+  - a run record holds only the fields V allows, using marker text that must not appear (V).
 
 ## Governance
 
-- This constitution supersedes all other project practices. Where a spec, plan, or PR
+- This constitution supersedes all other project practices. Where a spec, plan, or pull request
   conflicts with it, the constitution wins.
-- Amendments require a written proposal stating the change, its rationale, and its impact
-  on existing features and benchmarks, recorded in this file with an updated version.
-- Versioning follows semantic versioning:
-  - MAJOR: a principle is removed, redefined, or a budget is loosened.
-  - MINOR: a principle or section is added, or guidance is materially expanded.
-  - PATCH: clarifications and wording changes with no change in meaning.
-- Complexity or exceptions to a principle MUST be justified in the plan's Complexity
-  Tracking section; unjustified violations block merge.
-- Compliance is reviewed at every PR and at every release.
+- Amendments require a written proposal stating the change, its rationale, and its impact on
+  existing features and benchmarks, recorded in this file with an updated version.
+- Versioning follows semantic versioning: MAJOR when a principle is removed or redefined or a
+  budget is loosened; MINOR when a principle or section is added or guidance is materially
+  expanded; PATCH for clarifications.
+- Complexity or exceptions to a principle MUST be justified in the plan's Complexity Tracking
+  section; unjustified violations block merge.
+- Compliance is reviewed at every pull request and at every release.
 
-**Version**: 5.0.0 | **Ratified**: 2026-10-13 | **Last Amended**: 2026-10-28
+**Version**: 6.0.0 | **Ratified**: 2026-10-13 | **Last Amended**: 2026-10-29
