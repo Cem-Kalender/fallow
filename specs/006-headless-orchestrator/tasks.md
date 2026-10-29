@@ -82,6 +82,7 @@ every story builds on.
   - the run directory is created with a current-user-only ACL;
   - `fold(events) -> RunState`.
 - [X] T010 [P] Implement the entities of data-model.md in `src/run/state.rs`: Run, Plan, Part, Step, Decision, GateRun, Verdict, SteeringAction, Publication. Include the stage transitions ("planning → building → integrating → gating → reviewing → ready → publishing → done", "paused" remembers its stage, "done" and "stopped" are final) and Part's states, with the transitions checked in `fold`.
+  - Stage transitions are checked in `fold`; Part transitions are not yet (any state may follow any other).
 - [X] T011 [P] Add `uuid_v4()` and `secret_256()` from `BCryptGenRandom` to `src/platform/random.rs`, and a helper that creates directories and files readable by the current user only in `src/platform/acl.rs`.
 - [X] T012 Implement the service in `src/service/mod.rs`:
   - `fallow serve` claims the single-instance named pipe, refusing if it is taken;
@@ -187,10 +188,14 @@ and can run one fake-agent step.
   - per-step time comes from `step_min`;
   - when a limit is reached: a `limit_reached` event, then pause before the next step, offering to raise the limit, continue once, or stop;
   - when an agent reports no cost, the page says only the time limit applies.
+  - Built in `RunState::limit_hit` and `src/run/machine.rs`, not a `limits.rs`. Paused time does not count against the time limit. "Continue once" lets one more step start (`limits_set` with `once`).
+  - A step whose agent reports no cost shows "cost not reported" on the page; the page does not yet say that only the time limit then applies.
 - [X] T033 [US1] Implement the local merge in `src/publish/local.rs` (004's, adapted): only from `ready`, only exactly the verified integration commit, onto the target branch, without touching the engineer's working tree, then a `merged` event (FR-009).
+  - When the engineer's repository folder has the target branch checked out, the merge happens there (it needs no changes to tracked files; untracked files are ignored), so the working tree does move to the merged commit. Otherwise it happens in a temporary worktree.
 - [X] T034 [US1] Implement resume in `src/service/mod.rs` and `src/run/machine.rs` (research R-2):
   - on start, a step with `step_started` and no `step_finished` is resumed with `--resume <session>` and the "you were interrupted" note, or redone if the session cannot be resumed;
   - completed steps are never queued again.
+  - A resumed step that fails without any activity is taken as a lost session (`session_lost`): a new session gets the whole instruction, and the attempt costs no repair round. A question that only a transient error raised is cleared on restart, and the engineer can "Try again" (`POST /api/runs/<id>/retry`).
 - [X] T035 [US1] Implement `fallow run "<task>"` and the setup check (contracts/cli.md, FR-032) in `src/main.rs` and `src/service/api.rs`:
   - check the repository, uncommitted changes, the agent CLI and its sign-in, the gate commands, the remote and the hooks list;
   - create the run (`run_created`) and open `/runs/<id>/plan`;
@@ -215,7 +220,9 @@ and can run one fake-agent step.
   - an incomplete verdict.
   - Also: a review whose commands were refused does not count (found on a real run).
 - [X] T040 [P] [US1] Test `tests/us1_resume.rs` (constitution VII gate, SC-003): end the service at each stage (planning, building mid-step, gating, reviewing, ready), start it again, and check that the run completes without a completed step repeated and with the history intact.
+  - Covered: planning, building mid-step, gating (the baseline), reviewing and ready. "Integrating" does not exist as a separate step for one builder.
 - [X] T041 [P] [US1] Test `tests/us1_limits.rs` (FR-038): the cost limit and the time limit each pause before the next step, and raising the limit continues the run.
+  - The cost limit and "continue once" run end to end; the time limit, with paused time left out, is a `RunState` test in `tests/run_events.rs`.
 
 **Checkpoint**: the MVP. A solo run from the plan to the merge with the fake agent in CI, and with
 Claude Code by hand (quickstart V1, V3).
@@ -224,6 +231,19 @@ Reached on 2026-10-29:
 - **With the fake agent:** every US1 test passes.
 - **With the real Claude Code (Haiku), `tests/real_agent.rs`:** a solo run went from plan to merge with one step of each kind, in 90 s, for $0.016.
 - **What the real runs changed:** Fallow commits each step's work itself, rules are mirrored for the PowerShell tool, agents run one command per call, and a review with refused commands does not count (research R-4).
+- **What a fresh review found, and was fixed the same day:**
+  - gates now run in a new worktree per run, checked to be at the commit;
+  - files are counted from the part's last accepted commit, so a refused change stays counted;
+  - a pause without a question asks again or ends;
+  - each decision is derived again from the log, so a crash between two events repeats it, never skips it;
+  - lost sessions are taken over by a new session;
+  - "Try again" exists for questions Fallow raised itself;
+  - Stop is refused during a merge, and ends running gates;
+  - builders and reviewers get the exact gate commands, not the bare program (`python`), and no git rights;
+  - `--target` is the branch the run starts from, and it is checked;
+  - answers from a review with refused commands are left out of the verdict;
+  - failing test names are collected from the whole gate output;
+  - a repair cap of 0 holds the part (`at_cap`) for the engineer.
 
 ---
 

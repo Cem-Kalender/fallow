@@ -135,3 +135,41 @@ fn the_run_folder_is_private_to_the_user() {
     assert!(entries[0].contains("(OI)(CI)"), "{text}");
     let _ = std::fs::remove_dir_all(&d);
 }
+
+#[test]
+fn paused_time_does_not_count_against_the_time_limit() {
+    use fallow::run::events::Logged;
+    use fallow::run::time::rfc3339;
+    let t0 = 1_800_000_000;
+    let at = |s: u64| rfc3339(t0 + s);
+    let stage = |seq: u64, s: u64, to: Stage| Logged {
+        seq,
+        at: at(s),
+        event: Event::Stage {
+            to,
+            why: String::new(),
+        },
+    };
+    let mut events = vec![
+        Logged {
+            seq: 1,
+            at: at(0),
+            event: created(),
+        },
+        stage(2, 0, Stage::Building),
+        stage(3, 600, Stage::Paused),
+    ];
+    let s = RunState::fold(1, &events).unwrap();
+    assert_eq!(
+        s.minutes_used(t0 + 2000),
+        10,
+        "the pause so far is left out"
+    );
+    events.push(stage(4, 4200, Stage::Building));
+    let s = RunState::fold(1, &events).unwrap();
+    assert_eq!(s.minutes_used(t0 + 4800), 20);
+    assert!(s.limit_hit(t0 + 4800).is_none());
+    let (which, used) = s.limit_hit(t0 + 3600 + 7300).unwrap();
+    assert_eq!(which, "time");
+    assert!(used.starts_with("121 of 120"));
+}

@@ -86,6 +86,8 @@ pub struct SteeringEntry {
     pub detail: Option<String>,
     pub at: String,
     pub stage: Stage,
+    /// The event number, to order it among steps.
+    pub seq: u64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -143,6 +145,14 @@ pub struct RunState {
     pub stopped: Option<Option<String>>,
     pub notes: Vec<String>,
     pub cost_usd: f64,
+    /// Sessions that could not be resumed.
+    pub lost_sessions: Vec<String>,
+    /// One step may start past the limits (FR-038 "continue once").
+    pub allow_once: bool,
+    /// When the current pause began, and the paused seconds before it: paused time does not
+    /// count against the time limit.
+    pub paused_since: Option<String>,
+    pub paused_secs: u64,
     /// The latest event number.
     pub seq: u64,
 }
@@ -212,6 +222,10 @@ impl RunState {
             stopped: None,
             notes: Vec::new(),
             cost_usd: 0.0,
+            lost_sessions: Vec::new(),
+            allow_once: false,
+            paused_since: None,
+            paused_secs: 0,
             seq: first.seq,
         };
         for l in &events[1..] {
@@ -264,9 +278,19 @@ impl RunState {
                 }
                 if *to == Stage::Paused {
                     self.paused_from = Some(self.stage);
+                    self.paused_since = Some(l.at.clone());
                 } else if self.stage == Stage::Paused {
                     self.paused_from = None;
                     self.limit_reached = None;
+                    let since = self
+                        .paused_since
+                        .take()
+                        .as_deref()
+                        .and_then(super::time::parse_rfc3339);
+                    let now = super::time::parse_rfc3339(&l.at);
+                    if let (Some(a), Some(b)) = (since, now) {
+                        self.paused_secs += b.saturating_sub(a);
+                    }
                 }
                 if *to == Stage::Building && self.building_started.is_none() {
                     self.building_started = Some(l.at.clone());
@@ -314,6 +338,7 @@ impl RunState {
                 worktree,
                 base,
             } => {
+                self.allow_once = false;
                 if let Some(st) = self.steps.get_mut(n) {
                     st.started = Some(l.at.clone());
                     st.agent = Some(agent.clone());
@@ -413,6 +438,7 @@ impl RunState {
                     detail: detail.clone(),
                     at: l.at.clone(),
                     stage: self.stage,
+                    seq: l.seq,
                 });
             }
             Event::NeedsEngineer { why, options } => {
@@ -428,7 +454,11 @@ impl RunState {
                 usd,
                 minutes,
                 repair_cap,
+                once,
             } => {
+                if *once {
+                    self.allow_once = true;
+                }
                 if let Some(u) = usd {
                     self.limits.usd = *u;
                 }
@@ -439,6 +469,8 @@ impl RunState {
                     self.repair_cap = *r;
                 }
             }
+            Event::SessionLost { session } => self.lost_sessions.push(session.clone()),
+            Event::NeedsCleared { .. } => self.needs = None,
             Event::Merged { commit, .. } => self.merged = Some(commit.clone()),
             Event::Stopped { reason } => self.stopped = Some(reason.clone()),
             Event::Note { text } => self.notes.push(text.clone()),
@@ -450,13 +482,15 @@ impl RunState {
         self.steps.keys().next_back().map_or(1, |n| n + 1)
     }
 
-    /// The session of the latest step of `kind` (and `part`) that started, to resume it.
+    /// The session of the latest step of `role` (and `part`) that started and can still be
+    /// resumed.
     pub fn session_of(&self, role: &str, part: Option<&str>) -> Option<String> {
         self.steps
             .values()
             .rev()
             .filter(|s| s.kind.role() == role && s.part.as_deref() == part)
             .find_map(|s| s.session.clone())
+            .filter(|s| !self.lost_sessions.contains(s))
     }
 
     /// The baseline result of a gate, if it ran.
@@ -476,11 +510,43 @@ impl RunState {
             .count()
     }
 
-    /// Minutes since building started.
+    /// Minutes since building started, without the time the run was paused.
     pub fn minutes_used(&self, now: u64) -> u64 {
-        self.building_started
+        let Some(start) = self
+            .building_started
             .as_deref()
             .and_then(super::time::parse_rfc3339)
-            .map_or(0, |t| now.saturating_sub(t) / 60)
+        else {
+            return 0;
+        };
+        let paused_now = self
+            .paused_since
+            .as_deref()
+            .and_then(super::time::parse_rfc3339)
+            .map_or(0, |p| now.saturating_sub(p));
+        now.saturating_sub(start)
+            .saturating_sub(self.paused_secs + paused_now)
+            / 60
+    }
+
+    /// Which limit stops the next agent step, if one does (FR-038): `(which, how much is used)`.
+    pub fn limit_hit(&self, now: u64) -> Option<(String, String)> {
+        if self.allow_once {
+            return None;
+        }
+        if self.cost_usd >= self.limits.usd {
+            return Some((
+                "cost".into(),
+                format!("${:.2} of ${:.2}", self.cost_usd, self.limits.usd),
+            ));
+        }
+        let used = self.minutes_used(now);
+        if self.building_started.is_some() && used >= self.limits.minutes {
+            return Some((
+                "time".into(),
+                format!("{used} of {} min", self.limits.minutes),
+            ));
+        }
+        None
     }
 }

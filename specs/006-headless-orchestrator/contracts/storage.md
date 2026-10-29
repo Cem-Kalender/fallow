@@ -38,6 +38,9 @@ the page's `Last-Event-ID`.
 | `verdict` | step, answers[], complete, approved |
 | `steering` | kind, target?, detail?, stage |
 | `limit_reached` | which (cost \| time), used |
+| `limits_set` | usd?, minutes?, repair_cap?, once |
+| `session_lost` | session: an agent session that could not be resumed; it is never resumed again |
+| `needs_cleared` | why: a question that no longer needs the engineer (a transient error, cleared on restart) |
 | `publication` | kind, rules_source, required_checks[], required_reviews, pr?, checks[] |
 | `merged` | commit, how (local \| pull_request) |
 | `stopped` | reason? |

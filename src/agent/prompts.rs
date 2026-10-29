@@ -183,7 +183,7 @@ pub fn repair(part: &str, reasons: &[String], branch: &str) -> String {
 pub fn review(cx: &Context, commit: &str) -> String {
     let mut s = header("review", None);
     s.push_str(&format!(
-        "Task: {}\n\nYou review the integrated result at commit {commit}, checked out in your worktree. Check it as a black box against every acceptance criterion below: run something for each one (a test, a command, a one-line `python -c` check, and the like) and report what you ran and what happened. Reading the code is not a check: if a command is refused, run it on its own, without chaining. For each criterion that must fail, show the case that must be rejected and that it was.\n\n",
+        "Task: {}\n\nYou review the integrated result at commit {commit}, checked out in your worktree. Check it as a black box against every acceptance criterion below: run something for each one (a test command below, with arguments to pick the tests, or another command you are allowed) and report what you ran and what happened. Reading the code is not a check: if a command is refused, run it on its own, without chaining. For each criterion that must fail, show the case that must be rejected and that it was.\n\n",
         cx.task
     ));
     if let Some(plan) = cx.plan {

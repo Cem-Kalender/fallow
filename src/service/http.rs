@@ -341,9 +341,13 @@ fn handle(mut req: tiny_http::Request, tx: &Sender<Msg>, port: u16, secret: &str
                     id: i,
                     usd: body["usd"].as_f64(),
                     minutes: body["minutes"].as_u64(),
-                    repair_cap: body["repair_cap"].as_u64().map(|r| r as u32),
+                    repair_cap: body["repair_cap"]
+                        .as_u64()
+                        .map(|r| r.min(u32::MAX as u64) as u32),
+                    once: body["once"].as_bool().unwrap_or(false),
                 },
                 ["merge"] => Request::Merge { id: i },
+                ["retry"] => Request::Retry { id: i },
                 ["stop"] => Request::Stop {
                     id: i,
                     reason: body["reason"]

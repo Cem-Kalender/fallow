@@ -170,14 +170,23 @@ function renderAsk(s) {
     }
     if (opts.includes("raise the limit")) {
       btns.append(el("button", { class: "primary", type: "button", on: { click: () => {
-        const u = el("input", { type: "text", name: "usd", value: String(Math.ceil((s.limits.usd || 10) * 1.5)) });
-        const m = el("input", { type: "text", name: "minutes", value: String(Math.ceil((s.limits.minutes || 120) * 1.5)) });
+        // The default raise leaves room for half the original limit again, past what is used.
+        const usd = Math.max(s.limits.usd || 10, s.cost_usd || 0) + (s.limits.usd || 10) / 2;
+        const min = Math.max(s.limits.minutes || 120, s.minutes_used || 0) + (s.limits.minutes || 120) / 2;
+        const u = el("input", { type: "text", name: "usd", value: String(Math.ceil(usd)) });
+        const m = el("input", { type: "text", name: "minutes", value: String(Math.ceil(min)) });
         sheet("Raise the limits", [el("label", {}, "Cost limit ($)", u), el("label", {}, "Time limit (min)", m)], "Raise",
           (f) => api("POST", "/api/runs/" + view.id + "/limits", {
             usd: parseFloat(String(f.get("usd"))) || undefined,
             minutes: parseInt(String(f.get("minutes")), 10) || undefined,
           }));
       } } }, "Raise the limit"));
+    }
+    if (opts.includes("continue once")) {
+      btns.append(el("button", { type: "button", on: { click: () => act("limits", { once: true }) } }, "Continue for one step"));
+    }
+    if (opts.includes("retry")) {
+      btns.append(el("button", { class: "primary", type: "button", on: { click: () => act("retry") } }, "Try again"));
     }
     if (opts.includes("merge again")) {
       btns.append(el("button", { class: "primary", type: "button", on: { click: () => act("merge") } }, "Merge again"));
@@ -261,7 +270,7 @@ function renderSteps(s) {
         el("b", {}, "#" + st.n + " " + st.kind.replace("_", " ") + (st.part ? " · " + st.part : "")),
         el("span", { class: "pill " + cls }, label)),
       el("span", { class: "why" }, reasons || ""),
-      el("span", { class: "why mono" }, [st.agent, st.model].filter(Boolean).join(" ") + (st.cost_usd != null ? " · " + money(st.cost_usd) : "") + (st.duration_ms ? " · " + clock(st.duration_ms) : ""))));
+      el("span", { class: "why mono" }, [st.agent, st.model].filter(Boolean).join(" ") + (st.cost_usd != null ? " · " + money(st.cost_usd) : (st.end ? " · cost not reported" : "")) + (st.duration_ms ? " · " + clock(st.duration_ms) : ""))));
   }
 }
 

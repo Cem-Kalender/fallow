@@ -175,6 +175,8 @@ pub enum PartState {
     Repairing,
     WithEngineer,
     Paused,
+    /// Held at the repair cap until the engineer allows another repair (FR-008).
+    AtCap,
 }
 
 /// The engineer's actions (data-model.md Steering action).
@@ -322,6 +324,17 @@ pub enum Event {
         usd: Option<f64>,
         minutes: Option<u64>,
         repair_cap: Option<u32>,
+        /// One more step past the limits (FR-038 "continue once").
+        #[serde(default)]
+        once: bool,
+    },
+    /// An agent session that could not be resumed; it is never resumed again.
+    SessionLost {
+        session: String,
+    },
+    /// What needed the engineer no longer does (a retry, or a transient error after a restart).
+    NeedsCleared {
+        why: String,
     },
     Merged {
         commit: String,
@@ -356,6 +369,8 @@ impl Event {
             Event::NeedsEngineer { .. } => "needs_engineer",
             Event::LimitReached { .. } => "limit_reached",
             Event::LimitsSet { .. } => "limits_set",
+            Event::SessionLost { .. } => "session_lost",
+            Event::NeedsCleared { .. } => "needs_cleared",
             Event::Merged { .. } => "merged",
             Event::Stopped { .. } => "stopped",
             Event::Note { .. } => "note",

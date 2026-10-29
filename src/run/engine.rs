@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::sync::mpsc::{Receiver, Sender};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
@@ -72,6 +72,12 @@ pub enum Request {
         usd: Option<f64>,
         minutes: Option<u64>,
         repair_cap: Option<u32>,
+        /// One more step past the limits.
+        once: bool,
+    },
+    /// Try again after a question Fallow raised itself.
+    Retry {
+        id: u64,
     },
     Merge {
         id: u64,
@@ -127,8 +133,8 @@ pub struct Run {
     pub plan: Option<Plan>,
     /// Ends the running step early (stop, take over).
     pub stop: Arc<AtomicBool>,
-    /// Pages waiting for the next change (long polling).
-    pub waiters: Vec<Sender<Reply>>,
+    /// Pages waiting for the next change (long polling), with when they started waiting.
+    pub waiters: Vec<(Instant, Sender<Reply>)>,
     /// Activity lines seen since Fallow started, so a waiting page knows there are new ones.
     pub activity: u64,
 }
@@ -154,9 +160,15 @@ impl Run {
     /// Answers every waiting page.
     pub fn wake(&mut self) {
         let mark = self.mark();
-        for w in self.waiters.drain(..) {
+        for (_, w) in self.waiters.drain(..) {
             let _ = w.send(Reply::Ok(mark.clone()));
         }
+    }
+
+    /// Lets go of pages that stopped waiting (the page gives up after 25 s).
+    pub fn prune_waiters(&mut self) {
+        self.waiters
+            .retain(|(since, _)| since.elapsed() < Duration::from_secs(60));
     }
 
     pub fn worktrees(&self) -> PathBuf {
@@ -256,7 +268,7 @@ impl Engine {
                         Some(r) if r.state.seq > seq || r.activity > activity => {
                             let _ = reply.send(Reply::Ok(r.mark()));
                         }
-                        Some(r) => r.waiters.push(reply),
+                        Some(r) => r.waiters.push((Instant::now(), reply)),
                         None => {
                             let _ = reply.send(Reply::Err(format!("there is no run {id}")));
                         }
@@ -284,6 +296,9 @@ impl Engine {
                 Msg::Tick => {
                     let ids: Vec<u64> = self.runs.keys().copied().collect();
                     for id in ids {
+                        if let Some(r) = self.runs.get_mut(&id) {
+                            r.prune_waiters();
+                        }
                         self.drive(id);
                     }
                 }
@@ -302,15 +317,20 @@ impl Engine {
 
     fn drive(&mut self, id: u64) {
         if let Some(r) = self.runs.get_mut(&id) {
+            let before = needs(r);
             if let Err(e) = super::machine::drive(r, &self.ctx) {
                 // Asked once: a run that needs the engineer is not driven again until they act.
                 if r.state.needs.is_none() {
                     let _ = r.append(Event::NeedsEngineer {
-                        why: format!("Fallow could not go on: {e}"),
-                        options: vec!["stop".into()],
+                        why: format!("{}{e}", super::machine::COULD_NOT_GO_ON),
+                        options: vec!["retry".into(), "stop".into()],
                     });
-                    self.console.push(format!("run {id}: {e}"));
                 }
+            }
+            // A line on the console whenever the run starts needing the engineer (FR-016).
+            let after = needs(r);
+            if let Some(why) = after.filter(|a| before.as_ref() != Some(a)) {
+                self.console.push(format!("run {id} needs you: {why}"));
             }
         }
     }
@@ -346,8 +366,12 @@ impl Engine {
                 usd,
                 minutes,
                 repair_cap,
+                once,
             } => run_mut(self, id)
-                .and_then(|r| super::machine::raise_limits(r, usd, minutes, repair_cap))
+                .and_then(|r| super::machine::raise_limits(r, usd, minutes, repair_cap, once))
+                .map(|()| json!({})),
+            Request::Retry { id } => run_mut(self, id)
+                .and_then(super::machine::retry)
                 .map(|()| json!({})),
             Request::Merge { id } => {
                 let ctx_tx = self.ctx.tx.clone();
@@ -383,14 +407,22 @@ impl Engine {
             return Err("the task is empty".into());
         }
         let top = git_toplevel(&c.repo)?;
-        let start_commit = git::head(&top).map_err(|e| format!("{}: {e}", top.display()))?;
-        let target = match c.target.clone().or_else(|| git::branch(&top)) {
+        let current = git::branch(&top);
+        let target = match c.target.clone().or_else(|| current.clone()) {
             Some(t) => t,
             None => {
                 return Err("the repository is on a detached HEAD: name the target branch".into());
             }
         };
-        let left_out = git::changes(&top).unwrap_or_default();
+        // The run starts from the target branch, which must be a local branch.
+        let start_commit = git::rev(&top, &format!("refs/heads/{target}"))
+            .map_err(|_| format!("there is no local branch {target:?} to start from"))?;
+        // Uncommitted changes are left out only when they are on the branch the run starts from.
+        let left_out = if current.as_deref() == Some(target.as_str()) {
+            git::changes(&top).unwrap_or_default()
+        } else {
+            Vec::new()
+        };
         // The squad file at the starting commit (contracts/config.md).
         let mut notices = Vec::new();
         let squad = match git::show(&top, &start_commit, crate::config::squad::SQUAD_FILE) {
@@ -575,6 +607,7 @@ pub fn view(r: &Run) -> Value {
         None => String::new(),
     });
     v["interventions"] = json!(r.state.interventions());
+    v["minutes_used"] = json!(r.state.minutes_used(super::time::unix_now()));
     v["plan"] = serde_json::to_value(&r.plan).unwrap_or(Value::Null);
     v
 }

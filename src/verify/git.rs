@@ -38,6 +38,17 @@ pub fn has_remote(dir: &Path) -> bool {
     git(dir, &["remote"]).is_ok_and(|s| !s.trim().is_empty())
 }
 
+/// Changes to tracked files only: untracked files never block a merge.
+pub fn tracked_changes(dir: &Path) -> Result<Vec<String>, String> {
+    Ok(
+        git(dir, &["status", "--porcelain", "--untracked-files=no"])?
+            .lines()
+            .filter(|l| l.len() > 3)
+            .map(|l| l[3..].to_string())
+            .collect(),
+    )
+}
+
 /// Changed or untracked files in the worktree (`status --porcelain`).
 pub fn changes(dir: &Path) -> Result<Vec<String>, String> {
     Ok(git(dir, &["status", "--porcelain"])?

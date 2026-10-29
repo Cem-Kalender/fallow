@@ -153,6 +153,7 @@ fn the_engineer_can_allow_one_more_repair() {
             usd: None,
             minutes: None,
             repair_cap: Some(3),
+            once: false,
         },
     )
     .unwrap();

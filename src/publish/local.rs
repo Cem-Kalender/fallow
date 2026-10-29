@@ -17,7 +17,7 @@ pub fn merge(repo: &Path, target: &str, commit: &str, scratch: &Path) -> Result<
         &commit[..commit.len().min(10)]
     );
     if git::branch(repo).as_deref() == Some(target) {
-        if !git::changes(repo)?.is_empty() {
+        if !git::tracked_changes(repo)?.is_empty() {
             return Err(format!(
                 "{} has uncommitted changes on {target}; commit or stash them first",
                 repo.display()

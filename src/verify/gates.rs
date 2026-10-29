@@ -8,6 +8,7 @@ use std::io::Read;
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use regex::Regex;
@@ -92,7 +93,16 @@ const KEEP: usize = 64 * 1024;
 
 /// Runs a gate in `dir` with its time limit. Output lines go to `on_line` as they come; the
 /// process tree ends at the time limit.
-pub fn run(def: &GateDef, dir: &Path, commit: &str, on_line: &mut dyn FnMut(&str)) -> GateResult {
+/// Runs one gate. Failing names are collected from every line as it arrives, so a long output
+/// whose tail is kept still names every failure. `stop` ends the gate's processes early; the
+/// result then says it did not finish.
+pub fn run(
+    def: &GateDef,
+    dir: &Path,
+    commit: &str,
+    on_line: &mut dyn FnMut(&str),
+    stop: &AtomicBool,
+) -> GateResult {
     let (program, args) = shell_command(&def.command);
     let mut cmd = Command::new(&program);
     cmd.args(&args)
@@ -154,18 +164,31 @@ pub fn run(def: &GateDef, dir: &Path, commit: &str, on_line: &mut dyn FnMut(&str
     drop(tx);
     let deadline = Instant::now() + Duration::from_secs(def.timeout_min * 60);
     let mut output = String::new();
+    let mut failing = BTreeSet::new();
     let mut timed_out = false;
+    let mut stopped = false;
     let status = loop {
         while let Ok(line) = rx.try_recv() {
             on_line(&line);
+            failing.extend(failing_names(&line, &def.failures));
             output.push_str(&line);
             output.push('\n');
             if output.len() > 2 * KEEP {
-                output = output[output.len() - KEEP..].to_string();
+                let mut cut = output.len() - KEEP;
+                while !output.is_char_boundary(cut) {
+                    cut += 1;
+                }
+                output = output[cut..].to_string();
             }
         }
         match child.try_wait() {
             Ok(Some(s)) => break Some(s),
+            Ok(None) if stop.load(Ordering::Relaxed) => {
+                group.kill();
+                stopped = true;
+                let _ = child.wait();
+                break None;
+            }
             Ok(None) if Instant::now() >= deadline => {
                 group.kill();
                 timed_out = true;
@@ -179,11 +202,15 @@ pub fn run(def: &GateDef, dir: &Path, commit: &str, on_line: &mut dyn FnMut(&str
     // What is left in the pipes once the process ended.
     for line in rx.iter() {
         on_line(&line);
+        failing.extend(failing_names(&line, &def.failures));
         output.push_str(&line);
         output.push('\n');
     }
-    let failing = failing_names(&output, &def.failures);
-    let outcome = if timed_out {
+    let outcome = if stopped {
+        Outcome::NotStarted {
+            why: "stopped before it finished".into(),
+        }
+    } else if timed_out {
         Outcome::TimedOut
     } else {
         match status {

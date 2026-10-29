@@ -51,7 +51,8 @@ On failure it returns 409 with `{"error": "<why>"}` (for example "the plan has p
 | `/api/runs/<id>/take-over` | `{part}` | Ends the part's running step. Returns the command `claude --resume <session>` and the worktree path |
 | `/api/runs/<id>/hand-back` | `{part}` | Verifies the part's branch (R-7) as a step result |
 | `/api/runs/<id>/autonomy` | `{level}` | From the next decision on |
-| `/api/runs/<id>/limits` | `{usd?, minutes?, once?}` | Raises the limits, or allows one more step (FR-038) |
+| `/api/runs/<id>/limits` | `{usd?, minutes?, repair_cap?, once?}` | Raises the limits or the repair cap, or allows one more step (FR-038, FR-008). Values must be above zero |
+| `/api/runs/<id>/retry` | `{}` | Tries again after a question Fallow raised itself (a transient error, or a review without a usable verdict); refused for other questions |
 | `/api/runs/<id>/merge` | `{}` | In `ready`: local merge of exactly the verified commit, or `gh pr merge` |
 | `/api/runs/<id>/request-changes` | `{part, text}` | A repair round with the engineer's comment, within the cap |
 | `/api/runs/<id>/reject` | `{reason?}` | As stop, from `ready` or `publishing` |

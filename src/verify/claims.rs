@@ -12,11 +12,14 @@ use crate::plan::{Plan, glob_set};
 /// ends, so the work is the tip of the part's branch; a commit the builder names is a claim that
 /// must exist and be on that branch. The tip must be newer than the step's base, change only
 /// files the part may change, and contain every decision commit the part must take. `Ok` gives
-/// the verified commit; `Err` the reasons it is refused.
+/// the verified commit; `Err` the reasons it is refused. The files are counted from
+/// `files_base`, the part's last accepted commit, when the tip descends from it.
+#[allow(clippy::too_many_arguments)]
 pub fn check_build(
     repo: &Path,
     branch: &str,
     base: &str,
+    files_base: &str,
     result: &Value,
     plan: &Plan,
     part: &str,
@@ -46,7 +49,14 @@ pub fn check_build(
         ));
         return Err(why);
     }
-    let files = match git::files_between(repo, base, &commit) {
+    // The files are counted from the part's last accepted commit: a refused change stays
+    // counted until a later step is accepted.
+    let from = if git::is_ancestor(repo, files_base, &commit) {
+        files_base
+    } else {
+        base
+    };
+    let files = match git::files_between(repo, from, &commit) {
         Ok(f) => f,
         Err(e) => {
             why.push(format!("cannot read the commit's changes: {e}"));

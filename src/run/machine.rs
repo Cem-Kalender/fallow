@@ -1,16 +1,19 @@
-//! The stage machine (006 tasks T026, T027, T031 to T034): what a run does next, decided only
-//! from its folded state, so a restarted Fallow carries on from the log alone (constitution
-//! VII). Agent steps, gates and merges run on threads and come back through `on_done`.
+//! The stage machine (006 tasks T026, T027, T031 to T034): what a run does next.
+//!
+//! Results are recorded first (`process` ends with a `verified` event); what follows from them is
+//! derived on every pass from the folded state, and each decision begins with the one event that
+//! settles it (a queued step, a stage, a question to the engineer). A Fallow that stopped between
+//! two events therefore makes the same decision again, never a second one (constitution VII).
+//! Agent steps, gates and merges run on threads and come back through `on_done`.
 
 use std::io::Write;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use serde_json::Value;
-
 use super::engine::{Busy, Ctx, Done, Msg, Run};
 use super::events::*;
+use super::state::Step;
 use crate::agent::{self, Agent, Call, Session, prompts};
 use crate::config::{Failures, GateDef};
 use crate::plan::{self, Build};
@@ -30,8 +33,16 @@ pub fn integration_branch(id: u64) -> String {
     format!("fallow/r{id}/result")
 }
 
-/// How many times in a row a review may fail or be incomplete before the engineer is asked.
+/// How many reviews a round may take before the engineer is asked.
 const REVIEW_TRIES: usize = 3;
+
+/// Markers at the start of a `verified` reason that the next pass acts on.
+pub const BLOCKED: &str = "blocked: ";
+pub const INTERRUPTED: &str = "interrupted: ";
+pub const SESSION_LOST: &str = "session lost: ";
+/// The start of a question raised because Fallow itself could not go on (a transient error).
+pub const COULD_NOT_GO_ON: &str = "Fallow could not go on: ";
+const INTERRUPTED_WHY: &str = "interrupted: Fallow stopped while the step ran";
 
 fn gate_defs(run: &Run) -> Vec<GateDef> {
     run.state
@@ -101,6 +112,35 @@ fn instruction_of(run: &Run, n: u32) -> String {
     std::fs::read_to_string(run.steps_dir().join(format!("{n}.prompt"))).unwrap_or_default()
 }
 
+fn activity_lines(run: &Run, n: u32) -> usize {
+    std::fs::read_to_string(run.steps_dir().join(format!("{n}.jsonl")))
+        .map(|t| t.lines().count())
+        .unwrap_or(0)
+}
+
+fn context<'a>(run: &'a Run, plan: Option<&'a plan::Plan>) -> prompts::Context<'a> {
+    prompts::Context {
+        task: &run.state.task,
+        plan,
+        gates: &run.state.gates,
+        spec_kit: spec_kit(run),
+    }
+}
+
+/// Repair rounds a part has had: its repair steps (FR-008), without those that were cut short
+/// by Fallow stopping or by a lost session, which are taken up again by the next step.
+pub fn repairs(run: &Run, part: &str) -> u32 {
+    run.state
+        .steps
+        .values()
+        .filter(|s| s.kind == StepKind::Repair && s.part.as_deref() == Some(part))
+        .filter(|s| {
+            !first_reason(s)
+                .is_some_and(|r| r.starts_with(INTERRUPTED) || r.starts_with(SESSION_LOST))
+        })
+        .count() as u32
+}
+
 /// The first planning turn: the plan branch and its worktree, and the planner's first draft.
 pub fn start_planning(run: &mut Run) -> Result<(), String> {
     let id = run.id();
@@ -108,13 +148,7 @@ pub fn start_planning(run: &mut Run) -> Result<(), String> {
     git::create_branch(&repo, &plan_branch(id), &run.state.start_commit)?;
     let wt = run.worktrees().join("plan");
     git::worktree_add(&repo, &wt, Some(&plan_branch(id)), &run.state.start_commit)?;
-    let cx = prompts::Context {
-        task: &run.state.task,
-        plan: None,
-        gates: &run.state.gates,
-        spec_kit: spec_kit(run),
-    };
-    let text = prompts::plan_turn(&cx, "", true);
+    let text = prompts::plan_turn(&context(run, None), "", true);
     queue(
         run,
         StepKind::PlanTurn,
@@ -126,69 +160,35 @@ pub fn start_planning(run: &mut Run) -> Result<(), String> {
     Ok(())
 }
 
-/// After a restart: steps that were running when Fallow stopped are resumed in their sessions
-/// (research R-2); nothing completed runs again.
+/// After a restart (research R-2): steps that were running are recorded as interrupted and
+/// resumed in their sessions on the next pass; a question that only a transient error raised is
+/// cleared, so the run is tried again.
 pub fn resume(run: &mut Run) -> Result<(), String> {
-    let running: Vec<(u32, StepKind, Option<String>, Option<String>)> = run
+    if let Some(n) = &run.state.needs {
+        if n.why.starts_with(COULD_NOT_GO_ON) {
+            let why = n.why.clone();
+            run.append(Event::NeedsCleared { why })?;
+        }
+    }
+    let running: Vec<u32> = run
         .state
         .steps
         .values()
         .filter(|s| s.running())
-        .map(|s| (s.n, s.kind, s.part.clone(), s.session.clone()))
+        .map(|s| s.n)
         .collect();
-    for (n, kind, part, session) in running {
+    for n in running {
         run.append(Event::StepFinished {
             n,
             end: StepEnd::Failed {
-                why: "interrupted: Fallow stopped while the step ran".into(),
+                why: INTERRUPTED_WHY.into(),
             },
             cost_usd: None,
             duration_ms: 0,
             denials: Vec::new(),
         })?;
-        run.append(Event::Verified {
-            n,
-            accepted: false,
-            reasons: vec!["interrupted; resumed after Fallow started again".into()],
-            commit: None,
-        })?;
-        let text = match &session {
-            Some(_) => format!(
-                "Fallow step: {} {}\n\n{}",
-                kind.label(),
-                part.as_deref()
-                    .map(|p| format!("(part {p})"))
-                    .unwrap_or_default(),
-                prompts::INTERRUPTED
-            ),
-            None => instruction_of(run, n),
-        };
-        queue(
-            run,
-            kind,
-            part.as_deref(),
-            session,
-            "resumed after Fallow stopped",
-            text,
-        )?;
     }
     Ok(())
-}
-
-/// Whether a limit stops the next agent step (FR-038).
-fn limit_hit(run: &Run) -> Option<(String, String)> {
-    let s = &run.state;
-    if s.cost_usd >= s.limits.usd {
-        return Some((
-            "cost".into(),
-            format!("${:.2} of ${:.2}", s.cost_usd, s.limits.usd),
-        ));
-    }
-    let used = s.minutes_used(super::time::unix_now());
-    if s.building_started.is_some() && used >= s.limits.minutes {
-        return Some(("time".into(), format!("{used} of {} min", s.limits.minutes)));
-    }
-    None
 }
 
 fn pause_for_limit(run: &mut Run, which: String, used: String) -> Result<(), String> {
@@ -196,16 +196,30 @@ fn pause_for_limit(run: &mut Run, which: String, used: String) -> Result<(), Str
         which: which.clone(),
         used: used.clone(),
     })?;
-    run.append(Event::Stage {
-        to: Stage::Paused,
-        why: format!("the {which} limit is reached ({used})"),
-    })?;
+    if run.state.stage != Stage::Paused {
+        run.append(Event::Stage {
+            to: Stage::Paused,
+            why: format!("the {which} limit is reached ({used})"),
+        })?;
+    }
+    ask_limit(run, &which, &used)
+}
+
+fn ask_limit(run: &mut Run, which: &str, used: &str) -> Result<(), String> {
     run.append(Event::NeedsEngineer {
         why: format!(
-            "The run's {which} limit is reached ({used}). Raise the limit to go on, or stop the run."
+            "The run's {which} limit is reached ({used}). Raise the limit, continue for one more step, or stop the run."
         ),
-        options: vec!["raise the limit".into(), "stop".into()],
+        options: vec![
+            "raise the limit".into(),
+            "continue once".into(),
+            "stop".into(),
+        ],
     })
+}
+
+fn limit_hit(run: &Run) -> Option<(String, String)> {
+    run.state.limit_hit(super::time::unix_now())
 }
 
 /// Decides and starts what comes next. Does nothing while something runs.
@@ -213,22 +227,39 @@ pub fn drive(run: &mut Run, ctx: &Ctx) -> Result<(), String> {
     if run.busy.is_some() || run.state.stage.is_final() {
         return Ok(());
     }
-    match run.state.stage {
-        Stage::Planning => {
-            if run.state.needs.is_some() {
-                return Ok(());
-            }
-            if let Some(n) = unprocessed(run) {
-                return process(run, n);
-            }
-            if let Some(n) = queued(run) {
-                if let Some((w, u)) = limit_hit(run) {
-                    return pause_for_limit(run, w, u);
+    if run.state.stage == Stage::Paused {
+        // A pause that lost its question (the engineer's action cleared it) asks again, or
+        // ends when the limits allow the run to go on.
+        if run.state.needs.is_none() {
+            match limit_hit(run) {
+                Some((w, u)) => ask_limit(run, &w, &u)?,
+                None => {
+                    let back = run.state.paused_from.unwrap_or(Stage::Building);
+                    run.append(Event::Stage {
+                        to: back,
+                        why: "the limits allow the run to go on".into(),
+                    })?;
                 }
-                return start(run, ctx, n);
             }
-            Ok(())
         }
+        return Ok(());
+    }
+    if run.state.needs.is_some() {
+        return Ok(());
+    }
+    if let Some(n) = unprocessed(run) {
+        return process(run, n);
+    }
+    if requeue_last(run)? {
+        return Ok(());
+    }
+    if let Some(n) = queued(run) {
+        if let Some((w, u)) = limit_hit(run) {
+            return pause_for_limit(run, w, u);
+        }
+        return start(run, ctx, n);
+    }
+    match run.state.stage {
         Stage::Building => building(run, ctx),
         Stage::Reviewing => reviewing(run, ctx),
         _ => Ok(()),
@@ -240,7 +271,7 @@ fn queued(run: &Run) -> Option<u32> {
     run.state.steps.values().find(|s| s.queued()).map(|s| s.n)
 }
 
-/// A finished step whose result has not been handled (after a restart).
+/// A finished step whose result has not been recorded as handled.
 fn unprocessed(run: &Run) -> Option<u32> {
     run.state
         .steps
@@ -249,20 +280,113 @@ fn unprocessed(run: &Run) -> Option<u32> {
         .map(|s| s.n)
 }
 
+fn first_reason(s: &Step) -> Option<&str> {
+    match &s.verified {
+        Some((false, r)) => r.first().map(String::as_str),
+        _ => None,
+    }
+}
+
+/// When the last step was interrupted, or its session was lost, and nothing followed it yet:
+/// queue it again, resumed in its session, or in a new one.
+fn requeue_last(run: &mut Run) -> Result<bool, String> {
+    let Some(last) = run.state.steps.values().next_back().cloned() else {
+        return Ok(false);
+    };
+    let Some(reason) = first_reason(&last).map(str::to_string) else {
+        return Ok(false);
+    };
+    if reason.starts_with(INTERRUPTED) {
+        let session = last
+            .session
+            .clone()
+            .filter(|s| !run.state.lost_sessions.contains(s));
+        let text = match &session {
+            Some(_) => format!(
+                "Fallow step: {}{}\n\n{}",
+                last.kind.label(),
+                last.part
+                    .as_deref()
+                    .map(|p| format!(" (part {p})"))
+                    .unwrap_or_default(),
+                prompts::INTERRUPTED
+            ),
+            None => instruction_of(run, last.n),
+        };
+        queue(
+            run,
+            last.kind,
+            last.part.as_deref(),
+            session,
+            "resumed after Fallow stopped",
+            text,
+        )?;
+        return Ok(true);
+    }
+    if reason.starts_with(SESSION_LOST) {
+        let text = fresh_instruction(run, &last)?;
+        queue(
+            run,
+            last.kind,
+            last.part.as_deref(),
+            None,
+            "a new session takes over a session that could not be resumed",
+            text,
+        )?;
+        return Ok(true);
+    }
+    Ok(false)
+}
+
+/// The whole instruction for a new session taking over `last`'s work.
+fn fresh_instruction(run: &mut Run, last: &Step) -> Result<String, String> {
+    Ok(match last.kind {
+        StepKind::PlanTurn | StepKind::Decide => {
+            let said: Vec<String> = run
+                .state
+                .conversation
+                .iter()
+                .filter(|t| t.who == "engineer")
+                .map(|t| t.text.clone())
+                .collect();
+            prompts::plan_turn(&context(run, None), &said.join("\n"), true)
+        }
+        StepKind::Review => {
+            let commit = run.state.integrated.clone().unwrap_or_default();
+            load_plan(run)?;
+            prompts::review(&context(run, run.plan.as_ref()), &commit)
+        }
+        _ => {
+            load_plan(run)?;
+            let part = last.part.clone().unwrap_or_else(|| plan::MAIN.to_string());
+            let branch = part_branch(run.id(), &part);
+            let mut text = as_kind(
+                prompts::build(&context(run, run.plan.as_ref()), &part, &branch),
+                last.kind,
+            );
+            let before = instruction_of(run, last.n);
+            if last.kind != StepKind::Build && !before.is_empty() {
+                text.push_str(
+                    "\n\nFallow's last instruction for this part, which still applies:\n\n",
+                );
+                text.push_str(&before);
+            }
+            text
+        }
+    })
+}
+
+/// A build instruction headed as a step of `kind`, for a new session doing a repair.
+fn as_kind(text: String, kind: StepKind) -> String {
+    text.replacen(
+        "Fallow step: build",
+        &format!("Fallow step: {}", kind.label()),
+        1,
+    )
+}
+
 fn building(run: &mut Run, ctx: &Ctx) -> Result<(), String> {
     load_plan(run)?;
-    if run.state.needs.is_some() {
-        return Ok(());
-    }
-    if let Some(n) = unprocessed(run) {
-        return process(run, n);
-    }
-    if let Some(n) = queued(run) {
-        if let Some((w, u)) = limit_hit(run) {
-            return pause_for_limit(run, w, u);
-        }
-        return start(run, ctx, n);
-    }
     // The baseline, once, before anything is judged against it.
     let missing_baseline: Vec<GateDef> = gate_defs(run)
         .into_iter()
@@ -277,79 +401,117 @@ fn building(run: &mut Run, ctx: &Ctx) -> Result<(), String> {
         return Err("the run is building without an approved plan".into());
     };
     if plan.build == Build::Parts {
-        return run.append(Event::NeedsEngineer {
-            why: "This plan splits the work into parallel parts, which arrives with user story 5. Change the plan to one builder, or stop the run.".into(),
-            options: vec!["stop".into()],
-        });
+        return Err("parallel parts arrive with user story 5".into());
     }
     for p in &plan.parts {
-        let status = run.state.parts.get(&p.id).cloned();
-        match status.as_ref().map(|s| s.state) {
-            None | Some(PartState::Waiting) => {
-                run.append(Event::Part {
-                    id: p.id.clone(),
-                    state: PartState::Building,
-                    result_commit: None,
-                    repairs: 0,
-                })?;
-                let branch = part_branch(run.id(), &p.id);
-                let cx = prompts::Context {
-                    task: &run.state.task,
-                    plan: Some(&plan),
-                    gates: &run.state.gates,
-                    spec_kit: spec_kit(run),
-                };
-                let text = prompts::build(&cx, &p.id, &branch);
-                let n = queue(
-                    run,
-                    StepKind::Build,
-                    Some(&p.id),
-                    None,
-                    "build the part",
-                    text,
-                )?;
-                if let Some((w, u)) = limit_hit(run) {
-                    return pause_for_limit(run, w, u);
-                }
-                return start(run, ctx, n);
+        if run
+            .state
+            .parts
+            .get(&p.id)
+            .is_some_and(|s| s.state == PartState::Done)
+        {
+            continue;
+        }
+        let last = run
+            .state
+            .steps
+            .values()
+            .rev()
+            .find(|s| s.part.as_deref() == Some(p.id.as_str()))
+            .cloned();
+        let Some(last) = last else {
+            // Nothing built yet.
+            run.append(Event::Part {
+                id: p.id.clone(),
+                state: PartState::Building,
+                result_commit: None,
+                repairs: 0,
+            })?;
+            let text = prompts::build(
+                &context(run, Some(&plan)),
+                &p.id,
+                &part_branch(run.id(), &p.id),
+            );
+            let n = queue(
+                run,
+                StepKind::Build,
+                Some(&p.id),
+                None,
+                "build the part",
+                text,
+            )?;
+            return start_unless_limited(run, ctx, n);
+        };
+        match &last.verified {
+            None => return Ok(()),
+            Some((false, reasons)) => {
+                let reasons = reasons.clone();
+                return refused(run, &p.id, reasons);
             }
-            Some(PartState::Building | PartState::Repairing | PartState::Reopened) => {
-                // The latest accepted result still owes its gates.
-                let last = run
+            Some((true, _)) => {
+                let Some(c) = last.verified_commit.clone() else {
+                    return Err(format!("step {} was accepted without a commit", last.n));
+                };
+                let defs = gate_defs(run);
+                let missing: Vec<GateDef> = defs
+                    .iter()
+                    .filter(|d| {
+                        !run.state.gate_runs.iter().any(|g| {
+                            g.kind == GateKind::Part
+                                && g.part.as_deref() == Some(p.id.as_str())
+                                && g.result.commit == c
+                                && g.result.gate == d.name
+                        })
+                    })
+                    .cloned()
+                    .collect();
+                if !missing.is_empty() {
+                    run_gates(run, ctx, GateKind::Part, Some(p.id.clone()), c, missing);
+                    return Ok(());
+                }
+                let failed: Vec<String> = run
                     .state
-                    .steps
-                    .values()
-                    .rev()
-                    .find(|s| s.part.as_deref() == Some(p.id.as_str()) && s.end.is_some());
-                let accepted = last.and_then(|s| match &s.verified {
-                    Some((true, _)) => s.verified_commit.clone(),
-                    _ => None,
-                });
-                if let Some(c) = accepted {
-                    let defs = gate_defs(run);
-                    if defs.is_empty() {
-                        let repairs = status.map_or(0, |s| s.repairs);
-                        run.append(Event::Part {
-                            id: p.id.clone(),
-                            state: PartState::Done,
-                            result_commit: Some(c),
-                            repairs,
-                        })?;
-                        continue;
-                    }
-                    let ran = run.state.gate_runs.iter().any(|g| {
+                    .gate_runs
+                    .iter()
+                    .filter(|g| {
                         g.kind == GateKind::Part
                             && g.part.as_deref() == Some(p.id.as_str())
                             && g.result.commit == c
-                    });
-                    if !ran {
-                        run_gates(run, ctx, GateKind::Part, Some(p.id.clone()), c, defs);
-                    }
+                            && !g.class.is_some_and(|k| k.ok())
+                    })
+                    .map(|g| {
+                        let names: Vec<&str> = g
+                            .result
+                            .failing
+                            .iter()
+                            .map(String::as_str)
+                            .take(8)
+                            .collect();
+                        format!(
+                            "gate {} {} ({}){}",
+                            g.result.gate,
+                            g.result.outcome.label(),
+                            g.class.map_or("not classified", |k| k.label()),
+                            if names.is_empty() {
+                                String::new()
+                            } else {
+                                format!(": {}", names.join(", "))
+                            }
+                        )
+                    })
+                    .collect();
+                if failed.is_empty() {
+                    let r = repairs(run, &p.id);
+                    run.append(Event::Part {
+                        id: p.id.clone(),
+                        state: PartState::Done,
+                        result_commit: Some(c),
+                        repairs: r,
+                    })?;
+                    continue;
                 }
-                return Ok(());
+                return reject(run, ctx, &p.id, failed);
             }
-            Some(PartState::Done) => continue,
-            Some(_) => return Ok(()),
         }
     }
     // Every part is done: integrate. With one builder the integrated result is its commit.
@@ -359,8 +521,12 @@ fn building(run: &mut Run, ctx: &Ctx) -> Result<(), String> {
         .and_then(|p| run.state.parts.get(&p.id))
         .and_then(|s| s.result_commit.clone())
         .ok_or("the part is done without a commit")?;
-    git::set_branch(&run.state.repo, &integration_branch(run.id()), &main)?;
-    run.append(Event::Integrated { commit: main })?;
+    if run.state.integrated.as_deref() != Some(main.as_str())
+        || run.state.integrated_seq < last_repair_seq(run)
+    {
+        git::set_branch(&run.state.repo, &integration_branch(run.id()), &main)?;
+        run.append(Event::Integrated { commit: main })?;
+    }
     run.append(Event::Stage {
         to: Stage::Reviewing,
         why: "the work is verified and integrated".into(),
@@ -368,34 +534,257 @@ fn building(run: &mut Run, ctx: &Ctx) -> Result<(), String> {
     reviewing(run, ctx)
 }
 
-fn reviewing(run: &mut Run, ctx: &Ctx) -> Result<(), String> {
-    load_plan(run)?;
-    if run.state.needs.is_some() {
-        return Ok(());
-    }
-    if let Some(n) = unprocessed(run) {
-        return process(run, n);
-    }
-    if let Some(n) = queued(run) {
-        if let Some((w, u)) = limit_hit(run) {
-            return pause_for_limit(run, w, u);
-        }
-        return start(run, ctx, n);
-    }
-    let round = run.state.integrated_seq;
-    let reviewed = run
-        .state
+/// The event number of the latest repair step, so a repaired result is integrated again even
+/// when it equals the earlier commit.
+fn last_repair_seq(run: &Run) -> u64 {
+    run.state
         .steps
         .values()
-        .any(|s| s.kind == StepKind::Review && s.queued_seq > round);
-    if !reviewed {
-        let n = queue_fresh_review(run)?;
-        if let Some((w, u)) = limit_hit(run) {
-            return pause_for_limit(run, w, u);
+        .filter(|s| s.kind == StepKind::Repair)
+        .map(|s| s.queued_seq)
+        .max()
+        .unwrap_or(0)
+}
+
+/// What follows from a part's last step that was not accepted: the engineer's answer when the
+/// builder asked something, else a repair within the cap.
+fn refused(run: &mut Run, part: &str, reasons: Vec<String>) -> Result<(), String> {
+    let first = reasons.first().cloned().unwrap_or_default();
+    if let Some(q) = first.strip_prefix(BLOCKED) {
+        run.append(Event::Part {
+            id: part.to_string(),
+            state: PartState::Blocked,
+            result_commit: None,
+            repairs: repairs(run, part),
+        })?;
+        return run.append(Event::NeedsEngineer {
+            why: format!("The builder of part {part} asks: {q}"),
+            options: vec!["answer".into(), "stop".into()],
+        });
+    }
+    reject_now(run, part, reasons)
+}
+
+/// A part's work was not accepted: a repair within the cap, else the engineer (FR-008). The
+/// queued repair step is what settles it.
+fn reject(run: &mut Run, _ctx: &Ctx, part: &str, reasons: Vec<String>) -> Result<(), String> {
+    reject_now(run, part, reasons)
+}
+
+fn reject_now(run: &mut Run, part: &str, reasons: Vec<String>) -> Result<(), String> {
+    let done = repairs(run, part);
+    if done >= run.state.repair_cap {
+        run.append(Event::Part {
+            id: part.to_string(),
+            state: PartState::AtCap,
+            result_commit: None,
+            repairs: done,
+        })?;
+        return run.append(Event::NeedsEngineer {
+            why: format!(
+                "Part {part} still fails after {done} repair round(s): {}. Allow one more repair, or stop the run.",
+                reasons.join("; ")
+            ),
+            options: vec!["allow one more repair".into(), "stop".into()],
+        });
+    }
+    let session = run.state.session_of("builder", Some(part));
+    let text = match &session {
+        Some(_) => prompts::repair(part, &reasons, &part_branch(run.id(), part)),
+        None => {
+            load_plan(run)?;
+            let mut t = as_kind(
+                prompts::build(
+                    &context(run, run.plan.as_ref()),
+                    part,
+                    &part_branch(run.id(), part),
+                ),
+                StepKind::Repair,
+            );
+            t.push_str("\n\n");
+            t.push_str(&prompts::repair(
+                part,
+                &reasons,
+                &part_branch(run.id(), part),
+            ));
+            t
         }
-        return start(run, ctx, n);
+    };
+    queue(
+        run,
+        StepKind::Repair,
+        Some(part),
+        session,
+        &format!("repair round {} of {}", done + 1, run.state.repair_cap),
+        text,
+    )?;
+    run.append(Event::Part {
+        id: part.to_string(),
+        state: PartState::Repairing,
+        result_commit: None,
+        repairs: done + 1,
+    })?;
+    if run.state.stage == Stage::Reviewing {
+        run.append(Event::Stage {
+            to: Stage::Building,
+            why: format!("part {part} needs a repair"),
+        })?;
     }
     Ok(())
+}
+
+fn start_unless_limited(run: &mut Run, ctx: &Ctx, n: u32) -> Result<(), String> {
+    if let Some((w, u)) = limit_hit(run) {
+        return pause_for_limit(run, w, u);
+    }
+    start(run, ctx, n)
+}
+
+/// The review steps of the current round: after the last integration, and after the engineer
+/// last asked to review again.
+fn round_reviews(run: &Run) -> Vec<Step> {
+    let since = run.state.integrated_seq.max(last_retry_seq(run));
+    run.state
+        .steps
+        .values()
+        .filter(|s| s.kind == StepKind::Review && s.queued_seq > since)
+        .cloned()
+        .collect()
+}
+
+fn last_retry_seq(run: &Run) -> u64 {
+    run.state
+        .steering
+        .iter()
+        .filter(|s| s.kind == SteeringKind::Resume && s.detail.as_deref() == Some("retry"))
+        .map(|s| s.seq)
+        .max()
+        .unwrap_or(0)
+}
+
+fn reviewing(run: &mut Run, ctx: &Ctx) -> Result<(), String> {
+    load_plan(run)?;
+    let reviews = round_reviews(run);
+    let Some(last) = reviews.last().cloned() else {
+        let n = queue_fresh_review(run)?;
+        return start_unless_limited(run, ctx, n);
+    };
+    let tries = reviews.len();
+    match &last.verified {
+        None => Ok(()),
+        Some((false, reasons)) => {
+            if tries >= REVIEW_TRIES {
+                return ask_review_again(run, tries, &reasons.join("; "));
+            }
+            let n = queue_fresh_review(run)?;
+            start_unless_limited(run, ctx, n)
+        }
+        Some((true, _)) => {
+            let Some(v) = run
+                .state
+                .verdicts
+                .iter()
+                .rev()
+                .find(|v| v.step == last.n)
+                .cloned()
+            else {
+                return Err(format!("review step {} has no verdict", last.n));
+            };
+            if v.approved {
+                remove_review_worktrees(run, &reviews);
+                return run.append(Event::Stage {
+                    to: Stage::Ready,
+                    why: "the review approved every criterion".into(),
+                });
+            }
+            if v.complete {
+                // The criteria that failed, by part, from every counted answer of the round.
+                let all = counted_answers(run, &reviews);
+                let mut by_part: std::collections::BTreeMap<String, Vec<String>> =
+                    Default::default();
+                for a in all.iter().filter(|a| !a.passed) {
+                    let part = a
+                        .criterion
+                        .split('/')
+                        .next()
+                        .unwrap_or(plan::MAIN)
+                        .to_string();
+                    by_part.entry(part).or_default().push(format!(
+                        "{} failed review: ran {}; got {}",
+                        a.criterion, a.ran, a.result
+                    ));
+                }
+                remove_review_worktrees(run, &reviews);
+                for (part, reasons) in by_part {
+                    // Already settled for this part (a repair queued after this review).
+                    let settled = run
+                        .state
+                        .steps
+                        .values()
+                        .any(|s| s.part.as_deref() == Some(part.as_str()) && s.n > last.n);
+                    if !settled {
+                        reject(run, ctx, &part, reasons)?;
+                    }
+                }
+                if run.state.stage == Stage::Reviewing {
+                    run.append(Event::Stage {
+                        to: Stage::Building,
+                        why: "the review found failing criteria".into(),
+                    })?;
+                }
+                return Ok(());
+            }
+            if tries >= REVIEW_TRIES {
+                return ask_review_again(run, tries, &v.missing.join("; "));
+            }
+            let session = last
+                .session
+                .clone()
+                .filter(|s| !run.state.lost_sessions.contains(s));
+            let n = match session {
+                Some(s) => queue(
+                    run,
+                    StepKind::Review,
+                    None,
+                    Some(s),
+                    &format!("the verdict is incomplete: {}", v.missing.join("; ")),
+                    prompts::review_missing(&v.missing),
+                )?,
+                None => queue_fresh_review(run)?,
+            };
+            start_unless_limited(run, ctx, n)
+        }
+    }
+}
+
+fn ask_review_again(run: &mut Run, tries: usize, why: &str) -> Result<(), String> {
+    run.append(Event::NeedsEngineer {
+        why: format!("The review did not give a usable verdict after {tries} tries: {why}."),
+        options: vec!["retry".into(), "stop".into()],
+    })
+}
+
+fn remove_review_worktrees(run: &Run, reviews: &[Step]) {
+    for r in reviews {
+        if let Some(wt) = &r.worktree {
+            let _ = git::worktree_remove(&run.state.repo, wt);
+        }
+    }
+}
+
+/// The answers of a round's reviews that count: not from a review whose commands were refused
+/// (found on a real run) or whose worktree changed (recorded as not accepted).
+fn counted_answers(run: &Run, reviews: &[Step]) -> Vec<Answer> {
+    run.state
+        .verdicts
+        .iter()
+        .filter(|v| {
+            reviews.iter().any(|r| {
+                r.n == v.step && r.denials.is_empty() && matches!(r.verified, Some((true, _)))
+            })
+        })
+        .flat_map(|v| v.answers.clone())
+        .collect()
 }
 
 fn queue_fresh_review(run: &mut Run) -> Result<u32, String> {
@@ -404,13 +793,7 @@ fn queue_fresh_review(run: &mut Run) -> Result<u32, String> {
         .integrated
         .clone()
         .ok_or("nothing is integrated")?;
-    let cx = prompts::Context {
-        task: &run.state.task,
-        plan: run.plan.as_ref(),
-        gates: &run.state.gates,
-        spec_kit: false,
-    };
-    let text = prompts::review(&cx, &commit);
+    let text = prompts::review(&context(run, run.plan.as_ref()), &commit);
     queue(
         run,
         StepKind::Review,
@@ -450,10 +833,6 @@ fn start(run: &mut Run, ctx: &Ctx, n: u32) -> Result<(), String> {
         }
         StepKind::Review => {
             let commit = run.state.integrated.clone().ok_or("nothing to review")?;
-            let wt = run.worktrees().join(format!("review-{n}"));
-            if step.resume.is_none() {
-                let _ = git::worktree_remove(&repo, &wt);
-            }
             // A resumed review keeps its worktree, so its earlier checks still apply.
             let prev = step.resume.as_ref().and_then(|_| {
                 run.state
@@ -463,11 +842,43 @@ fn start(run: &mut Run, ctx: &Ctx, n: u32) -> Result<(), String> {
                     .find(|s| s.kind == StepKind::Review && s.n < n && s.worktree.is_some())
                     .and_then(|s| s.worktree.clone())
             });
-            let wt = prev.filter(|p| p.join(".git").exists()).unwrap_or(wt);
+            let wt = match prev.filter(|p| p.join(".git").exists()) {
+                Some(p) => p,
+                None => {
+                    let wt = run.worktrees().join(format!("review-{n}"));
+                    let _ = git::worktree_remove(&repo, &wt);
+                    wt
+                }
+            };
             git::worktree_add(&repo, &wt, None, &commit)?;
+            if git::head(&wt)? != commit {
+                return Err(format!(
+                    "the review worktree {} is not at {}",
+                    wt.display(),
+                    claims::short(&commit)
+                ));
+            }
             (wt, commit)
         }
     };
+    if let Some(p) = &step.part {
+        if matches!(step.kind, StepKind::Build | StepKind::Repair) {
+            let state = if step.kind == StepKind::Repair {
+                PartState::Repairing
+            } else {
+                PartState::Building
+            };
+            if run.state.parts.get(p).map(|s| s.state) != Some(state) {
+                let r = repairs(run, p);
+                run.append(Event::Part {
+                    id: p.clone(),
+                    state,
+                    result_commit: None,
+                    repairs: r,
+                })?;
+            }
+        }
+    }
     let choice = run.state.roles.get(role).cloned().unwrap_or_default();
     let def = ctx
         .settings
@@ -482,8 +893,8 @@ fn start(run: &mut Run, ctx: &Ctx, n: u32) -> Result<(), String> {
         _ => agent::allow::builder(&run.state.gates, &extra),
     };
     let session = match &step.resume {
-        Some(s) => Session::Resume(s.clone()),
-        None => Session::New(crate::platform::random::uuid_v4().map_err(|e| e.to_string())?),
+        Some(s) if !run.state.lost_sessions.contains(s) => Session::Resume(s.clone()),
+        _ => Session::New(crate::platform::random::uuid_v4().map_err(|e| e.to_string())?),
     };
     let remaining = (run.state.limits.usd - run.state.cost_usd).max(0.01);
     let call = Call {
@@ -548,7 +959,9 @@ fn start(run: &mut Run, ctx: &Ctx, n: u32) -> Result<(), String> {
     Ok(())
 }
 
-/// Runs gates on `commit` in a temporary worktree, on a thread.
+/// Runs gates on `commit` in a fresh worktree of its own, on a thread. The worktree is checked
+/// to be at `commit` before anything runs (found in review: a worktree left behind by a failed
+/// removal must never stand in for another commit).
 fn run_gates(
     run: &mut Run,
     ctx: &Ctx,
@@ -558,20 +971,36 @@ fn run_gates(
     defs: Vec<GateDef>,
 ) {
     run.busy = Some(Busy::Gates);
+    run.stop = Arc::new(AtomicBool::new(false));
+    let stop = Arc::clone(&run.stop);
     let repo = run.state.repo.clone();
-    let wt = run.worktrees().join("gate");
+    let wt = run
+        .worktrees()
+        .join(format!("gate-{}", super::time::unix_ms()));
     let tx = ctx.tx.clone();
     let id = run.id();
     let _ = std::thread::Builder::new()
         .name(format!("gates-{id}"))
         .spawn(move || {
-            let _ = git::worktree_remove(&repo, &wt);
             let mut results = Vec::new();
-            match git::worktree_add(&repo, &wt, None, &commit) {
+            let ready =
+                git::worktree_add(&repo, &wt, None, &commit).and_then(|()| match git::head(&wt) {
+                    Ok(h) if h == commit => Ok(()),
+                    Ok(h) => Err(format!("the gate worktree is at {h}, not at {commit}")),
+                    Err(e) => Err(e),
+                });
+            match ready {
                 Ok(()) => {
                     for d in &defs {
+                        if stop.load(Ordering::Relaxed) {
+                            break;
+                        }
                         let mut ignore = |_: &str| {};
-                        results.push(gates::run(d, &wt, &commit, &mut ignore));
+                        let r = gates::run(d, &wt, &commit, &mut ignore, &stop);
+                        if stop.load(Ordering::Relaxed) {
+                            break;
+                        }
+                        results.push(r);
                     }
                 }
                 Err(e) => {
@@ -597,7 +1026,7 @@ fn run_gates(
         });
 }
 
-/// Handles what a worker reports.
+/// Records what a worker reports; what follows is decided by the next pass of `drive`.
 pub fn on_done(run: &mut Run, _ctx: &Ctx, done: Done) -> Result<(), String> {
     match done {
         Done::Step { n, outcome } => {
@@ -630,28 +1059,15 @@ pub fn on_done(run: &mut Run, _ctx: &Ctx, done: Done) -> Result<(), String> {
             part,
             results,
         } => {
-            let mut failed = Vec::new();
+            if run.state.stage.is_final() {
+                return Ok(());
+            }
+            // Gates that did not finish (stopped) are not recorded; the next pass runs them.
             for r in results {
                 let class = if kind == GateKind::Baseline {
                     None
                 } else {
-                    let c = gates::classify(&r, run.state.baseline(&r.gate));
-                    if !c.ok() {
-                        let names: Vec<&str> =
-                            r.failing.iter().map(String::as_str).take(8).collect();
-                        failed.push(format!(
-                            "gate {} {} ({}){}",
-                            r.gate,
-                            r.outcome.label(),
-                            c.label(),
-                            if names.is_empty() {
-                                String::new()
-                            } else {
-                                format!(": {}", names.join(", "))
-                            }
-                        ));
-                    }
-                    Some(c)
+                    Some(gates::classify(&r, run.state.baseline(&r.gate)))
                 };
                 run.append(Event::GateRun {
                     kind,
@@ -660,29 +1076,18 @@ pub fn on_done(run: &mut Run, _ctx: &Ctx, done: Done) -> Result<(), String> {
                     class,
                 })?;
             }
-            if kind == GateKind::Part {
-                let p = part.unwrap_or_else(|| plan::MAIN.to_string());
-                let status = run.state.parts.get(&p).cloned();
-                let commit = run.state.gate_runs.last().map(|g| g.result.commit.clone());
-                if failed.is_empty() {
-                    run.append(Event::Part {
-                        id: p,
-                        state: PartState::Done,
-                        result_commit: commit,
-                        repairs: status.map_or(0, |s| s.repairs),
-                    })?;
-                } else {
-                    reject(run, &p, failed)?;
-                }
-            }
             Ok(())
         }
         Done::Merge(r) => match r {
+            // A merge that went through is recorded whatever the stage: it happened.
             Ok(commit) => {
                 run.append(Event::Merged {
                     commit,
                     how: "local".into(),
                 })?;
+                if run.state.stage.is_final() {
+                    return Ok(());
+                }
                 run.append(Event::Stage {
                     to: Stage::Done,
                     why: "merged by the engineer".into(),
@@ -690,15 +1095,38 @@ pub fn on_done(run: &mut Run, _ctx: &Ctx, done: Done) -> Result<(), String> {
             }
             Err(e) => run.append(Event::NeedsEngineer {
                 why: format!("The merge did not go through: {e}"),
-                options: vec!["merge again".into()],
+                options: vec!["merge again".into(), "stop".into()],
             }),
         },
     }
 }
 
-/// Handles a finished step's result; ends with a `verified` event, which marks it handled.
+/// Records a finished step's result; ends with a `verified` event, which marks it handled.
 fn process(run: &mut Run, n: u32) -> Result<(), String> {
     let step = run.state.steps.get(&n).cloned().ok_or("no such step")?;
+    if let Some(StepEnd::Failed { why }) = &step.end {
+        if why.starts_with(INTERRUPTED) {
+            return run.append(Event::Verified {
+                n,
+                accepted: false,
+                reasons: vec![format!("{INTERRUPTED}resumed after Fallow started again")],
+                commit: None,
+            });
+        }
+        // A resumed session that did nothing at all could not be resumed: a new session takes
+        // over (T034), and the failure costs no repair.
+        if step.resume.is_some() && activity_lines(run, n) == 0 {
+            if let Some(s) = step.session.clone() {
+                run.append(Event::SessionLost { session: s })?;
+            }
+            return run.append(Event::Verified {
+                n,
+                accepted: false,
+                reasons: vec![format!("{SESSION_LOST}{why}")],
+                commit: None,
+            });
+        }
+    }
     match step.kind {
         StepKind::PlanTurn | StepKind::Decide => plan_turn_done(run, &step),
         StepKind::Build | StepKind::Repair | StepKind::Take | StepKind::Plain => {
@@ -708,7 +1136,7 @@ fn process(run: &mut Run, n: u32) -> Result<(), String> {
     }
 }
 
-fn plan_turn_done(run: &mut Run, step: &super::state::Step) -> Result<(), String> {
+fn plan_turn_done(run: &mut Run, step: &Step) -> Result<(), String> {
     let n = step.n;
     let id = run.id();
     let repo = run.state.repo.clone();
@@ -750,12 +1178,20 @@ fn plan_turn_done(run: &mut Run, step: &super::state::Step) -> Result<(), String
             problems.extend(why);
         }
         match plan::at(&repo, &tip) {
-            Ok(Some(p)) => problems.extend(plan::approval_problems(
-                &repo,
-                &p,
-                &tip,
-                &run.state.test_patterns,
-            )),
+            Ok(Some(p)) => {
+                if p.build == Build::Parts {
+                    problems.push(
+                        "parallel parts arrive with user story 5: plan this with one builder for now"
+                            .into(),
+                    );
+                }
+                problems.extend(plan::approval_problems(
+                    &repo,
+                    &p,
+                    &tip,
+                    &run.state.test_patterns,
+                ));
+            }
             Ok(None) => problems.push(format!(
                 "there is no {} at the plan commit",
                 plan::PLAN_FILE
@@ -776,12 +1212,37 @@ fn plan_turn_done(run: &mut Run, step: &super::state::Step) -> Result<(), String
     })
 }
 
-fn build_done(run: &mut Run, step: &super::state::Step) -> Result<(), String> {
+/// Where the files a part may change are counted from: its last accepted commit, else the
+/// approved plan. A commit that was refused stays counted until a later one is accepted
+/// (found in review: checking from each step's own start let a refused change through).
+fn part_base(run: &Run, part: &str, before: u32) -> String {
+    run.state
+        .steps
+        .values()
+        .rev()
+        .filter(|s| s.part.as_deref() == Some(part) && s.n < before)
+        .find_map(|s| match &s.verified {
+            Some((true, _)) => s.verified_commit.clone(),
+            _ => None,
+        })
+        .or_else(|| run.state.approved_plan.clone())
+        .unwrap_or_else(|| run.state.start_commit.clone())
+}
+
+fn build_done(run: &mut Run, step: &Step) -> Result<(), String> {
     let n = step.n;
     let part = step.part.clone().unwrap_or_else(|| plan::MAIN.to_string());
+    let verified = |run: &mut Run, accepted: bool, reasons: Vec<String>, commit: Option<String>| {
+        run.append(Event::Verified {
+            n,
+            accepted,
+            reasons,
+            commit,
+        })
+    };
     let value = match &step.end {
         Some(StepEnd::Result { value }) => value.clone(),
-        Some(StepEnd::Failed { why }) => return reject_step(run, n, &part, vec![why.clone()]),
+        Some(StepEnd::Failed { why }) => return verified(run, false, vec![why.clone()], None),
         None => return Ok(()),
     };
     let summary = value["summary"].as_str().unwrap_or_default().to_string();
@@ -797,23 +1258,7 @@ fn build_done(run: &mut Run, step: &super::state::Step) -> Result<(), String> {
                     step.denials.join(", ")
                 );
             }
-            let repairs = run.state.parts.get(&part).map_or(0, |s| s.repairs);
-            run.append(Event::Verified {
-                n,
-                accepted: false,
-                reasons: vec![format!("blocked: {q}")],
-                commit: None,
-            })?;
-            run.append(Event::Part {
-                id: part.clone(),
-                state: PartState::Blocked,
-                result_commit: None,
-                repairs,
-            })?;
-            run.append(Event::NeedsEngineer {
-                why: format!("The builder of part {part} asks: {q}"),
-                options: vec!["answer".into(), "stop".into()],
-            })
+            verified(run, false, vec![format!("{BLOCKED}{q}")], None)
         }
         Some("done") => {
             load_plan(run)?;
@@ -821,46 +1266,40 @@ fn build_done(run: &mut Run, step: &super::state::Step) -> Result<(), String> {
             // Fallow commits what the step changed (research R-4): agents need no git rights.
             if let Some(wt) = &step.worktree {
                 let msg = format!(
-                    "{} {part}: {}
-
-Fallow run r{}, step {n}",
+                    "{} {part}: {}\n\nFallow run r{}, step {n}",
                     step.kind.label(),
                     first_line(&summary, "work"),
                     run.id()
                 );
                 if let Err(e) = git::commit_all(wt, &msg, None) {
-                    return reject_step(
+                    return verified(
                         run,
-                        n,
-                        &part,
+                        false,
                         vec![format!("Fallow could not commit the step's changes: {e}")],
+                        None,
                     );
                 }
             }
             let takes: Vec<String> = Vec::new();
-            let base = step.base.clone().unwrap_or_default();
+            let step_base = step.base.clone().unwrap_or_default();
+            let files_base = part_base(run, &part, n);
             match claims::check_build(
                 &run.state.repo,
                 &part_branch(run.id(), &part),
-                &base,
+                &step_base,
+                &files_base,
                 &value,
                 &plan,
                 &part,
                 &takes,
             ) {
-                Ok(commit) => run.append(Event::Verified {
-                    n,
-                    accepted: true,
-                    reasons: Vec::new(),
-                    commit: Some(commit),
-                }),
-                Err(why) => reject_step(run, n, &part, why),
+                Ok(commit) => verified(run, true, Vec::new(), Some(commit)),
+                Err(why) => verified(run, false, why, None),
             }
         }
-        _ => reject_step(
+        _ => verified(
             run,
-            n,
-            &part,
+            false,
             vec![format!(
                 "the builder reported that it failed{}",
                 if summary.is_empty() {
@@ -869,104 +1308,37 @@ Fallow run r{}, step {n}",
                     format!(": {summary}")
                 }
             )],
+            None,
         ),
     }
 }
 
-fn reject_step(run: &mut Run, n: u32, part: &str, reasons: Vec<String>) -> Result<(), String> {
-    run.append(Event::Verified {
-        n,
-        accepted: false,
-        reasons: reasons.clone(),
-        commit: None,
-    })?;
-    reject(run, part, reasons)
-}
-
-/// A part's work was not accepted: a repair within the cap, else the engineer (FR-008).
-fn reject(run: &mut Run, part: &str, reasons: Vec<String>) -> Result<(), String> {
-    let repairs = run.state.parts.get(part).map_or(0, |s| s.repairs) + 1;
-    if repairs > run.state.repair_cap {
-        run.append(Event::Part {
-            id: part.to_string(),
-            state: PartState::Blocked,
-            result_commit: None,
-            repairs: repairs - 1,
-        })?;
-        return run.append(Event::NeedsEngineer {
-            why: format!(
-                "Part {part} still fails after {} repair round(s): {}. Allow one more repair, or stop the run.",
-                repairs - 1,
-                reasons.join("; ")
-            ),
-            options: vec!["allow one more repair".into(), "stop".into()],
-        });
-    }
-    run.append(Event::Part {
-        id: part.to_string(),
-        state: PartState::Repairing,
-        result_commit: None,
-        repairs,
-    })?;
-    let session = run.state.session_of("builder", Some(part));
-    let text = prompts::repair(part, &reasons, &part_branch(run.id(), part));
-    queue(
-        run,
-        StepKind::Repair,
-        Some(part),
-        session,
-        &format!("repair round {repairs} of {}", run.state.repair_cap),
-        text,
-    )?;
-    if run.state.stage != Stage::Building {
-        run.append(Event::Stage {
-            to: Stage::Building,
-            why: format!("part {part} needs a repair"),
-        })?;
-    }
-    Ok(())
-}
-
-fn review_done(run: &mut Run, step: &super::state::Step) -> Result<(), String> {
+fn review_done(run: &mut Run, step: &Step) -> Result<(), String> {
     let n = step.n;
-    let round = run.state.integrated_seq;
-    let tries = run
-        .state
-        .steps
-        .values()
-        .filter(|s| s.kind == StepKind::Review && s.queued_seq > round && s.n <= n)
-        .count();
     let value = match &step.end {
         Some(StepEnd::Result { value }) => value.clone(),
         Some(StepEnd::Failed { why }) => {
-            run.append(Event::Verified {
+            return run.append(Event::Verified {
                 n,
                 accepted: false,
-                reasons: vec![why.clone()],
+                reasons: vec![format!("the review did not finish: {why}")],
                 commit: None,
-            })?;
-            return retry_review(
-                run,
-                tries,
-                None,
-                &format!("the review did not finish: {why}"),
-            );
+            });
         }
         None => return Ok(()),
     };
     let integrated = run.state.integrated.clone().unwrap_or_default();
     if let Some(wt) = &step.worktree {
         if !git::unchanged(wt, &integrated).unwrap_or(false) {
-            run.append(Event::Verified {
+            let _ = git::worktree_remove(&run.state.repo, wt);
+            return run.append(Event::Verified {
                 n,
                 accepted: false,
                 reasons: vec![
                     "the reviewer changed its worktree, so its verdict does not count".into(),
                 ],
                 commit: None,
-            })?;
-            let _ = git::worktree_remove(&run.state.repo, wt);
-            return retry_review(run, tries, None, "the reviewer changed files");
+            });
         }
     }
     load_plan(run)?;
@@ -976,21 +1348,13 @@ fn review_done(run: &mut Run, step: &super::state::Step) -> Result<(), String> {
         .into_iter()
         .map(|(k, c)| (k, c.must_fail))
         .collect();
-    // Every partial verdict of this review round adds up (FR-007).
-    let mut all: Vec<Answer> = run
-        .state
-        .verdicts
-        .iter()
-        .filter(|v| {
-            run.state
-                .steps
-                .get(&v.step)
-                .is_some_and(|s| s.queued_seq > round)
-        })
-        .flat_map(|v| v.answers.clone())
-        .collect();
+    // Every counted partial verdict of this round adds up (FR-007).
+    let reviews: Vec<Step> = round_reviews(run).into_iter().filter(|s| s.n < n).collect();
+    let mut all = counted_answers(run, &reviews);
     let mine = verdict::answers(&value);
-    all.extend(mine.iter().cloned());
+    if step.denials.is_empty() {
+        all.extend(mine.iter().cloned());
+    }
     let mut check = verdict::check(&all, &expected);
     // A review whose commands were refused did not check by running: it does not count, and the
     // reviewer is resumed to run them one at a time (found on a real run, 2026-10-29).
@@ -1014,62 +1378,7 @@ fn review_done(run: &mut Run, step: &super::state::Step) -> Result<(), String> {
         accepted: true,
         reasons: Vec::new(),
         commit: None,
-    })?;
-    if check.approved {
-        return run.append(Event::Stage {
-            to: Stage::Ready,
-            why: "the review approved every criterion".into(),
-        });
-    }
-    if check.complete {
-        let mut by_part: std::collections::BTreeMap<String, Vec<String>> = Default::default();
-        for key in &check.failed {
-            let part = key.split('/').next().unwrap_or(plan::MAIN).to_string();
-            let what = all
-                .iter()
-                .rev()
-                .find(|a| &a.criterion == key)
-                .map(|a| format!("{key} failed review: ran {}; got {}", a.ran, a.result))
-                .unwrap_or_else(|| format!("{key} failed review"));
-            by_part.entry(part).or_default().push(what);
-        }
-        for (part, reasons) in by_part {
-            reject(run, &part, reasons)?;
-        }
-        return Ok(());
-    }
-    let why = format!("the verdict is incomplete: {}", check.missing.join("; "));
-    match step.session.clone() {
-        Some(session) if tries < REVIEW_TRIES => {
-            queue(
-                run,
-                StepKind::Review,
-                None,
-                Some(session),
-                &why,
-                prompts::review_missing(&check.missing),
-            )?;
-            Ok(())
-        }
-        _ => retry_review(run, tries, None, &why),
-    }
-}
-
-/// Tries the review again with a fresh reviewer, up to `REVIEW_TRIES` times a round.
-fn retry_review(
-    run: &mut Run,
-    tries: usize,
-    _session: Option<String>,
-    why: &str,
-) -> Result<(), String> {
-    if tries >= REVIEW_TRIES {
-        return run.append(Event::NeedsEngineer {
-            why: format!("The review did not give a usable verdict after {tries} tries: {why}."),
-            options: vec!["stop".into()],
-        });
-    }
-    queue_fresh_review(run)?;
-    Ok(())
+    })
 }
 
 /// The engineer's turn in the planning conversation (T026).
@@ -1086,19 +1395,20 @@ pub fn say(run: &mut Run, text: &str) -> Result<(), String> {
     run.append(Event::PlanSaid {
         text: text.trim().to_string(),
     })?;
-    let first = !run
-        .state
-        .steps
-        .values()
-        .any(|s| s.kind == StepKind::PlanTurn && s.session.is_some());
-    let cx = prompts::Context {
-        task: &run.state.task,
-        plan: None,
-        gates: &run.state.gates,
-        spec_kit: spec_kit(run),
-    };
-    let instruction = prompts::plan_turn(&cx, text, first);
     let session = run.state.session_of("planner", None);
+    let first = session.is_none();
+    let said = if first {
+        run.state
+            .conversation
+            .iter()
+            .filter(|t| t.who == "engineer")
+            .map(|t| t.text.clone())
+            .collect::<Vec<_>>()
+            .join("\n")
+    } else {
+        text.to_string()
+    };
+    let instruction = prompts::plan_turn(&context(run, None), &said, first);
     queue(
         run,
         StepKind::PlanTurn,
@@ -1115,7 +1425,7 @@ pub fn approve(run: &mut Run) -> Result<(), String> {
     if run.state.stage != Stage::Planning {
         return Err("the plan is already approved".into());
     }
-    if run.busy.is_some() {
+    if run.busy.is_some() || queued(run).is_some() {
         return Err("the planner is still answering".into());
     }
     let Some(commit) = run.state.plan_commit.clone() else {
@@ -1148,41 +1458,41 @@ pub fn approve(run: &mut Run) -> Result<(), String> {
 
 /// The engineer answers a builder's question: the part's session continues with the answer.
 pub fn answer(run: &mut Run, text: &str) -> Result<(), String> {
-    let blocked: Vec<String> = run
+    if run.state.stage.is_final() {
+        return Err("the run is over".into());
+    }
+    if text.trim().is_empty() {
+        return Err("the answer is empty".into());
+    }
+    let Some(part) = run
         .state
         .parts
         .values()
-        .filter(|p| p.state == PartState::Blocked)
+        .find(|p| p.state == PartState::Blocked)
         .map(|p| p.id.clone())
-        .collect();
-    let Some(part) = blocked.first().cloned() else {
+    else {
         return Err("no builder is waiting for an answer".into());
     };
-    if run
-        .state
-        .needs
-        .as_ref()
-        .is_some_and(|n| n.options.iter().any(|o| o == "allow one more repair"))
-    {
-        return Err("this part reached its repair cap: allow one more repair instead".into());
-    }
     run.append(Event::Steering {
         kind: SteeringKind::Answer,
         target: Some(part.clone()),
         detail: Some(text.to_string()),
     })?;
-    let repairs = run.state.parts.get(&part).map_or(0, |s| s.repairs);
-    run.append(Event::Part {
-        id: part.clone(),
-        state: PartState::Building,
-        result_commit: None,
-        repairs,
-    })?;
     let session = run.state.session_of("builder", Some(&part));
-    let instruction = format!(
-        "Fallow step: build (part {part})\n\nThe engineer answers your question:\n\n{text}\n\nContinue in your worktree (branch `{}`) and return your result; Fallow commits your changes when the step ends.",
-        part_branch(run.id(), &part)
-    );
+    let branch = part_branch(run.id(), &part);
+    let instruction = match &session {
+        Some(_) => format!(
+            "Fallow step: build (part {part})\n\nThe engineer answers your question:\n\n{text}\n\nContinue in your worktree (branch `{branch}`) and return your result; Fallow commits your changes when the step ends."
+        ),
+        None => {
+            load_plan(run)?;
+            let mut t = prompts::build(&context(run, run.plan.as_ref()), &part, &branch);
+            t.push_str(&format!(
+                "\n\nThe engineer answered a question about this part:\n\n{text}"
+            ));
+            t
+        }
+    };
     queue(
         run,
         StepKind::Build,
@@ -1191,83 +1501,66 @@ pub fn answer(run: &mut Run, text: &str) -> Result<(), String> {
         "the engineer answered",
         instruction,
     )?;
-    run.append(Event::Stage {
-        to: if run.state.stage == Stage::Paused {
-            run.state.paused_from.unwrap_or(Stage::Building)
-        } else {
-            Stage::Building
-        },
-        why: "the engineer answered the builder".into(),
-    })
+    Ok(())
 }
 
-/// The engineer raises the limits or the repair cap (FR-038, FR-008).
+/// The engineer raises the limits or the repair cap, or lets one more step run (FR-038,
+/// FR-008). What it allows follows on the next pass.
 pub fn raise_limits(
     run: &mut Run,
     usd: Option<f64>,
     minutes: Option<u64>,
     repair_cap: Option<u32>,
+    once: bool,
 ) -> Result<(), String> {
     if run.state.stage.is_final() {
         return Err("the run is over".into());
     }
-    if usd.is_none() && minutes.is_none() && repair_cap.is_none() {
+    if usd.is_none() && minutes.is_none() && repair_cap.is_none() && !once {
         return Err("nothing to change".into());
+    }
+    if usd.is_some_and(|u| !u.is_finite() || u <= 0.0) || minutes == Some(0) {
+        return Err("limits must be above zero".into());
+    }
+    if repair_cap.is_some_and(|c| c > 20) {
+        return Err("a repair cap above 20 is not accepted".into());
     }
     run.append(Event::Steering {
         kind: SteeringKind::SetLimits,
         target: None,
         detail: Some(format!(
-            "usd={} min={} repair_cap={}",
+            "usd={} min={} repair_cap={}{}",
             usd.map_or("-".into(), |u| format!("{u:.2}")),
             minutes.map_or("-".into(), |m| m.to_string()),
-            repair_cap.map_or("-".into(), |r| r.to_string())
+            repair_cap.map_or("-".into(), |r| r.to_string()),
+            if once { " once" } else { "" }
         )),
     })?;
     run.append(Event::LimitsSet {
         usd,
         minutes,
         repair_cap,
-    })?;
-    // A part held at its repair cap gets its repair now.
-    if repair_cap.is_some() {
-        let held: Vec<(String, u32)> = run
-            .state
-            .parts
-            .values()
-            .filter(|p| p.state == PartState::Blocked && p.repairs >= 1)
-            .map(|p| (p.id.clone(), p.repairs))
-            .collect();
-        for (part, _) in held {
-            let reasons = run
-                .state
-                .steps
-                .values()
-                .rev()
-                .filter(|s| s.part.as_deref() == Some(part.as_str()))
-                .find_map(|s| match &s.verified {
-                    Some((false, r)) if !r.is_empty() => Some(r.clone()),
-                    _ => None,
-                })
-                .unwrap_or_default();
-            if run.state.stage == Stage::Paused {
-                let back = run.state.paused_from.unwrap_or(Stage::Building);
-                run.append(Event::Stage {
-                    to: back,
-                    why: "the engineer allowed another repair".into(),
-                })?;
-            }
-            reject(run, &part, reasons)?;
-        }
+        once,
+    })
+}
+
+/// The engineer asks Fallow to try again after a question it raised (a transient error, or a
+/// review that gave no usable verdict).
+pub fn retry(run: &mut Run) -> Result<(), String> {
+    if run.state.stage.is_final() {
+        return Err("the run is over".into());
     }
-    if run.state.stage == Stage::Paused && limit_hit(run).is_none() {
-        let back = run.state.paused_from.unwrap_or(Stage::Building);
-        run.append(Event::Stage {
-            to: back,
-            why: "the engineer raised the limits".into(),
-        })?;
+    let Some(n) = &run.state.needs else {
+        return Err("nothing is waiting".into());
+    };
+    if !n.options.iter().any(|o| o == "retry") {
+        return Err("this question needs an answer, not a retry".into());
     }
-    Ok(())
+    run.append(Event::Steering {
+        kind: SteeringKind::Resume,
+        target: None,
+        detail: Some("retry".into()),
+    })
 }
 
 /// The engineer's merge of the verified result (FR-009).
@@ -1306,10 +1599,14 @@ pub fn merge(run: &mut Run, tx: std::sync::mpsc::Sender<Msg>) -> Result<(), Stri
     Ok(())
 }
 
-/// Stops the run (constitution II: confirmed on the page). Branches and worktrees stay.
+/// Stops the run (constitution II: confirmed on the page). Agents and gates end; branches and
+/// worktrees stay. Not while a merge runs: it would land after the stop.
 pub fn stop(run: &mut Run, reason: Option<String>) -> Result<(), String> {
     if run.state.stage.is_final() {
         return Err("the run is already over".into());
+    }
+    if run.busy == Some(Busy::Merge) {
+        return Err("a merge is running; stop the run after it".into());
     }
     run.stop.store(true, Ordering::Relaxed);
     run.append(Event::Steering {
@@ -1329,9 +1626,4 @@ fn first_line(text: &str, default: &str) -> String {
     let l = text.lines().next().unwrap_or("").trim();
     let l = if l.is_empty() { default } else { l };
     l.chars().take(72).collect()
-}
-
-/// The answers a step's value holds, for tests and the page.
-pub fn value_of(run: &Run, n: u32) -> Option<Value> {
-    run.state.steps.get(&n).and_then(|s| s.result().cloned())
 }
