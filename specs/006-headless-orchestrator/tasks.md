@@ -248,6 +248,7 @@ Reached on 2026-10-29:
   - only a retry of the review question starts a new review round, and interrupted reviews use none of the 3 tries;
   - review failures are routed from the latest answer to each criterion of the plan.
 
+- **The third real run (Sonnet, the sandbox, the engineer on the page):** "a `total` command" went from plan to merge in 3.5 minutes for $0.31, with two interventions (approve, merge) and no refused commands. The planner noticed that the task's example product does not exist. The reviewer ran all 8 criteria, including the 4 that must fail.
 - **What the second real run found (Sonnet, the sandbox):** the reviewer could not run the program it checks, so the plan now names the commands agents may run (`commands`, approved with the plan); and the service opened a console window for every git and gate command, now hidden (research R-4).
 
 Known gaps: time spent waiting for the engineer outside a pause (a builder's question, the repair cap) counts against the time limit; a gate thread that panics leaves the run busy until Fallow restarts.
