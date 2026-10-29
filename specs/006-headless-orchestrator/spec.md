@@ -299,7 +299,8 @@ pass rate, time, cost and interventions.
   and the engineer is told what is left out.
 - The agent tool is missing or not signed in: the run does not start, and the page names what is
   missing.
-- A cost or time cap is reached: the run pauses and asks the engineer.
+- A cost or time limit is reached: the run pauses before its next step and asks the engineer
+  (FR-038).
 
 **Publishing**
 - A push is rejected by branch protection: it is never forced. The page shows the rule.
@@ -328,8 +329,8 @@ pass rate, time, cost and interventions.
 - **FR-004**: Each step after the plan MUST be one non-interactive agent call with:
   - a focused instruction (the step's goal, the relevant plan sections, the criteria);
   - its own working copy and branch;
-  - rights fixed by its role: builders edit and run commands, reviewers run commands but do not
-    edit;
+  - rights fixed by its role (FR-036): builders edit and run the commands on their allowlist,
+    reviewers run those commands but do not edit;
   - a turn limit and a time limit;
   - a required structured result: done, blocked or failed, the commit, its claims, and an optional
     question.
@@ -367,8 +368,8 @@ pass rate, time, cost and interventions.
 
 **The run's page (US3)**
 
-- **FR-014**: The orchestrator MUST serve the run's page locally, to the engineer only. The page
-  MUST show:
+- **FR-014**: The orchestrator MUST serve each run's page locally, to the engineer only, reached
+  from the list of runs (FR-035). A run's page MUST show:
   - the pipeline and the current stage;
   - per agent: its role, state, current activity, branch and cost;
   - a live activity feed taken from the agents' own output, filterable by agent;
@@ -464,6 +465,39 @@ pass rate, time, cost and interventions.
   Fallow's constitution MUST be replaced by one written for the orchestrator before planning
   starts (proposal: `constitution-proposal.md`). Code from earlier features is kept only where the
   orchestrator uses it.
+- **FR-035**: Fallow MUST run as one local service per engineer:
+  - started once, by command or, if the engineer chooses, at login;
+  - one page that lists every run across repositories with its stage and what needs the engineer,
+    and opens each run's view;
+  - runs started from that page or from the command line in a repository (with the task as text);
+  - unfinished runs resumed by themselves when the service starts again, after a crash or a
+    reboot.
+
+  Stopping the service MUST NOT lose a run. Each run continues where it was the next time the
+  service starts.
+- **FR-036**: A builder MUST be able to run only the commands on its allowlist, without asking:
+  - by default: git within its own working copy, the build and test commands the project declares,
+    and the usual read-only shell tools (listing, reading and searching files);
+  - plus any commands the project adds in its squad file.
+
+  A command outside the list MUST be refused by the agent's own permission settings. The step then
+  reports itself blocked, naming the command, and the run treats that as a question for the
+  planner or the engineer under the autonomy level. Reviewers get the same list without edits.
+  The planner may edit only the plan, the criteria and the contracts.
+- **FR-037**: The engineer MUST be able to choose the agent and the model for each role (planner,
+  builder, reviewer):
+  - as a default in Fallow's settings;
+  - per project in the squad file;
+  - per run when starting it.
+
+  The more specific choice wins. Without a choice, every role uses the default agent and its
+  default model. When the reviewer uses the same agent and model as the builder, the run's page
+  MUST say so. The run record keeps the agent and model of each step.
+- **FR-038**: Every run MUST have a cost limit and a time limit, by default **$10** and **2 hours**,
+  changeable per project and per run. When either is reached, the run MUST pause before starting
+  another step and ask the engineer to raise the limit, continue once, or stop. Cost counts only
+  what agents report. Where an agent reports none, only the time limit applies, and the page says
+  so.
 
 ### Key Entities
 
@@ -522,8 +556,9 @@ pass rate, time, cost and interventions.
 ## Assumptions
 
 **Product shape**
-- The first version runs for one engineer on their own machine. Remote or multi-user operation,
-  and running agents on another machine, are out of scope.
+- The first version runs for one engineer on their own Windows machine. Linux and macOS, the
+  Linux VPS, reaching the page from another machine, multi-user operation and running agents on
+  another machine are out of scope for now. Nothing in the design may rule them out later.
 - The planning conversation takes place on the run's page. Each turn is a non-interactive call that
   resumes the planner's session. The engineer can also open that session interactively.
 - One run per repository at a time is the default. Several runs on different repositories may run
@@ -561,3 +596,18 @@ pass rate, time, cost and interventions.
 - Q: Fallow's constitution forbids this feature as specified. Should it become Fallow under a new
   constitution, a new product, or a second program alongside the terminal app? → A: It completely
   overwrites Fallow; this is the new product, and the constitution is recreated for it (FR-034).
+- Q: Should Fallow run as one background service that manages all runs, or as a separate program
+  per run? → A: One local service, started once (optionally at login), with one page listing all
+  runs across repositories; runs start from the page or the command line, and unfinished runs
+  resume after a restart (FR-035).
+- Q: Which machines must the first version work on, and how is the page reached on the Linux VPS?
+  → A: Windows only for the first version; the Linux VPS (and Linux and macOS generally) is left
+  for later, so remote access to the page is out of scope for now.
+- Q: Which commands may a builder run on its own in a non-interactive step? → A: A default
+  allowlist (git in its own working copy, the project's declared build and test commands, usual
+  read-only shell tools), which each project extends in its squad file; anything else is refused
+  and the step reports itself blocked (FR-036).
+- Q: Should the reviewer use a different model or agent from the builder by default? → A: It is
+  configurable by the engineer: the agent and model of each role (FR-037).
+- Q: What should a run's default limits on cost and time be before it pauses and asks? → A: $10
+  and 2 hours per run by default, changeable per project and per run (FR-038).
