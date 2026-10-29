@@ -33,6 +33,8 @@ pub enum Done {
         kind: GateKind,
         part: Option<String>,
         results: Vec<GateResult>,
+        /// Fallow could not run the gates (no results are recorded then).
+        error: Option<String>,
     },
     Merge(Result<String, String>),
 }

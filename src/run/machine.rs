@@ -43,6 +43,8 @@ pub const SESSION_LOST: &str = "session lost: ";
 /// The start of a question raised because Fallow itself could not go on (a transient error).
 pub const COULD_NOT_GO_ON: &str = "Fallow could not go on: ";
 const INTERRUPTED_WHY: &str = "interrupted: Fallow stopped while the step ran";
+const REVIEW_GAVE_NOTHING: &str = "The review did not give a usable verdict";
+const RETRY_REVIEW: &str = "retry review";
 
 fn gate_defs(run: &Run) -> Vec<GateDef> {
     run.state
@@ -134,11 +136,14 @@ pub fn repairs(run: &Run, part: &str) -> u32 {
         .steps
         .values()
         .filter(|s| s.kind == StepKind::Repair && s.part.as_deref() == Some(part))
-        .filter(|s| {
-            !first_reason(s)
-                .is_some_and(|r| r.starts_with(INTERRUPTED) || r.starts_with(SESSION_LOST))
-        })
+        .filter(|s| !cut_short(s))
         .count() as u32
+}
+
+/// A step cut short by Fallow stopping or by a lost session: the next step takes it up again,
+/// so it is no attempt of its own.
+fn cut_short(s: &Step) -> bool {
+    first_reason(s).is_some_and(|r| r.starts_with(INTERRUPTED) || r.starts_with(SESSION_LOST))
 }
 
 /// The first planning turn: the plan branch and its worktree, and the planner's first draft.
@@ -164,6 +169,36 @@ pub fn start_planning(run: &mut Run) -> Result<(), String> {
 /// resumed in their sessions on the next pass; a question that only a transient error raised is
 /// cleared, so the run is tried again.
 pub fn resume(run: &mut Run) -> Result<(), String> {
+    // A stop recorded without its stage: the run is stopped.
+    if run.state.stopped.is_some() {
+        return run.append(Event::Stage {
+            to: Stage::Stopped,
+            why: "stopped by the engineer".into(),
+        });
+    }
+    // A merge asked for and not recorded: it went through if the target holds the commit.
+    let asked = run
+        .state
+        .steering
+        .iter()
+        .any(|s| s.kind == SteeringKind::Merge);
+    if run.state.stage == Stage::Ready && asked && run.state.merged.is_none() {
+        if let Some(c) = run.state.integrated.clone() {
+            let target = format!("refs/heads/{}", run.state.target);
+            if let Ok(tip) = git::rev(&run.state.repo, &target) {
+                if git::is_ancestor(&run.state.repo, &c, &tip) {
+                    run.append(Event::Merged {
+                        commit: tip,
+                        how: "local".into(),
+                    })?;
+                    return run.append(Event::Stage {
+                        to: Stage::Done,
+                        why: "merged by the engineer".into(),
+                    });
+                }
+            }
+        }
+    }
     if let Some(n) = &run.state.needs {
         if n.why.starts_with(COULD_NOT_GO_ON) {
             let why = n.why.clone();
@@ -224,7 +259,7 @@ fn limit_hit(run: &Run) -> Option<(String, String)> {
 
 /// Decides and starts what comes next. Does nothing while something runs.
 pub fn drive(run: &mut Run, ctx: &Ctx) -> Result<(), String> {
-    if run.busy.is_some() || run.state.stage.is_final() {
+    if run.busy.is_some() || run.state.stage.is_final() || run.state.stopped.is_some() {
         return Ok(());
     }
     if run.state.stage == Stage::Paused {
@@ -260,8 +295,21 @@ pub fn drive(run: &mut Run, ctx: &Ctx) -> Result<(), String> {
         return start(run, ctx, n);
     }
     match run.state.stage {
+        Stage::Planning => planning(run),
         Stage::Building => building(run, ctx),
         Stage::Reviewing => reviewing(run, ctx),
+        _ => Ok(()),
+    }
+}
+
+/// The engineer's last line has no reply and no turn is queued for it (Fallow stopped between
+/// the two): queue the planner's turn.
+fn planning(run: &mut Run) -> Result<(), String> {
+    match run.state.conversation.last() {
+        Some(t) if t.who == "engineer" => {
+            let text = t.text.clone();
+            queue_plan_turn(run, &text)
+        }
         _ => Ok(()),
     }
 }
@@ -364,8 +412,10 @@ fn fresh_instruction(run: &mut Run, last: &Step) -> Result<String, String> {
                 prompts::build(&context(run, run.plan.as_ref()), &part, &branch),
                 last.kind,
             );
+            // The previous instruction still applies unless it was the whole build prompt (a
+            // repair's reasons, the engineer's answer).
             let before = instruction_of(run, last.n);
-            if last.kind != StepKind::Build && !before.is_empty() {
+            if !before.is_empty() && !before.contains("\nTask: ") {
                 text.push_str(
                     "\n\nFallow's last instruction for this part, which still applies:\n\n",
                 );
@@ -394,8 +444,7 @@ fn building(run: &mut Run, ctx: &Ctx) -> Result<(), String> {
         .collect();
     if !missing_baseline.is_empty() {
         let commit = run.state.start_commit.clone();
-        run_gates(run, ctx, GateKind::Baseline, None, commit, missing_baseline);
-        return Ok(());
+        return run_gates(run, ctx, GateKind::Baseline, None, commit, missing_baseline);
     }
     let Some(plan) = run.plan.clone() else {
         return Err("the run is building without an approved plan".into());
@@ -466,8 +515,7 @@ fn building(run: &mut Run, ctx: &Ctx) -> Result<(), String> {
                     .cloned()
                     .collect();
                 if !missing.is_empty() {
-                    run_gates(run, ctx, GateKind::Part, Some(p.id.clone()), c, missing);
-                    return Ok(());
+                    return run_gates(run, ctx, GateKind::Part, Some(p.id.clone()), c, missing);
                 }
                 let failed: Vec<String> = run
                     .state
@@ -510,7 +558,7 @@ fn building(run: &mut Run, ctx: &Ctx) -> Result<(), String> {
                     })?;
                     continue;
                 }
-                return reject(run, ctx, &p.id, failed);
+                return reject(run, ctx, &p.id, failed).map(|_| ());
             }
         }
     }
@@ -562,16 +610,16 @@ fn refused(run: &mut Run, part: &str, reasons: Vec<String>) -> Result<(), String
             options: vec!["answer".into(), "stop".into()],
         });
     }
-    reject_now(run, part, reasons)
+    reject_now(run, part, reasons).map(|_| ())
 }
 
 /// A part's work was not accepted: a repair within the cap, else the engineer (FR-008). The
-/// queued repair step is what settles it.
-fn reject(run: &mut Run, _ctx: &Ctx, part: &str, reasons: Vec<String>) -> Result<(), String> {
+/// queued repair step is what settles it. `true` when a repair was queued.
+fn reject(run: &mut Run, _ctx: &Ctx, part: &str, reasons: Vec<String>) -> Result<bool, String> {
     reject_now(run, part, reasons)
 }
 
-fn reject_now(run: &mut Run, part: &str, reasons: Vec<String>) -> Result<(), String> {
+fn reject_now(run: &mut Run, part: &str, reasons: Vec<String>) -> Result<bool, String> {
     let done = repairs(run, part);
     if done >= run.state.repair_cap {
         run.append(Event::Part {
@@ -580,13 +628,14 @@ fn reject_now(run: &mut Run, part: &str, reasons: Vec<String>) -> Result<(), Str
             result_commit: None,
             repairs: done,
         })?;
-        return run.append(Event::NeedsEngineer {
+        run.append(Event::NeedsEngineer {
             why: format!(
                 "Part {part} still fails after {done} repair round(s): {}. Allow one more repair, or stop the run.",
                 reasons.join("; ")
             ),
             options: vec!["allow one more repair".into(), "stop".into()],
-        });
+        })?;
+        return Ok(false);
     }
     let session = run.state.session_of("builder", Some(part));
     let text = match &session {
@@ -630,7 +679,7 @@ fn reject_now(run: &mut Run, part: &str, reasons: Vec<String>) -> Result<(), Str
             why: format!("part {part} needs a repair"),
         })?;
     }
-    Ok(())
+    Ok(true)
 }
 
 fn start_unless_limited(run: &mut Run, ctx: &Ctx, n: u32) -> Result<(), String> {
@@ -656,7 +705,7 @@ fn last_retry_seq(run: &Run) -> u64 {
     run.state
         .steering
         .iter()
-        .filter(|s| s.kind == SteeringKind::Resume && s.detail.as_deref() == Some("retry"))
+        .filter(|s| s.kind == SteeringKind::Resume && s.detail.as_deref() == Some(RETRY_REVIEW))
         .map(|s| s.seq)
         .max()
         .unwrap_or(0)
@@ -669,7 +718,7 @@ fn reviewing(run: &mut Run, ctx: &Ctx) -> Result<(), String> {
         let n = queue_fresh_review(run)?;
         return start_unless_limited(run, ctx, n);
     };
-    let tries = reviews.len();
+    let tries = reviews.iter().filter(|s| !cut_short(s)).count();
     match &last.verified {
         None => Ok(()),
         Some((false, reasons)) => {
@@ -698,23 +747,29 @@ fn reviewing(run: &mut Run, ctx: &Ctx) -> Result<(), String> {
                 });
             }
             if v.complete {
-                // The criteria that failed, by part, from every counted answer of the round.
+                // The criteria of the plan that failed, by part, each from its latest counted
+                // answer of the round.
                 let all = counted_answers(run, &reviews);
+                let plan = run.plan.clone().ok_or("no approved plan")?;
+                let expected: Vec<(String, bool)> = plan
+                    .criteria()
+                    .into_iter()
+                    .map(|(k, c)| (k, c.must_fail))
+                    .collect();
                 let mut by_part: std::collections::BTreeMap<String, Vec<String>> =
                     Default::default();
-                for a in all.iter().filter(|a| !a.passed) {
-                    let part = a
-                        .criterion
-                        .split('/')
-                        .next()
-                        .unwrap_or(plan::MAIN)
-                        .to_string();
+                for key in verdict::check(&all, &expected).failed {
+                    let Some(a) = all.iter().rev().find(|a| a.criterion == key) else {
+                        continue;
+                    };
+                    let part = key.split('/').next().unwrap_or(plan::MAIN).to_string();
                     by_part.entry(part).or_default().push(format!(
                         "{} failed review: ran {}; got {}",
                         a.criterion, a.ran, a.result
                     ));
                 }
                 remove_review_worktrees(run, &reviews);
+                let mut repairing = false;
                 for (part, reasons) in by_part {
                     // Already settled for this part (a repair queued after this review).
                     let settled = run
@@ -722,11 +777,11 @@ fn reviewing(run: &mut Run, ctx: &Ctx) -> Result<(), String> {
                         .steps
                         .values()
                         .any(|s| s.part.as_deref() == Some(part.as_str()) && s.n > last.n);
-                    if !settled {
-                        reject(run, ctx, &part, reasons)?;
-                    }
+                    repairing |= settled || reject(run, ctx, &part, reasons)?;
                 }
-                if run.state.stage == Stage::Reviewing {
+                // Back to building only for a repair; a part at its cap waits here for the
+                // engineer (found in review: going back without one looped on every pass).
+                if repairing && run.state.stage == Stage::Reviewing {
                     run.append(Event::Stage {
                         to: Stage::Building,
                         why: "the review found failing criteria".into(),
@@ -759,7 +814,7 @@ fn reviewing(run: &mut Run, ctx: &Ctx) -> Result<(), String> {
 
 fn ask_review_again(run: &mut Run, tries: usize, why: &str) -> Result<(), String> {
     run.append(Event::NeedsEngineer {
-        why: format!("The review did not give a usable verdict after {tries} tries: {why}."),
+        why: format!("{REVIEW_GAVE_NOTHING} after {tries} tries: {why}."),
         options: vec!["retry".into(), "stop".into()],
     })
 }
@@ -969,20 +1024,29 @@ fn run_gates(
     part: Option<String>,
     commit: String,
     defs: Vec<GateDef>,
-) {
+) -> Result<(), String> {
+    let repo = run.state.repo.clone();
+    // Gate worktrees left behind by a removal that failed (a locked file on Windows).
+    if let Ok(entries) = std::fs::read_dir(run.worktrees()) {
+        for e in entries.flatten() {
+            if e.file_name().to_string_lossy().starts_with("gate-") {
+                let _ = git::worktree_remove(&repo, &e.path());
+            }
+        }
+    }
     run.busy = Some(Busy::Gates);
     run.stop = Arc::new(AtomicBool::new(false));
     let stop = Arc::clone(&run.stop);
-    let repo = run.state.repo.clone();
     let wt = run
         .worktrees()
         .join(format!("gate-{}", super::time::unix_ms()));
     let tx = ctx.tx.clone();
     let id = run.id();
-    let _ = std::thread::Builder::new()
+    let spawned = std::thread::Builder::new()
         .name(format!("gates-{id}"))
         .spawn(move || {
             let mut results = Vec::new();
+            let mut error = None;
             let ready =
                 git::worktree_add(&repo, &wt, None, &commit).and_then(|()| match git::head(&wt) {
                     Ok(h) if h == commit => Ok(()),
@@ -1003,16 +1067,7 @@ fn run_gates(
                         results.push(r);
                     }
                 }
-                Err(e) => {
-                    for d in &defs {
-                        results.push(gates::GateResult {
-                            gate: d.name.clone(),
-                            commit: commit.clone(),
-                            outcome: gates::Outcome::NotStarted { why: e.clone() },
-                            failing: Default::default(),
-                        });
-                    }
-                }
+                Err(e) => error = Some(format!("cannot prepare the gate worktree: {e}")),
             }
             let _ = git::worktree_remove(&repo, &wt);
             let _ = tx.send(Msg::Done {
@@ -1021,9 +1076,15 @@ fn run_gates(
                     kind,
                     part,
                     results,
+                    error,
                 },
             });
         });
+    if let Err(e) = spawned {
+        run.busy = None;
+        return Err(format!("cannot start a thread: {e}"));
+    }
+    Ok(())
 }
 
 /// Records what a worker reports; what follows is decided by the next pass of `drive`.
@@ -1058,9 +1119,16 @@ pub fn on_done(run: &mut Run, _ctx: &Ctx, done: Done) -> Result<(), String> {
             kind,
             part,
             results,
+            error,
         } => {
             if run.state.stage.is_final() {
                 return Ok(());
+            }
+            if let Some(e) = error {
+                return run.append(Event::NeedsEngineer {
+                    why: format!("{COULD_NOT_GO_ON}{e}"),
+                    options: vec!["retry".into(), "stop".into()],
+                });
             }
             // Gates that did not finish (stopped) are not recorded; the next pass runs them.
             for r in results {
@@ -1113,9 +1181,13 @@ fn process(run: &mut Run, n: u32) -> Result<(), String> {
                 commit: None,
             });
         }
-        // A resumed session that did nothing at all could not be resumed: a new session takes
-        // over (T034), and the failure costs no repair.
-        if step.resume.is_some() && activity_lines(run, n) == 0 {
+        // A resumed session that Claude Code does not know any more, and that did nothing: a new
+        // session takes over (T034), and the failure costs no repair. Other failures (an
+        // overloaded API, the budget) stay failures of the step.
+        if step.resume.is_some()
+            && activity_lines(run, n) == 0
+            && why.to_lowercase().contains("no conversation found")
+        {
             if let Some(s) = step.session.clone() {
                 run.append(Event::SessionLost { session: s })?;
             }
@@ -1151,11 +1223,13 @@ fn plan_turn_done(run: &mut Run, step: &Step) -> Result<(), String> {
         ),
         None => return Ok(()),
     };
-    run.append(Event::PlanReply {
-        step: n,
-        reply,
-        ready,
-    })?;
+    if !run.state.conversation.iter().any(|t| t.step == Some(n)) {
+        run.append(Event::PlanReply {
+            step: n,
+            reply,
+            ready,
+        })?;
+    }
     // Fallow commits the plan's files the planner changed, and nothing else (research R-4).
     if let Some(wt) = &step.worktree {
         let msg = format!("Plan (Fallow run r{id}, planning turn {n})");
@@ -1366,13 +1440,15 @@ fn review_done(run: &mut Run, step: &Step) -> Result<(), String> {
             step.denials.join(" | ")
         ));
     }
-    run.append(Event::Verdict {
-        step: n,
-        answers: mine,
-        complete: check.complete,
-        approved: check.approved,
-        missing: check.missing.clone(),
-    })?;
+    if !run.state.verdicts.iter().any(|v| v.step == n) {
+        run.append(Event::Verdict {
+            step: n,
+            answers: mine,
+            complete: check.complete,
+            approved: check.approved,
+            missing: check.missing.clone(),
+        })?;
+    }
     run.append(Event::Verified {
         n,
         accepted: true,
@@ -1395,6 +1471,11 @@ pub fn say(run: &mut Run, text: &str) -> Result<(), String> {
     run.append(Event::PlanSaid {
         text: text.trim().to_string(),
     })?;
+    queue_plan_turn(run, text.trim())
+}
+
+/// Queues the planner's turn answering the engineer's `text`.
+fn queue_plan_turn(run: &mut Run, text: &str) -> Result<(), String> {
     let session = run.state.session_of("planner", None);
     let first = session.is_none();
     let said = if first {
@@ -1519,6 +1600,9 @@ pub fn raise_limits(
     if usd.is_none() && minutes.is_none() && repair_cap.is_none() && !once {
         return Err("nothing to change".into());
     }
+    if once && run.state.stage != Stage::Paused {
+        return Err("continue once is for a run paused at its limit".into());
+    }
     if usd.is_some_and(|u| !u.is_finite() || u <= 0.0) || minutes == Some(0) {
         return Err("limits must be above zero".into());
     }
@@ -1556,10 +1640,16 @@ pub fn retry(run: &mut Run) -> Result<(), String> {
     if !n.options.iter().any(|o| o == "retry") {
         return Err("this question needs an answer, not a retry".into());
     }
+    // Only a retry of the review starts a new review round.
+    let detail = if n.why.starts_with(REVIEW_GAVE_NOTHING) {
+        RETRY_REVIEW
+    } else {
+        "retry"
+    };
     run.append(Event::Steering {
         kind: SteeringKind::Resume,
         target: None,
-        detail: Some("retry".into()),
+        detail: Some(detail.into()),
     })
 }
 

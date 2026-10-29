@@ -18,6 +18,9 @@
 //! sleep_ms = 0
 //! exit = 3                       # crash with this exit code instead of a result
 //! denied = ["git push"]          # reported as permission denials
+//!
+//! A resumed call (`--resume`) with no step left for it answers as Claude Code does for a
+//! session it does not know: "No conversation found with session ID: …".
 //! ```
 //!
 //! Test-only tooling; never started by Fallow unless an agent profile names it.
@@ -101,6 +104,7 @@ fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut scenario: Option<PathBuf> = None;
     let mut session = String::from("fake-session");
+    let mut resumed = false;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
@@ -109,6 +113,7 @@ fn main() -> ExitCode {
                 i += 1;
             }
             "--session-id" | "--resume" => {
+                resumed |= args[i] == "--resume";
                 if let Some(s) = args.get(i + 1) {
                     session = s.clone();
                 }
@@ -170,7 +175,12 @@ fn main() -> ExitCode {
     let Some((n, step)) = pick else {
         emit(
             json!({"type": "result", "subtype": "error", "is_error": true, "session_id": session,
-            "total_cost_usd": 0.0, "result": format!("no scripted step for {kind} {part:?}"), "permission_denials": []}),
+            "total_cost_usd": 0.0, "result": if resumed {
+                // What Claude Code says for a session it does not know.
+                format!("No conversation found with session ID: {session}")
+            } else {
+                format!("no scripted step for {kind} {part:?}")
+            }, "permission_denials": []}),
         );
         return ExitCode::SUCCESS;
     };

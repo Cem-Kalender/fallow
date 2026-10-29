@@ -195,7 +195,7 @@ and can run one fake-agent step.
 - [X] T034 [US1] Implement resume in `src/service/mod.rs` and `src/run/machine.rs` (research R-2):
   - on start, a step with `step_started` and no `step_finished` is resumed with `--resume <session>` and the "you were interrupted" note, or redone if the session cannot be resumed;
   - completed steps are never queued again.
-  - A resumed step that fails without any activity is taken as a lost session (`session_lost`): a new session gets the whole instruction, and the attempt costs no repair round. A question that only a transient error raised is cleared on restart, and the engineer can "Try again" (`POST /api/runs/<id>/retry`).
+  - A resumed step that fails without any activity, with Claude Code saying it found no conversation for the session, is a lost session (`session_lost`): a new session gets the whole instruction (with the repair reasons or the engineer's answer it was resuming with), and the attempt costs no repair round. Other failures of a resumed step (an overloaded API, the budget) count as failures. The exact text Claude Code prints for an unknown session is assumed, not yet seen on a real run. A question that only a transient error raised is cleared on restart, and the engineer can "Try again" (`POST /api/runs/<id>/retry`).
 - [X] T035 [US1] Implement `fallow run "<task>"` and the setup check (contracts/cli.md, FR-032) in `src/main.rs` and `src/service/api.rs`:
   - check the repository, uncommitted changes, the agent CLI and its sign-in, the gate commands, the remote and the hooks list;
   - create the run (`run_created`) and open `/runs/<id>/plan`;
@@ -220,7 +220,7 @@ and can run one fake-agent step.
   - an incomplete verdict.
   - Also: a review whose commands were refused does not count (found on a real run).
 - [X] T040 [P] [US1] Test `tests/us1_resume.rs` (constitution VII gate, SC-003): end the service at each stage (planning, building mid-step, gating, reviewing, ready), start it again, and check that the run completes without a completed step repeated and with the history intact.
-  - Covered: planning, building mid-step, gating (the baseline), reviewing and ready. "Integrating" does not exist as a separate step for one builder.
+  - Covered: planning, building mid-step, gating (the baseline), reviewing and ready. "Integrating" does not exist as a separate step for one builder. A stop or merge cut in half by a crash is handled on restart but not tested.
 - [X] T041 [P] [US1] Test `tests/us1_limits.rs` (FR-038): the cost limit and the time limit each pause before the next step, and raising the limit continues the run.
   - The cost limit and "continue once" run end to end; the time limit, with paused time left out, is a `RunState` test in `tests/run_events.rs`.
 
@@ -235,7 +235,7 @@ Reached on 2026-10-29:
   - gates now run in a new worktree per run, checked to be at the commit;
   - files are counted from the part's last accepted commit, so a refused change stays counted;
   - a pause without a question asks again or ends;
-  - each decision is derived again from the log, so a crash between two events repeats it, never skips it;
+  - each decision is derived again from the log, so a crash between two events repeats it, never skips it: the build, gate, review and repair decisions, a stop or merge cut in half (checked on restart), and an engineer's line without a planner turn. A step processed again after a crash adds no second reply or verdict;
   - lost sessions are taken over by a new session;
   - "Try again" exists for questions Fallow raised itself;
   - Stop is refused during a merge, and ends running gates;
@@ -243,7 +243,12 @@ Reached on 2026-10-29:
   - `--target` is the branch the run starts from, and it is checked;
   - answers from a review with refused commands are left out of the verdict;
   - failing test names are collected from the whole gate output;
-  - a repair cap of 0 holds the part (`at_cap`) for the engineer.
+  - a repair cap of 0 holds the part (`at_cap`) for the engineer, after a failing gate or a failing review (a second review found the review case looped on every pass, fixed the same day);
+  - a gate worktree that cannot be made is a question with "Try again", not a gate failure;
+  - only a retry of the review question starts a new review round, and interrupted reviews use none of the 3 tries;
+  - review failures are routed from the latest answer to each criterion of the plan.
+
+Known gaps: time spent waiting for the engineer outside a pause (a builder's question, the repair cap) counts against the time limit; a gate thread that panics leaves the run busy until Fallow restarts.
 
 ---
 

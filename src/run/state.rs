@@ -102,6 +102,8 @@ pub struct Turn {
     pub who: &'static str,
     pub text: String,
     pub at: String,
+    /// The planning turn that replied (none for the engineer's lines).
+    pub step: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -245,12 +247,14 @@ impl RunState {
                 who: "engineer",
                 text: text.clone(),
                 at: l.at.clone(),
+                step: None,
             }),
-            Event::PlanReply { reply, ready, .. } => {
+            Event::PlanReply { step, reply, ready } => {
                 self.conversation.push(Turn {
                     who: "planner",
                     text: reply.clone(),
                     at: l.at.clone(),
+                    step: Some(*step),
                 });
                 self.plan_ready = *ready;
             }

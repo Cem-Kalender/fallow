@@ -215,7 +215,7 @@ pub fn run(
     } else {
         match status {
             Some(s) if s.success() => Outcome::Passed,
-            _ if no_tests(&output) => Outcome::NoTests,
+            _ if failing.is_empty() && no_tests(&output) => Outcome::NoTests,
             Some(s) => Outcome::Failed { exit: s.code() },
             None => Outcome::Failed { exit: None },
         }

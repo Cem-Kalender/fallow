@@ -117,3 +117,56 @@ fn with_a_repair_cap_of_0_the_part_waits_for_the_engineer() {
     assert_eq!(v["parts"]["main"]["repairs"], 1);
     let _ = std::fs::remove_dir_all(&root);
 }
+
+#[test]
+fn a_failing_review_at_the_repair_cap_waits_for_the_engineer() {
+    // Found in review: the run went back to building without a repair and looped on every pass.
+    let root = scratch("review-cap");
+    let repo = repo(&root);
+    std::fs::write(
+        repo.join(".fallow/squad.toml"),
+        "repair_cap = 0\n[[gate]]\nname = \"tests\"\ncommand = \"python -m unittest\"\nbaseline = true\n",
+    )
+    .unwrap();
+    git(&repo, &["commit", "-q", "-am", "no repairs"]);
+    let scenario = root.join("scenario.toml");
+    let mut sc = plan_step(PLAN);
+    sc.push_str(&build_step("build", &good_files(), ""));
+    sc.push_str("[[step]]\nkind = \"review\"\noutput = { answers = [{ criterion = \"main/add\", ran = \"python -c add(2,3)\", result = \"6\", passed = false }, { criterion = \"main/bad\", ran = \"python -c add('a',1)\", result = \"TypeError\", passed = true, failing_case = \"add('a', 1) raises\" }] }\n");
+    let fixed = format!(
+        "{CALC}# checked again
+"
+    );
+    sc.push_str(&build_step("repair", &[("calc.py", &fixed)], ""));
+    sc.push_str(&review_ok(""));
+    std::fs::write(&scenario, &sc).unwrap();
+    let (tx, _h) = start_engine(&root, &scenario);
+    let id = create(&tx, &repo, "add()");
+    wait_for(&tx, id, "plan", |v| v["plan_approvable"] == true);
+    ask(&tx, Request::Approve { id }).unwrap();
+    let v = wait_for(&tx, id, "the repair cap", |v| v["needs"].is_object());
+    assert_eq!(v["parts"]["main"]["state"], "at_cap");
+    let seq = v["seq"].as_u64().unwrap();
+    std::thread::sleep(std::time::Duration::from_secs(3));
+    let v = ask(&tx, Request::Get { id }).unwrap();
+    assert_eq!(
+        v["seq"].as_u64().unwrap(),
+        seq,
+        "nothing happens while it waits"
+    );
+    assert!(v["needs"].is_object());
+    ask(
+        &tx,
+        Request::Limits {
+            id,
+            usd: None,
+            minutes: None,
+            repair_cap: Some(1),
+            once: false,
+        },
+    )
+    .unwrap();
+    let v = wait_for(&tx, id, "ready to merge", |v| v["stage"] == "ready");
+    assert_eq!(v["parts"]["main"]["repairs"], 1);
+    let _ = std::fs::remove_dir_all(&root);
+}
