@@ -355,13 +355,13 @@ table.
 
 **Independent Test**: quickstart Q6.
 
-- [ ] T044 [P] [US6] Write `tests/squad_memory.rs` (research R-14):
+- [X] T044 [P] [US6] Write `tests/squad_memory.rs` (research R-14):
   - the sum of the session footprints, gate sessions included, plus the expected size (the largest
     seen for the profile, else `orchestration.session_size_mb`);
   - a start that does not fit waits, and the lead and the engineer get the shortfall;
   - it proceeds when a sample shows room;
   - SC-008.
-- [ ] T045 [US6] Implement `src/orchestration/memory.rs`:
+- [X] T045 [US6] Implement `src/orchestration/memory.rs`:
   - the settings `orchestration.memory_budget_mb` and `orchestration.session_size_mb` in
     `src/config/schema.rs`;
   - the sampler's footprints in `src/app/orchestration.rs`.

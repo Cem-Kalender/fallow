@@ -199,6 +199,11 @@ pub trait Sessions {
         Ok(())
     }
 
+    /// The machine's and the sessions' memory as last measured (005 FR-037); `None`: unknown.
+    fn memory(&self) -> Option<memory::Sample> {
+        None
+    }
+
     fn projects(&self) -> Vec<(ProjectId, String, bool)> {
         let mut v: Vec<(ProjectId, String, bool)> = Vec::new();
         for s in self.all() {
@@ -338,6 +343,10 @@ pub struct Hub {
     pub signals: signals::Signals,
     /// Starts waiting for memory (005 FR-038): start request id, shortfall in MB.
     pub memory_waits: Vec<(u64, u64)>,
+    /// The largest memory seen per agent profile, in MB (005 R-14).
+    pub profile_sizes: HashMap<String, u64>,
+    /// The budget in force at the last decision, in MB (for `squad_status`).
+    pub memory_budget_seen: u64,
     next_start: u64,
 }
 
@@ -440,6 +449,8 @@ impl Hub {
             pending_reports: Vec::new(),
             signals: Default::default(),
             memory_waits: Vec::new(),
+            profile_sizes: HashMap::new(),
+            memory_budget_seen: 0,
             next_start: 0,
             settings,
             channel: None,
@@ -806,6 +817,14 @@ impl Hub {
                 }
             }
         };
+        // A start that does not fit the memory budget waits (005 FR-038).
+        let short = if state == StartState::Approved {
+            sessions
+                .memory()
+                .and_then(|m| self.memory_shortfall(&m, &pid))
+        } else {
+            None
+        };
         self.activity.add(
             from.party(),
             Action::StartRequested,
@@ -833,6 +852,27 @@ impl Hub {
         });
         if matches!(state, StartState::Refused(_)) {
             self.start_outcome(id);
+        }
+        if let Some(mb) = short {
+            self.memory_waits.push((id, mb));
+            let (pname, proj_name, role) = self
+                .starts
+                .iter()
+                .find(|s| s.id == id)
+                .map(|s| {
+                    (
+                        s.profile_name.clone(),
+                        s.project_name.clone(),
+                        s.role.clone(),
+                    )
+                })
+                .unwrap_or_default();
+            let text = format!(
+                "Starting {pname} ({}) in {proj_name} waits for memory: {mb} MB short of the budget. It starts by itself when a session ends or memory frees up.",
+                role.as_deref().unwrap_or("no role")
+            );
+            self.alerts.push(text.clone());
+            self.tell_lead(proj, text);
         }
         Ok((id, state, hold))
     }
@@ -879,6 +919,7 @@ impl Hub {
         self.starts
             .iter()
             .filter(|s| s.state == StartState::Approved)
+            .filter(|s| !self.memory_waits.iter().any(|(id, _)| *id == s.id))
             .cloned()
             .collect()
     }
@@ -1741,6 +1782,7 @@ impl Hub {
         }
         changed |= self.tick_deadlock(sessions, now);
         changed |= self.tick_signals(now);
+        changed |= self.tick_memory(sessions);
         changed |= self.tick_lead(sessions, now);
         for (w, end) in self.events.due(now) {
             changed = true;

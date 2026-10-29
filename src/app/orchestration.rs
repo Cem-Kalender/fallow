@@ -113,6 +113,38 @@ pub struct AppView<'a> {
     pub profiles: &'a [crate::session::profiles::AgentProfile],
     /// Why no session may start now, if so (session limit, memory).
     pub guard: Option<String>,
+    /// The memory the process monitor measured (005 FR-037).
+    pub memory: Option<crate::orchestration::memory::Sample>,
+}
+
+/// The memory sample for the hub (005 R-14): the machine, Fallow, and each running session's
+/// process tree as the process monitor last measured them.
+pub fn memory_sample(
+    sessions: &SessionManager,
+    snapshot: Option<&crate::procmon::snapshot::Snapshot>,
+) -> Option<crate::orchestration::memory::Sample> {
+    let snap = snapshot?;
+    let mb = |b: u64| b / (1024 * 1024);
+    let mut out = crate::orchestration::memory::Sample {
+        total_mb: mb(snap.summary.total_ram),
+        fallow_mb: mb(snap.summary.fallow_ram.bytes),
+        sessions: Vec::new(),
+    };
+    for s in sessions.sessions.iter().filter(|s| s.state.running()) {
+        let Some(key) = snap
+            .sessions
+            .iter()
+            .find(|(_, x)| **x == s.id)
+            .map(|(k, _)| *k)
+        else {
+            continue;
+        };
+        if let Some(g) = snap.groups.iter().find(|g| g.root == key) {
+            out.sessions
+                .push((s.id, s.profile.id.clone(), mb(g.total_footprint)));
+        }
+    }
+    Some(out)
 }
 
 /// Fallow's own memory above which agents may not start more sessions (FR-021: never beyond
@@ -162,6 +194,9 @@ impl Sessions for AppView<'_> {
             Some(why) => Err(why.clone()),
             None => Ok(()),
         }
+    }
+    fn memory(&self) -> Option<crate::orchestration::memory::Sample> {
+        self.memory.clone()
     }
     fn profile(&self, id: &str) -> Option<crate::session::profiles::AgentProfile> {
         self.profiles.iter().find(|p| p.id == id).cloned()
@@ -245,6 +280,7 @@ impl AppState {
             projects: &self.projects,
             profiles: &self.profiles,
             guard,
+            memory: memory_sample(&self.sessions, self.snapshot.as_deref()),
         };
         let changed = hub.handle(ev, &view, Instant::now());
         self.take_hub_notices();
@@ -262,6 +298,7 @@ impl AppState {
             projects: &self.projects,
             profiles: &self.profiles,
             guard,
+            memory: memory_sample(&self.sessions, self.snapshot.as_deref()),
         };
         let mut changed = hub.tick(&view, Instant::now());
         // Roles live in the hub's bursts; sessions show them (004 FR-009).
@@ -339,6 +376,7 @@ impl AppState {
                 projects: &self.projects,
                 profiles: &self.profiles,
                 guard,
+                memory: memory_sample(&self.sessions, self.snapshot.as_deref()),
             };
             if let Some(h) = self.hub.as_mut() {
                 h.start_done(&view, s.id, result, Instant::now());
@@ -424,6 +462,16 @@ impl AppState {
             let Some(path) = self.projects.get(job.project).map(|p| p.path.clone()) else {
                 continue;
             };
+            // A gate session counts against the memory budget too; it waits for room (005
+            // FR-037) and is tried again on the next round.
+            if let Some(m) = memory_sample(&self.sessions, self.snapshot.as_deref()) {
+                let short = self.hub.as_mut().and_then(|h| {
+                    h.memory_shortfall(&m, crate::orchestration::gates::GATE_PROFILE)
+                });
+                if short.is_some() {
+                    continue;
+                }
+            }
             // A run's baseline checkout stays next to its copy (005 R-11).
             let root = if self.projects.get(job.project).is_some_and(|p| p.temporary) {
                 None
@@ -1047,6 +1095,7 @@ impl AppState {
                     projects: &self.projects,
                     profiles: &self.profiles,
                     guard,
+                    memory: memory_sample(&self.sessions, self.snapshot.as_deref()),
                 };
                 if let Some(h) = self.hub.as_mut() {
                     if let Err(e) = h.repair_decide(&view, project, i, d, Instant::now()) {
@@ -1300,6 +1349,7 @@ impl AppState {
             projects: &self.projects,
             profiles: &self.profiles,
             guard: None,
+            memory: memory_sample(&self.sessions, self.snapshot.as_deref()),
         };
         let hub = self
             .hub
@@ -1701,6 +1751,7 @@ impl AppState {
             projects: &self.projects,
             profiles: &self.profiles,
             guard: None,
+            memory: memory_sample(&self.sessions, self.snapshot.as_deref()),
         };
         let now = Instant::now();
         hub.start_burst(&view, request, now)?;

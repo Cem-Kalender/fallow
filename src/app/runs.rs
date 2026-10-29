@@ -170,6 +170,10 @@ impl AppState {
                 projects: &self.projects,
                 profiles: &self.profiles,
                 guard: super::orchestration::start_guard(&self.sessions, self.snapshot.as_deref()),
+                memory: super::orchestration::memory_sample(
+                    &self.sessions,
+                    self.snapshot.as_deref(),
+                ),
             };
             let Some(h) = self.hub.as_mut() else {
                 return Err("orchestration is unavailable".into());

@@ -958,6 +958,33 @@ pub fn squad_lines(state: &AppState, v: &OrchView) -> Vec<Line<'static>> {
     if b.squad.adaptive() {
         lines.extend(work_lines(state, b));
     }
+    // 005 FR-037, FR-038: the memory budget and starts waiting for it.
+    if let Some(h) = state.hub.as_ref() {
+        let waits: Vec<String> = h
+            .memory_waits
+            .iter()
+            .filter(|(id, _)| {
+                h.starts
+                    .iter()
+                    .any(|s| s.id == *id && s.project == b.project)
+            })
+            .map(|(id, mb)| format!("start {id} ({mb} MB short)"))
+            .collect();
+        if h.memory_budget_seen > 0 || !waits.is_empty() {
+            lines.push(Line::styled(
+                format!(
+                    "Memory budget {} MB{}",
+                    h.memory_budget_seen,
+                    if waits.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" · waiting: {}", waits.join(", "))
+                    }
+                ),
+                Style::default().add_modifier(Modifier::DIM),
+            ));
+        }
+    }
     // Repair loops follow the sessions in the selection (r / t / Delete decide stopped ones).
     let n = squad_sessions(state).len();
     if !b.repairs.is_empty() {
