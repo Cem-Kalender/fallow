@@ -18,9 +18,23 @@ pub type Assignment = (String, Option<String>);
 const BURST_TASK: &str = "Build the work agreed with the user yourself, in one loop, and report it done with task_report and evidence. Delegate a piece only where it pays: record it in .fallow/work.toml with how it is built and why, and commit it before starting a builder.";
 
 impl Hub {
+    /// As `refresh_manifest`, at most every 2 s (routine calls by the lead; 005 review).
+    pub fn refresh_manifest_soon(&mut self, sessions: &dyn Sessions, project: ProjectId) {
+        let recent = self.burst_of(project).is_some_and(|b| {
+            b.manifest_checked
+                .is_some_and(|t| t.elapsed() < std::time::Duration::from_secs(2))
+        });
+        if !recent {
+            self.refresh_manifest(sessions, project);
+        }
+    }
+
     /// Reads the manifest at the lead's latest commit and applies it, when the commit changed
     /// (005 R-1). Without a known folder for the lead nothing is read.
     pub fn refresh_manifest(&mut self, sessions: &dyn Sessions, project: ProjectId) {
+        if let Some(b) = self.bursts.iter_mut().find(|b| b.project == project) {
+            b.manifest_checked = Some(std::time::Instant::now());
+        }
         let Some(b) = self.burst_of(project) else {
             return;
         };
@@ -66,7 +80,7 @@ impl Hub {
             return;
         }
         b.manifest = m.clone();
-        let (lead, started) = (b.lead, b.started);
+        let started = b.started;
         let open = |t: &tasks::Task| t.created_at >= started && !t.state.finished();
         match m {
             None => self.ensure_lead_task(project, BURST_WORK, BURST_TASK.to_string()),
@@ -75,9 +89,7 @@ impl Hub {
                     .tasks
                     .list
                     .iter()
-                    .filter(|t| {
-                        open(t) && t.assigned == Some(lead) && t.created_by == Party::Fallow
-                    })
+                    .filter(|t| open(t) && Hub::lead_work(t))
                     .filter(|t| {
                         t.work.as_deref().is_some_and(|w| {
                             w == BURST_WORK || m.work(w).is_none_or(|x| x.build != Build::Lead)
@@ -130,7 +142,7 @@ impl Hub {
         let (lead, started) = (b.lead, b.started);
         let exists = self.tasks.list.iter().any(|t| {
             t.created_at >= started
-                && t.assigned == Some(lead)
+                && t.created_by == Party::Fallow
                 && t.work.as_deref() == Some(work)
                 && !matches!(t.state, tasks::State::Cancelled(_))
         });

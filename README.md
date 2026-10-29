@@ -96,7 +96,7 @@ at once.
 
 - **Squads.** A squad declares roles, gates and merge conditions in `.fallow/squad.toml` in the
   project, versioned with your code (Fallow only reads it). Without the file, a built-in squad is
-  used: a lead, up to three builders and up to two read-only reviewers. Roles for all projects
+  used: a lead, up to three builders and up to two reviewers that may run commands but not edit. Roles for all projects
   can live in `roles.toml` in Fallow's config directory. The palette's "Create squad file" writes a commented
   starting point with the test command guessed from the project, and never commits it.
 - **Roles.** Fallow fixes each session's role at its start and stamps it on everything the
@@ -123,6 +123,50 @@ at once.
 - **Publishing.** No agent merges. With a remote, the lead opens a draft pull request once every
   merge condition holds, and you merge it. Without one, the Squad tab says "ready to merge" and
   `m` merges exactly the gated commit into the target branch after you confirm.
+
+### One loop by default, delegation where it pays
+
+Following Anthropic's published lessons on multi-agent systems, the lead **builds the work itself**
+by default, in one loop, and a reviewer that did not write it checks it. It delegates only where a
+split pays, and records each decision in a work manifest, `.fallow/work.toml`, that it commits:
+
+- `build = "builder"`: one fresh builder from the committed plan;
+- `build = "features"`: independent features, a builder each;
+- `build = "parts"`: parallel parts, only with files each part owns (code and its tests, never
+  only tests), no overlap, and a committed contract for each boundary.
+
+Fallow refuses a builder for work the manifest does not delegate, or that is not prepared, and the
+Squad tab shows every decision and its reason. Builders ask the lead with **signals**; the lead
+answers by committing the decision to the plan, the manifest or a contract, and a builder's done
+report is refused until it contains the changes to its part's criteria and contracts. Edits
+outside a part are reported to the lead. Every piece of work has acceptance criteria before it is
+built; a reviewer's approval counts only when it answers each one, including a case that must fail.
+The lead is told only what needs its decision; a new lead continues from the repository and
+`squad_status`. Sessions start only within a memory budget (`orchestration.memory_budget_mb`).
+Squad files written for the earlier workflow (merge on `done:<role>`) keep it.
+
+### Measuring: plain, solo and squad runs
+
+To see whether orchestration pays for your work, keep a **task set** outside your projects
+(`taskset.toml`: tasks with a starting commit, a fixed description, a time limit and **hidden
+tests**). "Register a task set…" and "Start a run…" or "Start a series…" in the palette run a task:
+
+- **plain**: one session with your skills and no Fallow tools;
+- **solo**: the lead builds alone, with Fallow's gates and a reviewer;
+- **squad**: the lead decides how to delegate.
+
+Each run works in its own copy of the project (only its history up to the start), so runs never
+see each other and your repository is only read. Every editing session runs at the same level and
+never asks you anything; Fallow types the description and ends the run when nothing worked for a
+while. You confirm closing its sessions, the hidden tests run on what the run left, and the result
+is recorded. The Runs tab compares runs by task and mode: pass rate, time, your interventions and
+cost (as Claude Code reports it on its status line). Any component can be switched off for a run
+(`off=reviewer,gates,…`) to see whether it matters.
+
+"Hidden" means the tests are kept out of the run's copy, worktrees, prompts and briefings until
+its sessions are closed; agents run as you, so one could read them on purpose. Run records hold
+numbers, fingerprints and fixed outcomes only (no names, paths or text), in Fallow's cache folder,
+until you delete them (constitution Principle VII).
 
 Risks: during a burst, agents act on each other's output without your review, and a prompt
 injection in one session can reach the others. That is why bursts are time-limited, scoped to one

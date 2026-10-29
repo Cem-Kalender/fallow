@@ -30,6 +30,10 @@ pub struct Runs {
     asked: bool,
     /// When the running hidden test started.
     test_started: Option<Instant>,
+    /// The run records and their size on disk, read when the Runs tab opens and after a
+    /// record is written or deleted (never per frame).
+    pub records: Vec<(u32, RunRecord)>,
+    pub records_usage: (usize, u64),
 }
 
 impl AppState {
@@ -50,6 +54,13 @@ impl AppState {
         Ok(format!(
             "Task set registered: {n} task(s). Hidden tests are kept out of every run until its sessions are closed. Agents run as you, so one could read them on purpose."
         ))
+    }
+
+    /// Reads the run records again (the Runs tab shows these).
+    pub fn refresh_records(&mut self) {
+        let cache = crate::config::cache_root();
+        self.runs.records = cache.as_deref().map(record::list).unwrap_or_default();
+        self.runs.records_usage = cache.as_deref().map_or((0, 0), record::usage);
     }
 
     /// The registered task sets, loaded on first use (never at startup, Principle II).
@@ -82,29 +93,6 @@ impl AppState {
             .cloned()
             .ok_or_else(|| format!("No task {:?} in the task set", plan.task))?;
         let cache = crate::config::cache_root().ok_or("no cache folder is known")?;
-        self.runs.next += 1;
-        let id = self.runs.next;
-        let root = cache
-            .join("runs")
-            .join("work")
-            .join(format!("{}-{id}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
-        let copy = root.join(crate::projects::folder_name(&task.project));
-        git::copy_at(&task.project, &task.start, &copy)
-            .map_err(|e| format!("Could not copy the project at {}: {e}", task.start))?;
-        for c in &set.setup {
-            let to = copy.join(&c.to);
-            if let Some(parent) = to.parent() {
-                let _ = std::fs::create_dir_all(parent);
-            }
-            std::fs::copy(&c.from, &to).map_err(|e| format!("{}: {e}", c.to))?;
-        }
-        let start_commit = git::head(&copy)?;
-        let task_fp = runs::task_fingerprint(&task)?;
-        let hidden_fp = runs::hidden_fingerprint(&task)?;
-        let project = self
-            .projects
-            .push_temporary(copy.clone(), &format!("run {id} {}", task.name));
         let agent = plan_agent(&plan);
         let profile = self
             .profiles
@@ -115,6 +103,45 @@ impl AppState {
         // Every editing session runs at the same level, never asking the engineer (FR-012).
         let level = roles::level_flags(profile.orchestration, squad::Level::EditRun)
             .ok_or_else(|| format!("{} has no flags for running unattended", profile.name))?;
+        let task_fp = runs::task_fingerprint(&task)?;
+        let hidden_fp = runs::hidden_fingerprint(&task)?;
+        self.runs.next += 1;
+        let id = self.runs.next;
+        let root = cache
+            .join("runs")
+            .join("work")
+            .join(format!("{}-{id}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let copy = root.join(crate::projects::folder_name(&task.project));
+        // Nothing of a run that could not start stays behind (005 review).
+        let prepared = (|| {
+            git::copy_at(&task.project, &task.start, &copy)
+                .map_err(|e| format!("Could not copy the project at {}: {e}", task.start))?;
+            for c in &set.setup {
+                let to = copy.join(&c.to);
+                if let Some(parent) = to.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                std::fs::copy(&c.from, &to).map_err(|e| format!("{}: {e}", c.to))?;
+            }
+            let start_commit = git::head(&copy)?;
+            let squad = if plan.mode == Mode::Plain {
+                None
+            } else {
+                Some(squad::load(&copy, self.store.dir.as_deref()).map_err(|p| p.join("; "))?)
+            };
+            Ok::<_, String>((start_commit, squad))
+        })();
+        let (start_commit, run_squad) = match prepared {
+            Ok(x) => x,
+            Err(e) => {
+                let _ = std::fs::remove_dir_all(&root);
+                return Err(e);
+            }
+        };
+        let project = self
+            .projects
+            .push_temporary(copy.clone(), &format!("run {id} {}", task.name));
         let mut run = Run {
             id,
             plan: plan.clone(),
@@ -137,6 +164,7 @@ impl AppState {
             measured: Default::default(),
             last_seen: None,
             final_commit: None,
+            result_session: None,
             tested_dir: None,
             snapshot: None,
         };
@@ -147,11 +175,17 @@ impl AppState {
         if plan.mode != Mode::Plain {
             self.ensure_hub(profile.orchestration);
         }
-        let sid = self.start_in_run(&run, &profile.id, level, plan.mode == Mode::Plain)?;
+        let sid = match self.start_in_run(&run, &profile.id, level, plan.mode == Mode::Plain) {
+            Ok(sid) => sid,
+            Err(e) => {
+                self.projects.remove_temporary(project);
+                let _ = std::fs::remove_dir_all(&run.root);
+                return Err(e);
+            }
+        };
         run.first = Some(sid);
         run.sessions.insert(sid);
-        if plan.mode != Mode::Plain {
-            let s = squad::load(&copy, self.store.dir.as_deref()).map_err(|p| p.join("; "))?;
+        if let Some(s) = run_squad {
             run.idle_end = Duration::from_secs(u64::from(s.run_idle_end_min) * 60);
             let max = self.sessions.limits.max_sessions.clamp(2, 255) as u8;
             let req = BurstRequest {
@@ -175,10 +209,19 @@ impl AppState {
                     self.snapshot.as_deref(),
                 ),
             };
-            let Some(h) = self.hub.as_mut() else {
-                return Err("orchestration is unavailable".into());
+            let started = match self.hub.as_mut() {
+                Some(h) => h.start_burst(&view, req, Instant::now()),
+                None => Err("orchestration is unavailable".into()),
             };
-            h.start_burst(&view, req, Instant::now())?;
+            if let Err(e) = started {
+                // The session runs already: the run ends unrecorded, through the one
+                // confirmation that closes its sessions (Principle IV).
+                run.plan.record = false;
+                self.end_run(&mut run, End::Engineer);
+                self.runs.run = Some(run);
+                return Err(format!("Run {id} could not coordinate: {e}"));
+            }
+            let h = self.hub.as_mut().expect("checked above");
             if let Some(b) = h.bursts.iter_mut().find(|b| b.project == project) {
                 b.description = Some(task.description.clone());
                 b.switched_off = plan.off.clone();
@@ -334,6 +377,12 @@ impl AppState {
                 if still {
                     return false;
                 }
+                if !run.plan.record {
+                    self.discard_copy(run);
+                    run.stage = Stage::Recorded;
+                    self.say(format!("Run {} closed, unrecorded", run.id));
+                    return true;
+                }
                 self.prepare_hidden_tests(run);
                 true
             }
@@ -454,6 +503,9 @@ impl AppState {
                 run.intervention(f);
             }
             self.end_run(&mut run, End::Engineer);
+        } else if matches!(run.stage, Stage::Ended(_)) {
+            // The close confirmation was dismissed: ask again (005 review).
+            self.runs.asked = false;
         }
         self.runs.run = Some(run);
         true
@@ -465,6 +517,10 @@ impl AppState {
         run.stage = Stage::Ended(why);
         // The record's view of the squad, before the burst ends.
         if let Some(h) = self.hub.as_mut() {
+            // A replaced lead's successor holds the run's result (FR-013).
+            if let Some(b) = h.burst_of(run.project) {
+                run.result_session = Some(b.lead);
+            }
             run.snapshot = h.run_snapshot(run.project);
             h.end_burst(run.project, "the run ended");
         }
@@ -539,7 +595,8 @@ impl AppState {
     /// The tested state: the lead's (or plain session's) worktree as the run left it.
     fn prepare_hidden_tests(&mut self, run: &mut Run) {
         let dir = run
-            .first
+            .result_session
+            .or(run.first)
             .and_then(|f| self.sessions.get(f))
             .map_or(run.copy.clone(), |s| s.cwd.clone());
         run.final_commit = git::head(&dir).ok();
@@ -647,6 +704,7 @@ impl AppState {
                 Ok(n) => note.push_str(&format!("; recorded as {n}")),
                 Err(e) => note.push_str(&format!("; not recorded: {e}")),
             }
+            self.refresh_records();
         }
         self.discard_copy(run);
         run.stage = Stage::Recorded;
@@ -670,13 +728,19 @@ impl AppState {
         };
         let work = cache.join("runs").join("work");
         let mine = format!("{}-", std::process::id());
+        let mut removed = 0;
         if let Ok(entries) = std::fs::read_dir(&work) {
             for e in entries.flatten() {
                 let name = e.file_name().to_string_lossy().into_owned();
-                if !name.starts_with(&mine) {
-                    let _ = std::fs::remove_dir_all(e.path());
+                if !name.starts_with(&mine) && std::fs::remove_dir_all(e.path()).is_ok() {
+                    removed += 1;
                 }
             }
+        }
+        if removed > 0 {
+            self.say(format!(
+                "{removed} run(s) left unfinished when Fallow last exited were discarded, unrecorded"
+            ));
         }
     }
 

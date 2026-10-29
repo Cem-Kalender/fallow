@@ -458,6 +458,19 @@ impl AppState {
                 .all(|c| git::on_branch(dir, c, &head))
                 .then_some(head)
         });
+        if let Some(h) = self.hub.as_mut() {
+            h.gate_memory_waits
+                .retain(|p| jobs.iter().any(|j| j.project == *p));
+        }
+        let unmeasured = memory_sample(&self.sessions, self.snapshot.as_deref()).map(|m| {
+            self.sessions
+                .sessions
+                .iter()
+                .filter(|s| s.state.running() && !m.sessions.iter().any(|(id, _, _)| *id == s.id))
+                .map(|s| s.profile.id.clone())
+                .collect::<Vec<_>>()
+        });
+        let mut gates_now = 0u64;
         for job in jobs {
             let Some(path) = self.projects.get(job.project).map(|p| p.path.clone()) else {
                 continue;
@@ -466,9 +479,21 @@ impl AppState {
             // FR-037) and is tried again on the next round.
             if let Some(m) = memory_sample(&self.sessions, self.snapshot.as_deref()) {
                 let short = self.hub.as_mut().and_then(|h| {
-                    h.memory_shortfall(&m, crate::orchestration::gates::GATE_PROFILE)
+                    let gate = h.expected_size(crate::orchestration::gates::GATE_PROFILE);
+                    let reserved = h.approved_mb(None)
+                        + gates_now * gate
+                        + unmeasured
+                            .iter()
+                            .flatten()
+                            .map(|p| h.expected_size(p))
+                            .sum::<u64>();
+                    let short =
+                        h.memory_shortfall(&m, crate::orchestration::gates::GATE_PROFILE, reserved);
+                    h.gate_memory_wait(job.project, short);
+                    short
                 });
                 if short.is_some() {
+                    changed = true;
                     continue;
                 }
             }
@@ -514,6 +539,7 @@ impl AppState {
             let result = self.start_gate_session(&job, cwd);
             if result.is_ok() {
                 self.gates_started += 1;
+                gates_now += 1;
             }
             if result.is_err() {
                 if let Some(d) = &dir {
@@ -869,6 +895,7 @@ impl AppState {
             "runs.end" => return Some(self.end_run_now()),
             "runs.open" => {
                 self.discard_leftover_copies();
+                self.refresh_records();
                 self.overlay = Overlay::Orch(OrchView {
                     tab: Tab::Runs,
                     ..OrchView::default()
@@ -942,6 +969,10 @@ impl AppState {
                 v.tab = v.tab.next(if id == "orch.tab_next" { 1 } else { -1 });
                 v.scroll = 0;
                 v.selected = 0;
+                if v.tab == Tab::Runs {
+                    self.refresh_records();
+                    return Some(true);
+                }
             }
             "orch.board_toggle" if v.tab == Tab::Board => {
                 v.shared = !v.shared;
@@ -1054,10 +1085,7 @@ impl AppState {
             "orch.grant_new" => return Some(self.open_grant(None)),
             "orch.delete" if v.tab == Tab::Runs => {
                 // 005: delete a record, confirmed.
-                let records = crate::config::cache_root()
-                    .map(|c| crate::orchestration::record::list(&c))
-                    .unwrap_or_default();
-                if let Some((n, _)) = records.get(v.selected) {
+                if let Some((n, _)) = self.runs.records.get(v.selected) {
                     let n = *n;
                     let view = v.clone();
                     let d = crate::ui::confirm::Dialog::new(

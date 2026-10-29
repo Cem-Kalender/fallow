@@ -778,13 +778,21 @@ pub(super) fn call(
         return r;
     }
     // The lead's view follows its latest commit: the manifest is read again when it changed
-    // (005 R-1); a read is one `git rev-parse` when nothing changed.
+    // (005 R-1); a read is one `git rev-parse` when nothing changed, at most every 2 s except
+    // for the calls that decide on it.
     if let Some(project) = hub
         .burst_for(caller)
         .filter(|b| b.lead == caller)
         .map(|b| b.project)
     {
-        hub.refresh_manifest(sessions, project);
+        if matches!(
+            name,
+            "session_start" | "task_report" | "signal_answer" | "publish" | "squad_status"
+        ) {
+            hub.refresh_manifest(sessions, project);
+        } else {
+            hub.refresh_manifest_soon(sessions, project);
+        }
     }
     let repeat = name == "event_wait"
         && hub.events.recent.get(&caller).is_some_and(|(k, _, _)| {

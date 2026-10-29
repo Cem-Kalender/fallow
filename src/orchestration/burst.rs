@@ -92,6 +92,8 @@ pub struct Burst {
     pub description: Option<String>,
     /// The lead's commit the manifest was last read at, and the files tracked there.
     pub manifest_seen: Option<String>,
+    /// When the lead's head was last looked at, so routine calls read it at most every 2 s.
+    pub manifest_checked: Option<Instant>,
     pub manifest_files: Vec<String>,
     /// What each builder session is for: a piece of work and its part (005 R-2).
     pub assigned: HashMap<u32, super::delegation::Assignment>,
@@ -220,6 +222,7 @@ impl Hub {
             focus: HashMap::new(),
             description: None,
             manifest_seen: None,
+            manifest_checked: None,
             manifest_files: Vec::new(),
             assigned: HashMap::new(),
             refused: Vec::new(),
@@ -312,6 +315,28 @@ impl Hub {
         };
         let b = self.bursts.remove(i);
         self.revoke(b.permission);
+        // Starts of the burst not carried out end with it (005 review): nothing starts after.
+        let ended: Vec<u64> = self
+            .starts
+            .iter()
+            .filter(|s| {
+                s.project == project
+                    && s.role.is_some()
+                    && matches!(
+                        s.state,
+                        super::StartState::Pending | super::StartState::Approved
+                    )
+            })
+            .map(|s| s.id)
+            .collect();
+        for id in &ended {
+            if let Some(s) = self.starts.iter_mut().find(|s| s.id == *id) {
+                s.state = super::StartState::Refused("coordination ended".into());
+            }
+            self.start_outcome(*id);
+        }
+        self.memory_waits.retain(|(id, _, _)| !ended.contains(id));
+        self.gate_memory_waits.retain(|p| *p != project);
         let text = format!(
             "Coordination ended ({why}). Requests to deliver, create tasks or start sessions wait for the user again."
         );
@@ -383,7 +408,23 @@ impl Hub {
             .ok_or("No coordination in this project")?;
         b.roles.retain(|_, r| r != "lead");
         b.roles.insert(session, "lead".into());
+        let old = b.lead;
         b.lead = session;
+        let started = b.started;
+        // The old lead's open pieces of work are the new lead's (005 review).
+        for t in self.tasks.list.iter_mut().filter(|t| {
+            t.created_at >= started
+                && t.assigned == Some(old)
+                && t.created_by == Party::Fallow
+                && t.work.is_some()
+                && !t.state.finished()
+        }) {
+            t.assigned = Some(session);
+            t.target = super::tasks::Target::Session(session);
+        }
+        let Some(b) = self.bursts.iter_mut().find(|b| b.project == project) else {
+            return Ok(());
+        };
         // The new lead learns where things stand from Fallow and the repository (005 FR-033).
         let text = format!(
             "You are now the lead of the coordination in {}. Call Fallow's whoami for your briefing and squad_status for where the work stands: the manifest commit, each piece of work with its builder and state, open signals and what the merge needs. Everything decided is in the repository.",

@@ -92,6 +92,13 @@ fn setup(budget: u64) -> (Hub, Fake, Instant) {
     (h, f, now)
 }
 
+fn waits(h: &Hub) -> Vec<(u64, u64)> {
+    h.memory_waits
+        .iter()
+        .map(|(id, mb, _)| (*id, *mb))
+        .collect()
+}
+
 fn reviewer(h: &mut Hub, f: &Fake, now: Instant) -> u64 {
     let r = h.call(
         f,
@@ -117,7 +124,7 @@ fn a_start_that_does_not_fit_waits_and_goes_when_memory_is_free() {
     // FR-037, FR-038, SC-008: lead 600 MB + expected 700 MB > 1200 MB.
     let (mut h, f, now) = setup(1200);
     let id = reviewer(&mut h, &f, now);
-    assert_eq!(h.memory_waits, [(id, 100)]);
+    assert_eq!(waits(&h), [(id, 100)]);
     assert!(
         h.approved_starts().is_empty(),
         "nothing starts beyond the budget"
@@ -148,7 +155,7 @@ fn a_start_that_does_not_fit_waits_and_goes_when_memory_is_free() {
     // Claude session too: 650 + 650 - 1200.
     *f.memory.borrow_mut() = Some(sample(&[(1, "claude", 650)]));
     h.tick(&f, now);
-    assert_eq!(h.memory_waits, [(id, 100)]);
+    assert_eq!(waits(&h), [(id, 100)]);
     // The lead's footprint shrinks: the start goes ahead by itself.
     *f.memory.borrow_mut() = Some(sample(&[(1, "claude", 400)]));
     h.tick(&f, now);
@@ -181,6 +188,72 @@ fn the_expected_size_is_the_largest_seen_for_the_profile() {
     assert!(h.memory_waits.is_empty());
     // Gates count in the measured sum: 500 + 1000 (a build in a gate) + 900 > 2000.
     *f.memory.borrow_mut() = Some(sample(&[(1, "claude", 500), (9, "gate", 1000)]));
-    let short = h.memory_shortfall(&f.memory().unwrap(), "claude");
+    let short = h.memory_shortfall(&f.memory().unwrap(), "claude", 0);
     assert_eq!(short, Some(400));
+}
+
+#[test]
+fn approved_starts_not_carried_out_count_against_the_budget() {
+    // 005 review: lead 600 + an approved reviewer 700 + another 700 > 1700.
+    let (mut h, f, now) = setup(1700);
+    let first = reviewer(&mut h, &f, now);
+    assert!(waits(&h).is_empty(), "the first fits");
+    let second = reviewer(&mut h, &f, now);
+    assert_eq!(waits(&h), [(second, 300)], "the first is reserved");
+    assert!(h.blocked(1), "the requester waits for memory (FR-014)");
+    // Ticks keep the order: the first still goes, the second still waits (with the measured
+    // 600 MB now the expected size: 600 + 600 + 600 - 1700).
+    h.tick(&f, now);
+    assert_eq!(waits(&h), [(second, 100)]);
+    let ids: Vec<u64> = h.approved_starts().iter().map(|s| s.id).collect();
+    assert_eq!(ids, [first]);
+}
+
+#[test]
+fn an_approved_start_is_held_when_memory_runs_short_before_it_starts() {
+    // FR-038 for starts approved earlier (or later by the engineer).
+    let (mut h, f, now) = setup(2000);
+    let id = reviewer(&mut h, &f, now);
+    assert!(waits(&h).is_empty());
+    *f.memory.borrow_mut() = Some(sample(&[(1, "claude", 1500)]));
+    h.tick(&f, now);
+    // The lead's 1500 MB is now also the expected size of a Claude session (R-14).
+    assert_eq!(waits(&h), [(id, 1000)]);
+    assert!(h.approved_starts().is_empty());
+}
+
+#[test]
+fn a_start_that_waits_too_long_is_refused_and_the_lead_told() {
+    // 005 review: a wait ends after request_timeout_s.
+    let (mut h, f, now) = setup(1200);
+    let id = reviewer(&mut h, &f, now);
+    assert_eq!(waits(&h).len(), 1);
+    let later = now + Duration::from_secs(h.settings.request_timeout_s + 1);
+    h.tick(&f, later);
+    assert!(waits(&h).is_empty());
+    assert!(matches!(
+        h.starts.iter().find(|s| s.id == id).unwrap().state,
+        StartState::Refused(_)
+    ));
+    assert!(
+        h.alerts.iter().any(|a| a.contains("waited")),
+        "{:?}",
+        h.alerts
+    );
+}
+
+#[test]
+fn ending_the_burst_ends_its_waiting_starts() {
+    // 005 review: nothing of a burst starts after it ended.
+    let (mut h, f, now) = setup(1200);
+    let id = reviewer(&mut h, &f, now);
+    assert!(h.end_burst(1, "test"));
+    assert!(waits(&h).is_empty());
+    assert!(matches!(
+        h.starts.iter().find(|s| s.id == id).unwrap().state,
+        StartState::Refused(_)
+    ));
+    *f.memory.borrow_mut() = Some(sample(&[]));
+    h.tick(&f, now);
+    assert!(h.approved_starts().is_empty());
 }

@@ -963,12 +963,12 @@ pub fn squad_lines(state: &AppState, v: &OrchView) -> Vec<Line<'static>> {
         let waits: Vec<String> = h
             .memory_waits
             .iter()
-            .filter(|(id, _)| {
+            .filter(|(id, _, _)| {
                 h.starts
                     .iter()
                     .any(|s| s.id == *id && s.project == b.project)
             })
-            .map(|(id, mb)| format!("start {id} ({mb} MB short)"))
+            .map(|(id, mb, _)| format!("start {id} ({mb} MB short)"))
             .collect();
         if h.memory_budget_seen > 0 || !waits.is_empty() {
             lines.push(Line::styled(
@@ -1168,9 +1168,8 @@ pub fn runs_lines(state: &AppState, v: &OrchView) -> Vec<Line<'static>> {
             s.queue.len()
         )));
     }
-    let cache = crate::config::cache_root();
-    let records = cache.as_deref().map(record::list).unwrap_or_default();
-    let (n, size) = cache.as_deref().map_or((0, 0), record::usage);
+    let records = &state.runs.records;
+    let (n, size) = state.runs.records_usage;
     lines.push(Line::styled(
         format!(
             "Recorded runs: {n} ({:.1} KB) · Enter details · Delete deletes a record · palette: Start a run… / Start a series…",
@@ -1204,9 +1203,9 @@ pub fn runs_lines(state: &AppState, v: &OrchView) -> Vec<Line<'static>> {
         ),
         bold,
     ));
-    for g in record::groups(&records) {
+    for g in record::groups(records) {
         lines.push(Line::raw(format!(
-            "{:<20} {:<6} {:>4} {:>7} {:>8}s {:>5}-{:<5} {:>7} {:>10}",
+            "{:<20} {:<6} {:>4} {:>7} {:>8}s {:>5}-{:<5} {:>7} {:>10}{}",
             name(&g.task_fp),
             g.mode,
             g.runs,
@@ -1217,6 +1216,11 @@ pub fn runs_lines(state: &AppState, v: &OrchView) -> Vec<Line<'static>> {
             g.interventions,
             g.cost_per_pass
                 .map_or("unknown".to_string(), |c| format!("${c:.2}")),
+            if g.switched_off.is_empty() {
+                String::new()
+            } else {
+                format!("  off={}", g.switched_off)
+            },
         )));
     }
     lines.push(Line::raw(""));

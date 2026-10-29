@@ -341,8 +341,13 @@ pub struct Hub {
     pub pending_reports: Vec<(u32, String)>,
     /// Builders' signals to the lead (005 R-4).
     pub signals: signals::Signals,
-    /// Starts waiting for memory (005 FR-038): start request id, shortfall in MB.
-    pub memory_waits: Vec<(u64, u64)>,
+    /// Starts waiting for memory (005 FR-038): start request id, shortfall in MB, since when.
+    pub memory_waits: Vec<(u64, u64, Instant)>,
+    /// Projects whose gate run waits for memory, told once (005 review).
+    pub gate_memory_waits: Vec<ProjectId>,
+    /// Starts already told to wait for memory, and when a freed start first waited.
+    pub memory_told: std::collections::HashSet<u64>,
+    pub memory_held: HashMap<u64, Instant>,
     /// The largest memory seen per agent profile, in MB (005 R-14).
     pub profile_sizes: HashMap<String, u64>,
     /// The budget in force at the last decision, in MB (for `squad_status`).
@@ -449,6 +454,9 @@ impl Hub {
             pending_reports: Vec::new(),
             signals: Default::default(),
             memory_waits: Vec::new(),
+            gate_memory_waits: Vec::new(),
+            memory_told: Default::default(),
+            memory_held: HashMap::new(),
             profile_sizes: HashMap::new(),
             memory_budget_seen: 0,
             next_start: 0,
@@ -819,9 +827,10 @@ impl Hub {
         };
         // A start that does not fit the memory budget waits (005 FR-038).
         let short = if state == StartState::Approved {
-            sessions
-                .memory()
-                .and_then(|m| self.memory_shortfall(&m, &pid))
+            sessions.memory().and_then(|m| {
+                let reserved = self.reserved_mb(sessions, &m, None);
+                self.memory_shortfall(&m, &pid, reserved)
+            })
         } else {
             None
         };
@@ -854,7 +863,8 @@ impl Hub {
             self.start_outcome(id);
         }
         if let Some(mb) = short {
-            self.memory_waits.push((id, mb));
+            self.memory_waits.push((id, mb, now));
+            self.memory_told.insert(id);
             let (pname, proj_name, role) = self
                 .starts
                 .iter()
@@ -919,7 +929,7 @@ impl Hub {
         self.starts
             .iter()
             .filter(|s| s.state == StartState::Approved)
-            .filter(|s| !self.memory_waits.iter().any(|(id, _)| *id == s.id))
+            .filter(|s| !self.memory_waits.iter().any(|(id, _, _)| *id == s.id))
             .cloned()
             .collect()
     }
@@ -1782,7 +1792,7 @@ impl Hub {
         }
         changed |= self.tick_deadlock(sessions, now);
         changed |= self.tick_signals(now);
-        changed |= self.tick_memory(sessions);
+        changed |= self.tick_memory(sessions, now);
         changed |= self.tick_lead(sessions, now);
         for (w, end) in self.events.due(now) {
             changed = true;
@@ -2001,11 +2011,14 @@ impl Hub {
             self.delivery_outcome(d);
         }
         // Tasks in progress there whose hand-over was already typed.
+        // The lead's own pieces of work wait for the next lead instead (005 review).
         let running: Vec<u32> = self
             .tasks
             .list
             .iter()
-            .filter(|t| t.assigned == Some(id) && t.state == tasks::State::InProgress)
+            .filter(|t| {
+                t.assigned == Some(id) && t.state == tasks::State::InProgress && !Hub::lead_work(t)
+            })
             .map(|t| t.id)
             .collect();
         for t in running {

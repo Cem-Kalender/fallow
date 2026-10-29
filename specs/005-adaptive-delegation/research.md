@@ -313,7 +313,15 @@ commit of its own that supersedes it).
 
 ## Verify items
 
-- Codex flags for `check` by installed version (R-3); Gemini mapping.
-- The exact `--settings` JSON form for `statusLine` on Windows and the status line's update timing
-  (R-10).
-- Resident memory of a Claude Code session on Linux, to replace the 700 MB first guess (R-14).
+Results (2026-10-29, Windows 11, T049):
+
+- **Claude Code `--settings` with `statusLine`**: Claude Code 2.1.312's `--settings
+  <file-or-json>` takes a JSON string. The command form Fallow writes (`"C:/…/fallow.exe"
+  usage-report`, forward slashes, quoted) runs under Git Bash and prints the marker from status
+  line JSON. Still open: the marker inside a live session's status line (quickstart Q5, T050).
+- **Codex and Gemini flags for `check`**: not installed on this machine; open. Codex's
+  `--sandbox workspace-write --ask-for-approval never` follows its documented flags; Gemini has no
+  mapping, so it cannot take a `check` role until a squad gives `[role.flags]`.
+- **Footprint of a Claude Code session on Linux**: needs the Linux VPS; open. The 700 MB default
+  (`orchestration.session_size_mb`) is replaced by the largest footprint Fallow measures per
+  profile as soon as one session ran, so the guess matters only for the first start.

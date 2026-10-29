@@ -467,6 +467,62 @@ fn edits_outside_the_part_and_to_decisions_are_reported() {
 }
 
 #[test]
+fn a_rejected_change_keeps_the_work_out() {
+    // 005 review: only an accepted change (or the lead's own commit) clears the wait.
+    let (mut h, f, now) = setup("rejected");
+    builder_branch(&f, &mut h);
+    hand_api(&mut h, &f, now);
+    let d = on_branch(
+        &f.dir,
+        "fallow/cart-api-1",
+        "contracts/cart.yaml",
+        "builder's v2\n",
+    );
+    let r = report(&mut h, &f, &d, now);
+    assert!(matches!(r, Reply::Done(_)), "{r:?}");
+    let s = h.signals.list.iter().find(|s| s.by_fallow).unwrap().id;
+    let r = h.call(
+        &f,
+        1,
+        "signal_answer",
+        json!({"signal": s, "text": "no: the contract stays", "accept": false}),
+        now,
+    );
+    assert!(matches!(r, Reply::Done(_)), "{r:?}");
+    let work_done = |h: &Hub| {
+        h.readiness(1)
+            .unwrap()
+            .checks
+            .into_iter()
+            .find(|c| c.condition == "work:done")
+            .unwrap()
+            .why
+    };
+    let why = work_done(&h);
+    assert!(why.contains("the lead rejected"), "{why}");
+    // The builder is told to redo it.
+    assert!(
+        h.deliveries
+            .list
+            .iter()
+            .any(|d| d.to == 2 && d.text.contains("rejected your change")),
+        "{:?}",
+        h.deliveries.list
+    );
+    // A new done report for the part, without the change, replaces the rejected one.
+    hand_api(&mut h, &f, now);
+    let e = on_branch(&f.dir, "fallow/cart-api-1", "contracts/cart.yaml", "v1\n");
+    let r = report(&mut h, &f, &e, now);
+    assert!(matches!(r, Reply::Done(_)), "{r:?}");
+    let why = work_done(&h);
+    assert!(
+        !why.contains("rejected") && !why.contains("waits for the lead"),
+        "{why}"
+    );
+    let _ = std::fs::remove_dir_all(&f.dir);
+}
+
+#[test]
 fn the_plan_commit_and_ownership_checks_can_be_switched_off() {
     // T039: FR-017.
     use fallow::orchestration::burst;

@@ -91,6 +91,8 @@ pub struct Task {
     pub time_limit: Duration,
     pub hidden: Vec<Copy>,
     pub tests: Vec<HiddenTest>,
+    /// The description's fingerprint (R-12), computed once at load.
+    pub fingerprint: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -252,9 +254,23 @@ pub fn parse(dir: &Path, file: &str, text: &str) -> Result<TaskSet, Vec<String>>
             problems.push(format!("{at}: task {:?}: a test command is empty", t.name));
         }
         let hidden = copies(t.hidden, dir, &at, &mut problems);
+        // A relative project path is relative to the task set (005 review).
+        let project = dir.join(&t.project);
+        if !project.is_dir() {
+            problems.push(format!(
+                "{at}: task {:?}: project {}: not a folder",
+                t.name,
+                project.display()
+            ));
+        }
+        let fingerprint = super::git::fingerprint(&description).unwrap_or_else(|e| {
+            problems.push(format!("{at}: task {:?}: {e}", t.name));
+            String::new()
+        });
         tasks.push(Task {
             name: t.name,
-            project: PathBuf::from(t.project),
+            project,
+            fingerprint,
             start: t.start,
             description,
             several_components: t.several_components,
@@ -285,7 +301,10 @@ pub fn parse(dir: &Path, file: &str, text: &str) -> Result<TaskSet, Vec<String>>
 
 /// The task's fingerprint (R-12): its description, line endings normalised.
 pub fn task_fingerprint(t: &Task) -> Result<String, String> {
-    super::git::fingerprint(&t.description)
+    if t.fingerprint.is_empty() {
+        return super::git::fingerprint(&t.description);
+    }
+    Ok(t.fingerprint.clone())
 }
 
 /// The hidden tests' fingerprint (R-12): each file's content and target path, and the commands.
@@ -452,6 +471,8 @@ pub struct Run {
     pub measured: BTreeMap<u32, Measured>,
     pub last_seen: Option<Instant>,
     pub final_commit: Option<String>,
+    /// The session whose folder holds the result: the lead when the run ended (FR-013).
+    pub result_session: Option<u32>,
     pub tested_dir: Option<PathBuf>,
     /// The squad as the record needs it, taken before the burst ends.
     pub snapshot: Option<Snapshot>,
@@ -532,13 +553,19 @@ impl Run {
 
 impl super::Hub {
     /// Whether a session waits on something (FR-014's time blocked): a task for it whose
-    /// preconditions are unmet, an open signal it raised, or its start waiting for memory.
+    /// preconditions are unmet, an open signal it raised, or a start it asked for waiting for
+    /// memory.
     pub fn blocked(&self, session: u32) -> bool {
         self.tasks.list.iter().any(|t| {
             t.state == super::tasks::State::Blocked
                 && (t.assigned == Some(session)
                     || t.target == super::tasks::Target::Session(session))
         }) || self.signals.open_from(session)
+            || self.memory_waits.iter().any(|(id, _, _)| {
+                self.starts
+                    .iter()
+                    .any(|s| s.id == *id && s.from.session() == Some(session))
+            })
     }
 
     /// Whether something of a run is in progress in the hub (FR-013): a start pending or
@@ -561,7 +588,11 @@ impl super::Hub {
             .list
             .iter()
             .any(|d| sessions.contains(&d.to) && !d.state.finished());
-        starts || gates || typing || self.memory_waiting(project)
+        starts
+            || gates
+            || typing
+            || self.memory_waiting(project)
+            || self.gate_memory_waits.contains(&project)
     }
 
     /// What a run's record needs from its burst, before the burst ends (R-15).

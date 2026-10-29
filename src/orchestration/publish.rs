@@ -304,22 +304,43 @@ impl Hub {
                 .collect();
             let parts: Vec<&str> = m.parts_of(&w.id).map(|p| p.id.as_str()).collect();
             // Work behind a change only the lead makes counts once accepted (R-19, FR-024).
-            let waits = |t: &&tasks::Task| {
-                t.evidence.as_ref().is_some_and(|e| {
-                    self.signals.list.iter().any(|s| {
-                        s.by_fallow && s.open() && s.commit.as_deref() == Some(e.commit.as_str())
+            // Accepted means accepted, or superseded by the lead's own commit; a rejection keeps
+            // the work out (005 review).
+            // Some(true): rejected; Some(false): not answered yet; None: nothing waits.
+            let wait = |t: &tasks::Task| -> Option<bool> {
+                let e = t.evidence.as_ref()?;
+                self.signals
+                    .list
+                    .iter()
+                    .filter(|s| s.by_fallow && s.commit.as_deref() == Some(e.commit.as_str()))
+                    .filter(|s| {
+                        !s.answer
+                            .as_ref()
+                            .is_some_and(|a| a.accepted || a.commit.is_some())
                     })
+                    .map(|s| s.answer.is_some())
+                    .max()
+            };
+            // A rejected report is replaced by a later done report for the same part.
+            let replaced = |t: &tasks::Task| {
+                mine.iter().any(|x| {
+                    x.id > t.id
+                        && x.part == t.part
+                        && x.state == tasks::State::Done
+                        && wait(x).is_none()
                 })
             };
             let undone: Vec<String> = mine
                 .iter()
-                .filter(|t| t.state != tasks::State::Done || waits(t))
-                .map(|t| {
-                    if waits(t) {
-                        format!("T{} waits for the lead to accept a change", t.id)
-                    } else {
-                        format!("T{} {}", t.id, t.state.label())
-                    }
+                .filter(|t| t.state != tasks::State::Done || wait(t).is_some())
+                .filter(|t| !(wait(t) == Some(true) && replaced(t)))
+                .map(|t| match wait(t) {
+                    Some(false) => format!("T{} waits for the lead to accept a change", t.id),
+                    Some(true) => format!(
+                        "T{} has a change the lead rejected: it needs a new done report",
+                        t.id
+                    ),
+                    None => format!("T{} {}", t.id, t.state.label()),
                 })
                 .collect();
             let unbuilt: Vec<&str> = parts

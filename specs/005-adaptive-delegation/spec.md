@@ -392,7 +392,9 @@ waits with a stated reason and starts when a session ends.
   its part's criteria or a contract it builds against; it is told which commit to take in.
 - **FR-024**: A change to the manifest, plan or a contract by a session other than the lead MUST be
   reported to the lead and the engineer as a signal from Fallow, and that work MUST NOT count until
-  the lead accepts it by answering that signal.
+  the lead accepts it by answering that signal. When the lead rejects the change, the builder is told,
+  and the work stays out until the builder reports the part again without it (or the lead answers
+  with a commit of its own).
 - **FR-025**: A builder's change to a file its part does not own MUST be reported to the lead with the
   file and its owner.
 - **FR-026**: A builder with an open question MUST be told, in its briefing and in the signal's reply,
@@ -424,7 +426,9 @@ waits with a stated reason and starts when a session ends.
 - **FR-033**: The lead's briefing and the squad status MUST give a new lead everything it needs to
   continue: the latest manifest commit, each piece of work with its builder, state and evidence, open
   signals, and what the merge still needs.
-- **FR-034**: The engineer MUST be able to name another session the lead during a burst.
+- **FR-034**: The engineer MUST be able to name another session the lead during a burst. The
+  pieces of work the lead builds itself MUST NOT fail when the lead's session exits; they pass to the
+  next lead.
 - **FR-035**: Fallow MUST tell the lead only what needs a decision from it: a signal, a failed gate, a
   verdict, an exited session, a session stuck at its agent's permission prompt, a ready merge, and a
   question it left unanswered too long. It MUST NOT send periodic status.
@@ -435,9 +439,13 @@ waits with a stated reason and starts when a session ends.
 **Resources (US6)**
 
 - **FR-037**: Fallow MUST decide whether another session fits from the memory its running sessions
-  actually use plus a margin, against a budget the engineer sets.
+  actually use plus a margin, against a budget the engineer sets. Starts already approved but not
+  yet running, and running sessions not yet measured, count at their expected size; gate runs count
+  too.
 - **FR-038**: A start that does not fit MUST wait, telling the lead and the engineer the reason and the
-  memory missing, and proceed by itself when memory is free.
+  memory missing, and proceed by itself when memory is free. This holds for starts the engineer
+  approves later too. A start that waited longer than the request timeout MUST be refused, telling
+  the lead; a start whose burst ended MUST NOT start.
 
 **Across the feature**
 

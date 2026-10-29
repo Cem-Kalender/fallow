@@ -479,3 +479,29 @@ fn overlapping_test_only_and_uncontracted_parts_are_refused() {
         &[]
     ));
 }
+
+#[test]
+fn the_leads_own_work_passes_to_the_next_lead() {
+    // 005 review, FR-033: the lead's exit does not fail its work; a new lead takes it over.
+    let (mut h, mut f, now) = setup();
+    let id = lead_tasks(&h)[0].id;
+    h.session_ended(1);
+    let t = h.tasks.list.iter().find(|t| t.id == id).unwrap();
+    assert_eq!(t.state, tasks::State::InProgress, "{t:?}");
+    f.0.push(info(2));
+    h.set_lead(1, 2).unwrap();
+    let t = h.tasks.list.iter().find(|t| t.id == id).unwrap();
+    assert_eq!(t.assigned, Some(2));
+    assert_eq!(t.target, tasks::Target::Session(2));
+    // Applying the manifest again (as after the new lead's next commit) creates no second
+    // task for the same work.
+    h.call(&f, 2, "whoami", json!({}), now);
+    h.apply_manifest(1, None);
+    let open = h
+        .tasks
+        .list
+        .iter()
+        .filter(|t| t.work.as_deref() == Some(manifest::BURST_WORK) && !t.state.finished())
+        .count();
+    assert_eq!(open, 1);
+}

@@ -262,6 +262,7 @@ mod tests {
             focus: HashMap::new(),
             description: None,
             manifest_seen: None,
+            manifest_checked: None,
             manifest_files: Vec::new(),
             assigned: HashMap::new(),
             refused: Vec::new(),

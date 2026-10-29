@@ -76,8 +76,16 @@ pub const NOTES: &[(&str, &str)] = &[
         "Coordinate this project (palette, or the offer when a project's first session starts) lets its agents work together for up to 8 hours: the session you start it from is the lead, and agents deliver, create tasks and start up to the allowed number of sessions without asking. A squad (`.fallow/squad.toml` in the project, or the built-in one) declares the roles, the gates Fallow runs itself, and the merge conditions. Fallow briefs each session for its role. Gates are command sessions; only Fallow signals their results. Done reports carry evidence Fallow checks. Failures go back to the owner of the part up to the repair cap, then to you. No agent merges: with a remote the lead opens a draft pull request; without one you press `m` in the Squad tab and Fallow merges exactly the gated commit. `Shift-X` ends coordination at once.",
     ),
     (
+        "One loop by default",
+        "In a squad that merges on `work:done` (the built-in one), the lead builds each piece of work itself unless `.fallow/work.toml` at its latest commit delegates it: to one fresh builder, to independent features, or to parallel parts that own their files (code and tests) and have a committed contract per boundary. Builders ask the lead with signals; the lead answers with a commit. A done report must contain the changes to its part's criteria and contracts. A reviewer's approval counts only when it answers every acceptance criterion, including a case that must fail. Starts wait for room in the memory budget.",
+    ),
+    (
+        "Runs and comparisons",
+        "Register a task set (palette), then start a run (`<task> plain|solo|squad [off=…] [agent=…]`) or a series. Each run works in its own copy of the project; when it ends you confirm closing its sessions, its hidden tests run on what it left, and the record (numbers only) goes to the Runs tab, which compares pass rate, time, interventions and cost by task and mode. `Delete` there deletes a record.",
+    ),
+    (
         "Roles and their limits",
-        "A role's level (read-only, edit, edit-run) becomes the agent's own permission flags; the agent CLI enforces them, not Fallow. Fallow enforces what it controls: each role sees and may call only its tools, may signal only its events, and is fixed for the session's life. For read-only roles Fallow checks the outcome: if the worktree changes, you are told and the session's signals and verdicts stop counting. Flags that skip an agent's own checks need your confirmation. An agent with no flags for a level cannot take that role (give them in the squad as `[role.flags]`).",
+        "A role's level (read-only, check, edit, edit-run) becomes the agent's own permission flags; the agent CLI enforces them, not Fallow. Fallow enforces what it controls: each role sees and may call only its tools, may signal only its events, and is fixed for the session's life. For read-only roles Fallow checks the outcome: if the worktree changes, you are told and the session's signals and verdicts stop counting. Flags that skip an agent's own checks need your confirmation. An agent with no flags for a level cannot take that role (give them in the squad as `[role.flags]`).",
     ),
     (
         "Connecting other agents",

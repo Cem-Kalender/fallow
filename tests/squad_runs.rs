@@ -22,7 +22,7 @@ setup = [{ from = "setup/local.json", to = ".claude/settings.local.json" }]
 
 [[task]]
 name = "cart-add"
-project = "C:/Repos/shop"
+project = "shop"
 start = "4f2a9c1"
 description = "cart-add/description.md"
 several_components = true
@@ -37,6 +37,7 @@ tests = [
 fn set_dir(name: &str) -> PathBuf {
     let d = tmp(name);
     std::fs::create_dir_all(d.join("setup")).unwrap();
+    std::fs::create_dir_all(d.join("shop")).unwrap();
     std::fs::create_dir_all(d.join("cart-add/hidden")).unwrap();
     std::fs::write(d.join("setup/local.json"), "{}").unwrap();
     std::fs::write(
@@ -57,6 +58,9 @@ fn a_task_set_is_read_and_checked() {
     assert_eq!(s.setup[0].to, ".claude/settings.local.json");
     let t = s.task("cart-add").unwrap();
     assert_eq!(t.start, "4f2a9c1");
+    // A relative project is relative to the task set, and must be a folder (005 review).
+    assert_eq!(t.project, d.join("shop"));
+    assert!(!t.fingerprint.is_empty(), "computed once at load");
     assert!(t.several_components);
     assert_eq!(t.time_limit, Duration::from_secs(90 * 60));
     assert_eq!(t.description, "Add items to the cart.\n");
@@ -152,6 +156,7 @@ fn run(task: runs::Task) -> Run {
         measured: Default::default(),
         last_seen: None,
         final_commit: Some("d".repeat(40)),
+        result_session: None,
         tested_dir: None,
         snapshot: None,
     }
@@ -172,6 +177,7 @@ fn task() -> runs::Task {
             macos: None,
             linux: None,
         }],
+        fingerprint: String::new(),
     }
 }
 
@@ -430,6 +436,10 @@ fn records_are_written_listed_compared_and_deleted() {
     assert_eq!(squad.cost_per_pass, None, "one run's cost is unknown");
     let plain = groups.iter().find(|g| g.mode == "plain").unwrap();
     assert!(plain.cost_per_pass.is_some());
+    // Components switched off are a different group too (FR-019).
+    let mut off = a.clone();
+    off.switched_off = vec!["reviewer".into()];
+    assert_eq!(record::groups(&[(1, a.clone()), (2, off)]).len(), 2);
     // Different settings are a different group.
     let mut other = a.clone();
     other.time_limit_s = 60;

@@ -323,6 +323,12 @@ impl super::Hub {
                         .collect::<Vec<_>>()
                         .join(", "),
                 );
+            } else {
+                // An unchecked commit is no answer (005 review).
+                return Err(super::Reply::error(
+                    "unavailable",
+                    "Fallow does not know your folder, so it cannot check the commit",
+                ));
             }
         }
         if let Some(s) = self.signals.get_mut(id) {
@@ -331,6 +337,22 @@ impl super::Hub {
                 commit: commit.clone(),
                 accepted: accept,
             });
+        }
+        if sig.by_fallow && !accept && commit.is_none() {
+            // The builder whose change was rejected redoes it (005 review).
+            let reply = format!(
+                "The lead rejected your change to a decision file (S{id}): {} Undo it, take the lead's decision files as they are, and report the work again.",
+                super::lead::one_line(&text)
+            );
+            let _ = self.request_delivery(
+                sessions,
+                super::Party::Fallow,
+                sig.from,
+                reply,
+                super::delivery::Purpose::Message,
+                true,
+                now,
+            );
         }
         if !sig.by_fallow {
             let take = commit.as_ref().map_or(String::new(), |c| {

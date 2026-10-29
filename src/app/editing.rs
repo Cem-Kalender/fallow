@@ -733,6 +733,7 @@ impl AppState {
                             Ok(()) => self.say(format!("Deleted run record {n}")),
                             Err(e) => self.say(e),
                         }
+                        self.refresh_records();
                     }
                     Pending::RemoveProject(id) => self.remove_project(id),
                     Pending::Delete(path) => match fileops::delete(&path, token) {

@@ -370,13 +370,19 @@ table.
 
 ## Phase 10: Polish & cross-cutting
 
-- [ ] T046 [P] Add the help and conflicts rows for the new commands and keys in
-  `src/app/commands.rs` and `src/app/keymap.rs` (FR-041).
-- [ ] T047 [P] Add a section to `README.md`: one loop by default, the manifest, runs and comparisons, and what
+- [X] T046 [P] Add the help and conflicts rows for the new commands and keys in
+  `src/app/commands.rs` and `src/app/keymap.rs` (FR-041). Done: the run commands are palette
+  commands without keys (no conflicts); help rows "One loop by default" and "Runs and comparisons"
+  in `src/ui/help.rs`.
+- [X] T047 [P] Add a section to `README.md`: one loop by default, the manifest, runs and comparisons, and what
   "hidden" means.
-- [ ] T048 Run `bench-memory --loaded` with a burst and `bench-startup` (`xtask/src/bench_memory.rs`,
-  `bench_startup.rs`) to confirm no regression (Principles I, II).
-- [ ] T049 Resolve the Verify items and record the results in `research.md`:
+- [X] T048 Run `bench-memory --loaded` with a burst and `bench-startup` (`xtask/src/bench_memory.rs`,
+  `bench_startup.rs`) to confirm no regression (Principles I, II). Results (2026-10-29, Windows,
+  debug build): loaded PASS, peak 54.5 MB of 150 MB (5 buffers, 1 burst, 1 gate, 1 GB fixture);
+  idle PASS, 15.95 MB. Startup p95 235 ms in a debug build: the budget is for release builds, so
+  this is no verdict; the release startup bench is still to run.
+- [X] T049 Resolve the Verify items and record the results in `research.md` (Windows done; Codex,
+  Gemini and the Linux footprint stay open there, as recorded):
   - Codex and Gemini flags for `check`;
   - `--settings` with `statusLine` on Windows;
   - the footprint of a Claude Code session on Linux, which replaces the 700 MB default.

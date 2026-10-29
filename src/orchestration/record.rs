@@ -243,6 +243,8 @@ pub struct Group {
     pub time_limit_s: u64,
     pub idle_end_s: u64,
     pub mode: String,
+    /// The components switched off, comma-separated (empty: none).
+    pub switched_off: String,
     pub runs: usize,
     pub passing: usize,
     pub median_s: u64,
@@ -260,7 +262,7 @@ pub fn passed(r: &RunRecord) -> bool {
 
 /// The runs grouped by task fingerprint, settings and mode (FR-019).
 pub fn groups(records: &[(u32, RunRecord)]) -> Vec<Group> {
-    type Key = (String, String, u64, u64, String);
+    type Key = (String, String, u64, u64, String, String);
     let mut map: std::collections::BTreeMap<Key, Vec<&RunRecord>> = Default::default();
     for (_, r) in records {
         map.entry((
@@ -269,13 +271,18 @@ pub fn groups(records: &[(u32, RunRecord)]) -> Vec<Group> {
             r.time_limit_s,
             r.idle_end_s,
             r.mode.clone(),
+            {
+                let mut off = r.switched_off.clone();
+                off.sort();
+                off.join(",")
+            },
         ))
         .or_default()
         .push(r);
     }
     map.into_iter()
         .map(
-            |((task_fp, hidden_fp, time_limit_s, idle_end_s, mode), rs)| {
+            |((task_fp, hidden_fp, time_limit_s, idle_end_s, mode, switched_off), rs)| {
                 let mut d: Vec<u64> = rs.iter().map(|r| r.duration_s).collect();
                 d.sort_unstable();
                 let passing = rs.iter().filter(|r| passed(r)).count();
@@ -292,6 +299,7 @@ pub fn groups(records: &[(u32, RunRecord)]) -> Vec<Group> {
                     time_limit_s,
                     idle_end_s,
                     mode,
+                    switched_off,
                     runs: rs.len(),
                     passing,
                     median_s: d[d.len() / 2],
