@@ -57,3 +57,30 @@ tasks (one small, one with two independent components), each with two hidden tes
 1. Start a squad run with the reviewer switched off.
 2. Expect: no reviewer starts, the record names `reviewer` as off, and the merge needs the engineer's
    explicit approval.
+
+## T050 setup and results
+
+**Setup (Windows, prepared 2026-10-29)**
+
+- Project: `C:\Repos\FallowSandbox`, reset to `782a472` (minishop: a small Python shop with tests,
+  Spec Kit, and the 005 squad file: gate `python -m unittest` with a baseline, merge on
+  `gate:tests`, `work:done`, `review:approved`, at most 2 parallel builders). Reset before each
+  demo: remove its worktrees and `fallow/*` branches, `git reset --hard 782a472`, `git clean -fdx`.
+- Task set: `C:\Repos\FallowTasks`, outside every project. `search` (small, one component) and
+  `cart` (two components meeting at the `Cart` interface), both starting at `782a472`, each with two
+  hidden test commands (with `python3` overrides for Linux). The hidden tests fail on the seed and
+  pass on a reference solution.
+- Fallow: the debug build of `27633bd`.
+- Linux VPS: the same setup, cloned there; the task set's `project` then names the clone.
+
+**Results** (fill in: PASS, FAIL with what happened, or not run)
+
+| Scenario | Windows | Linux VPS |
+|---|---|---|
+| Q1 One loop by default | | |
+| Q2 A prepared split | | |
+| Q3 Verification | | |
+| Q4 Replace the lead | | |
+| Q5 Compare | | |
+| Q6 Memory | | |
+| Q7 Switch a component off | | |
