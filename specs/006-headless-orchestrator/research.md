@@ -148,6 +148,17 @@ prompt.
 - **A review with refused commands does not count.** A real reviewer whose commands were refused
   approved by reading the code. Now any refused command makes the verdict incomplete, and the
   reviewer is resumed, naming the commands, to run them one at a time.
+- **The plan names the commands agents may run** (second real run, Sonnet). With only the exact
+  gate commands allowed, a reviewer could not run the program it had to check
+  (`python -m shop total …`), and every review was refused. The plan now has `commands`
+  (`commands = ["python -m shop"]`): each is allowed with any arguments to the builder and the
+  reviewer, besides the gates, and the engineer approves them with the plan, which the page shows
+  before approval. A command must be one plain command: no chaining, redirection or variables,
+  and not a bare interpreter, a shell or git. The instructions list what the agent may run.
+- **No console windows.** The service was started with `DETACHED_PROCESS`, so it had no console
+  and every console program it started (git, gates, the agents' commands) opened a window of its
+  own, about 20 flashes in one run. It now starts with a console that is never shown
+  (`CREATE_NO_WINDOW`), and git and gates are started the same way.
 - **Caches are not changes.** Running a check leaves untracked caches. A reviewer's worktree
   counts as changed only for tracked files or new commits.
 

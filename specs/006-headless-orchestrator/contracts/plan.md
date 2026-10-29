@@ -8,6 +8,7 @@ is one task, so there is no list of pieces of work.
 
 ```toml
 docs = ["specs/012-search/spec.md"]     # optional: where the prose is
+commands = ["python -m shop"]           # optional: what agents may run besides the gates, with any arguments
 shared = ["Cargo.lock"]                  # optional: files any part may change
 # owns = ["src/**", "tests/**"]          # optional: by default the builder may change
 #                                        # everything except the plan's own files

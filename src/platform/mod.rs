@@ -4,6 +4,20 @@
 
 pub mod random;
 
+/// A command for a console program that opens no window of its own. The service has no
+/// visible console, so each console child would otherwise flash a window (found on a real run).
+pub fn command(program: impl AsRef<std::ffi::OsStr>) -> std::process::Command {
+    #[allow(unused_mut)]
+    let mut cmd = std::process::Command::new(program);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        // CREATE_NO_WINDOW
+        cmd.creation_flags(0x0800_0000);
+    }
+    cmd
+}
+
 #[cfg(windows)]
 #[path = "job_windows.rs"]
 pub mod job;

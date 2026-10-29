@@ -21,6 +21,26 @@ fn header(kind: &str, part: Option<&str>) -> String {
     }
 }
 
+/// What an agent may run, for its instruction.
+fn may_run(cx: &Context) -> String {
+    let mut may: Vec<String> = cx
+        .gates
+        .iter()
+        .map(|g| format!("`{}`", g.command))
+        .collect();
+    if let Some(p) = cx.plan {
+        may.extend(p.commands.iter().map(|c| format!("`{c}`")));
+    }
+    if may.is_empty() {
+        "You may read files, but the plan allows no commands to run.".into()
+    } else {
+        format!(
+            "Besides reading files, you may run only these commands, each with any arguments, one per call: {}. Anything else is refused.",
+            may.join(", ")
+        )
+    }
+}
+
 fn gates_line(gates: &[GateSpec]) -> String {
     if gates.is_empty() {
         "The project declares no gate commands.".into()
@@ -55,6 +75,7 @@ pub fn system(role: &str) -> String {
 const PLAN_FORMAT: &str = r#"The plan is `.fallow/work.toml` (TOML). One builder (the default, and right for most tasks):
 
     docs = ["specs/012-search/spec.md"]      # optional: where the prose is
+    commands = ["python -m shop"]             # what the builder and the reviewer may run, with any arguments, besides the gates
     criteria = [
       { id = "find", text = "find ignores case and surrounding spaces" },
       { id = "unknown", text = "an unknown name returns None", must_fail = true },
@@ -76,7 +97,9 @@ Only when the work splits cleanly into parts that meet at a contract:
     path = "contracts/cart.md"
     between = ["cart-core", "receipt"]
 
-Every part needs criteria that can be checked by running something, with at least one case that must fail. Criterion ids are unique within a part."#;
+Every part needs criteria that can be checked by running something, with at least one case that must fail. Criterion ids are unique within a part.
+
+Agents may run only the gate commands and the plan's `commands` (each with any arguments), one command per call. List in `commands` what checking the criteria needs, such as the program itself (`python -m shop`); not a bare interpreter (`python`), a shell, or git. The engineer approves them with the plan."#;
 
 /// A turn of the planning conversation. The first turn carries the task and the format; later
 /// turns resume the planner's session with the engineer's words only.
@@ -160,8 +183,9 @@ pub fn build(cx: &Context, part: &str, branch: &str) -> String {
         }
     }
     s.push_str(&format!(
-        "Do not change the plan's files (`.fallow/`, contracts, the plan documents).\n\nWrite the code and its tests in this worktree (branch `{branch}`), and run the tests yourself. When your step ends, Fallow commits what you changed. {}\n\nIf something the plan does not answer stops you, return `status: blocked` with your `question` instead of guessing.\n\nReturn `status`, the `files` you changed, the `commands` you ran with their results, how each criterion is met (`criteria`, as part/id), and a `summary`.",
-        gates_line(cx.gates)
+        "Do not change the plan's files (`.fallow/`, contracts, the plan documents).\n\nWrite the code and its tests in this worktree (branch `{branch}`), and run the tests yourself. When your step ends, Fallow commits what you changed. {} {}\n\nIf something the plan does not answer stops you, return `status: blocked` with your `question` instead of guessing.\n\nReturn `status`, the `files` you changed, the `commands` you ran with their results, how each criterion is met (`criteria`, as part/id), and a `summary`.",
+        gates_line(cx.gates),
+        may_run(cx)
     ));
     s
 }
@@ -183,7 +207,7 @@ pub fn repair(part: &str, reasons: &[String], branch: &str) -> String {
 pub fn review(cx: &Context, commit: &str) -> String {
     let mut s = header("review", None);
     s.push_str(&format!(
-        "Task: {}\n\nYou review the integrated result at commit {commit}, checked out in your worktree. Check it as a black box against every acceptance criterion below: run something for each one (a test command below, with arguments to pick the tests, or another command you are allowed) and report what you ran and what happened. Reading the code is not a check: if a command is refused, run it on its own, without chaining. For each criterion that must fail, show the case that must be rejected and that it was.\n\n",
+        "Task: {}\n\nYou review the integrated result at commit {commit}, checked out in your worktree. Check it as a black box against every acceptance criterion below: run something for each one with the commands you may run (listed below) and report what you ran and what happened. Reading the code is not a check. For each criterion that must fail, show the case that must be rejected and that it was.\n\n",
         cx.task
     ));
     if let Some(plan) = cx.plan {
@@ -192,6 +216,7 @@ pub fn review(cx: &Context, commit: &str) -> String {
             s.push('\n');
         }
     }
+    s.push_str(&format!("\n{}\n", may_run(cx)));
     s.push_str(&format!(
         "\nDo not edit, create or commit files: you may only read and run commands. {}\n\nReturn `answers`, one per criterion, with `criterion` as part/id, `ran`, `result`, `passed`, and `failing_case` for the criteria that must fail; and a `summary`.",
         gates_line(cx.gates)

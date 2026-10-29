@@ -5,10 +5,9 @@
 //! lives in `publish`.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 fn git(dir: &Path, args: &[&str]) -> Result<String, String> {
-    let out = Command::new("git")
+    let out = crate::platform::command("git")
         .current_dir(dir)
         .args(args)
         .output()
@@ -76,7 +75,7 @@ pub fn tracked_files(dir: &Path) -> Result<Vec<String>, String> {
 
 /// Whether `commit` names a commit in this repository.
 pub fn commit_exists(dir: &Path, commit: &str) -> bool {
-    Command::new("git")
+    crate::platform::command("git")
         .current_dir(dir)
         .args(["cat-file", "-e", &format!("{commit}^{{commit}}")])
         .output()
@@ -85,7 +84,7 @@ pub fn commit_exists(dir: &Path, commit: &str) -> bool {
 
 /// Whether `commit` is on `branch` (an ancestor of its tip, or the tip).
 pub fn on_branch(dir: &Path, commit: &str, branch: &str) -> bool {
-    Command::new("git")
+    crate::platform::command("git")
         .current_dir(dir)
         .args(["merge-base", "--is-ancestor", commit, branch])
         .output()
@@ -148,7 +147,7 @@ pub fn show(dir: &Path, commit: &str, path: &str) -> Result<Option<String>, Stri
         return Err(format!("no commit {commit}"));
     }
     let spec = format!("{commit}:{path}");
-    let exists = Command::new("git")
+    let exists = crate::platform::command("git")
         .current_dir(dir)
         .args(["cat-file", "-e", &spec])
         .output()
@@ -195,7 +194,7 @@ pub fn is_ancestor(dir: &Path, a: &str, b: &str) -> bool {
 pub fn fingerprint(text: &str) -> Result<String, String> {
     use std::io::Write;
     let normalised = text.replace("\r\n", "\n");
-    let mut child = Command::new("git")
+    let mut child = crate::platform::command("git")
         .args(["hash-object", "--stdin"])
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())

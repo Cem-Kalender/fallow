@@ -6,7 +6,7 @@
 use std::collections::BTreeSet;
 use std::io::Read;
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
@@ -104,7 +104,7 @@ pub fn run(
     stop: &AtomicBool,
 ) -> GateResult {
     let (program, args) = shell_command(&def.command);
-    let mut cmd = Command::new(&program);
+    let mut cmd = crate::platform::command(&program);
     cmd.args(&args)
         .current_dir(dir)
         .stdin(Stdio::null())

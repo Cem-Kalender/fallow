@@ -550,7 +550,7 @@ fn run_mut(e: &mut Engine, id: u64) -> Result<&mut Run, String> {
 }
 
 fn git_toplevel(dir: &Path) -> Result<PathBuf, String> {
-    let out = std::process::Command::new("git")
+    let out = crate::platform::command("git")
         .current_dir(dir)
         .args(["rev-parse", "--show-toplevel"])
         .output()
@@ -610,6 +610,13 @@ pub fn view(r: &Run) -> Value {
     });
     v["interventions"] = json!(r.state.interventions());
     v["minutes_used"] = json!(r.state.minutes_used(super::time::unix_now()));
-    v["plan"] = serde_json::to_value(&r.plan).unwrap_or(Value::Null);
+    // Before approval, the plan the engineer is asked to approve (its commands among it).
+    let plan = r.plan.clone().or_else(|| {
+        r.state
+            .plan_commit
+            .as_deref()
+            .and_then(|c| crate::plan::at(&r.state.repo, c).ok().flatten())
+    });
+    v["plan"] = serde_json::to_value(&plan).unwrap_or(Value::Null);
     v
 }

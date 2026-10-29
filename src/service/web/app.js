@@ -313,6 +313,7 @@ function renderPlan(s) {
   if (plan) {
     box.append(el("span", {}, plan.build === "parts" ? plan.parts.length + " parts: " + (plan.reason || "") : "One builder"));
     if (plan.docs && plan.docs.length) box.append(el("span", { class: "muted" }, "Documents: " + plan.docs.join(", ")));
+    box.append(el("span", { class: "muted" }, "Agents may run, besides the gates: " + ((plan.commands && plan.commands.length) ? plan.commands.join(", ") : "nothing else")));
   } else if (s.plan_commit) {
     box.append(el("span", {}, "Committed at ", el("span", { class: "mono" }, s.plan_commit.slice(0, 10)), s.plan_approvable ? " · passes the checks" : ""));
   } else {

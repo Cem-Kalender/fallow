@@ -941,7 +941,13 @@ fn start(run: &mut Run, ctx: &Ctx, n: u32) -> Result<(), String> {
         .get(&choice.agent)
         .cloned()
         .ok_or_else(|| format!("no agent named {:?} in the settings", choice.agent))?;
-    let extra: Vec<String> = run.state.allow.get(role).cloned().unwrap_or_default();
+    let mut extra: Vec<String> = run.state.allow.get(role).cloned().unwrap_or_default();
+    if role != "planner" {
+        load_plan(run)?;
+        if let Some(p) = &run.plan {
+            extra.extend(agent::allow::command_rules(&p.commands));
+        }
+    }
     let allowed = match role {
         "planner" => agent::allow::planner(&extra),
         "reviewer" => agent::allow::reviewer(&run.state.gates, &extra),
@@ -1431,14 +1437,11 @@ fn review_done(run: &mut Run, step: &Step) -> Result<(), String> {
     }
     let mut check = verdict::check(&all, &expected);
     // A review whose commands were refused did not check by running: it does not count, and the
-    // reviewer is resumed to run them one at a time (found on a real run, 2026-10-29).
+    // reviewer is resumed with what it may run (found on real runs, 2026-10-29).
     if !step.denials.is_empty() {
         check.complete = false;
         check.approved = false;
-        check.missing.push(format!(
-            "checks by running: these commands were refused, run each one on its own: {}",
-            step.denials.join(" | ")
-        ));
+        check.missing = vec![refused_note(&step.denials, &plan, &run.state.gates)];
     }
     if !run.state.verdicts.iter().any(|v| v.step == n) {
         run.append(Event::Verdict {
@@ -1455,6 +1458,22 @@ fn review_done(run: &mut Run, step: &Step) -> Result<(), String> {
         reasons: Vec::new(),
         commit: None,
     })
+}
+
+/// What the reviewer is told about refused commands: chains are refused as a whole, and only
+/// the gates and the plan's commands may run.
+fn refused_note(denials: &[String], plan: &plan::Plan, gates: &[GateSpec]) -> String {
+    let mut may: Vec<String> = gates.iter().map(|g| g.command.clone()).collect();
+    may.extend(plan.commands.iter().cloned());
+    format!(
+        "every check again, by running: these commands were refused: {}. Run one command per call, without `;`, `&&` or `|`. Besides reading files, you may run only these commands, with any arguments: {}",
+        denials.join(" | "),
+        if may.is_empty() {
+            "none".to_string()
+        } else {
+            may.join(", ")
+        }
+    )
 }
 
 /// The engineer's turn in the planning conversation (T026).

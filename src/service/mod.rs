@@ -219,9 +219,10 @@ pub fn ensure_running() -> Result<(), String> {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
-        // DETACHED_PROCESS | CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP: it outlives this
-        // command and has no console window.
-        cmd.creation_flags(0x0000_0008 | 0x0800_0000 | 0x0000_0200);
+        // CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP: it outlives this command, with a console
+        // that is never shown. Not DETACHED_PROCESS: without any console, every console program
+        // it starts (git, the gates, the agents' commands) would open a window of its own.
+        cmd.creation_flags(0x0800_0000 | 0x0000_0200);
     }
     cmd.spawn()
         .map_err(|e| format!("cannot start the service: {e}"))?;

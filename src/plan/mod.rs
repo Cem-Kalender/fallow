@@ -63,6 +63,9 @@ pub struct Plan {
     pub docs: Vec<String>,
     pub shared: Vec<String>,
     pub test_patterns: Option<Vec<String>>,
+    /// Commands the builder and the reviewer may run besides the gates, with any arguments
+    /// (`python -m shop`): approved with the plan.
+    pub commands: Vec<String>,
     pub build: Build,
     pub reason: Option<String>,
     pub parts: Vec<Part>,
@@ -129,6 +132,8 @@ struct RawPlan {
     #[serde(default)]
     shared: Vec<String>,
     test_patterns: Option<Vec<String>>,
+    #[serde(default)]
+    commands: Vec<String>,
     build: Option<String>,
     reason: Option<String>,
     #[serde(default)]
@@ -181,6 +186,30 @@ fn check_criteria(at: &str, part: &str, list: &[Criterion], problems: &mut Vec<S
 
 /// Parses a plan. Problems are `file:line: message` (the T050 lesson: name them, never say the
 /// file is missing).
+/// Why a plan command cannot be allowed: it must be one plain command, not a chain, a
+/// redirection, a shell or git (Fallow does git itself).
+fn command_problem(c: &str) -> Option<&'static str> {
+    let c = c.trim();
+    if c.is_empty() {
+        return Some("empty");
+    }
+    if c.contains(['&', ';', '|', '>', '<', '`', '$', '\n', '\r']) {
+        return Some("one plain command only, without chaining, redirection or variables");
+    }
+    let program = c.split_whitespace().next().unwrap_or("").to_lowercase();
+    let program = program.trim_end_matches(".exe");
+    if matches!(
+        program,
+        "git" | "cmd" | "powershell" | "pwsh" | "bash" | "sh" | "rm" | "del" | "curl" | "wget"
+    ) {
+        return Some("not a command agents may run");
+    }
+    if c.split_whitespace().count() < 2 {
+        return Some("name the program and what it runs (\"python -m shop\", not \"python\")");
+    }
+    None
+}
+
 pub fn parse(file: &str, text: &str) -> Result<Plan, Vec<String>> {
     let raw: RawPlan = match toml::from_str(text) {
         Ok(r) => r,
@@ -192,6 +221,11 @@ pub fn parse(file: &str, text: &str) -> Result<Plan, Vec<String>> {
     let at = |span: std::ops::Range<usize>| format!("{file}:{}", line_of(text, span.start));
     let top = format!("{file}:1");
     let mut problems = Vec::new();
+    for c in &raw.commands {
+        if let Some(why) = command_problem(c) {
+            problems.push(format!("{top}: command {c:?}: {why}"));
+        }
+    }
     let build = match raw.build.as_deref() {
         None | Some("builder") => Build::Builder,
         Some("parts") => Build::Parts,
@@ -297,6 +331,7 @@ pub fn parse(file: &str, text: &str) -> Result<Plan, Vec<String>> {
             docs: raw.docs,
             shared: raw.shared,
             test_patterns: raw.test_patterns,
+            commands: raw.commands.iter().map(|c| c.trim().to_string()).collect(),
             build,
             reason,
             parts,
@@ -418,6 +453,33 @@ criteria = [
   { id = "unknown", text = "an unknown name gives None", must_fail = true },
 ]
 "#;
+
+    #[test]
+    fn the_plan_names_the_commands_agents_may_run() {
+        let p = parse(
+            "w",
+            &format!(
+                "commands = [\"python -m shop\"]
+{SOLO}"
+            ),
+        )
+        .unwrap();
+        assert_eq!(p.commands, ["python -m shop"]);
+        for bad in [
+            "python",
+            "python -m shop; rm x",
+            "python -m shop | more",
+            "git commit -m x",
+            "powershell -c x",
+            "python -m shop > out",
+        ] {
+            let text = format!(
+                "commands = [{bad:?}]
+{SOLO}"
+            );
+            assert!(parse("w", &text).is_err(), "{bad} was accepted");
+        }
+    }
 
     #[test]
     fn a_solo_plan_has_one_part_main() {

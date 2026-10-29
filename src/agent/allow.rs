@@ -46,6 +46,14 @@ fn gate_rules(gates: &[GateSpec]) -> Vec<String> {
     out
 }
 
+/// The plan's commands as rules, with any arguments after them (approved with the plan).
+pub fn command_rules(commands: &[String]) -> Vec<String> {
+    commands
+        .iter()
+        .map(|c| format!("Bash({}:*)", c.trim()))
+        .collect()
+}
+
 fn base(extra: &[String]) -> Vec<String> {
     let mut v: Vec<String> = READ
         .iter()
@@ -145,6 +153,10 @@ mod tests {
         assert!(p.iter().any(|x| x == "Edit(.fallow/**)"));
         assert!(!p.iter().any(|x| x == "Edit"));
         assert!(!b.iter().any(|x| x.contains("dangerously")));
+        assert_eq!(
+            command_rules(&["python -m shop".into()]),
+            ["Bash(python -m shop:*)"]
+        );
         for no in ["Bash(python:*)", "Bash(git commit:*)", "Bash(git add:*)"] {
             assert!(!b.iter().any(|x| x == no), "builder has {no}");
             assert!(!p.iter().any(|x| x == no), "planner has {no}");
