@@ -77,7 +77,7 @@ tasks (one small, one with two independent components), each with two hidden tes
 
 | Scenario | Windows | Linux VPS |
 |---|---|---|
-| Q1 One loop by default | | |
+| Q1 One loop by default | PASS 2026-10-29: builder refused (no manifest); lead built and reported it; baseline and final gate; reviewer #2 approved; merged by `m` (`530a604`) | |
 | Q2 A prepared split | | |
 | Q3 Verification | | |
 | Q4 Replace the lead | | |
