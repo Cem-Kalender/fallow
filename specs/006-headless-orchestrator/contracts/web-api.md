@@ -28,7 +28,7 @@ and `Cache-Control: no-store`. The page loads nothing from any other origin.
 | `GET /api/runs` | `[{id, repo, task, stage, needs_engineer, cost_usd, started, updated}]` |
 | `GET /api/runs/<id>` | The folded run state (data-model.md): run, plan, parts, steps (without activity), decisions, gates, verdicts, publication, limits, and `seq` (the last event number) |
 | `GET /api/runs/<id>/steps/<n>/activity?after=<i>` | Activity lines of one step |
-| `GET /api/runs/<id>/events` | Server-Sent Events. Each event is `id: <seq>`, `event: <type>`, `data: <json>`. It resumes after `Last-Event-ID`. Types are those in storage.md, plus `activity` (step, line) |
+| `GET /api/runs/<id>/wait?seq=<n>&activity=<m>` | Long polling (research R-6): `{seq, activity}` at once when the run has an event after `seq` or activity after `activity`, else with the next change, or after 25 s with `timeout: true` |
 
 ## Acting (steering, FR-017 to FR-020)
 

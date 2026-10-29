@@ -1,22 +1,24 @@
-# Built-in settings (contracts/config.md). A user settings.toml overrides any of these keys.
+# Fallow's built-in settings (006 contracts/config.md). Copy what you want to change into your
+# own settings.toml in Fallow's config folder; anything you leave out keeps these values.
 
-refresh_interval_ms = 2000          # FR-015; minimum 500
-footprint_interval_ms = 10000       # research R-3; how often each process's memory is re-read; 500..=3600000
-recent_window_minutes = 30          # FR-017
+[defaults]
+autonomy = "medium"          # high | medium | low (FR-017)
+limit_usd = 10               # per run (FR-038); only what agents report counts
+limit_min = 120              # per run, from building start
+step_min = 30                # per agent step
+repair_cap = 2               # repair rounds per part before you are asked (FR-008)
+max_parallel = 2             # builder steps at once (FR-022)
+memory_budget_mb = 0         # 0: three quarters of free memory at start
 
-[detection]
-browsers = false                    # FR-026
+[roles.planner]
+agent = "claude"
+model = ""                   # empty: the agent's default model
+[roles.builder]
+agent = "claude"
+model = ""
+[roles.reviewer]
+agent = "claude"
+model = ""                   # e.g. "opus"; the run page warns while it equals the builder's
 
-[dns]
-enabled = true                      # FR-022b
-refresh_minutes = 15                # research R-5; 1..=60
-
-[windows]
-read_working_directory = "on_detect" # "on_detect" | "on_select" | "never" (research R-10)
-
-[editor]
-read_only_threshold_mb = 10
-tab_width = 4
-
-[ui]
-mouse = true                        # FR-063
+[agents.claude]
+command = "claude"

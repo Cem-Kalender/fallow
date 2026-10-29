@@ -5,7 +5,7 @@ edition = "2024"
 rust-version = "1.85"
 license = "MIT OR Apache-2.0"
 publish = false
-description = "A terminal editor that shows the LLM processes on your machine"
+description = "Takes a coding task from an approved plan to a result it has verified itself"
 
 [workspace]
 resolver = "3"
@@ -13,72 +13,28 @@ members = [".", "xtask"]
 exclude = ["spikes"]
 
 [dependencies]
-crossterm = "0.29"
-ratatui = { version = "0.30", default-features = false, features = ["crossterm"] }
 serde = { version = "1", features = ["derive"] }
 toml = { version = "1", default-features = false, features = ["parse", "serde"] }
-regex = "1"
-globset = { version = "0.4", default-features = false }
-ipnet = "2"
-compact_str = "0.9"
-smallvec = "1"
-# Editor (US3, plan.md Dependency budget, research R-8).
-ropey = { version = "1", default-features = false, features = ["simd", "cr_lines"] }
-tree-sitter = "0.27"
-unicode-width = "0.2"
-tree-sitter-python = "0.25"
-tree-sitter-javascript = "0.25"
-tree-sitter-typescript = "0.23"
-tree-sitter-rust = "0.24"
-tree-sitter-go = "0.25"
-tree-sitter-c = "0.24"
-tree-sitter-cpp = "0.23"
-tree-sitter-java = "0.23"
-tree-sitter-c-sharp = "0.23"
-tree-sitter-bash = "0.25"
-tree-sitter-json = "0.24"
-tree-sitter-yaml = "0.7"
-tree-sitter-toml-ng = "0.7"
-tree-sitter-md = "0.5"
-tree-sitter-html = "0.23"
-tree-sitter-css = "0.25"
-notify = "8"
-grep-searcher = "0.1"
-grep-regex = "0.1"
-grep-matcher = "0.1"
-ignore = "0.4"
-arboard = { version = "3", default-features = false }
-# Agent sessions (002 research R-1, R-7). vt100 pinned: 0.18.0 was a broken release.
-vt100 = "=0.18.1"
-portable-pty = "0.9"
-# Agent orchestration (003 research R-1): JSON-RPC for the MCP tools.
 serde_json = "1"
+globset = { version = "0.4", default-features = false }
+regex = "1"
+# The run page on loopback (006 research R-6).
+tiny_http = "=0.12.0"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
-[target.'cfg(target_os = "macos")'.dependencies]
-zeroize = "1"
-
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = [
-    "Wdk_System_Threading",
     "Win32_Foundation",
-    "Win32_NetworkManagement_IpHelper",
-    "Win32_Networking_WinSock",
     "Win32_Security",
     "Win32_Security_Authorization",
     "Win32_Security_Cryptography",
     "Win32_Storage_FileSystem",
-    "Win32_System_Diagnostics_Debug",
-    "Win32_System_Diagnostics_ToolHelp",
     "Win32_System_IO",
     "Win32_System_JobObjects",
     "Win32_System_Pipes",
-    "Win32_System_SystemInformation",
-    "Win32_System_ProcessStatus",
     "Win32_System_Threading",
-    "Win32_UI_Shell",
 ] }
 
 [dev-dependencies]

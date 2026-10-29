@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fallow run</title>
+<link rel="stylesheet" href="/app.css">
+</head>
+<body data-page="run">
+<div class="wrap">
+  <header class="top">
+    <div class="title">
+      <div class="meta"><a href="/">All runs</a></div>
+      <h1 id="task">Run</h1>
+      <div class="meta" id="meta"></div>
+    </div>
+    <div class="stats">
+      <span id="stagePill" class="pill">…</span>
+      <div class="stat"><b id="cost">$0.00</b><span>Cost</span></div>
+      <div class="stat"><b id="time">0 min</b><span>Building time</span></div>
+      <div class="stat"><b id="repairs">0</b><span>Repairs</span></div>
+      <div class="stat"><b id="interventions">0</b><span>Interventions</span></div>
+    </div>
+  </header>
+
+  <section id="ask" class="ask" hidden></section>
+
+  <nav class="pipe" id="pipe" aria-label="Pipeline"></nav>
+
+  <div class="cols">
+    <section class="card">
+      <h2>Steps</h2>
+      <div id="steps" class="steps"></div>
+    </section>
+
+    <section class="card col-main">
+      <div id="planPanel" hidden>
+        <h2>Planning</h2>
+        <div id="conversation" class="conversation"></div>
+        <form id="sayForm" class="say">
+          <label for="sayText" class="sr">Your answer to the planner</label>
+          <textarea id="sayText" rows="3" placeholder="Answer the planner, or ask for changes to the plan"></textarea>
+          <div class="btns"><button type="submit" class="primary">Send</button></div>
+        </form>
+      </div>
+      <div class="cardhead">
+        <h2 id="activityTitle">Live activity</h2>
+        <div class="tabs" id="tabs"></div>
+      </div>
+      <div id="feed" class="feed" aria-live="polite"></div>
+    </section>
+
+    <section class="card">
+      <h2>Plan</h2>
+      <div id="plan" class="plan"></div>
+      <h2>Gates</h2>
+      <div id="gates" class="gate"></div>
+      <h2>Acceptance criteria</h2>
+      <div id="crit" class="crit"></div>
+      <div id="notes"></div>
+    </section>
+  </div>
+
+  <footer class="foot">
+    <button type="button" id="stopRun" class="danger">Stop the run</button>
+  </footer>
+</div>
+
+<div class="scrim" id="scrim" hidden>
+  <form class="sheet" id="sheet"></form>
+</div>
+<script src="/app.js"></script>
+</body>
+</html>

@@ -109,11 +109,47 @@ prompt.
 - All roles also get `mcp__fallow__*` (R-5).
 - `--dangerously-skip-permissions` and `bypassPermissions` are never passed unless the engineer
   turned them on for that run (constitution VI). The page then shows that the run is unrestricted.
-- **Verify (a setup task):** the exact `Bash(...)` prefix matching for commands with arguments,
-  on Windows shells. A fixture step runs an allowed and a refused command and checks
-  `permission_denials`.
+- **Verified (T001, 2026-10-29, Claude Code 2.1.312, Windows)** with only
+  `--allowedTools "Bash(git status:*)"` under `dontAsk`:
+  - **refused:** `git commit --allow-empty -m probe` and a `python -c` that writes a file;
+    - each is listed in `permission_denials` with its full `tool_input.command`;
+    - the agent got "Permission to use Bash has been denied because Claude Code is running in don't ask mode";
+    - nothing changed in the repository;
+  - **allowed with no rule:** `git log --oneline -1`. Claude Code allows commands it classifies as
+    read-only. Fallow treats this as harmless, since every role may read. It also means the
+    read-only shell tools need no rules of their own; the list above keeps them for clarity;
+  - prefix rules with arguments (`Bash(git status:*)` against `git status --short`) match;
+  - **consequence for the reviewer:** a refused command may make the agent try another tool. The
+    reviewer has no `Edit` or `Write`, so it has no other way to change files. Fallow still checks
+    that the reviewer's worktree is unchanged (R-7).
 
 **Rationale**: FR-036 with enforcement by the agent itself, which Fallow then verifies (I).
+
+**Found on real runs (2026-10-29, Claude Code 2.1.312, Haiku), and what changed:**
+
+- **Fallow commits a step's work itself.** A real planner was refused `git -c user.name=… commit`:
+  a rule matches by prefix, and options before the subcommand do not match `Bash(git commit:*)`.
+  Agents now need no git rights:
+  - a builder's step: when it ends, Fallow commits every change (`git add -A`, leaving out
+    caches such as `__pycache__`, `*.pyc`, `node_modules` and `.venv`) as the repository's
+    author, or as "Fallow" when none is configured;
+  - a planning turn: Fallow commits only the plan's folders (`.fallow/`, `contracts/`, `specs/`,
+    `docs/`) and throws away anything else.
+
+  A commit the builder names is still a claim: it must exist and be on the part's branch. What
+  Fallow verifies is the branch tip after its own commit.
+- **Every rule again for the PowerShell tool.** On Windows, Claude Code tries a refused Bash
+  command as PowerShell: each `Bash(...)` rule is passed as `PowerShell(...)` too.
+- **One command per call.** Agents chain commands (`python -m unittest -v 2>&1; echo …`), and a
+  chain is refused unless every part is allowed. The standing rules tell every role to run one
+  command per call. `echo`, `pwd`, `wc`, `sort`, `which`, `where` and `cd` were added to the
+  read-only list. `find` stays out, because `-exec` and `-delete` can change files. `git -C`
+  stays out, because it admits any git command.
+- **A review with refused commands does not count.** A real reviewer whose commands were refused
+  approved by reading the code. Now any refused command makes the verdict incomplete, and the
+  reviewer is resumed, naming the commands, to run them one at a time.
+- **Caches are not changes.** Running a check leaves untracked caches. A reviewer's worktree
+  counts as changed only for tracked files or new commits.
 
 ## R-5 MCP tools during a step, through the existing bridge
 
@@ -152,8 +188,12 @@ cover long waits.
 - **The page:** one HTML file, one script and one stylesheet, embedded in the binary
   (`include_str!`). No framework, no build step, no external fonts or CDNs. Headers:
   `Content-Security-Policy: default-src 'self'` and `X-Frame-Options: DENY`.
-- **Live updates:** Server-Sent Events, `GET /api/runs/<id>/events`, resuming from `Last-Event-ID`
-  (the event sequence number). One thread per open stream, since there is a single user.
+- **Live updates:** long polling, `GET /api/runs/<id>/wait?seq=<n>&activity=<m>`. The answer
+  comes at once when the run has an event after `seq` or activity after `activity`, otherwise with
+  the next change, or after 25 s with nothing new. The page then reads the run and the followed
+  step's activity again. Server-Sent Events were built first and dropped (2026-10-29, found in the
+  browser): `tiny_http` holds a streamed response in an 8 KiB chunk buffer and never flushes it
+  between small messages, so events did not reach the page.
 - **Notifications:** the page uses the browser's Notification API (localhost is a secure context)
   for "needs you". The service also prints the line on its console. Native Windows toasts are
   deferred.
@@ -162,7 +202,8 @@ cover long waits.
 
 **Alternatives considered**:
 - `axum` with `tokio`: an async runtime and about 2 MB, for a single user.
-- WebSockets: SSE is one-way, which is all the feed needs. Actions are plain POSTs.
+- Server-Sent Events: built first; see above.
+- WebSockets: a protocol upgrade for a one-way feed. Actions are plain POSTs.
 
 ## R-7 Verification Fallow does itself
 
@@ -204,7 +245,7 @@ cover long waits.
 |---|---|
 | `fallow/r<r>/plan` | the plan, and every decision commit |
 | `fallow/r<r>/<part>` | each builder's work; in solo, one part named `main` |
-| `fallow/r<r>` | the integration, merged by Fallow |
+| `fallow/r<r>/result` | the integration, merged by Fallow (git cannot hold `fallow/r<r>` next to branches below it) |
 
 How a decision flows:
 - **The decision:** a decide step commits on the plan branch.
@@ -237,8 +278,8 @@ How a decision flows:
 - **Local merge:** without a remote, or with an unprotected target, it is 004's local merge of
   exactly the gated commit, after the engineer's click.
 - **Pull request:**
-  - with protection, Fallow runs `git push origin fallow/r<r>`, then
-    `gh pr create --base <target> --head fallow/r<r> --body-file <run summary>`;
+  - with protection, Fallow runs `git push origin fallow/r<r>/result`, then
+    `gh pr create --base <target> --head fallow/r<r>/result --body-file <run summary>`;
   - checks are polled every 30 s with `gh pr checks --json name,state,bucket`;
   - a failing required check becomes a repair (FR-026);
   - with nothing required and nothing reporting after 5 minutes, the page says "No CI found";
@@ -289,7 +330,8 @@ How a decision flows:
 ## R-15 Testing without real agents
 
 **Decision**:
-- **A fake agent:** `fallow-fake-agent`, a test binary in `xtask`, that speaks the same stream-json
+- **A fake agent:** `fallow-fake-agent`, a second binary of the crate (`src/bin/`), so that
+  integration tests find it directly (`CARGO_BIN_EXE_…`), that speaks the same stream-json
   and result format as `claude -p`, scripted per scenario: edits, commits, false claims, blocked
   results, `ask_decision` calls, crashes and slow steps.
 - **Wiring:** an agent profile with `command = <fake agent>` makes every test and benchmark run

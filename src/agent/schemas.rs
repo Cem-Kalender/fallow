@@ -1,0 +1,103 @@
+//! The result schema of each step kind (contracts/step-results.md). Every field is a claim
+//! Fallow verifies before anything counts.
+
+use serde_json::{Value, json};
+
+use crate::run::events::StepKind;
+
+pub fn for_kind(kind: StepKind) -> Option<Value> {
+    match kind {
+        StepKind::Build | StepKind::Take | StepKind::Repair => Some(build()),
+        StepKind::Decide => Some(decide()),
+        StepKind::PlanTurn => Some(plan_turn()),
+        StepKind::Review => Some(review()),
+        StepKind::Plain => None,
+    }
+}
+
+fn build() -> Value {
+    json!({
+        "type": "object",
+        "required": ["status", "summary"],
+        "properties": {
+            "status": { "type": "string", "enum": ["done", "blocked", "failed"] },
+            "commit": { "type": "string", "description": "Optional: a commit you made yourself; Fallow commits your remaining changes" },
+            "files": { "type": "array", "items": { "type": "string" } },
+            "commands": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "required": ["command", "result"],
+                    "properties": {
+                        "command": { "type": "string" },
+                        "result": { "type": "string" }
+                    }
+                }
+            },
+            "criteria": {
+                "type": "array",
+                "description": "How each of the part's criteria is met",
+                "items": {
+                    "type": "object",
+                    "required": ["criterion", "how"],
+                    "properties": {
+                        "criterion": { "type": "string", "description": "part/id" },
+                        "how": { "type": "string" }
+                    }
+                }
+            },
+            "question": { "type": "string", "description": "When blocked: the question" },
+            "summary": { "type": "string" }
+        }
+    })
+}
+
+fn decide() -> Value {
+    json!({
+        "type": "object",
+        "required": ["outcome", "answer"],
+        "properties": {
+            "outcome": { "type": "string", "enum": ["decided", "needs_engineer"] },
+            "answer": { "type": "string" },
+            "changes": { "type": "string", "enum": ["none", "plan", "criteria", "contract"] },
+            "commit": { "type": "string", "description": "Required unless changes is none" },
+            "recommendation": { "type": "string" },
+            "options": { "type": "array", "items": { "type": "string" } }
+        }
+    })
+}
+
+fn plan_turn() -> Value {
+    json!({
+        "type": "object",
+        "required": ["reply"],
+        "properties": {
+            "reply": { "type": "string", "description": "Shown to the engineer in the planning conversation" },
+            "ready": { "type": "boolean", "description": "The planner considers the plan complete" }
+        }
+    })
+}
+
+fn review() -> Value {
+    json!({
+        "type": "object",
+        "required": ["answers"],
+        "properties": {
+            "answers": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "required": ["criterion", "ran", "result", "passed"],
+                    "properties": {
+                        "criterion": { "type": "string", "description": "part/id" },
+                        "ran": { "type": "string" },
+                        "result": { "type": "string" },
+                        "passed": { "type": "boolean" },
+                        "failing_case": { "type": "string", "description": "For must-fail criteria: the case that must fail, and that it did" }
+                    }
+                }
+            },
+            "summary": { "type": "string" }
+        }
+    })
+}

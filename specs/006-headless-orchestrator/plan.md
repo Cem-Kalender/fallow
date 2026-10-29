@@ -25,7 +25,7 @@ How it works:
   through MCP tools on 003's named-pipe bridge. Decisions are commits on the run's plan branch, and
   every affected part is reopened (R-5, R-9).
 - **The page** is served on loopback with a per-launch secret: the run view of the mockup, with
-  live activity over SSE and steering as plain requests (R-6).
+  live activity by long polling, and steering as plain requests (R-6).
 - **Publishing:** a local merge of the verified commit, or a pull request through the engineer's
   own `git` and `gh`, never bypassing protection (R-11).
 - **Measurement:** plain, solo and squad on task sets with hidden tests, carried over from 005

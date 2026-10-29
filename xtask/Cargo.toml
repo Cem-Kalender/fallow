@@ -6,21 +6,7 @@ rust-version = "1.85"
 license = "MIT OR Apache-2.0"
 publish = false
 
-# Dev-only benchmark and verification harness (research R-13). Never shipped.
+# Dev-only benchmark and verification harness. Never shipped.
 
 [dependencies]
-portable-pty = "0.9"
 serde_json = "1"
-
-[target.'cfg(unix)'.dependencies]
-libc = "0.2"
-
-[target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = [
-    "Win32_Foundation",
-    "Win32_System_Threading",
-    "Win32_System_ProcessStatus",
-    "Win32_Security",
-    "Win32_System_Console",
-    "Win32_System_Memory",
-] }

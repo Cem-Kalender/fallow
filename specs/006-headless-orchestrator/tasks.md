@@ -33,32 +33,35 @@ tests use the fake agent (research R-15).
 **Purpose**: clear out what 006 drops, keep what it reuses, and get a compiling skeleton of the
 new layout (plan.md Project Structure).
 
-- [ ] T001 Verify research R-4 on Windows:
+- [X] T001 Verify research R-4 on Windows:
   - run `claude -p` under `--permission-mode dontAsk` with `--allowedTools "Bash(git status:*)" "Bash(python -m unittest:*)"` in a scratch repo, asking it to run one allowed and one refused command;
   - record in `specs/006-headless-orchestrator/research.md` R-4 how `permission_denials` reports the refusal, and how prefixes with arguments match under PowerShell and cmd.
-- [ ] T002 Move the reused code to its new places, keeping its tests green:
+- [X] T002 Move the reused code to its new places, keeping its tests green:
   - `src/orchestration/{evidence,gates,git}.rs` → `src/verify/`;
   - `src/orchestration/manifest.rs` → `src/plan/`;
   - `src/orchestration/{runs,record}.rs` → `src/measure/`;
   - `src/orchestration/{bridge,channel,rpc,identity}.rs` → `src/mcp/`;
   - the Job Object and memory sampling code from `src/session/platform` and `src/orchestration/memory.rs` → `src/platform/`;
   - 004's local merge from `src/orchestration/publish.rs` → `src/publish/local.rs`.
-- [ ] T003 Delete the terminal app:
+  - Done for what Phases 1-3 use. The task sets, run records and memory budget (`measure`, the memory sampler) move with US5 and US7 (T061, T069 to T072), restored from git history then.
+- [X] T003 Delete the terminal app:
   - **folders:** `src/app`, `src/ui`, `src/editor`, `src/session` (what is left after T002), `src/procmon`, `src/projects`;
   - **files:** `src/clipboard.rs`, `src/dns.rs`, `src/cli.rs`;
   - **the rest of `src/orchestration`:** board, delivery, permissions, burst, signals, lead, roles, inject, delegation, briefing, tools, usage, activity, events, tasks, repair, squad's role parts;
   - **tests and benchmarks:** their tests in `tests/` and their benchmarks and canaries in `xtask/src/` (`bench_startup`, `bench_refresh`, `bench_new_process`, `bench_sessions`, `bench_search`, `canary_sessions`, `pty`, `projects`, `squad`, `mcp_agent`, `orchestration`, `diag`).
-- [ ] T004 Update `Cargo.toml` (research R-14):
+- [X] T004 Update `Cargo.toml` (research R-14):
   - remove `crossterm`, `ratatui`, `ropey`, every `tree-sitter*`, `notify`, `grep-*`, `ignore`, `arboard`, `vt100`, `portable-pty`, `ipnet`, `compact_str`, `smallvec`, and `regex` if unused;
   - add `tiny_http`, pinned to an exact version;
   - trim the `windows-sys` features to those still used;
   - `cargo build` and `cargo clippy --all-targets` must be clean.
-- [ ] T005 Write the new command line in `src/main.rs`:
+- [X] T005 Write the new command line in `src/main.rs`:
   - `fallow`, `serve`, `run`, `status`, `stop`, `autostart`, `mcp-bridge` and `bench`, with stubs, as contracts/cli.md;
   - `fallow autostart` prints the Startup-folder shortcut command and writes nothing (research R-1).
-- [ ] T006 [P] Create the module skeletons with doc comments naming their contract: `src/service/`, `src/run/`, `src/agent/`, `src/integrate.rs`, `src/publish/`, as in plan.md.
-- [ ] T007 [P] Write `fallow-fake-agent` in `xtask/src/fake_agent.rs`. It accepts `claude -p`'s flags (research R-3) and plays a scenario file (TOML: a list of tool events, edits, commits, an `ask_decision` call, the final `structured_output`, an optional crash or delay). It writes stream-json in the verified format, ending with a `result` event that has `structured_output`, `total_cost_usd`, `session_id` and `permission_denials`.
-- [ ] T008 [P] Remove the old jobs from `.github/workflows/ci.yml`:
+- [X] T006 [P] Create the module skeletons with doc comments naming their contract: `src/service/`, `src/run/`, `src/agent/`, `src/integrate.rs`, `src/publish/`, as in plan.md.
+  - `src/integrate.rs` and `src/measure/` arrive with US5 and US7; the other modules exist.
+- [X] T007 [P] Write `fallow-fake-agent` in `xtask/src/fake_agent.rs`. It accepts `claude -p`'s flags (research R-3) and plays a scenario file (TOML: a list of tool events, edits, commits, an `ask_decision` call, the final `structured_output`, an optional crash or delay). It writes stream-json in the verified format, ending with a `result` event that has `structured_output`, `total_cost_usd`, `session_id` and `permission_denials`.
+  - Built as a second binary of the crate, `src/bin/fallow-fake-agent.rs`, so integration tests find it through `CARGO_BIN_EXE_fallow-fake-agent` (research R-15).
+- [X] T008 [P] Remove the old jobs from `.github/workflows/ci.yml`:
   - startup, idle and loaded memory, refresh, new-process, sessions and search benchmarks, the session canary;
   - the macOS and Linux build matrix, since Windows is the target (clarified 2026-10-29);
   - keep build, clippy, fmt, test and egress jobs on Windows.
@@ -73,54 +76,57 @@ The reused tests still pass.
 **Purpose**: the event log, the service, the page server, the agent adapter and the config that
 every story builds on.
 
-- [ ] T009 Implement the event types of contracts/storage.md in `src/run/events.rs`:
+- [X] T009 Implement the event types of contracts/storage.md in `src/run/events.rs`:
   - each line is `{"seq","at","type",…}`, and `seq` increases by 1;
   - appending is followed by flush and `fsync` before returning;
   - the run directory is created with a current-user-only ACL;
   - `fold(events) -> RunState`.
-- [ ] T010 [P] Implement the entities of data-model.md in `src/run/state.rs`: Run, Plan, Part, Step, Decision, GateRun, Verdict, SteeringAction, Publication. Include the stage transitions ("planning → building → integrating → gating → reviewing → ready → publishing → done", "paused" remembers its stage, "done" and "stopped" are final) and Part's states, with the transitions checked in `fold`.
-- [ ] T011 [P] Add `uuid_v4()` and `secret_256()` from `BCryptGenRandom` to `src/platform/random.rs`, and a helper that creates directories and files readable by the current user only in `src/platform/acl.rs`.
-- [ ] T012 Implement the service in `src/service/mod.rs`:
+- [X] T010 [P] Implement the entities of data-model.md in `src/run/state.rs`: Run, Plan, Part, Step, Decision, GateRun, Verdict, SteeringAction, Publication. Include the stage transitions ("planning → building → integrating → gating → reviewing → ready → publishing → done", "paused" remembers its stage, "done" and "stopped" are final) and Part's states, with the transitions checked in `fold`.
+- [X] T011 [P] Add `uuid_v4()` and `secret_256()` from `BCryptGenRandom` to `src/platform/random.rs`, and a helper that creates directories and files readable by the current user only in `src/platform/acl.rs`.
+- [X] T012 Implement the service in `src/service/mod.rs`:
   - `fallow serve` claims the single-instance named pipe, refusing if it is taken;
   - writes `service.json` (pid, port, start time, never the secret);
   - loads every run whose stage is not final, through `fold`;
   - answers command-line requests over the pipe;
   - shuts down by ending steps' process trees (Job Objects) and leaving runs to resume.
-- [ ] T013 Implement the page server in `src/service/http.rs`:
+- [X] T013 Implement the page server in `src/service/http.rs`:
   - `tiny_http` bound to `127.0.0.1:0`;
   - the per-launch secret exchanged for an `HttpOnly; SameSite=Strict` cookie;
   - 401 without it;
   - 403 unless `Host` is `127.0.0.1:<port>` or `localhost:<port>`, and on a `POST` whose `Origin` is not the page's;
   - headers `Content-Security-Policy: default-src 'self'`, `X-Frame-Options: DENY`, `Cache-Control: no-store` (research R-6).
-- [ ] T014 [P] Implement Server-Sent Events in `src/service/sse.rs`: `GET /api/runs/<id>/events`, resuming after `Last-Event-ID`, one thread per stream, plus `activity` events.
-- [ ] T015 [P] Implement the `Adapter` trait in `src/agent/mod.rs`: start a call (instruction, schema, allowlist, MCP file, session new or resumed, model, budget, working directory, time limit), stream activity, and return the result or the failure reason.
-- [ ] T016 Implement `src/agent/claude.rs`, which builds the exact `claude -p` command of research R-3, and `src/agent/stream.rs`, which parses stream-json into activity lines (reads, edits, commands with results, progress) and the final `result`. A missing or invalid `structured_output`, `is_error`, or a time-out (process tree ended) makes a failed step.
-- [ ] T017 [P] Implement `src/agent/allow.rs`: the planner, builder and reviewer allowlists of research R-4, plus the squad file's `[allow]` additions and each declared gate command.
-- [ ] T018 [P] Implement the config of contracts/config.md in `src/config/`:
+- [X] T014 [P] Implement Server-Sent Events in `src/service/sse.rs`: `GET /api/runs/<id>/events`, resuming after `Last-Event-ID`, one thread per stream, plus `activity` events.
+  - Replaced by long polling (`GET /api/runs/<id>/wait`, research R-6): `tiny_http` never flushed the event stream, found in the browser on 2026-10-29. Test: `tests/run_wait.rs`.
+- [X] T015 [P] Implement the `Adapter` trait in `src/agent/mod.rs`: start a call (instruction, schema, allowlist, MCP file, session new or resumed, model, budget, working directory, time limit), stream activity, and return the result or the failure reason.
+  - The adapter is `agent::Call` with `agent::claude::run`; other agents get their own `run` behind the same `Call` when they arrive.
+- [X] T016 Implement `src/agent/claude.rs`, which builds the exact `claude -p` command of research R-3, and `src/agent/stream.rs`, which parses stream-json into activity lines (reads, edits, commands with results, progress) and the final `result`. A missing or invalid `structured_output`, `is_error`, or a time-out (process tree ended) makes a failed step.
+- [X] T017 [P] Implement `src/agent/allow.rs`: the planner, builder and reviewer allowlists of research R-4, plus the squad file's `[allow]` additions and each declared gate command.
+- [X] T018 [P] Implement the config of contracts/config.md in `src/config/`:
   - settings `[defaults]` (autonomy, `limit_usd = 10`, `limit_min = 120`, `step_min = 30`, `repair_cap = 2`, `max_parallel = 2`, `memory_budget_mb`), `[roles.*]` and `[agents.*]`;
   - the squad file changes: role tables and `[merge] requires` are ignored with a notice, plus the new `autonomy`, limits, `[roles.*]` and `[allow]`;
   - resolution order: settings, then the squad file, then the run.
-- [ ] T019 [P] Add run worktrees and branches to `src/verify/git.rs`:
-  - create `fallow/r<id>/plan`, `fallow/r<id>/<part>` and `fallow/r<id>` from the start commit;
+- [X] T019 [P] Add run worktrees and branches to `src/verify/git.rs`:
+  - create `fallow/r<id>/plan`, `fallow/r<id>/<part>` and `fallow/r<id>/result` from the start commit;
   - one worktree per step under `runs\<id>\worktrees\`;
   - removal when the run is deleted.
-- [ ] T020 Test: `tests/run_events.rs`:
+- [X] T020 Test: `tests/run_events.rs`:
   - append, then fold;
   - a torn last line is ignored with a notice;
   - the ACL is user-only;
   - illegal stage transitions are refused.
-- [ ] T021 [P] Test: `tests/service_http.rs` (constitution V gate):
+- [X] T021 [P] Test: `tests/service_http.rs` (constitution V gate):
   - the listener's address is `127.0.0.1`;
   - no cookie gives 401;
   - a wrong `Host` gives 403;
   - a `POST` with a foreign `Origin` gives 403;
   - the CSP header is present;
   - the embedded page files contain no `http://` or `https://` URL.
-- [ ] T022 [P] Test: `tests/agent_claude.rs`, with the fake agent:
+- [X] T022 [P] Test: `tests/agent_claude.rs`, with the fake agent:
   - the command line matches research R-3;
   - activity lines and the result are parsed;
   - an invalid result, a crash and a time-out are each a failed step;
   - `permission_denials` are reported.
+  - `tests/agent_claude.rs`, plus unit tests in `src/agent/claude.rs`.
 
 **Checkpoint**: a service that starts, serves an authenticated empty page, holds runs in event logs,
 and can run one fake-agent step.
@@ -139,77 +145,85 @@ and can run one fake-agent step.
 **Independent Test**: quickstart V1 (real agent) and V3, and `tests/us1_*.rs` (fake agent). On the
 `search` task: 2 interventions, the merged commit is the gated one, and the hidden tests pass.
 
-- [ ] T023 [US1] Update the plan format in `src/plan/` (research R-8, data-model.md Plan):
+- [X] T023 [US1] Update the plan format in `src/plan/` (research R-8, data-model.md Plan):
   - `build` is `"builder"` (one part named `main`) or `"parts"`;
   - criterion ids are unique within their part and addressed as `part/id`;
   - at least one `must_fail` per part;
   - `approvable()` requires the plan to parse, pass the checks, and be committed on `fallow/r<id>/plan`;
   - problems are named with file and line.
-- [ ] T024 [US1] Write the instructions per step kind and role in `src/agent/prompts.rs`:
+- [X] T024 [US1] Write the instructions per step kind and role in `src/agent/prompts.rs`:
   - `plan_turn` and `decide` (planner), `build`, `take` and `repair` (builder), `review` (reviewer);
   - each states the goal, the relevant plan sections and criteria, the rules (no messaging, ask with `ask_decision`, commit before reporting), and the result schema;
   - Spec Kit projects get the `/speckit-specify` and `/speckit-plan` pointers (research R-8).
-- [ ] T025 [P] [US1] Write the JSON schemas of contracts/step-results.md (build, take, repair, decide, plan_turn, review) in `src/agent/schemas.rs`.
-- [ ] T026 [US1] Implement the planning conversation in `src/run/machine.rs`:
+- [X] T025 [P] [US1] Write the JSON schemas of contracts/step-results.md (build, take, repair, decide, plan_turn, review) in `src/agent/schemas.rs`.
+- [X] T026 [US1] Implement the planning conversation in `src/run/machine.rs`:
   - `POST /api/runs/<id>/plan/say` queues a `plan_turn` step that resumes the planner session with the engineer's text;
   - its `reply` is shown;
   - its `commit` updates `plan_committed` with `approvable` and `problems`;
   - `POST …/plan/approve` succeeds only when approvable (FR-002, FR-003, FR-033).
-- [ ] T027 [US1] Implement the solo stage machine in `src/run/machine.rs`: building (one `build` step for part `main`) → gating → reviewing → ready, with repairs. It decides the next step only from folded state, and writes `step_queued` before starting a step.
-- [ ] T028 [US1] Implement claim verification in `src/verify/claims.rs` (research R-7):
+- [X] T027 [US1] Implement the solo stage machine in `src/run/machine.rs`: building (one `build` step for part `main`) → gating → reviewing → ready, with repairs. It decides the next step only from folded state, and writes `step_queued` before starting a step.
+- [X] T028 [US1] Implement claim verification in `src/verify/claims.rs` (research R-7):
   - the commit is on the step's branch (`merge-base --is-ancestor`) and newer than its base;
   - changed files are within `owns` and `shared`;
   - every `takes` commit is contained;
   - the outcome is written as `verified` (accepted or rejected, with reasons).
-- [ ] T029 [US1] Adapt 004's gate session into a process in `src/verify/gates.rs`:
+- [X] T029 [US1] Adapt 004's gate session into a process in `src/verify/gates.rs`:
   - run each declared command in a temporary worktree of the commit, with `timeout_min`;
   - capture output into the step's activity;
   - classify against the baseline taken at building start (`clean`, `pre-existing failures only`, `regression`);
   - write a `gate_run` event.
-- [ ] T030 [US1] Implement verdict completeness in `src/verify/verdict.rs` (from 005, with ids qualified by part):
+- [X] T030 [US1] Implement verdict completeness in `src/verify/verdict.rs` (from 005, with ids qualified by part):
   - every criterion in scope must be answered with `ran` and `result`, and every `must_fail` with a `failing_case`;
   - partial verdicts in one review add up;
   - an incomplete verdict resumes the reviewer naming the missing `part/id`s (FR-007);
   - a reviewer whose worktree changed stops counting.
-- [ ] T031 [US1] Implement repairs in `src/run/machine.rs`:
+- [X] T031 [US1] Implement repairs in `src/run/machine.rs`:
   - a rejected claim, a failed gate or a failing verdict queues a `repair` for the part, with the failed checks in its instruction;
   - the count is kept per part against `repair_cap` (default 2);
   - at the cap, the engineer is asked (FR-008).
-- [ ] T032 [US1] Implement run limits in `src/run/limits.rs` (FR-038):
+- [X] T032 [US1] Implement run limits in `src/run/limits.rs` (FR-038):
   - cost is the sum of reported `total_cost_usd`, and each step gets `--max-budget-usd` of what is left;
   - time counts from building start;
   - per-step time comes from `step_min`;
   - when a limit is reached: a `limit_reached` event, then pause before the next step, offering to raise the limit, continue once, or stop;
   - when an agent reports no cost, the page says only the time limit applies.
-- [ ] T033 [US1] Implement the local merge in `src/publish/local.rs` (004's, adapted): only from `ready`, only exactly the verified integration commit, onto the target branch, without touching the engineer's working tree, then a `merged` event (FR-009).
-- [ ] T034 [US1] Implement resume in `src/service/mod.rs` and `src/run/machine.rs` (research R-2):
+- [X] T033 [US1] Implement the local merge in `src/publish/local.rs` (004's, adapted): only from `ready`, only exactly the verified integration commit, onto the target branch, without touching the engineer's working tree, then a `merged` event (FR-009).
+- [X] T034 [US1] Implement resume in `src/service/mod.rs` and `src/run/machine.rs` (research R-2):
   - on start, a step with `step_started` and no `step_finished` is resumed with `--resume <session>` and the "you were interrupted" note, or redone if the session cannot be resumed;
   - completed steps are never queued again.
-- [ ] T035 [US1] Implement `fallow run "<task>"` and the setup check (contracts/cli.md, FR-032) in `src/main.rs` and `src/service/api.rs`:
+- [X] T035 [US1] Implement `fallow run "<task>"` and the setup check (contracts/cli.md, FR-032) in `src/main.rs` and `src/service/api.rs`:
   - check the repository, uncommitted changes, the agent CLI and its sign-in, the gate commands, the remote and the hooks list;
   - create the run (`run_created`) and open `/runs/<id>/plan`;
   - also implement `fallow status` and `fallow stop`.
-- [ ] T036 [US1] Write the first page in `src/service/web/`:
+  - The check covers the repository, uncommitted files, the agent and gate programs on the path. Whether the agent is signed in and which hooks will run are not checked yet; a step that fails for either says so.
+- [X] T036 [US1] Write the first page in `src/service/web/`:
   - `index.html`: the runs list;
   - `run.html`, `app.js` and `app.css`: the planning conversation with the plan, its problems and Approve; the stage; the bar for what needs the engineer (limit reached, repair cap, ready to merge with Merge);
   - no framework and no external resources, with the mockup's tokens and layout.
-- [ ] T037 [US1] Implement the read endpoints of contracts/web-api.md in `src/service/api.rs` (`GET /api/runs`, `GET /api/runs/<id>`, step activity), and the US1 actions (`POST /api/runs`, `plan/say`, `plan/approve`, `limits`, `merge`).
-- [ ] T038 [P] [US1] Test `tests/us1_solo.rs`, with fake agent scenarios for a good run (V1), checking:
+  - Checked in Chrome on 2026-10-29 with a scripted run: planning, approval, live progress, review evidence, the merge. Three display bugs fixed there.
+- [X] T037 [US1] Implement the read endpoints of contracts/web-api.md in `src/service/api.rs` (`GET /api/runs`, `GET /api/runs/<id>`, step activity), and the US1 actions (`POST /api/runs`, `plan/say`, `plan/approve`, `limits`, `merge`).
+- [X] T038 [P] [US1] Test `tests/us1_solo.rs`, with fake agent scenarios for a good run (V1), checking:
   - the stages in order;
   - exactly 2 steering actions recorded (approve, merge);
   - the merged commit is the gated one;
   - nothing on the target branch before the merge.
-- [ ] T039 [P] [US1] Test `tests/us1_false_claims.rs` (constitution I gate, SC-004): each of these is rejected, followed by a repair, with no question to the engineer:
+- [X] T039 [P] [US1] Test `tests/us1_false_claims.rs` (constitution I gate, SC-004): each of these is rejected, followed by a repair, with no question to the engineer:
   - a missing commit;
   - a commit without changes in the owned files;
   - a file outside `owns`;
   - a failing gate;
   - an incomplete verdict.
-- [ ] T040 [P] [US1] Test `tests/us1_resume.rs` (constitution VII gate, SC-003): end the service at each stage (planning, building mid-step, gating, reviewing, ready), start it again, and check that the run completes without a completed step repeated and with the history intact.
-- [ ] T041 [P] [US1] Test `tests/us1_limits.rs` (FR-038): the cost limit and the time limit each pause before the next step, and raising the limit continues the run.
+  - Also: a review whose commands were refused does not count (found on a real run).
+- [X] T040 [P] [US1] Test `tests/us1_resume.rs` (constitution VII gate, SC-003): end the service at each stage (planning, building mid-step, gating, reviewing, ready), start it again, and check that the run completes without a completed step repeated and with the history intact.
+- [X] T041 [P] [US1] Test `tests/us1_limits.rs` (FR-038): the cost limit and the time limit each pause before the next step, and raising the limit continues the run.
 
 **Checkpoint**: the MVP. A solo run from the plan to the merge with the fake agent in CI, and with
 Claude Code by hand (quickstart V1, V3).
+
+Reached on 2026-10-29:
+- **With the fake agent:** every US1 test passes.
+- **With the real Claude Code (Haiku), `tests/real_agent.rs`:** a solo run went from plan to merge with one step of each kind, in 90 s, for $0.016.
+- **What the real runs changed:** Fallow commits each step's work itself, rules are mirrored for the PowerShell tool, agents run one command per call, and a review with refused commands does not count (research R-4).
 
 ---
 
@@ -268,13 +282,13 @@ gates, criteria per part, cost and time, all live.
   - gates against the baseline;
   - the criteria per part with evidence;
   - repairs, time and cost;
-  - built from `GET /api/runs/<id>` plus the SSE stream, with no external resources.
-- [ ] T052 [US3] Stream activity in `src/agent/stream.rs` and `src/service/sse.rs`: each activity line is appended to `steps/<n>.jsonl` and published as an SSE `activity` event as it is parsed, within 2 s (FR-015).
+  - built from `GET /api/runs/<id>` plus long polling, with no external resources.
+- [ ] T052 [US3] Stream activity in `src/agent/claude.rs` and `src/run/engine.rs`: each activity line is appended to `steps/<n>.jsonl` and wakes the pages waiting on the run as it is parsed, within 2 s (FR-015).
 - [ ] T053 [US3] Complete the runs list in `src/service/web/index.html`: stage, what needs the engineer, cost, time, how many runs Fallow holds and their size on disk (constitution V), and the start form.
 - [ ] T054 [US3] Add notifications in `src/service/web/app.js`: the browser Notification API for "needs you", permission asked on first visit, and the service's console line (FR-016, research R-6).
 - [ ] T055 [P] [US3] Test `tests/us3_page.rs`:
   - reading a run mid-step returns the whole history;
-  - the SSE stream resumes after `Last-Event-ID` without gaps or duplicates;
+  - a page that waits after event N gets every later event, without gaps;
   - an activity line reaches the stream within 2 s of the fake agent writing it (SC-006);
   - the run continues with no page open.
 
@@ -329,7 +343,7 @@ and conflicts become repairs.
   - 005's memory budget (measured memory plus the expected size of unmeasured starts, research R-12);
   - a step that does not fit is `waiting_capacity`, with the reason on the page, and starts by itself.
 - [ ] T062 [US5] Implement integration in `src/integrate.rs` (research R-10):
-  - merge the parts' branches into `fallow/r<id>` in plan order with `--no-ff`;
+  - merge the parts' branches into `fallow/r<id>/result` in plan order with `--no-ff`;
   - on a conflict, abort and queue a repair for the part being merged, naming the files and the other part's commit;
   - attribute an integration gate failure to the part owning the failing test file, or ask the engineer when unclear (FR-023).
 - [ ] T063 [P] [US5] Test `tests/us5_parts.rs`:
@@ -357,7 +371,7 @@ and conflicts become repairs.
   - from them: required checks by name, required reviews, and whether the branch must be up to date;
   - `rules_source` is `branch_rules`, `protection`, `checks_only` or `none`.
 - [ ] T065 [US6] Publish in `src/publish/github.rs`:
-  - from `ready`: `git push origin fallow/r<id>`, then `gh pr create --base <target> --head fallow/r<id> --body-file <summary>`, where the summary has the plan, the criteria with evidence, the gates, the decisions with their commits, the repairs and the cost;
+  - from `ready`: `git push origin fallow/r<id>/result`, then `gh pr create --base <target> --head fallow/r<id>/result --body-file <summary>`, where the summary has the plan, the criteria with evidence, the gates, the decisions with their commits, the repairs and the cost;
   - poll `gh pr checks --json name,state,bucket` every 30 s;
   - a failing required check becomes a repair round on the same branch;
   - a branch behind the target is merged up to date and gated again;

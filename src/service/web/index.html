@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fallow</title>
+<link rel="stylesheet" href="/app.css">
+</head>
+<body data-page="index">
+<div class="wrap">
+  <header class="top">
+    <div class="title">
+      <h1>Fallow</h1>
+      <div class="meta"><span>Runs on this machine</span><span id="held"></span></div>
+    </div>
+  </header>
+
+  <section class="card">
+    <h2>Start a run</h2>
+    <form id="start" class="form">
+      <label for="repo">Repository folder
+        <input type="text" id="repo" name="repo" placeholder="C:\Repos\minishop" required>
+      </label>
+      <label for="task">Task
+        <textarea id="task" name="task" rows="3" placeholder="Make product search case-insensitive and add a search command" required></textarea>
+      </label>
+      <div class="row">
+        <label for="autonomy">Autonomy
+          <select id="autonomy" name="autonomy">
+            <option value="">default</option>
+            <option value="high">high</option>
+            <option value="medium">medium</option>
+            <option value="low">low</option>
+          </select>
+        </label>
+        <label for="limit_usd">Cost limit ($)
+          <input type="text" id="limit_usd" name="limit_usd" placeholder="10">
+        </label>
+        <label for="limit_min">Time limit (min)
+          <input type="text" id="limit_min" name="limit_min" placeholder="120">
+        </label>
+      </div>
+      <div class="btns"><button class="primary" type="submit">Start the run</button></div>
+      <p class="note" id="startNote"></p>
+    </form>
+  </section>
+
+  <section class="card">
+    <h2>Runs</h2>
+    <div id="runs" class="runs"><p class="empty">No runs yet.</p></div>
+  </section>
+</div>
+<script src="/app.js"></script>
+</body>
+</html>

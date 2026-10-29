@@ -79,14 +79,6 @@ fn config_dir_override_wins_and_files_live_inside() {
         p.settings(),
         Some(Path::new("/custom").join("settings.toml"))
     );
-    assert_eq!(
-        p.signatures(),
-        Some(Path::new("/custom").join("signatures.toml"))
-    );
-    assert_eq!(
-        p.providers(),
-        Some(Path::new("/custom").join("providers.toml"))
-    );
 }
 
 #[test]
