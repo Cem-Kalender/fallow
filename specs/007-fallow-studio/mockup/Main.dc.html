@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Fallow dashboard</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#F6F6F3}
+a{color:#2F52C9}a:hover{color:#1F3A99}
+.nav{color:#4A4945;text-decoration:none;padding:8px 12px;border-radius:8px;font-size:14px;font-weight:500}
+.nav:hover{background:#ECEBE6;color:#1C1C1A}
+.navon{background:#1C1C1A;color:#FFFFFF}
+.navon:hover{background:#1C1C1A;color:#FFFFFF}
+.card{background:#FFFFFF;border:1px solid #E3E2DC;border-radius:12px}
+.pill{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;padding:3px 9px;border-radius:999px;white-space:nowrap}
+.mono{font-family:'JetBrains Mono',ui-monospace,monospace}
+.btn{display:inline-flex;align-items:center;justify-content:center;min-height:40px;padding:0 16px;border-radius:8px;font:600 14px Inter,sans-serif;text-decoration:none;border:1px solid #1C1C1A;background:#1C1C1A;color:#FFFFFF;cursor:pointer}
+.btn:hover{background:#000000;color:#FFFFFF}
+.btn2{background:#FFFFFF;color:#1C1C1A;border:1px solid #D4D3CC}
+.btn2:hover{background:#F0EFEA;color:#1C1C1A}
+.th{font-size:12px;font-weight:600;color:#5E5D58;text-transform:uppercase;letter-spacing:.04em}
+</style>
+</helmet>
+<div style="width:100%;min-height:1000px;box-sizing:border-box;font-family:Inter,system-ui,sans-serif;color:#1C1C1A;background:#F6F6F3">
+
+<header style="display:flex;flex-wrap:wrap;align-items:center;gap:16px;padding:12px 24px;border-bottom:1px solid #E3E2DC;background:#FFFFFF">
+<div style="display:flex;align-items:center;gap:10px;font-weight:700;font-size:17px;margin-right:12px">
+<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#2F52C9" stroke-width="2" aria-hidden="true"><path d="M4 20c4-1 6-5 8-9s4-7 8-7"></path><path d="M4 14c3 0 5-2 6-4"></path><path d="M12 20c3-1 5-3 6-6"></path></svg>
+Fallow
+</div>
+<nav aria-label="Main" style="display:flex;flex-wrap:wrap;gap:4px">
+<a class="nav navon" href="Main.dc.html">Dashboard</a>
+<a class="nav" href="Spec.dc.html">Spec sessions</a>
+<a class="nav" href="Run.dc.html">Loops</a>
+<a class="nav" href="Pipeline.dc.html">Pipelines &amp; agents</a>
+</nav>
+<div style="flex:1"></div>
+<span class="pill" style="background:#FBEDE3;color:#9A3A0B">2 need you</span>
+<span style="font-size:13px;color:#5E5D58">3 agents running · $2.41 today</span>
+</header>
+
+<div style="display:flex;flex-wrap:wrap;gap:24px;padding:24px;max-width:1440px;margin:0 auto;box-sizing:border-box">
+
+<aside style="flex:1 1 240px;max-width:300px;display:flex;flex-direction:column;gap:12px">
+<div style="display:flex;align-items:center;justify-content:space-between">
+<h2 class="th" style="margin:0">Projects</h2>
+<button class="btn btn2" style="min-height:32px;padding:0 10px;font-size:13px">+ Add folder</button>
+</div>
+<a href="Spec.dc.html" class="card" style="display:block;padding:14px;text-decoration:none;color:#1C1C1A;border-color:#2F52C9;box-shadow:0 0 0 1px #2F52C9">
+<div style="font-weight:600">shop-demo</div>
+<div class="mono" style="font-size:12px;color:#5E5D58;margin-top:2px">C:\Repos\FallowSandbox</div>
+<div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap"><span class="pill" style="background:#EEF1FB;color:#2F52C9">git</span><span class="pill" style="background:#E6F3EA;color:#226640">Spec Kit</span><span class="pill" style="background:#F0EFEA;color:#4A4945">4 features</span></div>
+</a>
+<div class="card" style="padding:14px">
+<div style="font-weight:600">notes-site</div>
+<div class="mono" style="font-size:12px;color:#5E5D58;margin-top:2px">D:\work\notes-site</div>
+<div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap"><span class="pill" style="background:#EEF1FB;color:#2F52C9">git</span><span class="pill" style="background:#E6F3EA;color:#226640">Spec Kit</span><span class="pill" style="background:#F0EFEA;color:#4A4945">2 features</span></div>
+</div>
+<div class="card" style="padding:14px">
+<div style="font-weight:600">thesis-scripts</div>
+<div class="mono" style="font-size:12px;color:#5E5D58;margin-top:2px">C:\Users\cem\thesis</div>
+<div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap"><span class="pill" style="background:#F0EFEA;color:#4A4945">folder, no git</span><span class="pill" style="background:#E6F3EA;color:#226640">Spec Kit</span></div>
+</div>
+<div class="card" style="padding:14px;border-style:dashed;background:transparent">
+<div style="font-size:13px;color:#4A4945;line-height:1.5">Adding a folder installs the Spec Kit skills and the default agents for it. Git is set up when the first loop starts, if you agree.</div>
+</div>
+</aside>
+
+<main style="flex:999 1 560px;min-width:0;display:flex;flex-direction:column;gap:28px">
+
+<section aria-labelledby="needs">
+<h2 id="needs" style="margin:0 0 12px;font-size:20px">Needs you</h2>
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px">
+<div class="card" style="padding:16px;border-color:#E9B48F;background:#FFFCF9">
+<div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap"><span class="pill" style="background:#FBEDE3;color:#9A3A0B">Question · loop waits</span><span style="font-size:12px;color:#5E5D58">4 min ago</span></div>
+<div style="font-size:13px;color:#5E5D58;margin-top:10px">shop-demo › 007-cart · T014 · builder</div>
+<div style="font-weight:600;margin-top:4px;line-height:1.45">Adding more than the stock: refuse the whole line, or add what is left and say so?</div>
+<div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap"><a class="btn" href="Run.dc.html">Answer</a><span style="font-size:12px;color:#5E5D58;align-self:center">The answer is committed to spec.md</span></div>
+</div>
+<div class="card" style="padding:16px">
+<div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap"><span class="pill" style="background:#E6F3EA;color:#226640">Ready to merge</span><span style="font-size:12px;color:#5E5D58">1 h ago</span></div>
+<div style="font-size:13px;color:#5E5D58;margin-top:10px">notes-site › 002-search · 31 tasks</div>
+<div style="font-weight:600;margin-top:4px;line-height:1.45">All 3 user stories reviewed · 14/14 criteria · gates green vs baseline</div>
+<div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap"><a class="btn btn2" href="Run.dc.html">Review &amp; merge</a></div>
+</div>
+</div>
+</section>
+
+<section aria-labelledby="loops">
+<h2 id="loops" style="margin:0 0 12px;font-size:20px">Running loops</h2>
+<div style="display:flex;flex-direction:column;gap:12px">
+<a href="Run.dc.html" class="card" style="display:block;padding:16px;text-decoration:none;color:#1C1C1A">
+<div style="display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap">
+<div><span style="font-weight:600">shop-demo › 007-cart</span> <span style="color:#5E5D58;font-size:13px">· pipeline Standard</span></div>
+<div style="font-size:13px;color:#5E5D58">18 min · $1.12</div>
+</div>
+<div style="display:flex;gap:4px;margin-top:12px" aria-label="Phase progress">
+<div style="flex:4;height:8px;border-radius:4px;background:#2E7D4F"></div>
+<div style="flex:6;height:8px;border-radius:4px;background:#2E7D4F"></div>
+<div style="flex:9;height:8px;border-radius:4px;background:linear-gradient(90deg,#2F52C9 45%,#DCE3F8 45%)"></div>
+<div style="flex:8;height:8px;border-radius:4px;background:#E3E2DC"></div>
+<div style="flex:7;height:8px;border-radius:4px;background:#E3E2DC"></div>
+<div style="flex:4;height:8px;border-radius:4px;background:#E3E2DC"></div>
+</div>
+<div style="display:flex;gap:16px;margin-top:12px;flex-wrap:wrap;font-size:13px">
+<span><b>Phase 3 · US1 Add to cart</b></span>
+<span style="color:#5E5D58">T014 of 38</span>
+<span style="display:inline-flex;align-items:center;gap:6px"><span style="width:8px;height:8px;border-radius:50%;background:#B4470F"></span>builder waits for your answer</span>
+<span style="display:inline-flex;align-items:center;gap:6px;color:#5E5D58"><span style="width:8px;height:8px;border-radius:50%;background:#C9C8C1"></span>reviewer idle until the US1 checkpoint</span>
+</div>
+</a>
+<div class="card" style="padding:16px">
+<div style="display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap">
+<div><span style="font-weight:600">notes-site › 003-tags</span> <span style="color:#5E5D58;font-size:13px">· pipeline Standard + security review</span></div>
+<div style="font-size:13px;color:#5E5D58">41 min · $1.29</div>
+</div>
+<div style="display:flex;gap:4px;margin-top:12px" aria-label="Phase progress">
+<div style="flex:3;height:8px;border-radius:4px;background:#2E7D4F"></div>
+<div style="flex:5;height:8px;border-radius:4px;background:#2E7D4F"></div>
+<div style="flex:7;height:8px;border-radius:4px;background:#2E7D4F"></div>
+<div style="flex:9;height:8px;border-radius:4px;background:linear-gradient(90deg,#2F52C9 80%,#DCE3F8 80%)"></div>
+<div style="flex:3;height:8px;border-radius:4px;background:#E3E2DC"></div>
+</div>
+<div style="display:flex;gap:16px;margin-top:12px;flex-wrap:wrap;font-size:13px">
+<span><b>Phase 4 · US2 Filter by tag</b></span>
+<span style="color:#5E5D58">22 of 31 tasks</span>
+<span style="display:inline-flex;align-items:center;gap:6px"><span style="width:8px;height:8px;border-radius:50%;background:#2F52C9"></span>reviewer checking US2 · running <span class="mono" style="font-size:12px">npm test -- tags</span></span>
+<span style="display:inline-flex;align-items:center;gap:6px"><span style="width:8px;height:8px;border-radius:50%;background:#2F52C9"></span>security-reviewer reading api/tags.ts</span>
+</div>
+</div>
+</div>
+</section>
+
+<section aria-labelledby="features">
+<h2 id="features" style="margin:0 0 12px;font-size:20px">Features</h2>
+<div class="card" style="overflow-x:auto">
+<table style="width:100%;border-collapse:collapse;font-size:14px;min-width:620px">
+<thead><tr style="text-align:left;border-bottom:1px solid #E3E2DC">
+<th class="th" style="padding:12px 16px">Feature</th><th class="th" style="padding:12px 16px">Project</th><th class="th" style="padding:12px 16px">Stage</th><th class="th" style="padding:12px 16px">Spec Kit step</th><th class="th" style="padding:12px 16px"></th>
+</tr></thead>
+<tbody>
+<tr style="border-bottom:1px solid #EFEEE9"><td style="padding:12px 16px;font-weight:600">008-checkout</td><td style="padding:12px 16px;color:#5E5D58">shop-demo</td><td style="padding:12px 16px"><span class="pill" style="background:#F3EEFB;color:#5B3BB0">Spec session</span></td><td style="padding:12px 16px;color:#4A4945">Clarify · 2 of 4 questions</td><td style="padding:12px 16px;text-align:right"><a href="Spec.dc.html">Continue</a></td></tr>
+<tr style="border-bottom:1px solid #EFEEE9"><td style="padding:12px 16px;font-weight:600">007-cart</td><td style="padding:12px 16px;color:#5E5D58">shop-demo</td><td style="padding:12px 16px"><span class="pill" style="background:#EEF1FB;color:#2F52C9">Building</span></td><td style="padding:12px 16px;color:#4A4945">Locked · implement</td><td style="padding:12px 16px;text-align:right"><a href="Run.dc.html">Watch</a></td></tr>
+<tr style="border-bottom:1px solid #EFEEE9"><td style="padding:12px 16px;font-weight:600">002-search</td><td style="padding:12px 16px;color:#5E5D58">notes-site</td><td style="padding:12px 16px"><span class="pill" style="background:#E6F3EA;color:#226640">Ready to merge</span></td><td style="padding:12px 16px;color:#4A4945">Locked · done</td><td style="padding:12px 16px;text-align:right"><a href="Run.dc.html">Review</a></td></tr>
+<tr style="border-bottom:1px solid #EFEEE9"><td style="padding:12px 16px;font-weight:600">006-total</td><td style="padding:12px 16px;color:#5E5D58">shop-demo</td><td style="padding:12px 16px"><span class="pill" style="background:#F0EFEA;color:#4A4945">Merged</span></td><td style="padding:12px 16px;color:#4A4945">3.5 min · $0.31</td><td style="padding:12px 16px;text-align:right"><a href="Run.dc.html">History</a></td></tr>
+<tr><td style="padding:12px 16px;font-weight:600">001-plots</td><td style="padding:12px 16px;color:#5E5D58">thesis-scripts</td><td style="padding:12px 16px"><span class="pill" style="background:#F3EEFB;color:#5B3BB0">Spec session</span></td><td style="padding:12px 16px;color:#4A4945">Specify · draft</td><td style="padding:12px 16px;text-align:right"><a href="Spec.dc.html">Continue</a></td></tr>
+</tbody>
+</table>
+</div>
+<div style="margin-top:12px"><a class="btn" href="Spec.dc.html">+ New feature</a></div>
+</section>
+
+</main>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":1000}}'>
+class Component extends DCLogic {
+renderVals() {
+return {};
+}
+}
+</script>
+</body>
+</html>
