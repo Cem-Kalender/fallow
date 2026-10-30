@@ -41,23 +41,25 @@ The global events are `project`, `feature`, `loop_progress`, `needs_you` and `ne
 
 | Method and path | Body | Returns |
 |---|---|---|
+| `POST /api/projects/<p>/conversation` | | `{conversation}`: the project conversation, created on first use (FR-034) |
 | `GET /api/conversations/<c>` | | `{kind, mode, turns[], busy, pending_approval?}` |
 | `POST /api/conversations/<c>/say` | `{text}` | `{turn}`. The reply streams through the `conv:<c>` events |
 | `POST /api/conversations/<c>/mode` | `{mode}` | The new mode (FR-007a) |
 | `POST /api/conversations/<c>/approve` | `{id, answer: once\|always\|deny, prefix?}` | Answers the lead's pending command (S-7) |
-| `POST /api/projects/<p>/features` | `{title, from_turn?}` | A new feature, and its spec session forked from the project conversation (FR-034) |
+| `POST /api/projects/<p>/features` | `{title}` | A new feature, and its spec session forked from the project conversation (FR-034) |
 
 ## Spec sessions and documents
 
 | Method and path | Body | Returns |
 |---|---|---|
-| `GET /api/features/<f>` | | `{stage, step, documents[], markers[], lock_check, locks[], pipeline, autonomy, budget_suggestion}` |
-| `GET /api/features/<f>/doc?path=<p>` | | `{text, version, last_edit_by}` |
-| `PUT /api/features/<f>/doc?path=<p>` | `{text, version}` | Refused with 409 while a lead turn runs, or if the version moved; the page keeps the draft (research S-21). Only the spec paths are allowed |
-| `POST /api/features/<f>/step` | `{to}` | Moves the stepper (FR-006); the lead's next turn runs that step |
-| `POST /api/features/<f>/lock` | `{pipeline, autonomy, budget}` | 422 with the lock check's problems, or `{lock, loop}` |
-| `POST /api/features/<f>/unlock` | `{confirm: true}` | Pauses the loop after its current step, and reopens the session (FR-009) |
-| `GET /api/features/<f>/relock-preview` | | `{affected: ["US2", ...], why[]}`, shown before the new lock (S-17) |
+| `GET /api/features/<p>/<f>` | | `{stage, step, documents[], markers[], lock_check, locks[], pipeline, autonomy, budget_suggestion}` |
+| `GET /api/features/<p>/<f>/doc?path=<p>` | | `{text, version, last_edit_by}` |
+| `PUT /api/features/<p>/<f>/doc?path=<p>` | `{text, version}` | Refused with 409 while a lead turn runs, or if the version moved; the page keeps the draft (research S-21). Only the spec paths are allowed |
+| `POST /api/features/<p>/<f>/step` | `{to}` | Moves the stepper (FR-006); the lead's next turn runs that step |
+| `POST /api/features/<p>/<f>/lock` | `{pipeline, autonomy, budget}` | 422 with the lock check's problems, or `{lock, loop}` |
+| `POST /api/features/<p>/<f>/unlock` | `{confirm: true}` | Pauses the loop after its current step, and reopens the session (FR-009) |
+| `POST /api/features/<p>/<f>/dismiss` | `{finding}` | Dismisses an analyze finding (recorded); a CRITICAL one no longer blocks the lock |
+| `GET /api/features/<p>/<f>/relock-preview` | | `{affected: ["US2", ...], why[]}`, shown before the new lock (S-17) |
 
 ## Loops
 

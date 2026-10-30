@@ -226,6 +226,205 @@ impl Web {
     }
 }
 
+/// `%2F` and friends, and `+` as a space in queries.
+fn percent_decode(s: &str) -> String {
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        match b[i] {
+            b'%' if i + 2 < b.len() => {
+                let hex = std::str::from_utf8(&b[i + 1..i + 3]).ok();
+                match hex.and_then(|h| u8::from_str_radix(h, 16).ok()) {
+                    Some(v) => {
+                        out.push(v);
+                        i += 3;
+                    }
+                    None => {
+                        out.push(b'%');
+                        i += 1;
+                    }
+                }
+            }
+            c => {
+                out.push(c);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+fn query_arg(url: &str, key: &str) -> Option<String> {
+    let q = url.split_once('?').map(|(_, q)| q)?;
+    q.split('&')
+        .find_map(|kv| kv.strip_prefix(&format!("{key}=")))
+        .map(|v| percent_decode(&v.replace('+', " ")))
+}
+
+/// The studio's routes (007 contracts/web-api.md): `None` when the path is not one of them.
+fn studio_route(
+    method: &str,
+    parts: &[&str],
+    body: &Value,
+    url: &str,
+) -> Option<Result<Request, String>> {
+    use crate::studio::Req;
+    let s = |k: &str| body.get(k).and_then(Value::as_str).map(str::to_string);
+    let need = |k: &str| s(k).ok_or_else(|| format!("{k} is required"));
+    let confirmed = || {
+        if body.get("confirm").and_then(Value::as_bool) == Some(true) {
+            Ok(())
+        } else {
+            Err("this needs the engineer's confirmation".to_string())
+        }
+    };
+    let r = |req: Req| Some(Ok(Request::Studio(req)));
+    match (method, parts) {
+        ("POST", ["api", "projects"]) => match need("path") {
+            Ok(p) => r(Req::AddProject { path: p.into() }),
+            Err(e) => Some(Err(e)),
+        },
+        ("GET", ["api", "projects", p]) => r(Req::Project { id: p.to_string() }),
+        ("DELETE", ["api", "projects", p]) => {
+            Some(confirmed().map(|()| Request::Studio(Req::RemoveProject { id: p.to_string() })))
+        }
+        ("PATCH", ["api", "projects", p]) => r(Req::PatchProject {
+            id: p.to_string(),
+            patch: body.clone(),
+        }),
+        ("PUT", ["api", "projects", p, "commands"]) => {
+            let commands = body
+                .get("commands")
+                .and_then(Value::as_array)
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|c| c.as_str().map(str::to_string))
+                        .collect()
+                })
+                .unwrap_or_default();
+            r(Req::SetCommands {
+                id: p.to_string(),
+                commands,
+            })
+        }
+        ("POST", ["api", "projects", p, "git-init"]) => {
+            Some(confirmed().map(|()| Request::Studio(Req::GitInit { id: p.to_string() })))
+        }
+        ("POST", ["api", "projects", p, "conversation"]) => r(Req::ProjectConversation {
+            project: p.to_string(),
+        }),
+        ("POST", ["api", "projects", p, "features"]) => match need("title") {
+            Ok(t) => r(Req::NewFeature {
+                project: p.to_string(),
+                title: t,
+            }),
+            Err(e) => Some(Err(e)),
+        },
+        ("GET", ["api", "conversations", c]) => r(Req::Conversation { id: c.to_string() }),
+        ("POST", ["api", "conversations", c, "say"]) => match need("text") {
+            Ok(t) => r(Req::Say {
+                conv: c.to_string(),
+                text: t,
+            }),
+            Err(e) => Some(Err(e)),
+        },
+        ("POST", ["api", "conversations", c, "mode"]) => {
+            match s("mode")
+                .as_deref()
+                .and_then(crate::agent::rights::Mode::parse)
+            {
+                Some(mode) => r(Req::SetMode {
+                    conv: c.to_string(),
+                    mode,
+                }),
+                None => Some(Err("mode: read_only, approved, ask or run_anything".into())),
+            }
+        }
+        ("POST", ["api", "conversations", c, "approve"]) => {
+            use crate::conversation::events::ApprovalAnswer;
+            let answer = match s("answer").as_deref() {
+                Some("once") => ApprovalAnswer::Once,
+                Some("always") => ApprovalAnswer::Always,
+                Some("deny") => ApprovalAnswer::Deny,
+                _ => return Some(Err("answer: once, always or deny".into())),
+            };
+            match need("id") {
+                Ok(id) => r(Req::Approve {
+                    conv: c.to_string(),
+                    id,
+                    answer,
+                    prefix: s("prefix"),
+                }),
+                Err(e) => Some(Err(e)),
+            }
+        }
+        ("GET", ["api", "features", p, f]) => r(Req::Feature {
+            project: p.to_string(),
+            feature: f.to_string(),
+        }),
+        ("GET", ["api", "features", p, f, "doc"]) => match query_arg(url, "path") {
+            Some(path) => r(Req::Doc {
+                project: p.to_string(),
+                feature: f.to_string(),
+                path,
+            }),
+            None => Some(Err("path is required".into())),
+        },
+        ("PUT", ["api", "features", p, f, "doc"]) => {
+            match (query_arg(url, "path"), need("text"), need("version")) {
+                (Some(path), Ok(text), Ok(version)) => r(Req::PutDoc {
+                    project: p.to_string(),
+                    feature: f.to_string(),
+                    path,
+                    text,
+                    version,
+                }),
+                _ => Some(Err("path, text and version are required".into())),
+            }
+        }
+        ("POST", ["api", "features", p, f, "step"]) => match need("to") {
+            Ok(to) => r(Req::SetStep {
+                project: p.to_string(),
+                feature: f.to_string(),
+                to,
+            }),
+            Err(e) => Some(Err(e)),
+        },
+        ("POST", ["api", "features", p, f, "dismiss"]) => {
+            match body.get("finding").and_then(Value::as_u64) {
+                Some(i) => r(Req::Dismiss {
+                    project: p.to_string(),
+                    feature: f.to_string(),
+                    finding: i as usize,
+                }),
+                None => Some(Err("finding is required".into())),
+            }
+        }
+        ("POST", ["api", "features", p, f, "lock"]) => {
+            let level = match s("autonomy").as_deref() {
+                None => None,
+                Some("strict") => Some(crate::run::events::Level::Strict),
+                Some("normal") => Some(crate::run::events::Level::Normal),
+                Some("free") => Some(crate::run::events::Level::Free),
+                Some(o) => return Some(Err(format!("autonomy {o:?}: strict, normal or free"))),
+            };
+            let budget = body.get("budget");
+            Some(Ok(Request::Lock {
+                project: p.to_string(),
+                feature: f.to_string(),
+                pipeline: s("pipeline"),
+                level,
+                budget_usd: budget.and_then(|b| b.get("usd")).and_then(Value::as_f64),
+                budget_minutes: budget
+                    .and_then(|b| b.get("minutes"))
+                    .and_then(Value::as_u64),
+            }))
+        }
+        _ => None,
+    }
+}
+
 fn header_value<'a>(req: &'a tiny_http::Request, name: &str) -> Option<&'a str> {
     req.headers()
         .iter()
@@ -295,6 +494,13 @@ fn handle(mut req: tiny_http::Request, tx: &Sender<Msg>, port: u16, secret: &str
         }
     };
     let id = |s: &str| s.parse::<u64>().ok();
+    let decoded: Vec<String> = parts.iter().map(|p| percent_decode(p)).collect();
+    let dparts: Vec<&str> = decoded.iter().map(String::as_str).collect();
+    match studio_route(&method, &dparts, &body, &url) {
+        Some(Ok(r)) => return json_reply(req, ask(tx, r)),
+        Some(Err(e)) => return json_reply(req, Reply::Err(e)),
+        None => {}
+    }
     match (is_get, parts.as_slice()) {
         (true, []) => respond(req, 200, "text/html; charset=utf-8", INDEX.into()),
         (true, ["app.js"]) => respond(req, 200, "text/javascript; charset=utf-8", APP_JS.into()),
@@ -506,6 +712,39 @@ mod tests {
             ),
             Gate::Refuse { code: 401, .. }
         ));
+    }
+
+    #[test]
+    fn the_studio_routes_map_to_requests() {
+        use crate::studio::Req;
+        let b = json!({ "text": "hi", "version": "v1", "confirm": true });
+        let r = studio_route(
+            "PUT",
+            &["api", "features", "shop", "001-cart", "doc"],
+            &b,
+            "/api/features/shop/001-cart/doc?path=specs%2F001-cart%2Fspec.md",
+        );
+        match r {
+            Some(Ok(Request::Studio(Req::PutDoc { path, version, .. }))) => {
+                assert_eq!(path, "specs/001-cart/spec.md");
+                assert_eq!(version, "v1");
+            }
+            other => panic!("{other:?}"),
+        }
+        assert!(
+            matches!(
+                studio_route("DELETE", &["api", "projects", "shop"], &json!({}), "/"),
+                Some(Err(_))
+            ),
+            "removing needs the confirmation"
+        );
+        assert!(matches!(
+            studio_route("DELETE", &["api", "projects", "shop"], &b, "/"),
+            Some(Ok(Request::Studio(Req::RemoveProject { .. })))
+        ));
+        assert!(studio_route("GET", &["api", "runs"], &b, "/").is_none());
+        assert_eq!(percent_decode("a%20b%2Fc"), "a b/c");
+        assert_eq!(percent_decode("100%"), "100%");
     }
 
     #[test]

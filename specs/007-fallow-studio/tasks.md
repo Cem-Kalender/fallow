@@ -168,21 +168,21 @@ Unless a task says otherwise, tests use the `fake` runtime (research S-13).
   - documents read and written with versions; while a lead turn runs, writes are refused (research S-21);
   - the branches of research S-9: `NNN-name` from the base branch, which is recorded as the merge target.
 - [X] T033 [US1] The lock in `src/speckit/lock.rs`: the checks, the budget suggestion, the lock commit, the `git init` offer for plain folders, and creating the loop. The loop's start arrives in US2.
-- [ ] T034 [US1] The API routes for projects, conversations and features, as contracts/web-api.md describes, in `src/service/http.rs`.
-- [ ] T035 [US1] The project conversation screen in `src/service/web/screens/project.js`, matching `mockup/Project.dc.html`:
+- [X] T034 [US1] The API routes for projects, conversations and features, as contracts/web-api.md describes, in `src/service/http.rs`.
+- [X] T035 [US1] The project conversation screen in `src/service/web/screens/project.js`, matching `mockup/Project.dc.html`:
   - the features and project files column;
   - the chat with the streaming reply and the files read;
   - the proposed feature card with "Start spec session";
   - the mode chip with Shift+Tab;
   - the approval prompt;
   - the "lead knows" and ideas panels.
-- [ ] T036 [US1] The spec session screen in `src/service/web/screens/spec.js`, matching `mockup/Spec.dc.html`:
+- [X] T036 [US1] The spec session screen in `src/service/web/screens/spec.js`, matching `mockup/Spec.dc.html`:
   - the stepper;
   - the chat, with clarify questions as choices;
   - the document tabs, editable with versions, with markers highlighted; read-only while a lead turn runs, keeping the engineer's draft, then applying it or showing both versions to merge (research S-21);
   - "Lock & start the loop" with its checks;
   - the lock dialog: pipeline, autonomy and budget.
-- [ ] T037 [US1] The minimal dashboard in `src/service/web/screens/dashboard.js`: the projects column with "Add folder" (a path input), and the features table. The rest comes in US5.
+- [X] T037 [US1] The minimal dashboard in `src/service/web/screens/dashboard.js`: the projects column with "Add folder" (a path input), and the features table. The rest comes in US5.
 
 **Checkpoint**: Q1 and Q2 of quickstart.md work with real agents. US1's tests pass.
 

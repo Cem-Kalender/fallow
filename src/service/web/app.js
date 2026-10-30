@@ -173,7 +173,223 @@ const Fallow = (() => {
 
   const money = (v) => (typeof v === "number" ? `$${v.toFixed(2)}` : "cost not reported");
 
-  return { esc, h, raw, LOGO, icon, api, get, post, watch, confirm, register, route, show, start, money, get headerWatch() { return headerWatch; } };
+  // ---- Markdown, small: paragraphs, lists, `code`, **bold** (the lead's replies) -------------
+  function inline(s) {
+    return esc(s)
+      .replace(/`([^`]+)`/g, "<code>$1</code>")
+      .replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>");
+  }
+  function md(text) {
+    const out = [];
+    let list = null;
+    let para = [];
+    const flushPara = () => {
+      if (para.length) { out.push(`<p>${inline(para.join(" "))}</p>`); para = []; }
+    };
+    const flushList = () => {
+      if (list) { out.push(`<${list.tag}>${list.items.map((i) => `<li>${inline(i)}</li>`).join("")}</${list.tag}>`); list = null; }
+    };
+    for (const line of String(text || "").split("\n")) {
+      const b = line.match(/^\s*[-*] (.*)$/);
+      const n = line.match(/^\s*\d+[.)] (.*)$/);
+      if (b || n) {
+        flushPara();
+        const tag = b ? "ul" : "ol";
+        if (list && list.tag !== tag) flushList();
+        if (!list) list = { tag, items: [] };
+        list.items.push((b || n)[1]);
+      } else if (!line.trim()) {
+        flushPara();
+        flushList();
+      } else {
+        flushList();
+        para.push(line.trim());
+      }
+    }
+    flushPara();
+    flushList();
+    return raw(out.join(""));
+  }
+
+  // ---- The chat with the lead (screens 2 and 5) ---------------------------------------------
+  const MODES = ["ask", "run_anything", "read_only", "approved"];
+  const MODE_LABEL = { ask: "Ask", run_anything: "Run anything", read_only: "Read only", approved: "Approved commands" };
+  const nextMode = (m) => MODES[(MODES.indexOf(m) + 1) % MODES.length];
+
+  // The files the lead read in a turn's activity.
+  const filesRead = (activity) => [...new Set((activity || []).filter((a) => a.kind === "read").map((a) => a.text))];
+
+  function leadMsg(meta, body, extra) {
+    return h`<div class="lead"><div class="avatar" aria-hidden="true">L</div><div class="lead-body">${meta ? h`<div class="lead-meta">${meta}</div>` : ""}${body}${extra || ""}</div></div>`;
+  }
+
+  function question(q) {
+    if (!q || !q.options) return raw("");
+    return h`<div class="card question mt-8"><div class="k">QUESTION</div>
+      <div class="b lh">${q.text}</div>
+      ${q.why ? h`<div class="small muted mt-6 lh">${q.why}</div>` : ""}
+      <div class="col gap-8 mt-12">${q.options.map((o) => h`<button class="opt${o.recommended ? " rec" : ""}" data-act="choose" data-text="${`${o.label}: ${o.text}`}"><b class="none">${o.label}</b><span>${o.text}${o.recommended ? h` <span class="pill blue">recommended</span>` : ""}</span></button>`)}</div></div>`;
+  }
+
+  function proposal(p) {
+    if (!p) return raw("");
+    return h`<div class="card proposal"><div class="row between wrap"><span class="pill purple">proposed feature</span>${p.after ? h`<span class="tiny muted">after ${p.after}</span>` : ""}</div>
+      <div class="b mt-8">${p.title}</div><div class="small body-ink mt-4 lh">${p.summary}</div>
+      <div class="tiny muted mt-10">Carried into the spec session: this conversation and the files read.</div>
+      <div class="row wrap gap-8 mt-12"><button class="btn" data-act="start-feature" data-title="${p.title}">Start spec session</button></div></div>`;
+  }
+
+  // The messages of a conversation view (`GET /api/conversations/<c>`).
+  function messages(c) {
+    const out = [];
+    const turns = c.turns || [];
+    turns.forEach((t, i) => {
+      out.push(h`<div class="you">${t.said}</div>`);
+      if ((t.edits || []).length) {
+        out.push(h`<div class="tiny muted">Your edits went with it: ${t.edits.map((e) => e.path).join(", ")}</div>`);
+      }
+      const last = i === turns.length - 1;
+      const r = t.result || {};
+      if (t.reply === null || t.reply === undefined) {
+        const reads = filesRead(c.activity);
+        out.push(leadMsg(h`<b>lead</b> · working`, c.live ? md(c.live) : h`<span class="typing">The lead is answering…</span>`,
+          reads.length ? h`<div class="act small mt-6">${icon.file} Read ${reads.slice(0, 6).join(" · ")}</div>` : ""));
+        return;
+      }
+      const meta = [h`<b>lead</b>`];
+      if (r.step && r.step !== "none") meta.push(raw(` · ran /speckit-${esc(r.step)}`));
+      const extras = [];
+      const reads = [...new Set([...(last ? filesRead(c.activity) : []), ...(r.files_read || [])])];
+      if (reads.length) extras.push(h`<div class="act small mt-6">${icon.file} Read ${reads.slice(0, 6).join(" · ")}</div>`);
+      if ((t.documents_changed || []).length) extras.push(h`<div class="row wrap gap-6 mt-8">${t.documents_changed.map((d) => h`<span class="pill grey">${d}</span>`)}</div>`);
+      if ((t.discarded || []).length) extras.push(h`<div class="notice-line">Thrown away, outside the spec documents: ${t.discarded.join(", ")}</div>`);
+      if (t.failure) extras.push(h`<div class="notice-line">${t.failure}</div>`);
+      if (last && r.question) extras.push(question(r.question));
+      if (r.proposed_feature) extras.push(proposal(r.proposed_feature));
+      if (r.proposed_pipeline) extras.push(h`<div class="card pad-12 mt-8"><div class="row between"><span class="pill blue">proposed pipeline</span><a class="btn btn2 sm" href="#/pipelines">Open in the designer</a></div><pre class="term">${r.proposed_pipeline}</pre></div>`);
+      out.push(leadMsg(meta, md(t.reply), extras));
+    });
+    if (c.pending_approval) {
+      const a = c.pending_approval;
+      out.push(h`<div class="card approval"><div class="b">The lead asks to run a command</div>
+        <div class="term">${a.command}</div>
+        <div class="row wrap gap-8 mt-10">
+          <button class="btn" data-act="approve" data-id="${a.id}" data-answer="once">Allow once</button>
+          <button class="btn btn2" data-act="approve" data-id="${a.id}" data-answer="always" data-command="${a.command}">Always in this project</button>
+          <button class="btn btn2" data-act="approve" data-id="${a.id}" data-answer="deny">Deny</button>
+        </div></div>`);
+    }
+    if (!out.length) out.push(h`<div class="empty small">Say what you want to talk about; the lead answers from the project's code and documents.</div>`);
+    return out;
+  }
+
+  function composer(c, placeholder) {
+    const mode = c ? c.mode : "ask";
+    return h`<form class="composer" data-submit="say">
+      <div class="composer-row">
+        <button type="button" class="mode-chip" data-act="mode" title="Shift+Tab switches the mode" aria-label="${`Mode: ${MODE_LABEL[mode]}. Shift+Tab switches it.`}">${icon.shield}${MODE_LABEL[mode]}<span class="hint">· Shift+Tab</span></button>
+        <label for="say" class="sr">Message the lead</label>
+        <textarea id="say" rows="2" placeholder="${placeholder}"></textarea>
+        <button class="btn" type="submit"${raw(c && c.busy ? " disabled" : "")}>Send</button>
+      </div></form>`;
+  }
+
+  // Shared actions of a chat; returns true when it handled `name`.
+  async function chatAct(conv, name, el, after) {
+    if (name === "mode") {
+      const v = await get(`/api/conversations/${conv}`);
+      await post(`/api/conversations/${conv}/mode`, { mode: nextMode(v.mode) });
+      after();
+      return true;
+    }
+    if (name === "approve") {
+      const body = { id: el.dataset.id, answer: el.dataset.answer };
+      if (body.answer === "always") {
+        const words = (el.dataset.command || "").split(/\s+/).filter(Boolean);
+        body.prefix = words.slice(0, Math.min(words.length, 2)).join(" ");
+        const ok = await confirm({
+          title: "Allow always in this project?",
+          text: "Commands starting with this will run without asking, in this project's chats and for its agents.",
+          items: [body.prefix],
+          ok: "Allow always",
+        });
+        if (!ok) return true;
+      }
+      try { await post(`/api/conversations/${conv}/approve`, body); } catch (e) { alertLine(e.message); }
+      after();
+      return true;
+    }
+    if (name === "choose") {
+      const box = document.getElementById("say");
+      if (box) { box.value = el.dataset.text; box.focus(); }
+      return true;
+    }
+    return false;
+  }
+
+  async function sendSay(conv, after) {
+    const box = document.getElementById("say");
+    const text = box ? box.value.trim() : "";
+    if (!text) return;
+    try {
+      await post(`/api/conversations/${conv}/say`, { text });
+      box.value = "";
+    } catch (e) { alertLine(e.message); }
+    after();
+  }
+
+  // Shift+Tab in the message box switches the mode, as in Claude Code (FR-007a).
+  document.addEventListener("keydown", (ev) => {
+    if (ev.key === "Tab" && ev.shiftKey && ev.target && ev.target.id === "say") {
+      ev.preventDefault();
+      const chip = document.querySelector("[data-act=mode]");
+      if (chip) chip.click();
+    }
+  });
+
+  // A one-line message at the top of the screen.
+  function alertLine(text) {
+    let el = document.getElementById("alert-line");
+    if (!el) {
+      el = document.createElement("div");
+      el.id = "alert-line";
+      el.className = "notice";
+      el.setAttribute("role", "alert");
+      document.getElementById("app").prepend(el);
+    }
+    el.textContent = text;
+    setTimeout(() => { if (el.textContent === text) el.remove(); }, 8000);
+  }
+
+  // Forms: `data-submit="name"` calls the screen's `act(name, form, ev)`.
+  document.addEventListener("submit", (ev) => {
+    const f = ev.target.closest("[data-submit]");
+    if (!f || !current || !current.act) return;
+    ev.preventDefault();
+    current.act(f.dataset.submit, f, ev);
+  });
+
+  const atEnd = (el) => !el || el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+
+  const stagePill = (stage) => ({
+    spec_session: h`<span class="pill purple">spec</span>`,
+    locked: h`<span class="pill blue">locked</span>`,
+    building: h`<span class="pill blue">building</span>`,
+    ready_to_merge: h`<span class="pill green">ready</span>`,
+    done_unverified: h`<span class="pill orange">not verified</span>`,
+    merged: h`<span class="pill grey">merged</span>`,
+  })[stage] || h`<span class="pill grey">${stage}</span>`;
+
+  // Re-renders `render()` on every change in `scope`, until the screen is left.
+  function live(scope, render) {
+    const w = watch(scope, () => render());
+    return () => w.stop();
+  }
+
+  return { esc, h, raw, md, LOGO, icon, api, get, post, watch, live, confirm, register, route, show, start, money,
+    MODE_LABEL, messages, composer, chatAct, sendSay, alertLine, atEnd, stagePill, filesRead,
+    get headerWatch() { return headerWatch; } };
+
 })();
 
 document.addEventListener("DOMContentLoaded", () => Fallow.start());
