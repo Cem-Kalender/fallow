@@ -246,11 +246,11 @@ pub(crate) fn pause_for_limit(run: &mut Run, which: String, used: String) -> Res
 fn ask_limit(run: &mut Run, which: &str, used: &str) -> Result<(), String> {
     run.append(Event::NeedsEngineer {
         why: format!(
-            "The run's {which} limit is reached ({used}). Raise the limit, continue for one more step, or stop the run."
+            "The run's {which} limit is reached ({used}). Raise the limit, continue for one step, or stop the run."
         ),
         options: vec![
             "raise the limit".into(),
-            "continue once".into(),
+            "continue for one step".into(),
             "stop".into(),
         ],
     })

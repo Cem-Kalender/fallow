@@ -218,6 +218,9 @@ pub struct RunState {
     /// count against the time limit.
     pub paused_since: Option<String>,
     pub paused_secs: u64,
+    /// When the engineer was last asked something while the run was not paused: time waiting
+    /// for the engineer does not count either (FR-016a).
+    pub waiting_since: Option<String>,
     /// The latest event number.
     pub seq: u64,
     /// 007: set when this run is a loop over a locked feature.
@@ -293,6 +296,7 @@ impl RunState {
             allow_once: false,
             paused_since: None,
             paused_secs: 0,
+            waiting_since: None,
             seq: first.seq,
             feature_loop: None,
         };
@@ -305,6 +309,30 @@ impl RunState {
     /// Applies one event.
     pub fn apply(&mut self, l: &Logged) {
         self.seq = l.seq;
+        self.apply_event(l);
+        self.wait_clock(&l.at);
+    }
+
+    /// Starts or stops the clock of the time spent waiting for the engineer, which a pause
+    /// already covers.
+    fn wait_clock(&mut self, at: &str) {
+        let waiting = self.needs.is_some() && self.paused_since.is_none();
+        match (&self.waiting_since, waiting) {
+            (None, true) => self.waiting_since = Some(at.to_string()),
+            (Some(since), false) => {
+                if let (Some(a), Some(b)) = (
+                    super::time::parse_rfc3339(since),
+                    super::time::parse_rfc3339(at),
+                ) {
+                    self.paused_secs += b.saturating_sub(a);
+                }
+                self.waiting_since = None;
+            }
+            _ => {}
+        }
+    }
+
+    fn apply_event(&mut self, l: &Logged) {
         match &l.event {
             Event::RunCreated { .. } => self
                 .notes
@@ -754,7 +782,8 @@ impl RunState {
             .count()
     }
 
-    /// Minutes since building started, without the time the run was paused.
+    /// Minutes since building started, without the time the run was paused or waited for the
+    /// engineer.
     pub fn minutes_used(&self, now: u64) -> u64 {
         let Some(start) = self
             .building_started
@@ -768,8 +797,13 @@ impl RunState {
             .as_deref()
             .and_then(super::time::parse_rfc3339)
             .map_or(0, |p| now.saturating_sub(p));
+        let waiting_now = self
+            .waiting_since
+            .as_deref()
+            .and_then(super::time::parse_rfc3339)
+            .map_or(0, |p| now.saturating_sub(p));
         now.saturating_sub(start)
-            .saturating_sub(self.paused_secs + paused_now)
+            .saturating_sub(self.paused_secs + paused_now + waiting_now)
             / 60
     }
 

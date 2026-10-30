@@ -212,7 +212,7 @@ Unless a task says otherwise, tests use the `fake` runtime (research S-13).
   - an incomplete verdict, or a missing failing case;
   - a checker whose worktree changed;
   - a pipeline without gates or without a review, which ends `done_unverified` with its missing list.
-- [ ] T040 [P] [US2] `tests/us2_resume.rs` (CI gate VII): stops mid-task, mid-gates, mid-handover, mid-checkpoint and at ready. Each resumes in the right session, without repeating a completed task, gate run or review.
+- [X] T040 [P] [US2] `tests/us2_resume.rs` (CI gate VII): stops mid-task, mid-gates, mid-handover, mid-checkpoint and at ready. Each resumes in the right session, without repeating a completed task, gate run or review.
 - [X] T041 [P] [US2] `tests/us2_repairs.rs`:
   - a task's failing gate becomes a repair in the phase session, and after the cap the loop asks the engineer;
   - a failing review becomes a repair, then the checkpoint runs again, capped by `review_rounds`;
@@ -222,7 +222,7 @@ Unless a task says otherwise, tests use the `fake` runtime (research S-13).
   - the relock preview names the affected stories (research S-17);
   - after the relock, only those phases are rebuilt and reviewed;
   - a new baseline runs on the new lock commit.
-- [ ] T043 [P] [US2] `tests/us2_budget.rs`: the suggestion is tasks × the per-task amounts; the loop pauses at the limit with "continue for one step"; paused time and time waiting for the engineer do not count.
+- [X] T043 [P] [US2] `tests/us2_budget.rs`: the suggestion is tasks × the per-task amounts; the loop pauses at the limit with "continue for one step"; paused time and time waiting for the engineer do not count.
 
 ### Implementation for User Story 2
 
@@ -240,7 +240,7 @@ Unless a task says otherwise, tests use the `fake` runtime (research S-13).
 - [ ] T050 [US2] The outcome in `src/run/machine.rs` and `src/publish/local.rs`:
   - `ready`, or `done_unverified` with its missing list;
   - the merge of exactly the gated commit, refused when it does not merge cleanly.
-- [ ] T051 [US2] Budgets in `src/run/time.rs` and `src/run/state.rs` (FR-016a): the per-task suggestion, pausing at the limit, and excluding paused time and time waiting for the engineer. This also fixes 006's known gap.
+- [X] T051 [US2] Budgets in `src/run/time.rs` and `src/run/state.rs` (FR-016a): the per-task suggestion, pausing at the limit, and excluding paused time and time waiting for the engineer. This also fixes 006's known gap.
 - [ ] T052 [US2] Unlock and relock in `src/run/relock.rs` (research S-17): the affected stories from the two lock commits, the preview API, reopening phases, and a new baseline.
 - [ ] T053 [US2] The concurrency cap and the memory budget across loops and conversations in `src/run/engine.rs` (research S-19): restore 005/006's memory sampler into `src/platform/`, check the budget before a step starts, put chat turns first, and show "waiting for a slot".
 

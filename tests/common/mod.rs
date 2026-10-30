@@ -328,6 +328,16 @@ pub fn locked_calc(
     loop_steps: &str,
     pipeline: Option<&str>,
 ) -> (fallow::service::ToolEngine, PathBuf, u64) {
+    locked_calc_with(root, loop_steps, pipeline, Some((5.0, 60)))
+}
+
+/// `locked_calc` with the budget given at the lock, or the suggested one when `None`.
+pub fn locked_calc_with(
+    root: &Path,
+    loop_steps: &str,
+    pipeline: Option<&str>,
+    budget: Option<(f64, u64)>,
+) -> (fallow::service::ToolEngine, PathBuf, u64) {
     let repo = repo(root);
     let scenario = root.join("scenario.toml");
     std::fs::write(&scenario, format!("{}{loop_steps}", lead_writes_calc())).unwrap();
@@ -374,8 +384,8 @@ pub fn locked_calc(
             feature: "001-calc".into(),
             pipeline: pipeline.map(str::to_string),
             level: None,
-            budget_usd: Some(5.0),
-            budget_minutes: Some(60),
+            budget_usd: budget.map(|b| b.0),
+            budget_minutes: budget.map(|b| b.1),
         },
     )
     .unwrap();
