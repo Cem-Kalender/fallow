@@ -287,7 +287,9 @@ fn step(run: &mut Run, ctx: &Ctx) -> Result<(), String> {
     finish(run, &pl)
 }
 
-/// A maker's accepted work goes through the gates like a task's, when the pipeline has gates.
+/// A maker's accepted work goes through the gates like a task's, when the pipeline has gates
+/// and the step is at an end (a maker at the start writes tests that must fail first).
+#[allow(clippy::too_many_arguments)]
 fn maker_gated(
     run: &mut Run,
     ctx: &Ctx,
@@ -295,12 +297,32 @@ fn maker_gated(
     part: &str,
     phase: u32,
     commit: Option<String>,
+    gate: bool,
 ) -> Result<bool, String> {
     let Some(c) = commit else {
         return Ok(true);
     };
     if !pl.steps.iter().any(|s| s.agent == pipeline::GATES) {
         return Ok(true);
+    }
+    if !gate {
+        // Tests written to fail first (test-first): the gates run on this commit as a new
+        // baseline, so the tasks after it are judged against it, and what fails here is not
+        // counted against them until it passes (contracts/pipeline.md).
+        let missing: Vec<GateDef> = machine::gate_defs(run)
+            .into_iter()
+            .filter(|g| {
+                g.baseline
+                    && !run.state.gate_runs.iter().any(|r| {
+                        r.kind == GateKind::Baseline && r.result.gate == g.name && r.result.commit == c
+                    })
+            })
+            .collect();
+        if missing.is_empty() {
+            return Ok(true);
+        }
+        machine::run_gates(run, ctx, GateKind::Baseline, Some(part.to_string()), c, missing)?;
+        return Ok(false);
     }
     match gated(run, ctx, part, &c)? {
         None => Ok(false),
@@ -325,22 +347,22 @@ pub fn paused_by_engineer(run: &Run) -> bool {
         .is_some_and(|s| s.kind == SteeringKind::Pause)
 }
 
-/// The engineer's notes for the next step (FR-019) that no step has received yet: those after
-/// the latest step that started, for this agent or for any.
+/// The engineer's notes for the next step (FR-019) that this step, about to start, receives:
+/// each note goes to the first step that starts after it, for its agent or for any, once.
 fn notes_for(run: &Run, n: u32, def: &str) -> Vec<String> {
-    let since = run
-        .state
-        .steps
-        .values()
-        .filter(|s| s.n != n && s.started.is_some())
-        .map(|s| s.queued_seq)
-        .max()
-        .unwrap_or(0);
+    let for_def = |target: &Option<String>, d: Option<&str>| {
+        target.as_deref().is_none_or(|t| Some(t) == d)
+    };
     run.state
         .steering
         .iter()
-        .filter(|s| s.kind == SteeringKind::Note && s.seq > since)
-        .filter(|s| s.target.as_deref().is_none_or(|t| t == def))
+        .filter(|s| s.kind == SteeringKind::Note && for_def(&s.target, Some(def)))
+        // Not already given to a step that started after it.
+        .filter(|note| {
+            !run.state.steps.values().any(|st| {
+                st.n != n && st.started_seq > note.seq && for_def(&note.target, st.def.as_deref())
+            })
+        })
         .filter_map(|s| s.detail.clone())
         .collect()
 }
@@ -376,7 +398,7 @@ fn paths_match(globs: &[String], changed: &[String]) -> bool {
 /// The checker that answers a story's acceptance scenarios: the first one at the checkpoint's
 /// end without `paths`, which makes the pipeline verifying (contracts/pipeline.md). Other
 /// checkers answer their own checks in `findings` (contracts/step-results.md).
-fn scenario_checker(pl: &Pipeline, lib: &Library) -> Option<String> {
+pub(crate) fn scenario_checker(pl: &Pipeline, lib: &Library) -> Option<String> {
     pl.steps
         .iter()
         .find(|s| {
@@ -410,8 +432,13 @@ fn extra(
         .ok_or_else(|| format!("there is no agent named {:?}", s.agent))?;
     let checker = def.kind == Kind::Checker;
     let kind = if checker { StepKind::Review } else { StepKind::Make };
+    // A maker at the start (a test-writer) writes what must fail until the builder is done:
+    // its work is gated with the tasks, not on its own (contracts/pipeline.md, test-first).
+    let gate = s.at() == At::End;
+    // Whether it is done is decided from all its steps; the engineer's latest retry only
+    // starts a new round of tries.
     let fresh = fresh_since(run);
-    let of_part = |x: &&Step| x.part.as_deref() == Some(part) && x.queued_seq > fresh;
+    let of_part = |x: &&Step| x.part.as_deref() == Some(part);
     let repair = run
         .state
         .steps
@@ -420,7 +447,7 @@ fn extra(
         .filter(|x| x.kind == StepKind::Repair)
         .find(of_part)
         .cloned();
-    let since = repair.as_ref().map_or(fresh, |r| r.queued_seq);
+    let since = repair.as_ref().map_or(0, |r| r.queued_seq);
     let last = run
         .state
         .steps
@@ -430,6 +457,21 @@ fn extra(
         .find(of_part)
         .cloned();
     let builder = builder_of(pl);
+    let ask_again = |run: &mut Run, last: &Step| -> Result<bool, String> {
+        let text = machine::instruction_of(run, last.n);
+        queue(
+            run,
+            kind,
+            Some(part),
+            None,
+            at_phase,
+            &s.agent,
+            None,
+            &format!("{} ({part}) again", s.agent),
+            text,
+        )?;
+        Ok(false)
+    };
     match last.as_ref().map(|x| x.verified.clone()) {
         None => {
             if let Some(r) = &repair {
@@ -442,12 +484,14 @@ fn extra(
                     // A maker's work, repaired, is gated; a checker looks again.
                     Some((true, _)) if !checker => {
                         let c = r.verified_commit.clone();
-                        return maker_gated(run, ctx, pl, part, phase, c);
+                        return maker_gated(run, ctx, pl, part, phase, c, gate);
                     }
                     Some((true, _)) => {}
                 }
             } else if !s.paths.is_empty() {
-                // Only when the changes since its last run touch its paths.
+                // Only when the changes since its last run touch its paths: for a step at
+                // every phase's end, its run at an earlier phase counts.
+                let every_phase = part.contains("@phase-") && part.ends_with("-end");
                 let from = run
                     .state
                     .steps
@@ -455,8 +499,14 @@ fn extra(
                     .rev()
                     .find(|x| {
                         x.kind == kind
-                            && x.part.as_deref() == Some(part)
                             && x.verified.as_ref().is_some_and(|v| v.0)
+                            && (x.part.as_deref() == Some(part)
+                                || (every_phase
+                                    && x.def.as_deref() == Some(s.agent.as_str())
+                                    && x.part.as_deref().is_some_and(|p| {
+                                        p.starts_with(&format!("{}@phase-", s.agent))
+                                            && p.ends_with("-end")
+                                    })))
                     })
                     .and_then(|x| x.base.clone())
                     .unwrap_or_else(|| l.lock_commit.clone());
@@ -492,42 +542,45 @@ fn extra(
         Some(Some((true, _))) if checker => Ok(true),
         Some(Some((true, _))) => {
             let c = last.and_then(|x| x.verified_commit);
-            maker_gated(run, ctx, pl, part, phase, c)
+            maker_gated(run, ctx, pl, part, phase, c, gate)
         }
         Some(Some((false, reasons))) => {
             let last = last.unwrap_or_else(|| unreachable!());
+            let incomplete = checker && reasons.iter().all(|r| r.starts_with(INCOMPLETE));
+            let blocked = reasons.first().is_some_and(|r| r.starts_with(BLOCKED));
             // A checker that gave no usable verdict is asked again (FR-012).
-            if checker && reasons.iter().all(|r| r.starts_with(INCOMPLETE)) {
+            if incomplete {
                 let tries = run
                     .state
                     .steps
                     .values()
-                    .filter(|x| x.kind == kind && x.queued_seq > since && !machine::cut_short(x))
+                    .filter(|x| x.kind == kind && x.queued_seq > since.max(fresh) && !machine::cut_short(x))
                     .filter(of_part)
                     .count();
                 if tries < CHECK_TRIES {
-                    let text = machine::instruction_of(run, last.n);
-                    queue(
-                        run,
-                        kind,
-                        Some(part),
-                        None,
-                        at_phase,
-                        &s.agent,
-                        None,
-                        &format!("{} ({part}) again", s.agent),
-                        text,
-                    )?;
-                    return Ok(false);
+                    return ask_again(run, &last);
                 }
             }
-            if s.on_fail == OnFail::Engineer
-                || reasons.first().is_some_and(|r| r.starts_with(BLOCKED))
-                || (checker && reasons.iter().all(|r| r.starts_with(INCOMPLETE)))
-            {
+            if s.on_fail == OnFail::Engineer || blocked || incomplete {
+                // The engineer said "retry" since: the step runs again.
+                if last.queued_seq < fresh && !blocked {
+                    return ask_again(run, &last);
+                }
                 run.append(Event::NeedsEngineer {
-                    why: format!("{} ({part}) did not pass: {}", s.agent, reasons.join("; ")),
-                    options: vec!["retry".into(), "stop".into()],
+                    why: if blocked {
+                        format!(
+                            "The {} of {part} asks: {}",
+                            s.agent,
+                            reasons[0].trim_start_matches(BLOCKED)
+                        )
+                    } else {
+                        format!("{} ({part}) did not pass: {}", s.agent, reasons.join("; "))
+                    },
+                    options: if blocked {
+                        vec!["answer".into(), "stop".into()]
+                    } else {
+                        vec!["retry".into(), "stop".into()]
+                    },
                 })?;
                 return Ok(false);
             }
@@ -625,8 +678,18 @@ fn may_of(run: &Run, lib: &Library, def: &str) -> Vec<String> {
 
 /// The steps of a task: its build and repairs.
 fn task_steps<'a>(run: &'a Run, task: &str) -> impl Iterator<Item = &'a Step> {
+    // After a new lock that changed the task (or renumbered tasks), its earlier steps belong to
+    // the old task.
+    let since = run
+        .state
+        .feature_loop
+        .as_ref()
+        .and_then(|l| l.tasks.get(task))
+        .map_or(0, |t| t.since);
     run.state.steps.values().filter(move |s| {
-        s.task.as_deref() == Some(task) && matches!(s.kind, StepKind::Build | StepKind::Repair)
+        s.task.as_deref() == Some(task)
+            && s.queued_seq > since
+            && matches!(s.kind, StepKind::Build | StepKind::Repair)
     })
 }
 
@@ -636,8 +699,45 @@ fn repairs_of(run: &Run, part: &str) -> u32 {
         .values()
         .filter(|s| s.kind == StepKind::Repair && s.part.as_deref() == Some(part))
         .filter(|s| !machine::cut_short(s) && !s.reason.starts_with(RELOCK))
-        .filter(|s| s.queued_seq > fresh_since(run))
+        .filter(|s| {
+            s.queued_seq
+                > run
+                    .state
+                    .feature_loop
+                    .as_ref()
+                    .map_or(0, |l| l.relocked_seq)
+        })
         .count() as u32
+}
+
+/// How many more repairs the engineer allowed `part` since the latest new lock.
+fn allowed_more(run: &Run, part: &str) -> u32 {
+    let relock = run
+        .state
+        .feature_loop
+        .as_ref()
+        .map_or(0, |l| l.relocked_seq);
+    run.state
+        .steering
+        .iter()
+        .filter(|s| {
+            s.kind == SteeringKind::Resume
+                && s.detail.as_deref() == Some(machine::ONE_MORE)
+                && s.target.as_deref() == Some(part)
+                && s.seq > relock
+        })
+        .count() as u32
+}
+
+/// The engineer's latest "go on" after a question (a retry or one more repair).
+fn last_go(run: &Run) -> u64 {
+    run.state
+        .steering
+        .iter()
+        .filter(|s| s.kind == SteeringKind::Resume && s.detail.as_deref() != Some(machine::RESUMED))
+        .map(|s| s.seq)
+        .max()
+        .unwrap_or(0)
 }
 
 /// The reason of the step that brings a reopened story in line with a new lock.
@@ -664,7 +764,7 @@ fn take_lock(run: &mut Run, l: &LoopState, wt: &std::path::Path) -> Result<(), S
         }
     }
     std::fs::write(&file, &text).map_err(|e| format!("{}: {e}", file.display()))?;
-    git::commit_merge(wt, &format!("{msg}, the accepted tasks still ticked"))?;
+    git::commit_merge(wt, &format!("{msg}, the accepted tasks still ticked"), &[rel.as_str()])?;
     run.append(Event::Note {
         text: format!("lock {} was taken into the build branch", l.lock),
     })
@@ -779,7 +879,7 @@ fn repair_or_ask(
         });
     }
     let done = repairs_of(run, part);
-    if done >= cap {
+    if done >= cap + allowed_more(run, part) {
         if let Some(t) = task {
             run.append(Event::Task {
                 id: t.into(),
@@ -1462,7 +1562,7 @@ fn checkpoint(
                     )?;
                     return Ok(Some(false));
                 }
-                let allowed = last.as_ref().is_some_and(|s| s.queued_seq < fresh_since(run));
+                let allowed = last.as_ref().is_some_and(|s| s.queued_seq < last_go(run));
                 if c.on_fail == OnFail::Engineer && !allowed {
                     run.append(Event::NeedsEngineer {
                         why: format!(
@@ -1617,8 +1717,13 @@ fn start(run: &mut Run, ctx: &Ctx, n: u32) -> Result<(), String> {
     let call = Call {
         instruction: {
             let mut text = machine::instruction_of(run, n);
-            for note in notes_for(run, n, &defname) {
+            let notes = notes_for(run, n, &defname);
+            for note in &notes {
                 text.push_str(&format!("\n\nA note from the engineer for this step:\n{note}"));
+            }
+            // The step's instruction file says exactly what the agent was given.
+            if !notes.is_empty() {
+                let _ = std::fs::write(run.steps_dir().join(format!("{n}.prompt")), &text);
             }
             text
         },
@@ -1717,6 +1822,10 @@ pub fn process(run: &mut Run, ctx: &Ctx, n: u32) -> Result<(), String> {
         })
     };
     if let Some(StepEnd::Failed { why }) = &step.end {
+        // A crash, a time-out or a stop: what the agent committed or did to the locked
+        // documents is dealt with all the same.
+        let l = lp(run)?;
+        let tidied = tidy(run, &l, &step)?;
         if why.starts_with(INTERRUPTED) {
             return verified(
                 run,
@@ -1738,7 +1847,9 @@ pub fn process(run: &mut Run, ctx: &Ctx, n: u32) -> Result<(), String> {
         if step.kind == StepKind::Review {
             return verified(run, false, vec![format!("{INCOMPLETE}the check did not finish: {why}")], None);
         }
-        return verified(run, false, vec![why.clone()], None);
+        let mut reasons = vec![why.clone()];
+        reasons.extend(tidied);
+        return verified(run, false, reasons, None);
     }
     let Some(value) = step.result().cloned() else {
         return Ok(());
@@ -1789,6 +1900,37 @@ pub fn answered(run: &mut Run, last: &Step, text: &str) -> Result<(), String> {
         })?;
     }
     Ok(())
+}
+
+/// After any work step, whatever its outcome (done, blocked, failed, crashed, cut short): the
+/// agent's own commits are taken apart or put back, and a change to the locked documents is
+/// undone, so the next step's starting point holds only what Fallow judged (constitution I).
+/// Returns the reasons to add to the step's verdict.
+fn tidy(run: &Run, l: &LoopState, step: &Step) -> Result<Vec<String>, String> {
+    if !matches!(
+        step.kind,
+        StepKind::Build | StepKind::Repair | StepKind::Make | StepKind::Plain | StepKind::Take
+    ) {
+        return Ok(Vec::new());
+    }
+    let Some(wt) = step.worktree.clone() else {
+        return Ok(Vec::new());
+    };
+    let base = step.base.clone().unwrap_or_else(|| l.lock_commit.clone());
+    let mut reasons: Vec<String> = own_history(run, &wt, &base)?.into_iter().collect();
+    let touched: Vec<String> = git::changes_all(&wt)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|f| is_protected(l, f))
+        .collect();
+    if !touched.is_empty() {
+        git::restore_paths(&wt, &base, &touched)?;
+        reasons.push(format!(
+            "the locked documents were changed (Fallow undid it): {}",
+            touched.join(", ")
+        ));
+    }
+    Ok(reasons)
 }
 
 /// Commits an agent made itself are taken apart, so their changes are judged and committed by
@@ -1856,13 +1998,18 @@ fn work_done(run: &mut Run, step: &Step, value: &Value) -> Result<(), String> {
             commit,
         })
     };
+    // The agent's own commits and edits to the locked documents are dealt with first, so a
+    // repair can go on from a clean state; the step is still refused (FR-009, false claims).
+    let tidied = tidy(run, &l, step)?;
     match value["status"].as_str() {
         Some("blocked") => {
             let mut q = value["question"].as_str().unwrap_or("").to_string();
             if q.trim().is_empty() {
                 q = summary;
             }
-            verified(run, false, vec![format!("{BLOCKED}{q}")], None)
+            let mut reasons = vec![format!("{BLOCKED}{q}")];
+            reasons.extend(tidied);
+            verified(run, false, reasons, None)
         }
         Some("done") => {
             let Some(wt) = step.worktree.clone() else {
@@ -1874,17 +2021,6 @@ fn work_done(run: &mut Run, step: &Step, value: &Value) -> Result<(), String> {
                 );
             };
             let base = step.base.clone().unwrap_or_else(|| l.lock_commit.clone());
-            let history = own_history(run, &wt, &base)?;
-            // A change to the locked documents is undone by Fallow first, so a repair can go on
-            // from a clean state; the step is still refused (FR-009, false claims).
-            let touched: Vec<String> = git::changes_all(&wt)
-                .unwrap_or_default()
-                .into_iter()
-                .filter(|f| is_protected(&l, f))
-                .collect();
-            if !touched.is_empty() {
-                git::restore_paths(&wt, &base, &touched)?;
-            }
             // Fallow ticks the task in tasks.md, in the task's own commit (research S-8).
             if matches!(step.kind, StepKind::Build | StepKind::Repair) {
                 if let Some(t) = &step.task {
@@ -1925,13 +2061,7 @@ fn work_done(run: &mut Run, step: &Step, value: &Value) -> Result<(), String> {
                     );
                 }
             };
-            let mut reasons: Vec<String> = history.into_iter().collect();
-            if !touched.is_empty() {
-                reasons.push(format!(
-                    "the locked documents were changed (Fallow undid it): {}",
-                    touched.join(", ")
-                ));
-            }
+            let mut reasons: Vec<String> = tidied;
             if !git::on_branch(&run.state.repo, &commit, &l.build_branch) {
                 reasons.push(format!("commit {commit} is not on {}", l.build_branch));
             }
@@ -1970,19 +2100,18 @@ fn work_done(run: &mut Run, step: &Step, value: &Value) -> Result<(), String> {
                 verified(run, false, reasons, None)
             }
         }
-        _ => verified(
-            run,
-            false,
-            vec![format!(
+        _ => {
+            let mut reasons = vec![format!(
                 "the agent reported that it failed{}",
                 if summary.is_empty() {
                     String::new()
                 } else {
                     format!(": {summary}")
                 }
-            )],
-            None,
-        ),
+            )];
+            reasons.extend(tidied);
+            verified(run, false, reasons, None)
+        }
     }
 }
 

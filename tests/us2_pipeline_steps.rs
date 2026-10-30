@@ -96,3 +96,46 @@ fn a_security_review_and_a_once_step_run_where_the_pipeline_says() {
     drop(e);
     let _ = std::fs::remove_dir_all(&root);
 }
+
+fn writes_tests(story_phase: u32, files: &[(&str, &str)]) -> String {
+    task_step("X", files, "")
+        .replacen("kind = \"build\"", "kind = \"make\"", 1)
+        .replacen("part = \"X\"", &format!("part = \"test-writer@phase-{story_phase}-start\""), 1)
+        .replacen("task = \"X\"", "task = \"test-writer\"", 1)
+}
+
+#[test]
+fn test_first_tests_fail_first_and_the_tasks_are_judged_against_them() {
+    let root = scratch("test-first");
+    let steps = [
+        task_step("T001", &[("calc/__init__.py", "")], ""),
+        handover_step(1, ""),
+        // US1's acceptance tests, before add() exists: they fail, and that is expected.
+        writes_tests(2, &[("tests/__init__.py", ""), ("tests/test_add.py", TEST_ADD)]),
+        task_step("T002", &[("calc/__init__.py", CALC_INIT)], ""),
+        task_step("T003", &[("tests/test_more.py", "")], ""),
+        handover_step(2, ""),
+        check_step("US1", true, ""),
+        writes_tests(3, &[("tests/test_sub.py", TEST_SUB)]),
+        task_step("T004", &[("calc/__init__.py", CALC_INIT_SUB)], ""),
+        handover_step(3, ""),
+        check_step("US2", true, ""),
+    ]
+    .concat();
+    let (e, _repo, id) = locked_calc(&root, &steps, Some("test-first"));
+    let tx = &e.tx;
+    let v = wait_for(tx, id, "ready to merge", |v| v["stage"] == "ready");
+    assert_eq!(v["feature_loop"]["outcome"][0], true);
+    // No repair: the failing acceptance tests were not held against T001's or T002's gates.
+    assert_eq!(steps_of(&v, "repair", "test-writer@phase-2-start").len(), 0);
+    assert!(v["steps"].as_object().unwrap().values().all(|s| s["kind"] != "repair"), "no repairs");
+    // The test-writer's commit became a baseline with the tests that failed there.
+    let gates = v["gate_runs"].as_array().unwrap();
+    let tw = gates
+        .iter()
+        .find(|g| g["kind"] == "baseline" && g["part"] == "test-writer@phase-2-start")
+        .expect("a baseline at the test-writer's commit");
+    assert!(!tw["result"]["failing"].as_array().unwrap().is_empty(), "{tw}");
+    drop(e);
+    let _ = std::fs::remove_dir_all(&root);
+}

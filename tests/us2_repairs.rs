@@ -109,7 +109,9 @@ fn the_engineers_options_let_the_loop_go_on() {
         note("1"),
         note("2"),
         note("3"),
-        // After "allow one more repair".
+        // "Allow one more repair": exactly one more, which fails too.
+        note("4"),
+        // And once more: this one fixes it.
         repair_step("T002", &[("calc/__init__.py", CALC_INIT)]),
         task_step("T003", &[("tests/test_add2.py", "")], ""),
         handover_step(2, ""),
@@ -126,11 +128,17 @@ fn the_engineers_options_let_the_loop_go_on() {
     let v = wait_for(tx, id, "the cap", |v| !v["needs"].is_null());
     assert!(v["needs"]["options"].as_array().unwrap().iter().any(|o| o == "allow one more repair"), "{}", v["needs"]);
     ask(tx, Request::Retry { id }).unwrap();
+    let v = wait_for(tx, id, "the cap again", |v| {
+        v["needs"]["why"].as_str().is_some_and(|w| w.contains("T002"))
+            && steps_of(v, "repair", "T002").len() == 4
+    });
+    assert!(v["needs"]["why"].as_str().unwrap().contains("still fails"), "{}", v["needs"]);
+    ask(tx, Request::Retry { id }).unwrap();
     let v = wait_for(tx, id, "the question", |v| {
         v["needs"]["why"].as_str().is_some_and(|w| w.contains("floats"))
     });
     assert_eq!(v["feature_loop"]["tasks"]["T002"]["state"], "accepted");
-    assert_eq!(steps_of(&v, "repair", "T002").len(), 4, "one more repair after the cap");
+    assert_eq!(steps_of(&v, "repair", "T002").len(), 5, "one more repair each time it was allowed");
     ask(
         tx,
         Request::Answer {

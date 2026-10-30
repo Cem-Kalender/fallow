@@ -230,7 +230,7 @@ pub fn task(run: &Run, id: &str) -> Result<Value, String> {
         .state
         .steps
         .values()
-        .filter(|s| s.task.as_deref() == Some(id))
+        .filter(|s| s.task.as_deref() == Some(id) && s.queued_seq > status.since)
         .map(|s| {
             json!({
                 "n": s.n, "kind": s.kind, "agent": s.def, "model": s.model, "session": s.session,
@@ -244,10 +244,21 @@ pub fn task(run: &Run, id: &str) -> Result<Value, String> {
         .filter(|e| e["task"] == id)
         .collect();
     let commands: Vec<Value> = lines.iter().filter(|e| e["kind"] == "run").cloned().collect();
+    // All of the task's work: from where its first step started to its accepted commit (a
+    // repair's commit holds only the repair).
+    let first_base = run
+        .state
+        .steps
+        .values()
+        .find(|s| s.task.as_deref() == Some(id) && s.queued_seq > status.since && s.base.is_some())
+        .and_then(|s| s.base.clone());
     let diff = status
         .commit
         .as_deref()
-        .and_then(|c| git::patch_of(&run.state.repo, c).ok())
+        .and_then(|c| match &first_base {
+            Some(b) => git::diff_between(&run.state.repo, b, c, ".").ok(),
+            None => git::patch_of(&run.state.repo, c).ok(),
+        })
         .map(|d| crate::agent::trim_to(&d, crate::agent::DETAIL_MAX))
         .unwrap_or_default();
     let gates: Vec<&super::state::GateEntry> = run
@@ -361,6 +372,7 @@ pub fn view(run: &Run, ctx: &Ctx) -> Result<Value, String> {
             }),
         );
     }
+    let answerer = pl.as_ref().and_then(|pl| feature::scenario_checker(pl, &lib));
     let spec = feature::doc_at(run, &l.lock_commit, "spec.md")
         .and_then(|t| crate::speckit::spec::read("spec.md", &t).ok())
         .unwrap_or_default();
@@ -368,11 +380,13 @@ pub fn view(run: &Run, ctx: &Ctx) -> Result<Value, String> {
         .stories
         .iter()
         .map(|st| {
-            let last = s
-                .steps
-                .values()
-                .rev()
-                .find(|x| x.kind == StepKind::Review && x.part.as_deref() == Some(st.id.as_str()) && x.verified.is_some());
+            // The verdict of the checker that answers the scenarios (others report findings).
+            let last = s.steps.values().rev().find(|x| {
+                x.kind == StepKind::Review
+                    && x.part.as_deref() == Some(st.id.as_str())
+                    && x.verified.is_some()
+                    && answerer.as_deref().is_none_or(|a| x.def.as_deref() == Some(a))
+            });
             let verdict = last.and_then(|x| s.verdicts.iter().find(|v| v.step == x.n));
             let criteria: Vec<Value> = st
                 .scenarios

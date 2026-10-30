@@ -28,6 +28,8 @@ pub const SESSION_LOST: &str = "session lost: ";
 pub const COULD_NOT_GO_ON: &str = "Fallow could not go on: ";
 /// The detail of the engineer's "go on" after a pause (a retry's detail is "retry").
 pub(crate) const RESUMED: &str = "resume";
+/// The detail of "allow one more repair", with the part as its target.
+pub(crate) const ONE_MORE: &str = "one more repair";
 pub(crate) const INTERRUPTED_WHY: &str = "interrupted: Fallow stopped while the step ran";
 
 pub(crate) fn gate_defs(run: &Run) -> Vec<GateDef> {
@@ -530,6 +532,16 @@ pub fn retry(run: &mut Run) -> Result<(), String> {
         .any(|o| o == "retry" || o == "allow one more repair")
     {
         return Err("this question needs an answer, not a retry".into());
+    }
+    // "Allow one more repair" raises that part's cap by one; a retry starts a new round of
+    // tries for what was asked about.
+    if n.options.iter().any(|o| o == "allow one more repair") {
+        let part = run.state.steps.values().next_back().and_then(|s| s.part.clone());
+        return run.append(Event::Steering {
+            kind: SteeringKind::Resume,
+            target: part,
+            detail: Some(ONE_MORE.into()),
+        });
     }
     run.append(Event::Steering {
         kind: SteeringKind::Resume,

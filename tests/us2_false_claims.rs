@@ -158,3 +158,35 @@ fn an_agents_own_commits_and_a_checker_that_edits_count_for_nothing() {
     drop(e);
     let _ = std::fs::remove_dir_all(&root);
 }
+
+#[test]
+fn an_agents_own_commit_is_undone_even_when_its_step_fails() {
+    let root = scratch("claims-failed");
+    let steps = [
+        // T001 commits an edit to the locked spec, then reports that it failed.
+        task_step("T001", &[("calc/__init__.py", ""), ("specs/001-calc/spec.md", "hacked\n")], "commit = \"sneaky\"")
+            .replace("status = \"done\"", "status = \"failed\""),
+        // The repair changes nothing more and says it is done.
+        repair_step("T001", &[("calc/__init__.py", "# calc\n")]),
+        handover_step(1, ""),
+        task_step("T002", &[("calc/__init__.py", CALC_INIT)], ""),
+        task_step("T003", &[("tests/__init__.py", ""), ("tests/test_add.py", TEST_ADD)], ""),
+        handover_step(2, ""),
+        check_step("US1", true, ""),
+        task_step("T004", &[("calc/__init__.py", CALC_INIT_SUB), ("tests/test_sub.py", TEST_SUB)], ""),
+        handover_step(3, ""),
+        check_step("US2", true, ""),
+    ]
+    .concat();
+    let (e, repo, id) = locked_calc(&root, &steps, None);
+    let tx = &e.tx;
+    let v = wait_for(tx, id, "ready to merge", |v| v["stage"] == "ready");
+    let t1 = refused(&v, |s| s["task"] == "T001");
+    assert!(t1.iter().any(|r| r.contains("locked documents were changed")), "{t1:?}");
+    let spec_now = git(&repo, &["show", "fallow/001-calc/build:specs/001-calc/spec.md"]);
+    assert!(spec_now.contains("User Story 1"), "the locked spec is intact: {spec_now}");
+    let log = git(&repo, &["log", "--format=%s", "fallow/001-calc/build"]);
+    assert!(!log.lines().any(|l| l == "sneaky"), "{log}");
+    drop(e);
+    let _ = std::fs::remove_dir_all(&root);
+}

@@ -335,9 +335,12 @@ pub fn merge_theirs(dir: &Path, commit: &str) -> Result<(), String> {
         .map(|_| ())
 }
 
-/// Ends a merge started by `merge_theirs` with everything in the worktree, as one commit.
-pub fn commit_merge(dir: &Path, message: &str) -> Result<String, String> {
-    git(dir, &["add", "-A", "--", "."])?;
+/// Ends a merge started by `merge_theirs` as one commit: what the merge staged, and `also`.
+/// Anything else in the worktree (left by a step that did not finish) stays out of it.
+pub fn commit_merge(dir: &Path, message: &str, also: &[&str]) -> Result<String, String> {
+    for p in also {
+        git(dir, &["add", "--", p])?;
+    }
     let has_author = git(dir, &["config", "user.email"]).is_ok_and(|e| !e.trim().is_empty());
     let mut args: Vec<&str> = Vec::new();
     if !has_author {

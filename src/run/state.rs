@@ -33,6 +33,8 @@ pub struct Step {
     pub verified_commit: Option<String>,
     /// The event number that queued it, to tell rounds apart.
     pub queued_seq: u64,
+    /// The event number of its start (0 until it starts).
+    pub started_seq: u64,
     /// 007: a loop step's task (`T014`), phase and agent definition (`builder`).
     pub task: Option<String>,
     pub phase: Option<u32>,
@@ -130,6 +132,8 @@ pub struct TaskStatus {
     pub state: TaskState,
     pub commit: Option<String>,
     pub repairs: u32,
+    /// Steps queued before this event number are not this task's: a new lock changed it.
+    pub since: u64,
 }
 
 /// A question an agent asked during the loop (007 data-model.md, Question).
@@ -437,6 +441,7 @@ impl RunState {
                         verified: None,
                         verified_commit: None,
                         queued_seq: l.seq,
+                        started_seq: 0,
                         task: task.clone(),
                         phase: *phase,
                         def: def.clone(),
@@ -454,6 +459,7 @@ impl RunState {
                 self.allow_once = false;
                 if let Some(st) = self.steps.get_mut(n) {
                     st.started = Some(l.at.clone());
+                    st.started_seq = l.seq;
                     st.agent = Some(agent.clone());
                     st.model = Some(model.clone());
                     st.session = Some(session.clone());
@@ -610,6 +616,7 @@ impl RunState {
                                 state: TaskState::Pending,
                                 commit: None,
                                 repairs: 0,
+                                since: 0,
                             },
                         );
                     }
@@ -758,6 +765,7 @@ impl RunState {
                                     state: TaskState::Pending,
                                     commit: None,
                                     repairs: 0,
+                                    since: l.seq,
                                 };
                                 match f.tasks.get_mut(&t.id) {
                                     Some(s) if same => s.phase = p.n,
