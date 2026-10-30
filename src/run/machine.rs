@@ -14,7 +14,7 @@ use std::time::Duration;
 use super::engine::{Busy, Ctx, Done, Msg, Run};
 use super::events::*;
 use super::state::Step;
-use crate::agent::{self, Agent, Call, Session, prompts};
+use crate::agent::{self, Call, Runtime, Session, prompts, rights};
 use crate::config::{Failures, GateDef};
 use crate::plan::{self, Build};
 use crate::verify::{claims, gates, git, verdict};
@@ -941,31 +941,42 @@ fn start(run: &mut Run, ctx: &Ctx, n: u32) -> Result<(), String> {
         .get(&choice.agent)
         .cloned()
         .ok_or_else(|| format!("no agent named {:?} in the settings", choice.agent))?;
-    let mut extra: Vec<String> = run.state.allow.get(role).cloned().unwrap_or_default();
+    // The squad file's `[allow]` lists hold rules (`Bash(npm run lint:*)`); rights take prefixes.
+    let mut commands: Vec<String> = run
+        .state
+        .allow
+        .get(role)
+        .into_iter()
+        .flatten()
+        .filter_map(|r| rights::prefix_of_rule(r))
+        .collect();
     if role != "planner" {
         load_plan(run)?;
+        commands.extend(run.state.gates.iter().map(|g| g.command.clone()));
         if let Some(p) = &run.plan {
-            extra.extend(agent::allow::command_rules(&p.commands));
+            commands.extend(p.commands.iter().cloned());
         }
     }
-    let allowed = match role {
-        "planner" => agent::allow::planner(&extra),
-        "reviewer" => agent::allow::reviewer(&run.state.gates, &extra),
-        _ => agent::allow::builder(&run.state.gates, &extra),
+    let rights = match role {
+        "planner" => rights::Rights {
+            edits: rights::Edits::Only(
+                rights::PLAN_GLOBS.iter().map(|s| s.to_string()).collect(),
+            ),
+            ..rights::checker(commands)
+        },
+        "reviewer" => rights::checker(commands),
+        _ => rights::maker(commands, Vec::new()),
     };
     let session = match &step.resume {
         Some(s) if !run.state.lost_sessions.contains(s) => Session::Resume(s.clone()),
         _ => Session::New(crate::platform::random::uuid_v4().map_err(|e| e.to_string())?),
     };
     let remaining = (run.state.limits.usd - run.state.cost_usd).max(0.01);
+    let runtime = agent::claude::Claude::new(def.command.clone(), def.args.clone());
     let call = Call {
-        agent: Agent {
-            command: def.command.clone(),
-            args: def.args.clone(),
-        },
         instruction: instruction_of(run, n),
         schema: agent::schemas::for_kind(step.kind),
-        allowed,
+        rights,
         mcp_config: None,
         session: session.clone(),
         model: Some(choice.model.clone()).filter(|m| !m.is_empty()),
@@ -973,7 +984,7 @@ fn start(run: &mut Run, ctx: &Ctx, n: u32) -> Result<(), String> {
         cwd: worktree.clone(),
         time_limit: Duration::from_secs(run.state.limits.step_minutes * 60),
         system: Some(prompts::system(role)),
-        unrestricted: false,
+        partial: false,
     };
     run.append(Event::StepStarted {
         n,
@@ -998,7 +1009,11 @@ fn start(run: &mut Run, ctx: &Ctx, n: u32) -> Result<(), String> {
                 .open(&activity_path)
                 .ok();
             let tx2 = tx.clone();
-            let mut on = |a: agent::Activity| {
+            let started = std::time::Instant::now();
+            let mut on = |e: agent::Event| {
+                let Some(a) = agent::activity_of(&e, started.elapsed().as_millis() as u64) else {
+                    return;
+                };
                 if let Some(f) = file.as_mut() {
                     if let Ok(line) = serde_json::to_string(&a) {
                         let _ = writeln!(f, "{line}");
@@ -1010,7 +1025,7 @@ fn start(run: &mut Run, ctx: &Ctx, n: u32) -> Result<(), String> {
                     line: a,
                 });
             };
-            let outcome = agent::claude::run(&call, &mut on, &stop);
+            let outcome = runtime.start(&call, &mut on, &stop);
             let _ = tx.send(Msg::Done {
                 run: run_id,
                 done: Done::Step { n, outcome },
@@ -1239,7 +1254,7 @@ fn plan_turn_done(run: &mut Run, step: &Step) -> Result<(), String> {
     // Fallow commits the plan's files the planner changed, and nothing else (research R-4).
     if let Some(wt) = &step.worktree {
         let msg = format!("Plan (Fallow run r{id}, planning turn {n})");
-        let paths: Vec<&str> = crate::agent::allow::PLAN_DIRS.to_vec();
+        let paths: Vec<&str> = crate::agent::rights::PLAN_DIRS.to_vec();
         if let Err(e) = git::commit_all(wt, &msg, Some(&paths)) {
             run.append(Event::Note {
                 text: format!("Fallow could not commit the plan: {e}"),

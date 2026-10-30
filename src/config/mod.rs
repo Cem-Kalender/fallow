@@ -1,4 +1,8 @@
-//! Where Fallow keeps things, and its settings (006 contracts/config.md).
+//! Where Fallow keeps things, and its settings (006 contracts/config.md; 007 research S-16,
+//! contracts/storage.md).
+//!
+//! The engineer's own configuration lives in `~/.fallow/`: `settings.toml`, `agents/` and
+//! `pipelines/`. 006 kept the settings in the platform config directory; they are moved once.
 //!
 //! The more specific value wins: Fallow's settings, then the project's squad file, then the
 //! run's own options (FR-037, FR-038).
@@ -43,21 +47,82 @@ impl fmt::Display for Notice {
 pub struct ConfigPaths {
     /// `None` when no config directory can be determined.
     pub dir: Option<PathBuf>,
+    /// 006's settings file, moved into `dir` once (`None` with `--config-dir`).
+    pub legacy_settings: Option<PathBuf>,
 }
 
 impl ConfigPaths {
-    /// `--config-dir` if given, otherwise `<platform config dir>/fallow/`.
+    /// `--config-dir` if given, otherwise `~/.fallow/`.
     pub fn resolve(override_dir: Option<&Path>) -> Self {
-        let dir = match override_dir {
-            Some(d) => Some(d.to_path_buf()),
-            None => platform_config_dir().map(|d| d.join("fallow")),
-        };
-        ConfigPaths { dir }
+        match override_dir {
+            Some(d) => ConfigPaths {
+                dir: Some(d.to_path_buf()),
+                legacy_settings: None,
+            },
+            None => ConfigPaths {
+                dir: home_config_dir(),
+                legacy_settings: platform_config_dir()
+                    .map(|d| d.join("fallow").join("settings.toml")),
+            },
+        }
     }
 
     pub fn settings(&self) -> Option<PathBuf> {
         self.dir.as_ref().map(|d| d.join("settings.toml"))
     }
+
+    /// The engineer's agent definitions (contracts/agent-definition.md).
+    pub fn agents(&self) -> Option<PathBuf> {
+        self.dir.as_ref().map(|d| d.join("agents"))
+    }
+
+    /// The engineer's pipelines (contracts/pipeline.md).
+    pub fn pipelines(&self) -> Option<PathBuf> {
+        self.dir.as_ref().map(|d| d.join("pipelines"))
+    }
+
+    /// Creates the directory, readable by the current user only, and moves 006's settings file
+    /// into it when it has none yet. Returns what it did, for the service's log.
+    pub fn prepare(&self) -> Result<Option<String>, String> {
+        let Some(dir) = &self.dir else {
+            return Ok(None);
+        };
+        crate::platform::private_dir(dir)?;
+        let (Some(new), Some(old)) = (self.settings(), self.legacy_settings.as_ref()) else {
+            return Ok(None);
+        };
+        if new.exists() || !old.is_file() {
+            return Ok(None);
+        }
+        std::fs::copy(old, &new)
+            .map_err(|e| format!("cannot move {} to {}: {e}", old.display(), new.display()))?;
+        let _ = std::fs::remove_file(old);
+        Ok(Some(format!(
+            "moved the settings from {} to {}",
+            old.display(),
+            new.display()
+        )))
+    }
+}
+
+/// `~/.fallow/`: `%USERPROFILE%\.fallow` on Windows, `$HOME/.fallow` elsewhere.
+fn home_config_dir() -> Option<PathBuf> {
+    let var = std::env::var_os;
+    home_config_dir_for(this_os(), var("HOME"), var("USERPROFILE"))
+}
+
+/// `~/.fallow/` from the given environment values. Empty values count as unset.
+pub fn home_config_dir_for(
+    os: Os,
+    home: Option<OsString>,
+    userprofile: Option<OsString>,
+) -> Option<PathBuf> {
+    let set = |v: Option<OsString>| v.filter(|v| !v.is_empty()).map(PathBuf::from);
+    match os {
+        Os::Windows => set(userprofile).or_else(|| set(home)),
+        Os::MacOs | Os::Linux => set(home),
+    }
+    .map(|h| h.join(".fallow"))
 }
 
 fn this_os() -> Os {
@@ -70,8 +135,9 @@ fn this_os() -> Os {
     }
 }
 
-/// `%APPDATA%` on Windows, `~/Library/Application Support` on macOS, `$XDG_CONFIG_HOME` or
-/// `~/.config` on Linux. Reads only these path variables, never stores or shows them.
+/// 006's config directory, read only to move its settings: `%APPDATA%` on Windows,
+/// `~/Library/Application Support` on macOS, `$XDG_CONFIG_HOME` or `~/.config` on Linux. Reads
+/// only these path variables, never stores or shows them.
 fn platform_config_dir() -> Option<PathBuf> {
     let var = std::env::var_os;
     config_dir_for(

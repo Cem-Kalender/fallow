@@ -47,6 +47,11 @@ pub fn serve(
     };
     crate::platform::private_dir(&data)?;
     let paths = ConfigPaths::resolve(config_dir);
+    match paths.prepare() {
+        Ok(Some(said)) => eprintln!("fallow: {said}"),
+        Ok(None) => {}
+        Err(e) => eprintln!("fallow: {e}"),
+    }
     let (settings, notices) = Settings::load(paths.settings().as_deref());
     for n in &notices {
         eprintln!("{n}");

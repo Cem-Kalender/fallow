@@ -22,5 +22,6 @@ If the spec or plan does not settle something, use the `ask` tool instead of gue
 answer is that the question waits for the engineer, end the step as `blocked` with the question
 id.
 
-At the end of the phase, Fallow asks for a handover: write it as asked, for the builder of the
-next phase, who starts from the locked documents and the handovers only.
+At the end of the phase, Fallow asks for a handover: `specs/<feature>/handover/phase-<n>.md`
+with the sections `## Built`, `## Decisions` and `## For the next phase`. Write it for the
+builder of the next phase, who starts from the locked documents and the handovers only.

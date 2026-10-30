@@ -3,3 +3,5 @@
 //! one resumable agent call; a spec session forks from its project's conversation. In a git
 //! project the lead works in Fallow's own worktree, and after each turn its spec documents are
 //! committed and anything else it changed is discarded.
+
+pub mod events;

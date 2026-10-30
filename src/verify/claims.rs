@@ -5,7 +5,7 @@ use std::path::Path;
 use serde_json::Value;
 
 use super::git;
-use crate::agent::allow::PLAN_GLOBS;
+use crate::agent::rights::PLAN_GLOBS;
 use crate::plan::{Plan, glob_set};
 
 /// What a builder's `done` result must show. Fallow commits the step's changes itself when it

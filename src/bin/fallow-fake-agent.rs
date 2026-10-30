@@ -1,4 +1,5 @@
-//! `fallow-fake-agent`: a scripted stand-in for `claude -p` (006 research R-15, tasks T007).
+//! `fallow-fake-agent`: a scripted stand-in for `claude -p` (006 research R-15; 007 research
+//! S-13, the `fake` runtime).
 //!
 //! It takes the same flags, reads its instruction on stdin, and writes the same stream-json,
 //! ending with a `result` event carrying `structured_output`, `total_cost_usd`, `session_id`
@@ -8,26 +9,34 @@
 //!
 //! ```toml
 //! [[step]]
-//! kind = "build"                 # plan_turn, build, repair, review, ...
+//! kind = "build"                 # build, repair, review, handover, lead_turn, ...
 //! part = "main"                  # optional
-//! when = "text in the instruction"  # optional
-//! files = [{ path = "shop/x.py", text = "..." }]
+//! when = "text in the instruction"  # optional, e.g. a task id "T014"
+//! files = [{ path = "shop/x.py", text = "..." }]   # with old = "..." it is an Edit
 //! commit = "message"             # git add -A; git commit -m
 //! output = { status = "done", commit = "$HEAD", summary = "..." }
 //! cost = 0.05
 //! sleep_ms = 0
 //! exit = 3                       # crash with this exit code instead of a result
 //! denied = ["git push"]          # reported as permission denials
+//! is_error = false
+//! say = "a reply"                # an assistant message, streamed as deltas with
+//!                                # --include-partial-messages
+//! ask = "a question"             # calls Fallow's MCP `ask` tool; its answer replaces $ANSWER
+//! approve = "python -c 1"        # a command outside the rules: asks the --permission-prompt-tool
+//!                                # in the default mode, or is refused under dontAsk;
+//!                                # $APPROVED becomes "allow" or "deny"
+//! ```
 //!
 //! A resumed call (`--resume`) with no step left for it answers as Claude Code does for a
-//! session it does not know: "No conversation found with session ID: …".
-//! ```
+//! session it does not know: "No conversation found with session ID: …". With `--fork-session`
+//! the call runs in a new session id, which its events report.
 //!
 //! Test-only tooling; never started by Fallow unless an agent profile names it.
 
-use std::io::{Read, Write};
+use std::io::{BufRead, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Command, ExitCode};
+use std::process::{Command, ExitCode, Stdio};
 
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -36,6 +45,7 @@ use serde_json::{Value, json};
 struct File {
     path: String,
     text: String,
+    old: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -56,6 +66,9 @@ struct Step {
     denied: Vec<String>,
     #[serde(default)]
     is_error: bool,
+    say: Option<String>,
+    ask: Option<String>,
+    approve: Option<String>,
 }
 
 fn cost() -> f64 {
@@ -83,21 +96,82 @@ fn git(dir: &Path, args: &[&str]) -> String {
         .unwrap_or_default()
 }
 
-fn substitute(v: Value, head: &str, session: &str) -> Value {
+fn substitute(v: Value, vars: &[(&str, &str)]) -> Value {
     match v {
-        Value::String(s) => Value::String(s.replace("$HEAD", head).replace("$SESSION", session)),
-        Value::Array(a) => Value::Array(
-            a.into_iter()
-                .map(|x| substitute(x, head, session))
-                .collect(),
-        ),
+        Value::String(mut s) => {
+            for (k, x) in vars {
+                s = s.replace(k, x);
+            }
+            Value::String(s)
+        }
+        Value::Array(a) => Value::Array(a.into_iter().map(|x| substitute(x, vars)).collect()),
         Value::Object(m) => Value::Object(
             m.into_iter()
-                .map(|(k, x)| (k, substitute(x, head, session)))
+                .map(|(k, x)| (k, substitute(x, vars)))
                 .collect(),
         ),
         other => other,
     }
+}
+
+/// Calls one tool of the `fallow` MCP server named in `--mcp-config`, as Claude Code would:
+/// start it, initialize, call, and return the text of the result.
+fn mcp_call(config: &Path, tool: &str, arguments: Value) -> Result<String, String> {
+    let cfg: Value = serde_json::from_str(
+        &std::fs::read_to_string(config).map_err(|e| format!("{}: {e}", config.display()))?,
+    )
+    .map_err(|e| e.to_string())?;
+    let server = &cfg["mcpServers"]["fallow"];
+    let command = server["command"].as_str().ok_or("no fallow server")?;
+    let args: Vec<String> = server["args"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|a| a.as_str().map(str::to_string))
+        .collect();
+    let mut child = Command::new(command)
+        .args(&args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("cannot start {command}: {e}"))?;
+    let mut stdin = child.stdin.take().ok_or("no stdin")?;
+    let mut out = std::io::BufReader::new(child.stdout.take().ok_or("no stdout")?);
+    let mut request = |id: u64, method: &str, params: Value| -> Result<Value, String> {
+        let msg = json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params});
+        writeln!(stdin, "{msg}").map_err(|e| e.to_string())?;
+        stdin.flush().map_err(|e| e.to_string())?;
+        loop {
+            let mut line = String::new();
+            if out.read_line(&mut line).map_err(|e| e.to_string())? == 0 {
+                return Err("the MCP server closed".into());
+            }
+            let Ok(v) = serde_json::from_str::<Value>(&line) else {
+                continue;
+            };
+            if v["id"] == json!(id) {
+                if let Some(e) = v.get("error") {
+                    return Err(e.to_string());
+                }
+                return Ok(v["result"].clone());
+            }
+        }
+    };
+    request(
+        1,
+        "initialize",
+        json!({"protocolVersion": "2025-06-18", "capabilities": {},
+               "clientInfo": {"name": "fallow-fake-agent", "version": "0"}}),
+    )?;
+    let r = request(2, "tools/call", json!({"name": tool, "arguments": arguments}))?;
+    let _ = child.kill();
+    Ok(r["content"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|c| c["text"].as_str())
+        .collect::<Vec<_>>()
+        .join("\n"))
 }
 
 fn main() -> ExitCode {
@@ -105,6 +179,11 @@ fn main() -> ExitCode {
     let mut scenario: Option<PathBuf> = None;
     let mut session = String::from("fake-session");
     let mut resumed = false;
+    let mut fork = false;
+    let mut partial = false;
+    let mut mcp_config: Option<PathBuf> = None;
+    let mut prompt_tool: Option<String> = None;
+    let mut mode = String::from("default");
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
@@ -119,9 +198,29 @@ fn main() -> ExitCode {
                 }
                 i += 1;
             }
+            "--fork-session" => fork = true,
+            "--include-partial-messages" => partial = true,
+            "--mcp-config" => {
+                mcp_config = args.get(i + 1).map(PathBuf::from);
+                i += 1;
+            }
+            "--permission-prompt-tool" => {
+                prompt_tool = args.get(i + 1).cloned();
+                i += 1;
+            }
+            "--permission-mode" => {
+                if let Some(m) = args.get(i + 1) {
+                    mode = m.clone();
+                }
+                i += 1;
+            }
             _ => {}
         }
         i += 1;
+    }
+    if fork {
+        // A fork runs in a new session that remembers the old one.
+        session = format!("{session}-fork-{}", std::process::id());
     }
     let Some(scenario) = scenario else {
         eprintln!("fallow-fake-agent: --scenario is required");
@@ -175,7 +274,7 @@ fn main() -> ExitCode {
     let Some((n, step)) = pick else {
         emit(
             json!({"type": "result", "subtype": "error", "is_error": true, "session_id": session,
-            "total_cost_usd": 0.0, "result": if resumed {
+            "total_cost_usd": 0.0, "result": if resumed && !fork {
                 // What Claude Code says for a session it does not know.
                 format!("No conversation found with session ID: {session}")
             } else {
@@ -193,8 +292,74 @@ fn main() -> ExitCode {
             .join("\n"),
     );
     emit(
-        json!({"type": "assistant", "message": {"content": [{"type": "text", "text": format!("Working on {kind}.")}]}}),
+        json!({"type": "assistant", "session_id": session, "message": {"content": [{"type": "text", "text": format!("Working on {kind}.")}]}}),
     );
+    let mut tool_n = 0;
+    let mut tool_id = || {
+        tool_n += 1;
+        format!("toolu_{tool_n}")
+    };
+    if let Some(say) = &step.say {
+        if partial {
+            for chunk in say.split_inclusive(' ') {
+                emit(json!({"type": "stream_event", "session_id": session, "event": {
+                    "type": "content_block_delta", "index": 0,
+                    "delta": {"type": "text_delta", "text": chunk}}}));
+            }
+        }
+        emit(
+            json!({"type": "assistant", "session_id": session, "message": {"content": [{"type": "text", "text": say}]}}),
+        );
+    }
+    let mut answer = String::new();
+    if let Some(q) = &step.ask {
+        let id = tool_id();
+        emit(json!({"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "id": id, "name": "mcp__fallow__ask", "input": {"question": q}}]}}));
+        answer = match &mcp_config {
+            Some(c) => mcp_call(c, "ask", json!({"question": q}))
+                .unwrap_or_else(|e| format!("error: {e}")),
+            None => "error: no --mcp-config".into(),
+        };
+        emit(json!({"type": "user", "message": {"content": [
+            {"type": "tool_result", "tool_use_id": id, "content": answer}]}}));
+    }
+    let mut approved = String::new();
+    let mut prompt_denials: Vec<Value> = Vec::new();
+    if let Some(cmd) = &step.approve {
+        let id = tool_id();
+        let input = json!({"command": cmd, "description": "scripted"});
+        emit(json!({"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "id": id, "name": "Bash", "input": input}]}}));
+        // As Claude Code does (T001): the prompt tool is asked only in the default mode.
+        let verdict = match (&prompt_tool, mode.as_str(), &mcp_config) {
+            (Some(t), "default", Some(c)) => {
+                let tool = t.trim_start_matches("mcp__fallow__");
+                mcp_call(
+                    c,
+                    tool,
+                    json!({"tool_name": "Bash", "input": input, "tool_use_id": id}),
+                )
+                .ok()
+                .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+                .unwrap_or_else(|| json!({"behavior": "deny", "message": "the prompt tool failed"}))
+            }
+            _ => json!({"behavior": "deny",
+                "message": "Permission to use Bash has been denied because Claude Code is running in don't ask mode."}),
+        };
+        if verdict["behavior"] == "allow" {
+            approved = "allow".into();
+            emit(json!({"type": "user", "message": {"content": [
+                {"type": "tool_result", "tool_use_id": id, "content": "ran"}]}}));
+        } else {
+            approved = "deny".into();
+            let msg = verdict["message"].as_str().unwrap_or("denied").to_string();
+            emit(json!({"type": "user", "message": {"content": [
+                {"type": "tool_result", "tool_use_id": id, "is_error": true, "content": msg}]}}));
+            prompt_denials
+                .push(json!({"tool_name": "Bash", "tool_use_id": id, "tool_input": input}));
+        }
+    }
     if step.sleep_ms > 0 {
         std::thread::sleep(std::time::Duration::from_millis(step.sleep_ms));
     }
@@ -204,37 +369,47 @@ fn main() -> ExitCode {
             let _ = std::fs::create_dir_all(d);
         }
         let _ = std::fs::write(&p, &f.text);
-        emit(
-            json!({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Write", "input": {"file_path": f.path}}]}}),
-        );
-        emit(
-            json!({"type": "user", "message": {"content": [{"type": "tool_result", "content": "written"}]}}),
-        );
+        let id = tool_id();
+        let use_ = match &f.old {
+            Some(old) => json!({"type": "tool_use", "id": id, "name": "Edit",
+                "input": {"file_path": f.path, "old_string": old, "new_string": f.text}}),
+            None => json!({"type": "tool_use", "id": id, "name": "Write",
+                "input": {"file_path": f.path, "content": f.text}}),
+        };
+        emit(json!({"type": "assistant", "message": {"content": [use_]}}));
+        emit(json!({"type": "user", "message": {"content": [
+            {"type": "tool_result", "tool_use_id": id, "content": "written"}]}}));
     }
     if let Some(msg) = &step.commit {
         git(&cwd, &["add", "-A"]);
         let out = git(&cwd, &["commit", "-q", "-m", msg]);
-        emit(
-            json!({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Bash", "input": {"command": format!("git commit -m {msg:?}")}}]}}),
-        );
-        emit(
-            json!({"type": "user", "message": {"content": [{"type": "tool_result", "content": out}]}}),
-        );
+        let id = tool_id();
+        emit(json!({"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "id": id, "name": "Bash", "input": {"command": format!("git commit -m {msg:?}")}}]}}));
+        emit(json!({"type": "user", "message": {"content": [
+            {"type": "tool_result", "tool_use_id": id, "content": out}]}}));
     }
     if let Some(code) = step.exit {
         return ExitCode::from(code as u8);
     }
     let head = git(&cwd, &["rev-parse", "HEAD"]);
-    let output = step
-        .output
-        .as_ref()
-        .and_then(|o| serde_json::to_value(o).ok())
-        .map(|v| substitute(v, &head, &session));
-    let denials: Vec<Value> = step
+    let output = step.output.as_ref().and_then(|o| serde_json::to_value(o).ok()).map(|v| {
+        substitute(
+            v,
+            &[
+                ("$HEAD", &head),
+                ("$SESSION", &session),
+                ("$ANSWER", &answer),
+                ("$APPROVED", &approved),
+            ],
+        )
+    });
+    let mut denials: Vec<Value> = step
         .denied
         .iter()
         .map(|c| json!({"tool_name": "Bash", "tool_input": {"command": c}}))
         .collect();
+    denials.extend(prompt_denials);
     let mut result = json!({"type": "result", "subtype": "success", "is_error": step.is_error,
         "session_id": session, "total_cost_usd": step.cost, "num_turns": 1,
         "result": "done", "permission_denials": denials});

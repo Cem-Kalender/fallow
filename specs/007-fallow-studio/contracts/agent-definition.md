@@ -52,7 +52,7 @@ Unknown keys, nesting, multi-line values and anchors are refused, with the file 
   - a maker may edit within its worktree, but not the locked documents;
   - a checker may not edit, and a checker whose worktree changes stops counting (006);
   - the lead's rights follow the chat mode (research S-7).
-- **Commands**: only `may_run`, expanded with the project's gates and the locked plan's commands, one per call, with no chaining.
+- **Commands**: only `may_run`, expanded with the project's gates and the locked plan's commands, one per call, with no chaining. Commands the runtime classifies as read-only (`git log`, `ls`) also run: they change nothing (research S-7).
 - **The result** follows the schema for `returns` (contracts/step-results.md).
 - **The `ask` and `progress` tools** through Fallow's MCP bridge. There is no tool to reach another agent.
 - **Limits** on time, turns and cost.

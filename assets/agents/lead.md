@@ -19,12 +19,13 @@ In the project conversation:
   steps. The engineer opens it in the designer and saves it; nothing is used before that.
 
 In a spec session, follow Spec Kit's steps with its skills, one step per turn unless the
-engineer asks for more: constitution (when the project has none), `/speckit-specify`,
+engineer asks for more: `/speckit-constitution` (when `.specify/memory/constitution.md` is
+missing or still the template, with its `[PROJECT_NAME]` placeholders), `/speckit-specify`,
 `/speckit-clarify`, `/speckit-plan`, `/speckit-tasks`, `/speckit-analyze`. Say which step you ran.
 - Ask clarify questions one at a time as `question`, with options and one marked recommended.
   Write each answer into the spec as you go.
-- Mark at least one acceptance scenario per user story as `(must fail)`: a case that must be
-  refused. Fallow will not lock a story without one, and the reviewer must show that case refused.
+- End the text of at least one acceptance scenario per user story with `(must fail)`: a case
+  that must be refused. Fallow will not lock a story without one, and the reviewer must show that case refused.
 - When the engineer says something is theirs to decide, list it under
   `**Reserved for the engineer**:` in the story or in Requirements. Questions about it always go
   to the engineer.

@@ -67,31 +67,31 @@ Unless a task says otherwise, tests use the `fake` runtime (research S-13).
 
 **Purpose**: the runtime interface, the stores, the formats and the page shell that every story builds on.
 
-- [ ] T009 Define the runtime interface in `src/agent/mod.rs`, as contracts/runtime.md describes:
+- [X] T009 Define the runtime interface in `src/agent/mod.rs`, as contracts/runtime.md describes:
   - `trait Runtime`, `Call` (with `Rights`), `Session::{New, Resume, Fork}`, `Event` and `End`;
   - convert 006's `Call` and `Outcome` callers to it.
-- [ ] T010 Port `src/agent/claude.rs` to the trait:
-  - `Rights` become `--allowedTools` rules under `dontAsk`, with the PowerShell mirrors (006 R-4), and `--permission-prompt-tool` in Ask mode (T001);
+- [X] T010 Port `src/agent/claude.rs` to the trait:
+  - `Rights` become `--allowedTools` rules under `dontAsk`, with the PowerShell mirrors (006 R-4); protected files and Read only mode become `--disallowedTools`; Ask mode runs under `--permission-mode default` with `--permission-prompt-tool` (T001);
   - `Fork` becomes `--resume <id> --fork-session`, and the partial messages become `message_delta`;
   - tool uses become `tool_call` events, with diffs for `Edit` and `Write` and the command for `Bash` and `PowerShell`;
   - tool results become `tool_result` events, with output trimmed to 64 KB;
   - thinking blocks are dropped.
-- [ ] T011 Write the `fake` runtime in `src/agent/fake.rs`, and extend `src/bin/fallow-fake-agent.rs`:
+- [X] T011 Write the `fake` runtime in `src/agent/fake.rs`, and extend `src/bin/fallow-fake-agent.rs`:
   - fork (a new session id with the old steps kept);
   - partial messages;
   - scenario steps matched by task id (`when = "T014"`);
   - a scripted `ask` call or `approve` request through the MCP bridge;
   - edits of any path, including locked documents, for the false-claim tests.
-- [ ] T012 [P] Write `src/agent/rights.rs`, replacing `allow.rs`, with unit tests:
+- [X] T012 [P] Write `src/agent/rights.rs`, replacing `allow.rs`, with unit tests:
   - rights by kind: maker, checker, lead;
   - rights by chat mode: read only, approved, ask, run anything;
   - the spec paths;
   - `may_run`, expanded with `gates` and `plan.commands`.
-- [ ] T013 [P] Settings and paths in `src/config/`:
+- [X] T013 [P] Settings and paths in `src/config/`:
   - `%USERPROFILE%\.fallow\` holds `settings.toml`, `agents\` and `pipelines\`;
   - the 006 settings file is moved there once;
   - user-only ACLs on new directories (006's platform code).
-- [ ] T014 [P] Add the conversation and loop events of contracts/storage.md in `src/run/events.rs` and `src/conversation/events.rs`, with their folds and round-trip tests. 006's runs stay readable.
+- [X] T014 [P] Add the conversation and loop events of contracts/storage.md in `src/run/events.rs` and `src/conversation/events.rs`, with their folds and round-trip tests. 006's runs stay readable.
 - [ ] T015 [P] Write the `tasks.md` and `spec.md` readers in `src/speckit/{tasks,spec}.rs`, as contracts/spec-kit-files.md describes:
   - phases, tasks, story phases, scenarios `USn/k`, must-fail marks, the reserved list, and markers;
   - `plan.md`'s `## Commands` section, checked like approved commands;
@@ -110,7 +110,8 @@ Unless a task says otherwise, tests use the `fake` runtime (research S-13).
   - `app.css`: the colour tokens of research S-2, the mockup's classes (`card`, `pill`, `btn`, `btn2`, `nav`, `stage`, `task`, `ev`, `row`) and `@font-face` rules for `/fonts/*`;
   - `app.js`: the hash router, the long-poll client, and the render helpers;
   - a confirmation dialog that names what is affected, used by every destructive action on every screen (stop, unlock, removing a project, deleting data, definitions or pipelines; constitution II);
-  - serve the fonts; keep the CSP `default-src 'self'`.
+  - serve the fonts; keep the CSP `default-src 'self'`;
+  - remove 006's `run.html` and its route (T007).
 - [ ] T021 [P] Extend `tests/web_api_auth.rs`: the new routes need the secret and pass the Host and Origin checks, and the page and fonts load nothing external (CI gate V).
 
 **Checkpoint**: the shell opens at `fallow` with the empty dashboard. The parsers and the runtimes pass their tests.
@@ -223,7 +224,7 @@ Unless a task says otherwise, tests use the `fake` runtime (research S-13).
 
 ### Implementation for User Story 2
 
-- [ ] T044 [US2] Loop state in `src/run/state.rs`: the loop, its phases and tasks (data-model.md) from the lock's `tasks.md`; the folds of the new events; phase sessions; the build branch `fallow/NNN/build` from the lock commit, with `NNN-name` merged in at task boundaries (research S-9). Then remove 006's planner path and its tests, now replaced (T007).
+- [ ] T044 [US2] Loop state in `src/run/state.rs`: the loop, its phases and tasks (data-model.md) from the lock's `tasks.md`; the folds of the new events; phase sessions; the build branch `fallow/NNN/build` from the lock commit, with `NNN-name` merged in at task boundaries (research S-9). Then remove 006's planner path, the service's `run` request (`src/service/mod.rs`), `src/plan/`, parts, and their tests, now replaced (T007).
 - [ ] T045 [US2] Scheduling from the pipeline in `src/run/machine.rs` (research S-9):
   - the builder per task: a new session at the start of a phase, then resumed;
   - `fallow:gates` per task or per phase;

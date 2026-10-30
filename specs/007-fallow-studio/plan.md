@@ -29,7 +29,7 @@ How it works:
 **Primary Dependencies**:
 - **Kept**: `serde`, `toml`, `serde_json`, `globset`, `regex`, `tiny_http`, `windows-sys`.
 - **Added**: no crates. `windows-sys` gains the `Win32_UI_Shell` and `Win32_UI_WindowsAndMessaging` features for the notification icon (S-14).
-- **Run as external tools**: `claude` 2.1.x (verified flags: `--fork-session`, `--include-partial-messages`, `--permission-prompts`; `--permission-prompt-tool` is to be verified on a real run, S-7) and `git`.
+- **Run as external tools**: `claude` 2.1.x (verified by T001 and T002: `--fork-session`, `--include-partial-messages`, and `--permission-prompt-tool`, which is called only under `--permission-mode default`; research S-5, S-7) and `git`.
 - **Shipped files**:
   - Spec Kit 1.0.12 (MIT);
   - Inter and JetBrains Mono woff2 (OFL 1.1);

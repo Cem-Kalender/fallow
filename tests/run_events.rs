@@ -82,7 +82,7 @@ fn a_torn_last_line_is_dropped_and_cut_off() {
     })
     .unwrap();
     drop(log);
-    let (_, events, notes) = Log::open(&d).unwrap();
+    let (_, events, notes) = Log::<Event>::open(&d).unwrap();
     assert_eq!(events.len(), 2, "the next event starts on a clean line");
     assert!(notes.is_empty());
     let _ = std::fs::remove_dir_all(&d);
@@ -122,7 +122,7 @@ fn illegal_stage_changes_are_refused_by_the_fold() {
 #[test]
 fn the_run_folder_is_private_to_the_user() {
     let d = dir("acl");
-    let (log, _, _) = Log::open(&d).unwrap();
+    let (log, _, _) = Log::<Event>::open(&d).unwrap();
     drop(log);
     let out = std::process::Command::new("icacls")
         .arg(&d)
@@ -172,4 +172,112 @@ fn paused_time_does_not_count_against_the_time_limit() {
     let (which, used) = s.limit_hit(t0 + 3600 + 7300).unwrap();
     assert_eq!(which, "time");
     assert!(used.starts_with("121 of 120"));
+}
+
+#[test]
+fn a_loop_folds_its_phases_tasks_questions_and_outcome() {
+    // 007 T014: the loop events after run_created (contracts/storage.md).
+    use fallow::run::events::{
+        Level, Logged, PhaseSpec, PhaseState, QuestionState, TaskSpec, TaskState,
+    };
+    let task = |id: &str, story: Option<&str>| TaskSpec {
+        id: id.into(),
+        story: story.map(str::to_string),
+        parallel: false,
+        text: format!("do {id}"),
+    };
+    let events: Vec<Event> = vec![
+        created(),
+        Event::LoopCreated {
+            project: "shop".into(),
+            feature: "007-cart".into(),
+            lock: 1,
+            lock_commit: "l1".into(),
+            base_branch: "master".into(),
+            build_branch: "fallow/007/build".into(),
+            pipeline: "name = \"standard\"".into(),
+            level: Level::Normal,
+            budget_usd: 2.5,
+            budget_minutes: 100,
+            phases: vec![
+                PhaseSpec {
+                    n: 1,
+                    title: "Setup".into(),
+                    story: None,
+                    tasks: vec![task("T001", None)],
+                },
+                PhaseSpec {
+                    n: 3,
+                    title: "User Story 1".into(),
+                    story: Some("US1".into()),
+                    tasks: vec![task("T010", Some("US1")), task("T011", Some("US1"))],
+                },
+            ],
+        },
+        Event::Phase {
+            n: 1,
+            state: PhaseState::Building,
+            session: Some("s1".into()),
+            handover: None,
+        },
+        Event::Task {
+            id: "T001".into(),
+            state: TaskState::Accepted,
+            commit: Some("c1".into()),
+            repairs: 1,
+        },
+        Event::Phase {
+            n: 1,
+            state: PhaseState::Done,
+            session: None,
+            handover: Some("specs/007-cart/handover/phase-1.md".into()),
+        },
+        Event::Question {
+            id: "q1".into(),
+            step: 4,
+            task: Some("T010".into()),
+            text: "Refuse or add what is left?".into(),
+            options: vec!["refuse".into(), "add what is left".into()],
+            state: QuestionState::WaitingEngineer,
+            by: None,
+            answer: None,
+            commit: None,
+            affects: Some("US1".into()),
+        },
+        Event::Unlocked,
+        Event::Relocked {
+            lock: 2,
+            commit: "l2".into(),
+            affected: vec!["US1".into()],
+        },
+        Event::Outcome {
+            verified: false,
+            missing: vec!["no review at checkpoints".into()],
+        },
+    ];
+    let d = dir("loop");
+    let (mut log, _, _) = Log::open(&d).unwrap();
+    for e in events {
+        log.append(e).unwrap();
+    }
+    drop(log);
+    let (_, logged, notes) = Log::open(&d).unwrap();
+    assert!(notes.is_empty());
+    let logged: Vec<Logged> = logged;
+    let s = RunState::fold(1, &logged).unwrap();
+    let f = s.feature_loop.expect("a loop");
+    assert_eq!(f.feature, "007-cart");
+    assert_eq!(f.lock, 2);
+    assert_eq!(f.lock_commit, "l2");
+    assert!(!f.unlocked);
+    assert_eq!(f.affected, ["US1"]);
+    assert_eq!(f.phases[0].state, PhaseState::Done);
+    assert_eq!(f.phases[0].session.as_deref(), Some("s1"), "kept when a later event omits it");
+    assert!(f.phases[0].handover.is_some());
+    assert_eq!(f.tasks["T001"].state, TaskState::Accepted);
+    assert_eq!(f.tasks["T001"].repairs, 1);
+    assert_eq!(f.tasks["T011"].phase, 3);
+    assert_eq!(f.questions["q1"].state, QuestionState::WaitingEngineer);
+    assert_eq!(f.outcome, Some((false, vec!["no review at checkpoints".to_string()])));
+    let _ = std::fs::remove_dir_all(&d);
 }

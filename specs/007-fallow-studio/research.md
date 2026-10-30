@@ -91,10 +91,10 @@ A request returns as soon as there is something newer than `after`, or after 25 
 - **All modes**:
   - reading: `Read`, `Glob`, `Grep`;
   - writing: `Edit`/`Write` only on `specs/**`, `.specify/memory/**` and `.fallow/**`;
-  - everything else is denied (`dontAsk`, or prompts routed as below).
-- **Read only**: no command rules.
+  - everything else is denied: under `--permission-mode dontAsk`, except Ask (below).
+- **Read only**: no command rules, and `--disallowedTools Bash PowerShell`, because Claude Code runs read-only commands by itself even under `dontAsk` (T001).
 - **Approved commands**: plus `Bash(<cmd>:*)` and the PowerShell mirror for each approved command, as 006 does for the gates and the plan's commands (006 research R-4).
-- **Ask**: plus `--permission-prompt-tool mcp__fallow__approve`.
+- **Ask**: plus `--permission-prompt-tool mcp__fallow__approve`, under `--permission-mode default`: the tool is called only in that mode (T001). Edits outside the spec paths, and tools other than `Bash` and `PowerShell`, are denied by the tool at once.
   - A command outside the rules calls Fallow's `approve` tool, which shows the exact command in the chat with "Allow once", "Always in this project" and "Deny", and waits.
   - The tool gives up after 10 minutes and denies.
   - "Always" adds the command's program prefix to the project's approved commands, after the engineer confirms the prefix.
@@ -108,6 +108,7 @@ A request returns as soon as there is something newer than `after`, or after 25 
   - `{"behavior":"deny","message":"…"}` refuses it. The agent sees the message as the tool's error, and the refusal is also listed in `permission_denials`.
 - **Edits and writes are asked about too** in `default` mode. Fallow's `approve` answers `deny` at once, without asking the engineer, for `Edit`, `Write` and `NotebookEdit` outside the spec paths, and for every tool other than `Bash` and `PowerShell`.
 - **Read-only commands run without asking**, in both modes: `git log -1` ran under `dontAsk` with only `Read` allowed. This is Claude Code's built-in allowance for read-only commands. **Read only** mode therefore also passes `--disallowedTools Bash PowerShell`, so that it runs nothing at all.
+- **Loop agents and the other modes accept this allowance** (decided 2026-10-30): commands Claude Code classifies as read-only change nothing, and 006 already allowed a list of them to every role (`git status`, `git log`, `ls`, `cat` and others). `may_run` and the approved commands therefore name what an agent may run **besides** reading. Checkers stay safe either way: a checker whose worktree changes stops counting.
 
 **Rationale**: the rights are enforced by the agent's own permission system, never by asking it to behave (constitution VI). No mode uses `--dangerously-skip-permissions`.
 
@@ -212,10 +213,10 @@ When an agent calls `ask`:
 - **Where**: `~/.fallow/pipelines/<name>.toml`, overridable by `.fallow/pipelines/<name>.toml` in a project. The defaults are Standard, Test first and Solo.
 - **Steps**: each `[[step]]` names:
   - `agent`, or the built-in `fallow:gates`;
-  - `when`: `task`, `phase`, `checkpoint`, or `once` with `at = "start"` or `"end"`;
+  - `when`: `task`, `phase`, `checkpoint` or `once`, with `at = "start"` or `"end"` for the last three;
   - optionally `paths`, globs the changes must touch;
   - `on_fail`: `repair` or `engineer`;
-  - optionally `cap`.
+  - the caps (`task_repairs`, `review_rounds`) are set for the whole pipeline.
 - **A pipeline is valid when**:
   - exactly one maker step is `when = "task"` (the builder);
   - every agent it names exists;
@@ -257,13 +258,15 @@ Activity on the page is built from these events, never from a provider's raw out
 **Decision**: Fallow embeds Spec Kit 1.0.12, the same files this repository was initialised with:
 - `.specify/scripts/bash/*`, `.specify/templates/*` and `.specify/memory/constitution.md` (the template);
 - `.claude/skills/speckit-*/SKILL.md`;
-- `.specify/init-options.json`.
+- `.specify/init-options.json` (read by the specify skill) and `.specify/integration.json` (read by `common.sh`).
+
+Not shipped: the PowerShell scripts (no skill calls them), and the installer's manifests and workflows, which describe the developer's own install (Phase 1 review). The skills run the bash scripts, which on Windows means Git Bash, which Claude Code itself needs there.
 
 Adding a project copies each of them only if it does not exist. If the project has Spec Kit at another version, Fallow says so and copies nothing over it. Spec Kit's license (MIT) ships with the files.
 
 `xtask spec-kit` refreshes the embedded copy from a Spec Kit checkout that a developer chooses. Fallow itself never downloads it.
 
-**Rationale**: FR-002 (no download) and constitution V. The files are small: 307 KB in 35 files.
+**Rationale**: FR-002 (no download) and constitution V. The files are small: 236 KB in 25 files.
 
 ## S-16 Projects, conversations and the dashboard's data
 

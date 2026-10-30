@@ -82,10 +82,50 @@ fn config_dir_override_wins_and_files_live_inside() {
 }
 
 #[test]
-fn default_dir_ends_in_fallow() {
+fn default_dir_is_dot_fallow_in_home() {
+    // 007 research S-16: the engineer's configuration lives in ~/.fallow/.
     if let Some(dir) = ConfigPaths::resolve(None).dir {
-        assert_eq!(dir.file_name().unwrap(), "fallow");
+        assert_eq!(dir.file_name().unwrap(), ".fallow");
     }
+    use fallow::config::home_config_dir_for;
+    let s = |v: &str| Some(std::ffi::OsString::from(v));
+    assert_eq!(
+        home_config_dir_for(Os::Windows, s("/h"), s(r"C:\Users\u")),
+        Some(PathBuf::from(r"C:\Users\u").join(".fallow"))
+    );
+    assert_eq!(
+        home_config_dir_for(Os::Linux, s("/home/u"), None),
+        Some(PathBuf::from("/home/u/.fallow"))
+    );
+    assert_eq!(home_config_dir_for(Os::Linux, s(""), None), None);
+    let p = ConfigPaths::resolve(Some(Path::new("/custom")));
+    assert_eq!(p.agents(), Some(Path::new("/custom").join("agents")));
+    assert_eq!(p.pipelines(), Some(Path::new("/custom").join("pipelines")));
+    assert_eq!(p.legacy_settings, None);
+}
+
+#[test]
+fn the_006_settings_move_once() {
+    let root = std::env::temp_dir().join(format!("fallow-cfgmove-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let old = root.join("old").join("settings.toml");
+    std::fs::create_dir_all(old.parent().unwrap()).unwrap();
+    std::fs::write(&old, "[defaults]\nrepair_cap = 4\n").unwrap();
+    let p = ConfigPaths {
+        dir: Some(root.join("new")),
+        legacy_settings: Some(old.clone()),
+    };
+    let said = p.prepare().unwrap();
+    assert!(said.unwrap().contains("moved"));
+    assert!(!old.exists());
+    assert!(std::fs::read_to_string(p.settings().unwrap())
+        .unwrap()
+        .contains("repair_cap = 4"));
+    // A second start finds the new file and moves nothing.
+    std::fs::write(&old, "stale").unwrap();
+    assert_eq!(p.prepare().unwrap(), None);
+    assert!(old.exists());
+    let _ = std::fs::remove_dir_all(&root);
 }
 
 #[test]

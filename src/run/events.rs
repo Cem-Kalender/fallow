@@ -346,6 +346,117 @@ pub enum Event {
     Note {
         text: String,
     },
+    /// 007: a loop over a locked feature's `tasks.md`; follows `run_created` (contracts/storage.md).
+    LoopCreated {
+        project: String,
+        feature: String,
+        lock: u32,
+        lock_commit: String,
+        base_branch: String,
+        build_branch: String,
+        /// The pipeline used, resolved, as TOML.
+        pipeline: String,
+        level: Level,
+        budget_usd: f64,
+        budget_minutes: u64,
+        phases: Vec<PhaseSpec>,
+    },
+    Task {
+        id: String,
+        state: TaskState,
+        commit: Option<String>,
+        repairs: u32,
+    },
+    Phase {
+        n: u32,
+        state: PhaseState,
+        session: Option<String>,
+        handover: Option<String>,
+    },
+    Question {
+        id: String,
+        step: u32,
+        task: Option<String>,
+        text: String,
+        options: Vec<String>,
+        state: QuestionState,
+        by: Option<String>,
+        answer: Option<String>,
+        commit: Option<String>,
+        affects: Option<String>,
+    },
+    Unlocked,
+    Relocked {
+        lock: u32,
+        commit: String,
+        affected: Vec<String>,
+    },
+    /// How a loop ended: verified (ready to merge), or done but not verified, naming what was
+    /// not checked (FR-015).
+    Outcome {
+        verified: bool,
+        missing: Vec<String>,
+    },
+}
+
+/// How much the lead decides without the engineer (FR-020a).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum Level {
+    Strict,
+    #[default]
+    Normal,
+    Free,
+}
+
+/// A task of `tasks.md`, as locked.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TaskSpec {
+    pub id: String,
+    pub story: Option<String>,
+    pub parallel: bool,
+    pub text: String,
+}
+
+/// A phase of `tasks.md`, as locked. `story` is set for a user story's phase.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PhaseSpec {
+    pub n: u32,
+    pub title: String,
+    pub story: Option<String>,
+    pub tasks: Vec<TaskSpec>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskState {
+    Pending,
+    Current,
+    Accepted,
+    Failed,
+    Waiting,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PhaseState {
+    Pending,
+    Building,
+    Checkpoint,
+    Repairing,
+    Done,
+    Reopened,
+    Waiting,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum QuestionState {
+    WithLead,
+    Answered,
+    Decided,
+    WaitingEngineer,
+    Overruled,
 }
 
 impl Event {
@@ -374,27 +485,35 @@ impl Event {
             Event::Merged { .. } => "merged",
             Event::Stopped { .. } => "stopped",
             Event::Note { .. } => "note",
+            Event::LoopCreated { .. } => "loop_created",
+            Event::Task { .. } => "task",
+            Event::Phase { .. } => "phase",
+            Event::Question { .. } => "question",
+            Event::Unlocked => "unlocked",
+            Event::Relocked { .. } => "relocked",
+            Event::Outcome { .. } => "outcome",
         }
     }
 }
 
 /// An event with its place in the log.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Logged {
+pub struct Logged<E = Event> {
     pub seq: u64,
     pub at: String,
     #[serde(flatten)]
-    pub event: Event,
+    pub event: E,
 }
 
-/// The append-only log of one run.
-pub struct Log {
+/// The append-only log of one run, or (with another event type) of one conversation.
+pub struct Log<E = Event> {
     path: PathBuf,
     file: std::fs::File,
     next: u64,
+    _events: std::marker::PhantomData<E>,
 }
 
-impl std::fmt::Debug for Log {
+impl<E> std::fmt::Debug for Log<E> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Log").field("path", &self.path).finish()
     }
@@ -402,10 +521,13 @@ impl std::fmt::Debug for Log {
 
 pub const EVENTS_FILE: &str = "events.jsonl";
 
-impl Log {
+/// An opened log, the events it holds, and notes about what was dropped.
+pub type Opened<E> = (Log<E>, Vec<Logged<E>>, Vec<String>);
+
+impl<E: Serialize + serde::de::DeserializeOwned> Log<E> {
     /// Opens (creating) the log in `dir` and reads every event. A last line that is cut off (a
     /// crash during a write) is dropped and reported in `notes`.
-    pub fn open(dir: &Path) -> Result<(Log, Vec<Logged>, Vec<String>), String> {
+    pub fn open(dir: &Path) -> Result<Opened<E>, String> {
         crate::platform::private_dir(dir)?;
         let path = dir.join(EVENTS_FILE);
         let text = match std::fs::read_to_string(&path) {
@@ -422,7 +544,7 @@ impl Log {
                 good_len += line.len();
                 continue;
             }
-            match serde_json::from_str::<Logged>(trimmed) {
+            match serde_json::from_str::<Logged<E>>(trimmed) {
                 Ok(l) if line.ends_with('\n') => {
                     events.push(l);
                     good_len += line.len();
@@ -451,11 +573,20 @@ impl Log {
             .open(&path)
             .map_err(|e| format!("{}: {e}", path.display()))?;
         let next = events.last().map_or(1, |l| l.seq + 1);
-        Ok((Log { path, file, next }, events, notes))
+        Ok((
+            Log {
+                path,
+                file,
+                next,
+                _events: std::marker::PhantomData,
+            },
+            events,
+            notes,
+        ))
     }
 
     /// Appends an event, flushed and synced before returning (research R-2).
-    pub fn append(&mut self, event: Event) -> Result<Logged, String> {
+    pub fn append(&mut self, event: E) -> Result<Logged<E>, String> {
         let logged = Logged {
             seq: self.next,
             at: super::time::rfc3339(super::time::unix_now()),

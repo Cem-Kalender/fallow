@@ -252,7 +252,7 @@ Claude Code is the first runtime. Others (Codex, Gemini) can be added later with
 **The spec session**
 
 - **FR-005**: The engineer MUST be able to start a feature in a project and hold a chat with the lead agent about it, in the page. The conversation MUST be kept with the feature and survive restarts.
-- **FR-006**: The lead MUST follow Spec Kit's steps (constitution if the project has none, specify, clarify, plan, tasks, analyze). A stepper MUST show the step it is at, and the engineer MUST be able to move it to the next step or back to an earlier one.
+- **FR-006**: The lead MUST follow Spec Kit's steps (constitution while the project's is still Spec Kit's template, specify, clarify, plan, tasks, analyze). A stepper MUST show the step it is at, and the engineer MUST be able to move it to the next step or back to an earlier one.
 - **FR-007**: The feature's documents MUST be shown beside the chat and update as the lead writes them. The engineer MUST be able to edit them directly; the lead MUST receive the engineer's edits on its next turn. Open `[NEEDS CLARIFICATION]` markers MUST be highlighted. Clarify questions MUST be shown as choices with the lead's recommendation.
 - **FR-007a**: In the project conversation and the spec session, what the lead may run MUST follow a mode the engineer switches like Claude Code's permission modes. The current mode is shown as a chip by the message box, and Shift+Tab or a click on the chip moves to the next mode:
   - **Read only**: the lead reads files and writes the spec documents, and runs nothing;
@@ -404,7 +404,7 @@ Claude Code is the first runtime. Others (Codex, Gemini) can be added later with
 - **The questions channel is a local MCP server that Fallow serves to each agent**, with an `ask` tool. When the answer must come from the engineer, the asking step ends and is resumed later rather than holding the call open.
 - **The lead continues from its spec-session context** when answering questions, so it knows what the engineer said and not only what was written.
 - **One builder per loop in this version.** `[P]` tasks run one after another. Parallel builders for `[P]` tasks or parts are later work. Checkers that run at the same point (for example, a review and a security review) may run at the same time.
-- **The constitution is per project.** If a project has none, the lead's first spec session starts with it.
+- **The constitution is per project.** While it is still Spec Kit's template (its `[PROJECT_NAME]` placeholders unfilled), the lead's first spec session starts with it.
 - **Spec Kit is shipped with Fallow** at a pinned version and copied into the project. Fallow does not run Spec Kit's own installer, which downloads its templates.
 - **Git is required for a loop.** A plain folder gets git only when the engineer agrees, at the first lock.
 - **The target branch for the merge** is the branch the feature was locked from. Pushing, pull requests and CI (006's P5) are out of scope here and kept for later.

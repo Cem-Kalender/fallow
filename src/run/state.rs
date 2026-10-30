@@ -106,6 +106,65 @@ pub struct Turn {
     pub step: Option<u32>,
 }
 
+/// A phase of a loop, as locked, and where it is (007 data-model.md, Phase).
+#[derive(Debug, Clone, Serialize)]
+pub struct PhaseStatus {
+    pub spec: PhaseSpec,
+    pub state: PhaseState,
+    /// The phase's builder session (FR-010a).
+    pub session: Option<String>,
+    pub handover: Option<String>,
+}
+
+/// A task of a loop and where it is (007 data-model.md, Task).
+#[derive(Debug, Clone, Serialize)]
+pub struct TaskStatus {
+    pub phase: u32,
+    pub state: TaskState,
+    pub commit: Option<String>,
+    pub repairs: u32,
+}
+
+/// A question an agent asked during the loop (007 data-model.md, Question).
+#[derive(Debug, Clone, Serialize)]
+pub struct QuestionEntry {
+    pub id: String,
+    pub step: u32,
+    pub task: Option<String>,
+    pub text: String,
+    pub options: Vec<String>,
+    pub state: QuestionState,
+    pub by: Option<String>,
+    pub answer: Option<String>,
+    pub commit: Option<String>,
+    pub affects: Option<String>,
+    pub seq: u64,
+}
+
+/// 007: the loop over a locked feature's `tasks.md`.
+#[derive(Debug, Clone, Serialize)]
+pub struct LoopState {
+    pub project: String,
+    pub feature: String,
+    pub lock: u32,
+    pub lock_commit: String,
+    pub base_branch: String,
+    pub build_branch: String,
+    pub pipeline: String,
+    pub level: Level,
+    pub budget_usd: f64,
+    pub budget_minutes: u64,
+    pub phases: Vec<PhaseStatus>,
+    pub tasks: BTreeMap<String, TaskStatus>,
+    pub questions: BTreeMap<String, QuestionEntry>,
+    /// Unlocked and not locked again yet (FR-009).
+    pub unlocked: bool,
+    /// The stories reopened by the latest new lock.
+    pub affected: Vec<String>,
+    /// How the loop ended: verified, and what was not checked.
+    pub outcome: Option<(bool, Vec<String>)>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct RunState {
     pub id: u64,
@@ -157,6 +216,8 @@ pub struct RunState {
     pub paused_secs: u64,
     /// The latest event number.
     pub seq: u64,
+    /// 007: set when this run is a loop over a locked feature.
+    pub feature_loop: Option<LoopState>,
 }
 
 impl RunState {
@@ -229,6 +290,7 @@ impl RunState {
             paused_since: None,
             paused_secs: 0,
             seq: first.seq,
+            feature_loop: None,
         };
         for l in &events[1..] {
             s.apply(l);
@@ -478,6 +540,149 @@ impl RunState {
             Event::Merged { commit, .. } => self.merged = Some(commit.clone()),
             Event::Stopped { reason } => self.stopped = Some(reason.clone()),
             Event::Note { text } => self.notes.push(text.clone()),
+            Event::LoopCreated {
+                project,
+                feature,
+                lock,
+                lock_commit,
+                base_branch,
+                build_branch,
+                pipeline,
+                level,
+                budget_usd,
+                budget_minutes,
+                phases,
+            } => {
+                let mut tasks = BTreeMap::new();
+                for p in phases {
+                    for t in &p.tasks {
+                        tasks.insert(
+                            t.id.clone(),
+                            TaskStatus {
+                                phase: p.n,
+                                state: TaskState::Pending,
+                                commit: None,
+                                repairs: 0,
+                            },
+                        );
+                    }
+                }
+                self.feature_loop = Some(LoopState {
+                    project: project.clone(),
+                    feature: feature.clone(),
+                    lock: *lock,
+                    lock_commit: lock_commit.clone(),
+                    base_branch: base_branch.clone(),
+                    build_branch: build_branch.clone(),
+                    pipeline: pipeline.clone(),
+                    level: *level,
+                    budget_usd: *budget_usd,
+                    budget_minutes: *budget_minutes,
+                    phases: phases
+                        .iter()
+                        .map(|p| PhaseStatus {
+                            spec: p.clone(),
+                            state: PhaseState::Pending,
+                            session: None,
+                            handover: None,
+                        })
+                        .collect(),
+                    tasks,
+                    questions: BTreeMap::new(),
+                    unlocked: false,
+                    affected: Vec::new(),
+                    outcome: None,
+                });
+            }
+            Event::Task {
+                id,
+                state,
+                commit,
+                repairs,
+            } => match self.feature_loop.as_mut().and_then(|f| f.tasks.get_mut(id)) {
+                Some(t) => {
+                    t.state = *state;
+                    if commit.is_some() {
+                        t.commit = commit.clone();
+                    }
+                    t.repairs = *repairs;
+                }
+                None => self.notes.push(format!("event {}: no task {id}", l.seq)),
+            },
+            Event::Phase {
+                n,
+                state,
+                session,
+                handover,
+            } => match self
+                .feature_loop
+                .as_mut()
+                .and_then(|f| f.phases.iter_mut().find(|p| p.spec.n == *n))
+            {
+                Some(p) => {
+                    p.state = *state;
+                    if session.is_some() {
+                        p.session = session.clone();
+                    }
+                    if handover.is_some() {
+                        p.handover = handover.clone();
+                    }
+                }
+                None => self.notes.push(format!("event {}: no phase {n}", l.seq)),
+            },
+            Event::Question {
+                id,
+                step,
+                task,
+                text,
+                options,
+                state,
+                by,
+                answer,
+                commit,
+                affects,
+            } => {
+                if let Some(f) = self.feature_loop.as_mut() {
+                    f.questions.insert(
+                        id.clone(),
+                        QuestionEntry {
+                            id: id.clone(),
+                            step: *step,
+                            task: task.clone(),
+                            text: text.clone(),
+                            options: options.clone(),
+                            state: *state,
+                            by: by.clone(),
+                            answer: answer.clone(),
+                            commit: commit.clone(),
+                            affects: affects.clone(),
+                            seq: l.seq,
+                        },
+                    );
+                }
+            }
+            Event::Unlocked => {
+                if let Some(f) = self.feature_loop.as_mut() {
+                    f.unlocked = true;
+                }
+            }
+            Event::Relocked {
+                lock,
+                commit,
+                affected,
+            } => {
+                if let Some(f) = self.feature_loop.as_mut() {
+                    f.unlocked = false;
+                    f.lock = *lock;
+                    f.lock_commit = commit.clone();
+                    f.affected = affected.clone();
+                }
+            }
+            Event::Outcome { verified, missing } => {
+                if let Some(f) = self.feature_loop.as_mut() {
+                    f.outcome = Some((*verified, missing.clone()));
+                }
+            }
         }
     }
 
