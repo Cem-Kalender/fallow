@@ -171,6 +171,10 @@ pub struct Run {
     pub waiters: Vec<(Instant, Sender<Reply>)>,
     /// Activity lines seen since Fallow started, so a waiting page knows there are new ones.
     pub activity: u64,
+    /// The running step's process group, sampled for the memory budget (research S-19).
+    pub group: Option<Arc<crate::platform::job::Group>>,
+    /// Why the next step has not started: no free slot, or not enough memory.
+    pub waiting: Option<String>,
 }
 
 impl Run {
@@ -220,7 +224,51 @@ impl Run {
 }
 
 /// What the stage machine needs from around it.
+/// What a step expects to use when it has no sample yet, in MB (005's session size).
+pub const STEP_MB: i64 = 700;
+
+/// The free agent slots and memory room across loops and conversations (research S-19). The
+/// engine sets them before it drives a run; a step takes its share as it starts.
+#[derive(Debug)]
+pub struct Slots {
+    free: std::sync::atomic::AtomicI64,
+    room_mb: std::sync::atomic::AtomicI64,
+}
+
+impl Default for Slots {
+    fn default() -> Self {
+        Slots {
+            free: std::sync::atomic::AtomicI64::new(i64::MAX),
+            room_mb: std::sync::atomic::AtomicI64::new(i64::MAX),
+        }
+    }
+}
+
+impl Slots {
+    pub fn set(&self, free: i64, room_mb: i64) {
+        use std::sync::atomic::Ordering::Relaxed;
+        self.free.store(free, Relaxed);
+        self.room_mb.store(room_mb, Relaxed);
+    }
+
+    /// Takes a slot for a step about to start, or says why it waits.
+    pub fn take(&self) -> Result<(), String> {
+        use std::sync::atomic::Ordering::Relaxed;
+        if self.free.load(Relaxed) <= 0 {
+            return Err("waiting for a slot: the most agents allowed at once are running".into());
+        }
+        if self.room_mb.load(Relaxed) < STEP_MB {
+            return Err("waiting for a slot: not enough memory for another agent".into());
+        }
+        self.free.fetch_sub(1, Relaxed);
+        self.room_mb.fetch_sub(STEP_MB, Relaxed);
+        Ok(())
+    }
+}
+
 pub struct Ctx {
+    /// 007: agent slots shared by every loop and conversation (research S-19).
+    pub slots: Arc<Slots>,
     pub settings: Settings,
     pub tx: Sender<Msg>,
     /// Fallow's own executable and process id, for the step tools' bridge.
@@ -285,6 +333,8 @@ impl Engine {
                         stop: Arc::new(AtomicBool::new(false)),
                         waiters: Vec::new(),
                         activity: 0,
+                        group: None,
+                        waiting: None,
                     };
                     if !run.state.stage.is_final() {
                         if let Err(err) = super::machine::resume(&mut run) {
@@ -346,6 +396,7 @@ impl Engine {
                 Msg::Done { run, done } => {
                     if let Some(r) = self.runs.get_mut(&run) {
                         r.busy = None;
+                        r.group = None;
                         if let Err(e) = super::machine::on_done(r, &self.ctx, done) {
                             self.console.push(format!("run {run}: {e}"));
                         }
@@ -878,6 +929,8 @@ impl Engine {
             stop: Arc::new(AtomicBool::new(false)),
             waiters: Vec::new(),
             activity: 0,
+            group: None,
+            waiting: None,
         };
         run.append(Event::LoopCreated {
             project: p.id.clone(),
@@ -972,7 +1025,39 @@ impl Engine {
         })
     }
 
+    /// The slots and memory room left for loop steps (research S-19). The lead's turns in a chat
+    /// always start, so they go first; they count against what loops may use.
+    fn refresh_slots(&self) {
+        let d = &self.ctx.settings.defaults;
+        let mut running = 0i64;
+        let mut used = 0i64;
+        let mut count = |g: Option<&crate::platform::job::Group>| {
+            running += 1;
+            used += g.map_or(0, |g| g.memory_mb() as i64).max(STEP_MB);
+        };
+        for r in self.runs.values() {
+            if matches!(r.busy, Some(Busy::Step(_))) {
+                count(r.group.as_deref());
+            }
+        }
+        let turns: Vec<&crate::studio::Tool> = self.studio.tools.values().collect();
+        for c in self.studio.convs.values().filter(|c| c.state.busy) {
+            let g = turns
+                .iter()
+                .find(|t| matches!(&t.owner, crate::studio::Owner::Conv(id) if *id == c.id()));
+            count(g.map(|t| &*t.group));
+        }
+        let budget = match d.memory_budget_mb {
+            0 => crate::platform::total_memory_mb().map_or(i64::MAX, |t| (t * 3 / 4) as i64),
+            b => b as i64,
+        };
+        self.ctx
+            .slots
+            .set(d.max_parallel as i64 - running, budget.saturating_sub(used));
+    }
+
     fn drive(&mut self, id: u64) {
+        self.refresh_slots();
         if let Some(r) = self.runs.get_mut(&id) {
             let before = needs(r);
             if let Err(e) = super::machine::drive(r, &self.ctx) {
@@ -1222,6 +1307,8 @@ impl Engine {
             stop: Arc::new(AtomicBool::new(false)),
             waiters: Vec::new(),
             activity: 0,
+            group: None,
+            waiting: None,
         };
         for n in notices {
             run.append(Event::Note {
@@ -1279,6 +1366,7 @@ pub fn summary(r: &Run) -> Value {
         "cost_usd": s.cost_usd,
         "created": s.created,
         "seq": s.seq,
+        "waiting": r.waiting,
     })
 }
 
@@ -1313,6 +1401,7 @@ pub fn view(r: &Run) -> Value {
         Some(Busy::Merge) => "merge".into(),
         None => String::new(),
     });
+    v["waiting"] = json!(r.waiting);
     v["interventions"] = json!(r.state.interventions());
     v["minutes_used"] = json!(r.state.minutes_used(super::time::unix_now()));
     // Before approval, the plan the engineer is asked to approve (its commands among it).

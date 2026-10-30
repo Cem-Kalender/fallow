@@ -227,22 +227,22 @@ Unless a task says otherwise, tests use the `fake` runtime (research S-13).
 ### Implementation for User Story 2
 
 - [ ] T044 [US2] Loop state in `src/run/state.rs`: the loop, its phases and tasks (data-model.md) from the lock's `tasks.md`; the folds of the new events; phase sessions; the build branch `fallow/NNN/build` from the lock commit, with `NNN-name` merged in at task boundaries (research S-9). Then remove 006's planner path, the service's `run` request (`src/service/mod.rs`), `src/plan/`, parts, and their tests, now replaced (T007).
-- [ ] T045 [US2] Scheduling from the pipeline in `src/run/machine.rs` (research S-9):
+- [X] T045 [US2] Scheduling from the pipeline in `src/run/machine.rs` (research S-9):
   - the builder per task: a new session at the start of a phase, then resumed;
   - `fallow:gates` per task or per phase;
   - checkpoint, phase and once steps, in fresh sessions;
   - the `paths` filter;
   - `parallel_with` within the cap.
-- [ ] T046 [US2] Checks per task in `src/verify/claims.rs` and `src/run/machine.rs`: the claim against the worktree, the locked documents untouched, the task tick, Fallow's commit, and the gates against the baseline.
-- [ ] T047 [US2] The handover step: its instruction in `src/agent/prompts.rs`, its schema in `src/agent/schemas.rs`, its check of the three sections and that nothing else changed, and Fallow's commit.
-- [ ] T048 [US2] Checker verdicts in `src/verify/verdict.rs`: criteria `USn/k` from `spec.md`, must-fail cases, and findings with severity, where `high` or above fails.
-- [ ] T049 [US2] Repairs and caps from the pipeline in `src/run/machine.rs`, keeping 006's rule that cut-short steps do not count.
-- [ ] T050 [US2] The outcome in `src/run/machine.rs` and `src/publish/local.rs`:
+- [X] T046 [US2] Checks per task in `src/verify/claims.rs` and `src/run/machine.rs`: the claim against the worktree, the locked documents untouched, the task tick, Fallow's commit, and the gates against the baseline.
+- [X] T047 [US2] The handover step: its instruction in `src/agent/prompts.rs`, its schema in `src/agent/schemas.rs`, its check of the three sections and that nothing else changed, and Fallow's commit.
+- [X] T048 [US2] Checker verdicts in `src/verify/verdict.rs`: criteria `USn/k` from `spec.md`, must-fail cases, and findings with severity, where `high` or above fails.
+- [X] T049 [US2] Repairs and caps from the pipeline in `src/run/machine.rs`, keeping 006's rule that cut-short steps do not count.
+- [X] T050 [US2] The outcome in `src/run/machine.rs` and `src/publish/local.rs`:
   - `ready`, or `done_unverified` with its missing list;
   - the merge of exactly the gated commit, refused when it does not merge cleanly.
 - [X] T051 [US2] Budgets in `src/run/time.rs` and `src/run/state.rs` (FR-016a): the per-task suggestion, pausing at the limit, and excluding paused time and time waiting for the engineer. This also fixes 006's known gap.
 - [X] T052 [US2] Unlock and relock in `src/run/relock.rs` (research S-17): the affected stories from the two lock commits, the preview API, reopening phases, and a new baseline.
-- [ ] T053 [US2] The concurrency cap and the memory budget across loops and conversations in `src/run/engine.rs` (research S-19): restore 005/006's memory sampler into `src/platform/`, check the budget before a step starts, put chat turns first, and show "waiting for a slot".
+- [X] T053 [US2] The concurrency cap and the memory budget across loops and conversations in `src/run/engine.rs` (research S-19): restore 005/006's memory sampler into `src/platform/`, check the budget before a step starts, put chat turns first, and show "waiting for a slot".
 
 **Checkpoint**: Q3 and Q5 of quickstart.md work with real agents. US2's tests pass.
 

@@ -229,6 +229,20 @@ pub fn resume(run: &mut Run) -> Result<(), String> {
     Ok(())
 }
 
+/// Takes an agent slot for the next step, or records why it waits (research S-19).
+pub(crate) fn slot(run: &mut Run, ctx: &Ctx) -> bool {
+    match ctx.slots.take() {
+        Ok(()) => {
+            run.waiting = None;
+            true
+        }
+        Err(why) => {
+            run.waiting = Some(why);
+            false
+        }
+    }
+}
+
 pub(crate) fn pause_for_limit(run: &mut Run, which: String, used: String) -> Result<(), String> {
     run.append(Event::LimitReached {
         which: which.clone(),
@@ -298,6 +312,9 @@ pub fn drive(run: &mut Run, ctx: &Ctx) -> Result<(), String> {
     if let Some(n) = queued(run) {
         if let Some((w, u)) = limit_hit(run) {
             return pause_for_limit(run, w, u);
+        }
+        if !slot(run, ctx) {
+            return Ok(());
         }
         return start(run, ctx, n);
     }

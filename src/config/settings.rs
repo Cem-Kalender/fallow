@@ -60,7 +60,7 @@ impl Default for Defaults {
             limit_min: 120,
             step_min: 30,
             repair_cap: 2,
-            max_parallel: 2,
+            max_parallel: 4,
             memory_budget_mb: 0,
         }
     }

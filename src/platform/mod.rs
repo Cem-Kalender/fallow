@@ -3,6 +3,31 @@
 //! the door open and is not built in CI.
 
 pub mod notify;
+
+/// The machine's physical memory in MB, if it can be read.
+#[cfg(windows)]
+pub fn total_memory_mb() -> Option<u64> {
+    use windows_sys::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
+    // SAFETY: an all-zero MEMORYSTATUSEX with its length set is valid input.
+    let mut m: MEMORYSTATUSEX = unsafe { std::mem::zeroed() };
+    m.dwLength = std::mem::size_of::<MEMORYSTATUSEX>() as u32;
+    // SAFETY: `m` lives for the call.
+    (unsafe { GlobalMemoryStatusEx(&mut m) } != 0).then(|| m.ullTotalPhys / (1024 * 1024))
+}
+
+/// The machine's physical memory in MB, if it can be read.
+#[cfg(not(windows))]
+pub fn total_memory_mb() -> Option<u64> {
+    let text = std::fs::read_to_string("/proc/meminfo").ok()?;
+    let kb: u64 = text
+        .lines()
+        .find(|l| l.starts_with("MemTotal:"))?
+        .split_whitespace()
+        .nth(1)?
+        .parse()
+        .ok()?;
+    Some(kb / 1024)
+}
 pub mod random;
 
 /// A command for a console program that opens no window of its own. The service has no

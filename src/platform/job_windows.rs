@@ -8,7 +8,7 @@ use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
 use windows_sys::Win32::System::JobObjects::{
     AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
     JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
-    SetInformationJobObject, TerminateJobObject,
+    QueryInformationJobObject, SetInformationJobObject, TerminateJobObject,
 };
 use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_SET_QUOTA, PROCESS_TERMINATE};
 
@@ -49,6 +49,27 @@ impl Group {
             return Err(e);
         }
         Ok(Group { job })
+    }
+
+    /// The most memory the job's processes have committed so far, in MB (the memory budget,
+    /// research S-19).
+    pub fn memory_mb(&self) -> u64 {
+        // SAFETY: an all-zero structure is valid output space.
+        let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
+        // SAFETY: `info` lives for the call and its size is passed.
+        let ok = unsafe {
+            QueryInformationJobObject(
+                self.job,
+                JobObjectExtendedLimitInformation,
+                (&raw mut info).cast(),
+                std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+                std::ptr::null_mut(),
+            )
+        };
+        if ok == 0 {
+            return 0;
+        }
+        (info.PeakJobMemoryUsed / (1024 * 1024)) as u64
     }
 
     /// Puts the agent into the job right after spawn.

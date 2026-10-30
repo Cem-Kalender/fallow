@@ -217,6 +217,9 @@ fn step(run: &mut Run, ctx: &Ctx) -> Result<(), String> {
         if let Some((w, u)) = machine::limit_hit(run) {
             return machine::pause_for_limit(run, w, u);
         }
+        if !machine::slot(run, ctx) {
+            return Ok(());
+        }
         return start(run, ctx, n);
     }
     let lib = library(run, ctx);
@@ -1262,6 +1265,12 @@ fn start(run: &mut Run, ctx: &Ctx, n: u32) -> Result<(), String> {
     let remaining = (run.state.limits.usd - run.state.cost_usd).max(0.01);
     let budget = def.limits.usd.map_or(remaining, |u| u.min(remaining));
     let minutes = def.limits.minutes.unwrap_or(run.state.limits.step_minutes);
+    // The step's process group, sampled for the memory budget (research S-19).
+    let group = Arc::new(
+        crate::platform::job::Group::new()
+            .map_err(|e| format!("cannot create a process group: {e}"))?,
+    );
+    run.group = Some(Arc::clone(&group));
     let call = Call {
         instruction: machine::instruction_of(run, n),
         schema: agent::schemas::for_kind(step.kind),
@@ -1274,7 +1283,7 @@ fn start(run: &mut Run, ctx: &Ctx, n: u32) -> Result<(), String> {
         time_limit: Duration::from_secs(minutes * 60),
         system: Some(def.body.clone()),
         partial: false,
-        group: None,
+        group: Some(Arc::clone(&group)),
     };
     run.append(Event::StepStarted {
         n,

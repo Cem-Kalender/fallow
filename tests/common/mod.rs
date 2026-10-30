@@ -197,9 +197,28 @@ pub fn start_studio(
 ) -> fallow::service::ToolEngine {
     let config = root.join("config");
     std::fs::create_dir_all(&config).unwrap();
+    // Settings a test adds, such as a smaller cap.
+    let settings = match std::fs::read_to_string(root.join("settings.extra.toml")) {
+        Ok(extra) => {
+            let exe = env!("CARGO_BIN_EXE_fallow-fake-agent");
+            let text = format!(
+                "{extra}
+[agents.claude]
+command = {exe:?}
+args = [\"--scenario\", {:?}]
+",
+                scenario.display().to_string()
+            );
+            let mut n = Vec::new();
+            let s = Settings::parse("settings.toml", &text, &mut n);
+            assert!(n.is_empty(), "{n:?}");
+            s
+        }
+        Err(_) => studio_settings(scenario),
+    };
     fallow::service::engine_with_tools(
         root.join("data"),
-        studio_settings(scenario),
+        settings,
         Some(config),
         PathBuf::from(env!("CARGO_BIN_EXE_fallow")),
         approval_wait,

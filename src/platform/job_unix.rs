@@ -15,6 +15,11 @@ impl Group {
         })
     }
 
+    /// Not sampled on Unix yet: the cap on parallel steps still applies.
+    pub fn memory_mb(&self) -> u64 {
+        0
+    }
+
     fn pgid(&self) -> Option<i32> {
         Some(self.pgid.load(std::sync::atomic::Ordering::Relaxed)).filter(|p| *p > 1)
     }

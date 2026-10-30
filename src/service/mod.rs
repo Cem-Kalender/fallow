@@ -73,6 +73,7 @@ pub fn serve(
     let exe =
         std::env::current_exe().map_err(|e| format!("cannot find Fallow's own executable: {e}"))?;
     let ctx = Ctx {
+        slots: Arc::default(),
         settings,
         tx: tx.clone(),
         exe,
@@ -339,6 +340,7 @@ pub fn engine_for_tests(
 ) -> Result<(Sender<Msg>, std::thread::JoinHandle<()>), String> {
     let (tx, rx) = mpsc::channel::<Msg>();
     let ctx = Ctx {
+        slots: Arc::default(),
         settings,
         tx: tx.clone(),
         exe: std::env::current_exe().unwrap_or_default(),
@@ -374,6 +376,7 @@ pub fn engine_with_tools(
     );
     let (tx, rx) = mpsc::channel::<Msg>();
     let ctx = Ctx {
+        slots: Arc::default(),
         settings,
         tx: tx.clone(),
         exe,
