@@ -388,7 +388,7 @@ fn gated(
                 g.kind == GateKind::Part
                     && g.part.as_deref() == Some(part)
                     && g.result.commit == commit
-                    && !g.class.is_some_and(|k| k.ok())
+                    && !gate_ok(run, g)
             })
             .map(|g| {
                 let names: Vec<&str> = g
@@ -412,6 +412,21 @@ fn gated(
             })
             .collect(),
     ))
+}
+
+/// Whether a gate run lets the work through (FR-011): it passed, or failed only where the
+/// baseline failed, or ran no tests while the baseline had none either (a project's first
+/// tasks; no test that passed in the baseline fails).
+fn gate_ok(run: &Run, g: &super::state::GateEntry) -> bool {
+    if g.class.is_some_and(|k| k.ok()) {
+        return true;
+    }
+    use crate::verify::gates::Outcome;
+    g.result.outcome == Outcome::NoTests
+        && run
+            .state
+            .baseline(&g.result.gate)
+            .is_none_or(|b| matches!(b.outcome, Outcome::NoTests | Outcome::NotStarted { .. }))
 }
 
 /// A task's or a story's work was not accepted: a repair in the phase's session within the
@@ -1041,7 +1056,7 @@ fn gated_story(run: &Run, story: &str, commit: &str) -> GateState {
     }
     let failed: Vec<String> = runs
         .iter()
-        .filter(|g| !g.class.is_some_and(|k| k.ok()))
+        .filter(|g| !gate_ok(run, g))
         .map(|g| format!("gate {} {}", g.result.gate, g.result.outcome.label()))
         .collect();
     if failed.is_empty() {

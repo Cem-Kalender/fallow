@@ -68,7 +68,9 @@ impl Stage {
             (_, Paused | Stopped) => self != Paused || to == Stopped,
             (Paused, _) => true,
             (Planning, Building) => true,
-            (Building, Integrating | Gating | Reviewing) => true,
+            // 007: a feature's loop reviews within Building (at each checkpoint) and is ready
+            // when its last phase is done.
+            (Building, Integrating | Gating | Reviewing | Ready) => true,
             (Integrating, Gating | Building | Reviewing) => true,
             (Gating, Reviewing | Building) => true,
             (Reviewing, Ready | Building) => true,

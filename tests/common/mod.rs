@@ -235,3 +235,149 @@ pub fn turn_ended(tx: &Sender<Msg>, conv: &str, n: usize) -> Value {
             && !v["turns"][n - 1]["reply"].is_null()
     })
 }
+
+// ---- 007 US2: a locked two-story feature ------------------------------------------------
+
+pub const CALC_SPEC: &str = "# Feature Specification: Calc\n\n## User Scenarios & Testing\n\n### User Story 1 - Add (Priority: P1)\n\n**Acceptance Scenarios**:\n\n1. **Given** two numbers, **When** adding 2 and 3, **Then** the result is 5.\n2. **Given** a string, **When** adding 'a' and 1, **Then** a TypeError is raised (must fail)\n\n### User Story 2 - Subtract (Priority: P2)\n\n**Acceptance Scenarios**:\n\n1. **Given** two numbers, **When** subtracting 3 from 5, **Then** the result is 2.\n2. **Given** a string, **When** subtracting 1 from 'a', **Then** a TypeError is raised (must fail)\n";
+pub const CALC_PLAN: &str = "# Plan\n\n## Commands\n\n- `python -m calc`\n";
+pub const CALC_TASKS: &str = "# Tasks: Calc\n\n## Phase 1: Setup\n\n- [ ] T001 Create the calc package\n\n## Phase 2: User Story 1 - Add\n\n- [ ] T002 [US1] add() in calc/__init__.py\n- [ ] T003 [US1] Tests for add\n\n## Phase 3: User Story 2 - Subtract\n\n- [ ] T004 [US2] sub() with its tests\n";
+
+/// The lead's two turns: the documents, then analyze.
+pub fn lead_writes_calc() -> String {
+    format!(
+        "[[step]]\nkind = \"lead_turn\"\nfiles = [{{ path = \"specs/001-calc/spec.md\", text = {} }}, {{ path = \"specs/001-calc/plan.md\", text = {} }}, {{ path = \"specs/001-calc/tasks.md\", text = {} }}]\noutput = {{ reply = \"Written.\", step = \"tasks\" }}\n\n[[step]]\nkind = \"lead_turn\"\noutput = {{ reply = \"Analyzed.\", step = \"analyze\", findings = [] }}\n\n",
+        lit(CALC_SPEC),
+        lit(CALC_PLAN),
+        lit(CALC_TASKS)
+    )
+}
+
+/// A builder step for `task` that writes `files` and reports them.
+pub fn task_step(task: &str, files: &[(&str, &str)], extra: &str) -> String {
+    let fs: Vec<String> = files
+        .iter()
+        .map(|(p, t)| format!("{{ path = {p:?}, text = {} }}", lit(t)))
+        .collect();
+    let names: Vec<String> = files.iter().map(|(p, _)| format!("{p:?}")).collect();
+    format!(
+        "[[step]]\nkind = \"build\"\npart = {task:?}\n{extra}\nfiles = [{}]\noutput = {{ status = \"done\", task = {task:?}, files = [{}], summary = \"did {task}\" }}\n\n",
+        fs.join(", "),
+        names.join(", ")
+    )
+}
+
+/// The handover of phase `n`.
+pub fn handover_step(n: u32, extra: &str) -> String {
+    let path = format!("specs/001-calc/handover/phase-{n}.md");
+    format!(
+        "[[step]]\nkind = \"handover\"\npart = \"phase-{n}\"\n{extra}\nfiles = [{{ path = {path:?}, text = {} }}]\noutput = {{ status = \"done\", path = {path:?}, summary = \"handed over\" }}\n\n",
+        lit(&format!(
+            "## Built\nPhase {n}.\n\n## Decisions\nNone.\n\n## For the next phase\nGo on.\n"
+        ))
+    )
+}
+
+/// A reviewer's verdict on `story` (US1 or US2): both scenarios checked, the second refused.
+pub fn check_step(story: &str, passed: bool, extra: &str) -> String {
+    let (op, a, b) = if story == "US1" {
+        ("add", "2, 3", "5")
+    } else {
+        ("sub", "5, 3", "2")
+    };
+    format!(
+        "[[step]]\nkind = \"review\"\npart = {story:?}\n{extra}\noutput = {{ answers = [{{ criterion = \"{story}/1\", ran = \"python -c {op}({a})\", result = \"{b}\", passed = {passed} }}, {{ criterion = \"{story}/2\", ran = \"python -c {op}('a', 1)\", result = \"TypeError\", passed = true, failing_case = \"{op}('a', 1) is refused\" }}], summary = \"checked\" }}\n\n"
+    )
+}
+
+pub const CALC_INIT: &str = "def add(a, b):\n    if not isinstance(a, int) or not isinstance(b, int):\n        raise TypeError('ints only')\n    return a + b\n";
+pub const CALC_INIT_SUB: &str = "def add(a, b):\n    if not isinstance(a, int) or not isinstance(b, int):\n        raise TypeError('ints only')\n    return a + b\n\n\ndef sub(a, b):\n    if not isinstance(a, int) or not isinstance(b, int):\n        raise TypeError('ints only')\n    return a - b\n";
+pub const TEST_ADD: &str = "import unittest\nfrom calc import add\n\n\nclass Add(unittest.TestCase):\n    def test_add(self):\n        self.assertEqual(add(2, 3), 5)\n\n    def test_bad(self):\n        with self.assertRaises(TypeError):\n            add('a', 1)\n";
+pub const TEST_SUB: &str = "import unittest\nfrom calc import sub\n\n\nclass Sub(unittest.TestCase):\n    def test_sub(self):\n        self.assertEqual(sub(5, 3), 2)\n";
+
+/// Every step of a loop that goes well, phase by phase.
+pub fn calc_loop_ok() -> String {
+    [
+        task_step("T001", &[("calc/__init__.py", "")], ""),
+        handover_step(1, ""),
+        task_step("T002", &[("calc/__init__.py", CALC_INIT)], ""),
+        task_step(
+            "T003",
+            &[("tests/__init__.py", ""), ("tests/test_add.py", TEST_ADD)],
+            "",
+        ),
+        handover_step(2, ""),
+        check_step("US1", true, ""),
+        task_step(
+            "T004",
+            &[
+                ("calc/__init__.py", CALC_INIT_SUB),
+                ("tests/test_sub.py", TEST_SUB),
+            ],
+            "",
+        ),
+        handover_step(3, ""),
+        check_step("US2", true, ""),
+    ]
+    .concat()
+}
+
+/// A project with the Calc feature locked through the studio; returns the engine, the project
+/// folder, the loop's id. `loop_steps` are the loop's scenario steps, after the lead's.
+pub fn locked_calc(
+    root: &Path,
+    loop_steps: &str,
+    pipeline: Option<&str>,
+) -> (fallow::service::ToolEngine, PathBuf, u64) {
+    let repo = repo(root);
+    let scenario = root.join("scenario.toml");
+    std::fs::write(&scenario, format!("{}{loop_steps}", lead_writes_calc())).unwrap();
+    let e = start_studio(root, &scenario, None);
+    let tx = &e.tx;
+    let project = sreq(tx, Req::AddProject { path: repo.clone() }).unwrap()["project"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    git(&repo, &["add", "."]);
+    git(&repo, &["commit", "-q", "-m", "spec kit"]);
+    let f = sreq(
+        tx,
+        Req::NewFeature {
+            project: project.clone(),
+            title: "Calc".into(),
+        },
+    )
+    .unwrap();
+    assert_eq!(f["feature"], "001-calc");
+    let conv = f["conversation"].as_str().unwrap().to_string();
+    sreq(
+        tx,
+        Req::Say {
+            conv: conv.clone(),
+            text: "Write it.".into(),
+        },
+    )
+    .unwrap();
+    turn_ended(tx, &conv, 1);
+    sreq(
+        tx,
+        Req::Say {
+            conv: conv.clone(),
+            text: "Analyze.".into(),
+        },
+    )
+    .unwrap();
+    turn_ended(tx, &conv, 2);
+    let l = ask(
+        tx,
+        Request::Lock {
+            project,
+            feature: "001-calc".into(),
+            pipeline: pipeline.map(str::to_string),
+            level: None,
+            budget_usd: Some(5.0),
+            budget_minutes: Some(60),
+        },
+    )
+    .unwrap();
+    (e, repo, l["loop"].as_u64().unwrap())
+}
