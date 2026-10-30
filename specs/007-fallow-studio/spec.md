@@ -35,6 +35,9 @@ Fallow Studio puts proper spec-driven development in front of that loop and make
 - Q: Should the builder keep one session for the whole feature, or start fresh per phase? → A: A fresh session per phase of `tasks.md`; the tasks of a phase share it. Every builder session starts from the same markdown files, the locked documents plus the handovers that earlier builders wrote (FR-010a).
 - Q: How much may the lead answer without the engineer? → A: A setting per project and per feature, the autonomy level. Strict: every question goes to the engineer. Normal (the default): the lead answers what the documents or the conversations settle. Free: the lead also decides small open questions itself, and the engineer sees them afterwards (FR-020a).
 - Q: How does Fallow get the engineer's attention? → A: The "Needs you" inbox and its count, plus a desktop notification that opens the item when clicked, with a switch to turn notifications off (FR-003a).
+- Q (analysis, 2026-10-30): When a question waits for the engineer, what happens to the rest of the loop? → A: The loop waits; other loops and conversations go on (FR-021).
+- Q (analysis, 2026-10-30): What is a "small" question at the Free level? → A: One that touches no reserved item, no acceptance scenario, no public interface (commands, API, file or data formats) and no dependency (FR-020a).
+- Q (analysis, 2026-10-30): May Fallow tick tasks in the locked `tasks.md`? → A: Yes. After the lock, Fallow may tick tasks, add handovers and commit answers; nothing else changes the documents (FR-009).
 - Q: What spending and time limit does a loop have by default? → A: A cost and time budget that Fallow suggests at the lock from the number of tasks, which the engineer can edit there. The loop pauses and asks when it is reached (FR-016a).
 - Q: What may the lead run in the project conversation and the spec session? → A: The engineer switches modes as in Claude Code: Shift+Tab or a chip by the message box cycles Read only, Approved commands, Ask (the default) and Run anything (FR-007a).
 
@@ -125,19 +128,19 @@ While a loop runs, its page shows the process as in the mockup's "Orchestration 
 
 During a step, an agent that meets something the spec does not settle asks through Fallow; agents never talk to each other directly.
 - **If the spec, or the conversation from the spec session, answers it,** the lead answers. Fallow commits the answer to the spec, and the asking agent continues within the same step. The feed shows "lead answered", and the engineer can overrule it.
-- **If the question is genuinely open,** the lead passes it to the engineer with options and a recommendation. Only the affected user story waits. The asking agent's step ends, and it resumes in its session with the committed answer.
+- **If the question is genuinely open,** the lead passes it to the engineer with options and a recommendation. The loop waits for the answer, while other loops and conversations go on. The asking agent's step ends, and it resumes in its session with the committed answer.
 
 **Why this priority**: it keeps the loop moving without guessing. It needs User Story 2 to exist, but is not needed for a first verified result, because a builder can already stop and ask in 006's way.
 
 **Independent Test**: with a scripted agent that asks two questions, one answered by the spec and one not, check that:
 - the first is answered by the lead and committed, and the agent continues;
-- the second reaches the engineer with options, and only its story waits;
+- the second reaches the engineer with options, and the loop waits for it;
 - both appear in the feed with who answered and the commit.
 
 **Acceptance Scenarios**:
 
 1. **Given** a builder that asks a question the spec answers, **When** the lead answers it, **Then** the answer is committed to the spec's clarifications, the builder receives it without its step ending, and the feed shows the question, "lead answered", and the commit.
-2. **Given** a question the lead judges open, **When** it is relayed, **Then** the engineer sees it in the "Needs you" inbox and on the loop page, with options and the lead's recommendation. Tasks of other user stories that do not depend on it continue.
+2. **Given** a question the lead judges open, **When** it is relayed, **Then** the engineer sees it in the "Needs you" inbox and on the loop page, with options and the lead's recommendation. The loop waits for the answer; other loops and conversations go on.
 3. **Given** the engineer answers, **Then** the answer is committed, and the asking agent resumes in its session with it.
 4. **Given** an answer the lead gave, **When** the engineer overrules it, **Then** the reversal is committed, and the tasks built on the old answer are reopened and verified again.
 
@@ -220,7 +223,7 @@ Claude Code is the first runtime. Others (Codex, Gemini) can be added later with
 - **A plain folder (no git).** Spec sessions work. Starting a loop needs git: Fallow offers to set it up (an initial commit of what is there) and only does so if the engineer agrees.
 - **Spec Kit already installed**, possibly another version. Fallow keeps the existing files, installs nothing over them, and says which version it found.
 - **A project folder that was moved or deleted.** The project shows as missing, with its history kept, until the engineer removes it or points it to the new place.
-- **The engineer edits a document while the lead is writing it.** Neither edit is lost: the lead's write is refused for that document, and the lead is told to re-read and reapply.
+- **The engineer edits a document while the lead's turn runs.** Neither edit is lost: while a turn runs, the documents in the page are read-only, and what the engineer types is kept as a draft. After the turn, a draft for a document the lead did not change is applied; for one it did change, both versions are shown for the engineer to merge.
 - **Locking with open `[NEEDS CLARIFICATION]` markers or analyze findings.** The lock is refused, and the open items are named.
 - **A `tasks.md` Fallow cannot read** (no phases, no task ids, or no user story checkpoints). The lock is refused with what is wrong, before any agent step.
 - **A task the builder cannot finish in one step.** It continues the task in its session. A task that fails beyond the repair cap waits for the engineer.
@@ -243,6 +246,7 @@ Claude Code is the first runtime. Others (Codex, Gemini) can be added later with
   - The notification is raised by Fallow on the engineer's machine; nothing leaves it.
   - It names the project, the feature and what is needed, and never includes code or command output.
   - The engineer MUST be able to turn notifications off. One item raises one notification, not one per retry.
+- **FR-003b**: Fallow MUST show what it keeps on disk and how large it is: per project, its loops, conversations and worktrees. The engineer MUST be able to delete a loop's or conversation's data, after a confirmation naming what is removed (constitution V). This view follows the mockup's style; it is reached from the dashboard.
 - **FR-004**: Several loops MUST be able to run at once, across or within projects, limited by a cap on concurrent agent steps and Fallow's memory budget. Steps over the cap wait and say so.
 
 **The spec session**
@@ -257,8 +261,8 @@ Claude Code is the first runtime. Others (Codex, Gemini) can be added later with
   - **Run anything**: any command without asking, until the engineer switches back.
 
   In every mode, the lead never edits code: in these chats it writes only `specs/`, the constitution and `.fallow/`. The mode belongs to that one chat, and a new conversation starts in Ask. When the lead answers questions during a loop, it has the rights of Approved commands, whatever mode the chat was in.
-- **FR-008**: Locking MUST be possible only when tasks and analyze are done, and with no open clarification markers. Locking MUST commit the documents on the feature's branch (creating it if needed) and start the loop.
-- **FR-009**: After the lock, the loop MUST change the documents only by committing answers to questions (User Story 4). The engineer MUST be able to unlock a feature:
+- **FR-008**: Locking MUST be possible only when tasks and analyze are done, with no open clarification markers, no CRITICAL analyze finding left undismissed, `spec.md`, `plan.md` and `tasks.md` readable by Fallow, and every user story having at least one acceptance scenario marked `(must fail)`. A refused lock names each problem. Locking MUST commit the documents on the feature's branch (creating it if needed) and start the loop.
+- **FR-009**: After the lock, Fallow MUST change the documents only by ticking accepted tasks in `tasks.md`, adding handovers, and committing answers to questions (User Story 4). The engineer MUST be able to unlock a feature:
   - the loop pauses at the end of its current step, and the spec session opens again with its history;
   - when the engineer locks again, the change is committed, and the loop continues;
   - the user stories the change affects are reopened and verified again, including stories already reviewed;
@@ -278,7 +282,7 @@ Claude Code is the first runtime. Others (Codex, Gemini) can be added later with
 - **FR-015**: A result from a pipeline without gates or without reviews MUST be shown as "Done, not verified by Fallow", naming what was not checked.
 - **FR-016**: Everything 006's loop does MUST keep working, now per task:
   - resume after a stop or crash without repeating completed work;
-  - limits on time, cost and repairs, with paused time excluded;
+  - limits on time, cost and repairs (FR-016a, FR-013);
   - pause, stop, and a note for the next step;
   - retrying a step lost to a transient error.
 
@@ -307,10 +311,10 @@ Claude Code is the first runtime. Others (Codex, Gemini) can be added later with
 - **FR-020a**: The lead's freedom to answer MUST follow the autonomy level, set per project and overridable per feature until the lock (or at an unlock):
   - **Strict**: every question goes to the engineer, with the lead's recommendation;
   - **Normal** (the default): the lead answers what the locked documents or the engineer's conversations settle;
-  - **Free**: the lead also decides small open questions itself. Each such decision is committed, marked "decided by the lead", and listed for the engineer to confirm or overrule; it never blocks the loop.
+  - **Free**: the lead also decides small open questions itself. A small question is a question that touches no reserved item, no acceptance scenario, no public interface (commands, API, file or data formats) and no dependency. Each such decision is committed, marked "decided by the lead", and listed for the engineer to confirm or overrule; it never blocks the loop.
 
   Whatever the level, a question about something the engineer marked as theirs in the spec, or that would change an acceptance criterion, always goes to the engineer.
-- **FR-021**: A question the lead judges open MUST go to the engineer with options and the lead's recommendation. Only the work that depends on it waits. The asking step ends, and resumes in its session with the committed answer.
+- **FR-021**: A question the lead judges open MUST go to the engineer with options and the lead's recommendation. The loop waits for the answer: with one builder working in order, the rest of the loop depends on it. Other loops and conversations go on. The asking step ends, and resumes in its session with the committed answer.
 - **FR-022**: The engineer MUST be able to overrule any answer the lead gave. The reversal is committed, and the tasks built on the old answer are reopened and verified again.
 - **FR-023**: Every question and answer MUST appear in the feed, with who answered (lead or engineer) and the commit.
 
@@ -380,7 +384,7 @@ Claude Code is the first runtime. Others (Codex, Gemini) can be added later with
 ### Measurable Outcomes
 
 - **SC-001**: From adding a folder to the lead's first reply in a new feature takes under 1 minute, excluding the agent's own response time.
-- **SC-002**: On the engineer's task set, in at least 4 of 5 loops, the only interventions after the lock are the merge and questions the lead relayed as genuinely open.
+- **SC-002**: On the engineer's task set, in at least 4 of 5 loops, the only interventions after the lock are the merge and questions the lead relayed as genuinely open. 007 records every loop for this; the measurement on a task set with hidden tests is a later feature, and until then 007 does not claim it (constitution VIII).
 - **SC-003**: No feature is ever shown as "Ready to merge" without every task's gates and every story's review having passed. This is shown by tests with injected false claims, missing reviews and removed gates.
 - **SC-004**: For any task of a finished loop, the engineer can name from the page alone, in under 1 minute:
   - the agent that did it;

@@ -33,6 +33,8 @@ The global events are `project`, `feature`, `loop_progress`, `needs_you` and `ne
 | `PATCH /api/projects/<p>` | `{pipeline?, autonomy?, budget_per_task?, notifications?, path?}` | The project |
 | `GET /api/projects/<p>/commands` | | The approved commands |
 | `PUT /api/projects/<p>/commands` | `{commands[]}` | Checked as in the data model |
+| `GET /api/data` | | Sizes per project: loops, conversations and worktrees, with totals (FR-003b) |
+| `DELETE /api/data/<kind>/<id>` | `{confirm: true}` | `kind` is `loop` or `conv`. Deletes that data after the page's confirmation naming it. A running loop cannot be deleted |
 | `POST /api/projects/<p>/git-init` | `{confirm: true}` | `git init` and an initial commit (edge cases) |
 
 ## Conversations (the project conversation and spec sessions)
@@ -51,7 +53,7 @@ The global events are `project`, `feature`, `loop_progress`, `needs_you` and `ne
 |---|---|---|
 | `GET /api/features/<f>` | | `{stage, step, documents[], markers[], lock_check, locks[], pipeline, autonomy, budget_suggestion}` |
 | `GET /api/features/<f>/doc?path=<p>` | | `{text, version, last_edit_by}` |
-| `PUT /api/features/<f>/doc?path=<p>` | `{text, version}` | Fails with 409 if the version moved, so neither edit is lost (edge cases). Only the spec paths are allowed |
+| `PUT /api/features/<f>/doc?path=<p>` | `{text, version}` | Refused with 409 while a lead turn runs, or if the version moved; the page keeps the draft (research S-21). Only the spec paths are allowed |
 | `POST /api/features/<f>/step` | `{to}` | Moves the stepper (FR-006); the lead's next turn runs that step |
 | `POST /api/features/<f>/lock` | `{pipeline, autonomy, budget}` | 422 with the lock check's problems, or `{lock, loop}` |
 | `POST /api/features/<f>/unlock` | `{confirm: true}` | Pauses the loop after its current step, and reopens the session (FR-009) |

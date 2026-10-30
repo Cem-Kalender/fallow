@@ -48,7 +48,7 @@ These are scenarios that show the feature works end to end. Q1–Q5 use real age
 1. Lock a feature whose spec leaves one behaviour open on purpose, and answers another in its Clarifications.
    - **Expected**:
      - the question the spec answers is answered by the lead ("lead answered"), committed, and the builder carries on;
-     - the open question reaches you: in the inbox, as a desktop notification, and on the loop page with options. Only its story waits.
+     - the open question reaches you: in the inbox, as a desktop notification, and on the loop page with options. The loop waits for your answer.
 2. Answer it.
    - **Expected**: the builder resumes in the same session with the committed answer.
 3. Overrule the lead's answer.

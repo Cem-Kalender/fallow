@@ -14,7 +14,7 @@ Fallow reads `tasks.md` and `spec.md` at the lock and refuses a lock whose files
 **Rules**:
 - Tasks before the first phase heading, or phases without tasks, are refused.
 - A story phase whose story is not in `spec.md` is refused.
-- When Fallow accepts a task, it rewrites that task's `- [ ]` as `- [X]` in the task's commit. This is the only change Fallow makes to a locked document besides committing answers.
+- When Fallow accepts a task, it rewrites that task's `- [ ]` as `- [X]` in the task's commit. Ticks, handovers and committed answers are the only changes Fallow makes to locked documents (FR-009).
 
 ## `spec.md`
 
@@ -30,7 +30,16 @@ Fallow reads `tasks.md` and `spec.md` at the lock and refuses a lock whose files
 **Lock rules**:
 - every story has at least one scenario;
 - every story has at least one scenario marked `(must fail)`;
-- no open marker.
+- no open marker;
+- `plan.md`'s commands pass the check.
+
+## `plan.md`
+
+| Element | Pattern | Use |
+|---|---|---|
+| Commands | `## Commands`, then a list of `` `command` `` items | The commands agents may run besides the gates, approved with the lock. Each must pass the approved-command check |
+
+The section is optional. A command that fails the check blocks the lock, naming it.
 
 ## Analyze
 

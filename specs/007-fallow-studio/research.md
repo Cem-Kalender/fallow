@@ -141,6 +141,11 @@ A request returns as soon as there is something newer than `after`, or after 25 
 - **Repair caps** (FR-013): 3 per task for gate failures, and 3 review rounds per checkpoint. Both are settable per pipeline. Steps cut short (an interruption or a lost session) do not count, as in 006.
 - **The baseline**: the gates run once on the lock commit. After an unlock and a new lock, they run again on the new lock commit.
 
+**Branches** (a git project whose feature started from branch B):
+- `NNN-name`: created from B when the feature starts. The spec session commits there, and so does every lock and every answer.
+- `fallow/NNN/build`: created from the lock commit when the loop starts. Builders' tasks, ticks and handovers are committed there. Fallow merges `NNN-name` into it at task boundaries, which brings answers in, and after a relock.
+- The merge (FR-014) brings the gated head of `fallow/NNN/build` into B. Both feature branches are kept until the engineer removes them.
+
 **Rationale**: a step per task gives Fallow a checkpoint per task (FR-011) without restarting the agent's context. A session per phase keeps the context focused (clarification of 2026-10-30).
 
 ## S-10 Questions through the lead (`ask`)
@@ -154,7 +159,7 @@ When an agent calls `ask`:
 1. **Fallow records the question** and starts a lead call, forked from the spec session (S-5). The call gets the question, the locked documents, the autonomy level and the reserved items.
 2. **The lead returns one of three things**:
    - `answer`: Normal or Free, and the documents or conversations settle it;
-   - `decided`: Free only, a small open question the lead decided itself;
+   - `decided`: Free only, a small open question the lead decided itself. Small means a question that touches no reserved item, no acceptance scenario, no public interface (commands, API, file or data formats) and no dependency;
    - `relay`: everything else, and every reserved item, with options and a recommendation.
 3. **For `answer` or `decided`**:
    - Fallow commits the answer to `spec.md`'s Clarifications on the feature branch;
@@ -163,7 +168,7 @@ When an agent calls `ask`:
 4. **For `relay`**:
    - the tool returns `{state: "waiting", question}`;
    - the agent's instruction says to end the step with `status: blocked`;
-   - only the phases that depend on that user story wait;
+   - the loop waits for the answer (clarified 2026-10-30): with one builder working in order, its later work depends on it. Other loops and conversations go on;
    - when the engineer answers, the answer is committed the same way, and the step resumes in its session with it.
 5. **Overruling** commits the reversal. The tasks committed after the overruled answer, in the phases of the affected story, are reopened: their phase's builder session gets a repair with the new answer, and the story's checkpoint runs again.
 
@@ -281,7 +286,7 @@ Adding a project copies each of them only if it does not exist. If the project h
   - the plan format `.fallow/work.toml`, with its parts, owned files and contracts;
   - the run page `run.html`.
 - **Kept**: the service, the event log and its fold, the stage machine's verification, gates, repairs, resume and limits, the Claude adapter, the bridge, and the fake agent.
-- **The plan's `commands`** become the project's approved commands, plus the commands that the plan of a feature names in a `## Commands` section.
+- **The plan's `commands`** become the project's approved commands, plus the commands that a feature's `plan.md` names in its `## Commands` section (contracts/spec-kit-files.md). They are approved with the lock.
 - **006's remaining user stories** are superseded: decisions (US2), page steering (US4), parts (US5), publishing (US6) and measurement (US7). Parts and publishing return later as their own features. Measurement keeps its record format, and is re-planned for loops.
 
 **Rationale**: two ways to start work would split the product. The spec says the old flow is replaced (FR-033).
@@ -290,4 +295,22 @@ Adding a project copies each of them only if it does not exist. If the project h
 
 **Decision**: keep 005/006's cap. By default, at most 4 agent steps run at once across all loops and conversations. A turn of the lead in a chat the engineer is waiting on goes ahead of loop steps. Above the cap, a step waits with "waiting for a slot". The memory budget is kept.
 
+The memory budget (005/006) is checked before a step starts. Fallow samples its own memory and the agents' Job Objects, and a step that would go over waits for a slot.
+
 **Rationale**: constitution VIII's reference run is 4 concurrent steps.
+
+## S-20 Run records (constitution IV and VIII)
+
+**Decision**: every loop writes a run record when it ends, using 005/006's format and field rules: numbers, identifiers, fingerprints and fixed-value outcomes, never text, paths or output.
+- **What it holds**: tasks, phases, repairs, review rounds, questions by outcome, interventions, time and cost, the pipeline's steps (so switched-off steps are recorded), and the outcome.
+- **The test**: the CI marker test plants marker text in a loop and checks it never reaches a record.
+
+Measuring SC-002 on a task set with hidden tests is a later feature (clarified 2026-10-30).
+
+## S-21 Edits while the lead's turn runs
+
+**Decision**: while a lead turn runs, the page shows the documents read-only and keeps what the engineer types as a local draft. After the turn:
+- a draft for a document the lead did not change is saved with the version check;
+- for one the lead changed, the page shows both versions side by side for the engineer to merge.
+
+The version check (`PUT` with a stale version returns 409) stays as a safety net.

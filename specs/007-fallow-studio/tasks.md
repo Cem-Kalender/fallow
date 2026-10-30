@@ -51,7 +51,7 @@ Unless a task says otherwise, tests use the `fake` runtime (research S-13).
   - parts and owned files;
   - `src/plan/`: move `command_problem` and its test to `src/project/commands.rs`;
   - `src/service/web/run.html`;
-  - the tests that drive the planner flow (`tests/us1_*.rs`). Their checks of verification, repairs, resume and limits are rewritten in Phase 4.
+  - **not yet** 006's tests of verification, repairs, resume and limits (`tests/us1_*.rs`), or the planner path they drive: constitution VII's resume gate must not lapse. T044 removes them once T038 to T043 replace them.
 - [ ] T008 [P] Create the module skeletons with doc comments naming their contracts, as in plan.md:
   - `src/project/`, `src/conversation/`, `src/speckit/` and `src/defs/`;
   - `src/agent/{rights,fake}.rs`;
@@ -93,6 +93,7 @@ Unless a task says otherwise, tests use the `fake` runtime (research S-13).
 - [ ] T014 [P] Add the conversation and loop events of contracts/storage.md in `src/run/events.rs` and `src/conversation/events.rs`, with their folds and round-trip tests. 006's runs stay readable.
 - [ ] T015 [P] Write the `tasks.md` and `spec.md` readers in `src/speckit/{tasks,spec}.rs`, as contracts/spec-kit-files.md describes:
   - phases, tasks, story phases, scenarios `USn/k`, must-fail marks, the reserved list, and markers;
+  - `plan.md`'s `## Commands` section, checked like approved commands;
   - errors with file and line;
   - the task tick writer;
   - unit tests on Spec Kit's own template output and on broken files.
@@ -107,6 +108,7 @@ Unless a task says otherwise, tests use the `fake` runtime (research S-13).
   - `src/service/web/index.html`, the logo SVG, the header with the nav, and the needs-you count;
   - `app.css`: the colour tokens of research S-2, the mockup's classes (`card`, `pill`, `btn`, `btn2`, `nav`, `stage`, `task`, `ev`, `row`) and `@font-face` rules for `/fonts/*`;
   - `app.js`: the hash router, the long-poll client, and the render helpers;
+  - a confirmation dialog that names what is affected, used by every destructive action on every screen (stop, unlock, removing a project, deleting data, definitions or pipelines; constitution II);
   - serve the fonts; keep the CSP `default-src 'self'`.
 - [ ] T021 [P] Extend `tests/web_api_auth.rs`: the new routes need the secret and pass the Host and Origin checks, and the page and fonts load nothing external (CI gate V).
 
@@ -159,7 +161,8 @@ Unless a task says otherwise, tests use the `fake` runtime (research S-13).
 - [ ] T032 [US1] Features in `src/conversation/features.rs`:
   - a new feature gets its number, its branch, its worktree and a fork of the project conversation;
   - the stepper and its moves;
-  - documents read and written with versions.
+  - documents read and written with versions; while a lead turn runs, writes are refused (research S-21);
+  - the branches of research S-9: `NNN-name` from the base branch, which is recorded as the merge target.
 - [ ] T033 [US1] The lock in `src/speckit/lock.rs`: the checks, the budget suggestion, the lock commit, the `git init` offer for plain folders, and creating the loop. The loop's start arrives in US2.
 - [ ] T034 [US1] The API routes for projects, conversations and features, as contracts/web-api.md describes, in `src/service/http.rs`.
 - [ ] T035 [US1] The project conversation screen in `src/service/web/screens/project.js`, matching `mockup/Project.dc.html`:
@@ -172,7 +175,7 @@ Unless a task says otherwise, tests use the `fake` runtime (research S-13).
 - [ ] T036 [US1] The spec session screen in `src/service/web/screens/spec.js`, matching `mockup/Spec.dc.html`:
   - the stepper;
   - the chat, with clarify questions as choices;
-  - the document tabs, editable with versions, with markers highlighted;
+  - the document tabs, editable with versions, with markers highlighted; read-only while a lead turn runs, keeping the engineer's draft, then applying it or showing both versions to merge (research S-21);
   - "Lock & start the loop" with its checks;
   - the lock dialog: pipeline, autonomy and budget.
 - [ ] T037 [US1] The minimal dashboard in `src/service/web/screens/dashboard.js`: the projects column with "Add folder" (a path input), and the features table. The rest comes in US5.
@@ -219,7 +222,7 @@ Unless a task says otherwise, tests use the `fake` runtime (research S-13).
 
 ### Implementation for User Story 2
 
-- [ ] T044 [US2] Loop state in `src/run/state.rs`: the loop, its phases and tasks (data-model.md) from the lock's `tasks.md`; the folds of the new events; phase sessions.
+- [ ] T044 [US2] Loop state in `src/run/state.rs`: the loop, its phases and tasks (data-model.md) from the lock's `tasks.md`; the folds of the new events; phase sessions; the build branch `fallow/NNN/build` from the lock commit, with `NNN-name` merged in at task boundaries (research S-9). Then remove 006's planner path and its tests, now replaced (T007).
 - [ ] T045 [US2] Scheduling from the pipeline in `src/run/machine.rs` (research S-9):
   - the builder per task: a new session at the start of a phase, then resumed;
   - `fallow:gates` per task or per phase;
@@ -235,7 +238,7 @@ Unless a task says otherwise, tests use the `fake` runtime (research S-13).
   - the merge of exactly the gated commit, refused when it does not merge cleanly.
 - [ ] T051 [US2] Budgets in `src/run/time.rs` and `src/run/state.rs` (FR-016a): the per-task suggestion, pausing at the limit, and excluding paused time and time waiting for the engineer. This also fixes 006's known gap.
 - [ ] T052 [US2] Unlock and relock in `src/run/relock.rs` (research S-17): the affected stories from the two lock commits, the preview API, reopening phases, and a new baseline.
-- [ ] T053 [US2] The concurrency cap across loops and conversations in `src/run/engine.rs` (research S-19), with chat turns first and "waiting for a slot" shown.
+- [ ] T053 [US2] The concurrency cap and the memory budget across loops and conversations in `src/run/engine.rs` (research S-19): restore 005/006's memory sampler into `src/platform/`, check the budget before a step starts, put chat turns first, and show "waiting for a slot".
 
 **Checkpoint**: Q3 and Q5 of quickstart.md work with real agents. US2's tests pass.
 
@@ -278,16 +281,16 @@ Unless a task says otherwise, tests use the `fake` runtime (research S-13).
 
 **Goal**: `ask` during a step, answered, decided or relayed by the lead according to the autonomy level, with every answer committed and open to overruling.
 
-**Independent Test**: a scripted agent asks two questions, one the spec answers and one it does not. The first is answered and committed, and the agent continues. The second reaches the engineer, and only its story waits (spec, US4).
+**Independent Test**: a scripted agent asks two questions, one the spec answers and one it does not. The first is answered and committed, and the agent continues. The second reaches the engineer, and the loop waits for it (spec, US4).
 
 ### Tests for User Story 4
 
 - [ ] T059 [P] [US4] `tests/us4_ask.rs`:
   - an answer needs a basis;
-  - `decided` happens only at Free;
+  - `decided` happens only at Free, and only for a small question as FR-020a defines it;
   - Strict always relays, and reserved items or a change to a criterion are always relayed (CI gate II);
   - the answer is committed to `## Clarifications` and reaches the build branch at the next task boundary;
-  - a relayed question blocks only its story's phases;
+  - a relayed question makes the loop wait, while another loop goes on;
   - the step resumes with the answer;
   - overruling reopens the tasks built on the old answer and runs the checkpoint again;
   - one open ask per step;
@@ -298,7 +301,7 @@ Unless a task says otherwise, tests use the `fake` runtime (research S-13).
 - [ ] T060 [US4] Wire `ask` and `progress` to loop steps in `src/mcp/` and `src/run/questions.rs`: tokens per step, one open question, and the question's events.
 - [ ] T061 [US4] The lead's answer call in `src/run/questions.rs`: a fork of the spec session, the `answer` schema, and the rules of contracts/step-results.md, including the autonomy level and the reserved items.
 - [ ] T062 [US4] Commit answers in `src/run/questions.rs`: to the feature branch's `spec.md`, merged into the build branch at the next task boundary.
-- [ ] T063 [US4] Relay to the engineer: the step ends blocked, only dependent phases wait, the answer API, and the step resumes in its session.
+- [ ] T063 [US4] Relay to the engineer: the step ends blocked, the loop waits (clarified 2026-10-30), the answer API, and the step resumes in its session.
 - [ ] T064 [US4] Overrule: the reversal commit, the tasks after the answer reopened as a repair, and the checkpoint run again.
 - [ ] T065 [US4] On the page, in `screens/loop.js` and the inbox: the question banner with options and the recommendation, answer and overrule buttons, and "lead answered" or "decided by the lead" entries with their commits in the feed.
 
@@ -327,6 +330,8 @@ Unless a task says otherwise, tests use the `fake` runtime (research S-13).
   - a menu with Open, Notifications on/off and Stop;
   - a no-op on other platforms.
 - [ ] T071 [US5] `src/service/notify.rs`: needs-you items become notifications, with deduplication and the setting.
+- [ ] T072 [P] [US5] `tests/us5_data.rs`: the data view's sizes per project, loop, conversation and worktree; deleting a loop or conversation's data after confirmation; a running loop refused (FR-003b, constitution V).
+- [ ] T073 [US5] The data view: `GET /api/data` and `DELETE /api/data/<kind>/<id>` in `src/service/http.rs`, sizes computed in `src/project/data.rs`, and a "Data" panel reached from the dashboard in `screens/dashboard.js`, in the mockup's style, with the confirmation dialog.
 
 **Checkpoint**: the dashboard matches screen 1, and notifications arrive with the page closed.
 
@@ -340,7 +345,7 @@ Unless a task says otherwise, tests use the `fake` runtime (research S-13).
 
 ### Tests for User Story 6
 
-- [ ] T072 [P] [US6] `tests/us6_defs.rs`:
+- [ ] T074 [P] [US6] `tests/us6_defs.rs`:
   - the definitions and pipelines API: create, edit and delete, with errors at the line;
   - override order;
   - `.md.new` on update;
@@ -349,14 +354,14 @@ Unless a task says otherwise, tests use the `fake` runtime (research S-13).
 
 ### Implementation for User Story 6
 
-- [ ] T073 [US6] The definitions, pipelines and runtimes API in `src/service/http.rs`, as contracts/web-api.md describes.
-- [ ] T074 [US6] The pipeline designer screen in `screens/pipelines.js`, matching `mockup/Pipeline.dc.html`:
+- [ ] T075 [US6] The definitions, pipelines and runtimes API in `src/service/http.rs`, as contracts/web-api.md describes.
+- [ ] T076 [US6] The pipeline designer screen in `screens/pipelines.js`, matching `mockup/Pipeline.dc.html`:
   - the agent library with each agent's source;
   - the flow: add, remove and reorder steps; `when`, `at`, `paths` and `on_fail`; the "always" steps shown fixed;
   - the "not verifying" warning;
   - the definition editor with errors at their lines;
   - save.
-- [ ] T075 [US6] Pipelines the lead proposes: `proposed_pipeline` in a reply opens as a draft in the designer, used only after save. Choosing a pipeline per project, and per feature in the lock dialog.
+- [ ] T077 [US6] Pipelines the lead proposes: `proposed_pipeline` in a reply opens as a draft in the designer, used only after save. Choosing a pipeline per project, and per feature in the lock dialog.
 
 ---
 
@@ -366,24 +371,26 @@ Unless a task says otherwise, tests use the `fake` runtime (research S-13).
 
 **Independent Test**: the full loop runs once with Claude and once with the `fake` runtime declared in the definitions, and behaves the same (spec, US7).
 
-- [ ] T076 [P] [US7] `tests/us7_runtime.rs`: a loop whose definitions name `runtime: fake` runs end to end through the registry; a runtime that is not installed fails the step, naming it, and the loop asks the engineer.
-- [ ] T077 [US7] The runtime registry in `src/agent/mod.rs`: availability, `GET /api/runtimes`, the definition's runtime and model used per step, and both shown on the agent cards.
+- [ ] T078 [P] [US7] `tests/us7_runtime.rs`: a loop whose definitions name `runtime: fake` runs end to end through the registry; a runtime that is not installed fails the step, naming it, and the loop asks the engineer.
+- [ ] T079 [US7] The runtime registry in `src/agent/mod.rs`: availability, `GET /api/runtimes`, the definition's runtime and model used per step, and both shown on the agent cards.
 
 ---
 
 ## Phase 10: Polish & cross-cutting concerns
 
-- [ ] T078 Update `.github/workflows/ci.yml` so the CI gates run: false claims and unverified results; reserved questions relayed; writes only where allowed (project install, discarded lead edits); loopback and egress; resume.
-- [ ] T079 [P] Benchmarks in `xtask/src/bench.rs`: dashboard ready within 500 ms; idle memory, and memory with 4 concurrent fake steps across two loops (constitution VIII).
-- [ ] T080 [P] Accessibility on the five screens:
+- [ ] T080 Run records for loops in `src/measure/record.rs` (research S-20): restore 005/006's record format and field rules from git history; write a record when a loop ends, with its pipeline's steps, tasks, repairs, review rounds, questions by outcome, interventions, time, cost and outcome.
+- [ ] T081 [P] The record marker test in `tests/record_marker.rs`: marker text planted in a loop's task, documents, agent output and answers never appears in its record (constitution V).
+- [ ] T082 Update `.github/workflows/ci.yml` so the CI gates run: false claims and unverified results; reserved questions relayed; writes only where allowed (project install, discarded lead edits); loopback and egress; resume; the record marker test.
+- [ ] T083 [P] Benchmarks in `xtask/src/bench.rs`: dashboard ready within 500 ms; idle memory, and memory with 4 concurrent fake steps across two loops (constitution VIII).
+- [ ] T084 [P] Accessibility on the five screens:
   - every control reachable by keyboard;
   - a visible focus ring;
   - `aria-label` on icon buttons;
   - text contrast of at least 4.5:1 (FR-032).
-- [ ] T081 The visual check (SC-007, SC-008): each screen next to its mockup at 1440 px and 390 px, with screenshots in `specs/007-fallow-studio/visual-check/`. The engineer approves.
-- [ ] T082 Run quickstart Q1–Q5 with Sonnet in the sandbox (reset it first), and record the runs, their costs and the problems found in this file.
-- [ ] T083 [P] Documentation: `README.md`; mark 006's superseded user stories in `specs/006-headless-orchestrator/tasks.md`; update the contracts with anything that changed during the build.
-- [ ] T084 A fresh-context review of the whole change, then fix its findings.
+- [ ] T085 The visual check (SC-007, SC-008): each screen next to its mockup at 1440 px and 390 px, with screenshots in `specs/007-fallow-studio/visual-check/`. The engineer approves.
+- [ ] T086 Run quickstart Q1–Q5 with Sonnet in the sandbox (reset it first), and record the runs, their costs, the time from adding the folder to the lead's first reply (SC-001), and the problems found in this file.
+- [ ] T087 [P] Documentation: `README.md`; mark 006's superseded user stories in `specs/006-headless-orchestrator/tasks.md`; update the contracts with anything that changed during the build.
+- [ ] T088 A fresh-context review of the whole change, then fix its findings.
 
 ---
 
@@ -411,7 +418,7 @@ Tests first, written to fail; then the state and model, the logic, the API, and 
 - Setup: T003, T004, T005, T006 and T008 together, after T001 and T002 (which need real agents).
 - Foundational: T012 to T017 together. T020 and T021 alongside them.
 - Each story's test tasks marked [P] together.
-- US5's notifications (T070, T071) and US6's designer (T074) can be built alongside US2 to US4 by another developer.
+- US5's notifications (T070, T071) and US6's designer (T076) can be built alongside US2 to US4 by another developer.
 
 ## Parallel Example: User Story 2
 

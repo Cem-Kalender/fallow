@@ -26,7 +26,9 @@ Entities, their fields, their rules, and how they change state. Storage is descr
 |---|---|---|
 | project | project id | |
 | dir | `specs/NNN-name` | NNN is the next free number. Fallow numbers features the way Spec Kit's `feature_numbering` does |
-| branch | `NNN-name` | Git projects only, created when the feature starts (S-6) |
+| base_branch | branch name | The branch the feature started from; the merge target (S-9) |
+| branch | `NNN-name` | Git projects only, created from `base_branch` when the feature starts. Documents, locks and answers are committed here (S-6, S-9) |
+| build_branch | `fallow/NNN/build` | Created from the lock commit when the loop starts. Tasks, ticks and handovers are committed here (S-9) |
 | stage | see below | |
 | spec_session | conversation id | Forked from the project conversation (S-5) |
 | step | Spec Kit step | `constitution`, `specify`, `clarify`, `plan`, `tasks`, `analyze`, `done` |
@@ -94,7 +96,7 @@ spec_session ──lock──▶ locked ──loop starts──▶ building ─�
 
 ## Loop
 
-006's Run, renamed in the page, with these changes:
+006's Run, with these changes. It is a "loop" on the page and in the spec, and is still stored as a run (`runs\<id>`) and called `Run` in the code:
 
 | Field | Type | Rules |
 |---|---|---|
@@ -140,7 +142,7 @@ spec_session ──lock──▶ locked ──loop starts──▶ building ─�
 | by | `lead` \| `engineer` | |
 | answer, recommendation? | | |
 | commit | sha | The commit of the answer to `spec.md`'s Clarifications |
-| affects | `USn` | Only the work that depends on this story waits (FR-021) |
+| affects | `USn` | The story the question is about. While it waits for the engineer, the loop waits (FR-021) |
 
 **Transitions**:
 - `with_lead` → `answered` or `decided`, which the engineer can later move to `overruled`;
