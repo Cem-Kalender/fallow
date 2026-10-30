@@ -1,31 +1,29 @@
 <!--
 Sync Impact Report
 ==================
-Version change: 5.0.0 → 6.0.0
-Bump rationale: MAJOR. The constitution is replaced: Fallow becomes a headless orchestrator with a
-local run page (feature 006, FR-034). Approved by the project owner on 2026-10-29. Source:
-specs/006-headless-orchestrator/constitution-proposal.md.
+Version change: 6.0.0 → 6.1.0
+Bump rationale: MINOR. Guidance materially expanded for feature 007 (Fallow Studio): the lead's
+answers, agents the engineer defines, chat modes, and what Fallow may write in a project. No
+principle removed or loosened; budgets unchanged. Approved by the project owner on 2026-10-30.
+Source: specs/007-fallow-studio/constitution-proposal.md.
 
 Modified principles:
-  - I. Memory Efficiency First → VIII. Small and Measured (new budgets for Fallow's own process)
-  - II. Instant Startup → VIII (page ready within 500 ms, activity within 2 s)
-  - IV. Observability Over Control → I. Verified, Not Trusted; II. The Engineer Decides
-  - V. Least Privilege → VI. Least Privilege (agents and roles)
-  - VI. Benchmarked Performance Claims → VIII (extended to effectiveness claims)
-  - VII. Privacy by Construction → V. Local and Private by Construction
+  - I. Verified, Not Trusted: one bullet added (verified vs. not verified results)
+  - II. The Engineer Decides: the autonomy bullet rewritten (the lead's answers)
+  - III. Coordination in Code, Decisions in the Repo: the messaging bullet rewritten (ask)
+  - V. Local and Private by Construction: one bullet added (notifications)
+  - VI. Least Privilege: rights by kind, skip-permission options, and where Fallow writes
 
-Added sections: III. Coordination in Code, Decisions in the Repo; IV. Simplest Setup First;
-VII. Runs Survive; Budgets & Measurement (replaces Performance Budgets & Measurement).
-Removed sections: III. Terminal-Only.
+Added sections: none. Removed sections: none.
 
 Templates requiring updates: none. plan-template.md, spec-template.md and tasks-template.md read
 the constitution at runtime.
 
-Follow-up TODOs: the new benchmarks and CI gates (VIII, quality gates) are built in feature 006;
-until then the v5.0.0 benchmark jobs still run against the old binary.
+Follow-up TODOs: 006's per-run `unrestricted` option (--dangerously-skip-permissions) is no
+longer allowed by VI and is removed in 007.
 
-Previous amendment (5.0.0): MAJOR. Principle VII redefined for run records. Source:
-specs/005-adaptive-delegation/constitution-amendment.md.
+Previous amendment (6.0.0): MAJOR. The constitution replaced for Fallow as the headless
+orchestrator. Source: specs/006-headless-orchestrator/constitution-proposal.md.
 -->
 
 # Fallow Constitution
@@ -49,6 +47,9 @@ own machine with the engineer's own rights.
   whose working copy changes stops counting.
 - What Fallow cannot verify (for example, a command that writes outside the working copy) MUST be
   stated where it matters, never implied to be checked.
+- A result is offered as verified only when the gates ran on every accepted task and an
+  independent checker checked every user story. A result without either MUST be shown as not
+  verified, naming what was not checked, and never in the colors or words of a verified one.
 
 Rationale: agents report success they have not achieved. Fallow's value is that a result it
 offers to merge has been checked by something other than the agent that produced it.
@@ -60,9 +61,12 @@ offers to merge has been checked by something other than the agent that produced
   force-pushes, bypasses protection or approves its own pull request.
 - Agent steps start only after the engineer approved the plan, apart from the planning
   conversation the engineer started. The approval covers that run's steps, within its caps.
-- The engineer sets how much is decided without them (the autonomy level). Questions reserved for
-  the engineer are never answered on their behalf, and a waiting question blocks only the work that
-  depends on it.
+- The engineer sets how much is decided without them (the autonomy level). The lead may answer an
+  agent's question only from what the locked documents or the engineer's own conversations settle
+  (or, at the level the engineer chose, a small open question, listed for the engineer to
+  confirm). Every such answer is committed and can be overruled. Questions reserved for the
+  engineer, and questions that would change an acceptance criterion, are never answered on their
+  behalf. A waiting question blocks only the work that depends on it.
 - The engineer can always see the run, pause or stop any part of it, overrule a decision, and take
   over a part. Every steering action is recorded.
 - Destructive actions (stopping a run, deleting run data, discarding branches) MUST be confirmed
@@ -74,8 +78,9 @@ step in precisely.
 ### III. Coordination in Code, Decisions in the Repo
 
 - Fallow, not the agents, decides which step runs next, from state it has verified.
-- Agents MUST NOT message each other or the engineer. During a step an agent may read the plan,
-  report progress, and ask Fallow for a decision.
+- Agents MUST NOT message each other or the engineer. During a step, an agent may read the locked
+  documents, report progress, and ask a question. Fallow routes the question to the lead or the
+  engineer, and records it with its answer.
 - Decisions MUST be recorded as commits to the plan, the criteria or a contract. A message may
   point to the commit, never replace it.
 - When a decision changes what a part builds against, every affected part MUST be reopened and
@@ -106,6 +111,8 @@ the work divides cleanly and measurement says it pays.
   - requests from other origins and other host names rejected.
 
   The page MUST load nothing from outside Fallow.
+- Fallow's notifications are shown by Fallow's own process on the engineer's machine. They name
+  the project, the feature and what is needed, and never include code or command output.
 - Fallow itself MUST NOT make network requests. The traffic of a run is:
   - the agents' own traffic to their providers;
   - the engineer's own git and remote tools, which Fallow runs with the engineer's credentials only
@@ -126,12 +133,19 @@ already has.
 
 - Fallow MUST NOT require elevated privileges, and runs every agent with the engineer's rights or
   fewer.
-- Each role's rights are fixed by Fallow and enforced by the agent's own options: builders edit
-  and run commands, reviewers run commands without editing, and the planner edits only the plan.
-- Options that make an agent skip its own permission checks MUST NOT be used unless the engineer
-  turned them on explicitly for that run.
-- Fallow writes only to its own data and config directories, the working copies and branches of
-  its runs, and the files its agents are allowed to change there.
+- Each agent's rights are fixed by Fallow from its kind, whatever its definition says. A maker
+  edits only its own working copy, and never the locked documents. A checker runs commands without
+  editing. The lead writes only spec documents (`specs/`, the constitution, `.fallow/`). Commands
+  are limited to the gates, the plan's commands and the project's approved commands.
+- Options that make an agent skip its own permission checks MUST NOT be used. In a conversation
+  the engineer is present for, they may let the lead run commands that are not approved, either
+  per command or until they switch back. The lead's edits stay limited to spec documents either
+  way.
+- Fallow writes only to these places:
+  - its own data and config directories;
+  - the working copies and branches of its loops and conversations;
+  - in a project the engineer added: the Spec Kit files and `.fallow/` files it installs where
+    they are missing, and the spec documents and handovers of that project's features.
 
 Rationale: a program that starts agents on its own must give each of them no more power than its
 step needs.
@@ -203,4 +217,4 @@ orchestration are easy to make and hard to earn.
   section; unjustified violations block merge.
 - Compliance is reviewed at every pull request and at every release.
 
-**Version**: 6.0.0 | **Ratified**: 2026-10-13 | **Last Amended**: 2026-10-29
+**Version**: 6.1.0 | **Ratified**: 2026-10-13 | **Last Amended**: 2026-10-30
