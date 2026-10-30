@@ -42,11 +42,11 @@ pub const INTERRUPTED: &str = "interrupted: ";
 pub const SESSION_LOST: &str = "session lost: ";
 /// The start of a question raised because Fallow itself could not go on (a transient error).
 pub const COULD_NOT_GO_ON: &str = "Fallow could not go on: ";
-const INTERRUPTED_WHY: &str = "interrupted: Fallow stopped while the step ran";
+pub(crate) const INTERRUPTED_WHY: &str = "interrupted: Fallow stopped while the step ran";
 const REVIEW_GAVE_NOTHING: &str = "The review did not give a usable verdict";
 const RETRY_REVIEW: &str = "retry review";
 
-fn gate_defs(run: &Run) -> Vec<GateDef> {
+pub(crate) fn gate_defs(run: &Run) -> Vec<GateDef> {
     run.state
         .gates
         .iter()
@@ -106,15 +106,18 @@ fn queue(
         part: part.map(str::to_string),
         resume,
         reason: reason.to_string(),
+        task: None,
+        phase: None,
+        def: None,
     })?;
     Ok(n)
 }
 
-fn instruction_of(run: &Run, n: u32) -> String {
+pub(crate) fn instruction_of(run: &Run, n: u32) -> String {
     std::fs::read_to_string(run.steps_dir().join(format!("{n}.prompt"))).unwrap_or_default()
 }
 
-fn activity_lines(run: &Run, n: u32) -> usize {
+pub(crate) fn activity_lines(run: &Run, n: u32) -> usize {
     std::fs::read_to_string(run.steps_dir().join(format!("{n}.jsonl")))
         .map(|t| t.lines().count())
         .unwrap_or(0)
@@ -142,7 +145,7 @@ pub fn repairs(run: &Run, part: &str) -> u32 {
 
 /// A step cut short by Fallow stopping or by a lost session: the next step takes it up again,
 /// so it is no attempt of its own.
-fn cut_short(s: &Step) -> bool {
+pub(crate) fn cut_short(s: &Step) -> bool {
     first_reason(s).is_some_and(|r| r.starts_with(INTERRUPTED) || r.starts_with(SESSION_LOST))
 }
 
@@ -169,9 +172,6 @@ pub fn start_planning(run: &mut Run) -> Result<(), String> {
 /// resumed in their sessions on the next pass; a question that only a transient error raised is
 /// cleared, so the run is tried again.
 pub fn resume(run: &mut Run) -> Result<(), String> {
-    if run.state.feature_loop.is_some() {
-        return Ok(());
-    }
     // A stop recorded without its stage: the run is stopped.
     if run.state.stopped.is_some() {
         return run.append(Event::Stage {
@@ -229,7 +229,7 @@ pub fn resume(run: &mut Run) -> Result<(), String> {
     Ok(())
 }
 
-fn pause_for_limit(run: &mut Run, which: String, used: String) -> Result<(), String> {
+pub(crate) fn pause_for_limit(run: &mut Run, which: String, used: String) -> Result<(), String> {
     run.append(Event::LimitReached {
         which: which.clone(),
         used: used.clone(),
@@ -256,17 +256,13 @@ fn ask_limit(run: &mut Run, which: &str, used: &str) -> Result<(), String> {
     })
 }
 
-fn limit_hit(run: &Run) -> Option<(String, String)> {
+pub(crate) fn limit_hit(run: &Run) -> Option<(String, String)> {
     run.state.limit_hit(super::time::unix_now())
 }
 
 /// Decides and starts what comes next. Does nothing while something runs.
 pub fn drive(run: &mut Run, ctx: &Ctx) -> Result<(), String> {
     if run.busy.is_some() || run.state.stage.is_final() || run.state.stopped.is_some() {
-        return Ok(());
-    }
-    // 007: a feature's loop is driven by its own machine (US2, T045).
-    if run.state.feature_loop.is_some() {
         return Ok(());
     }
     if run.state.stage == Stage::Paused {
@@ -288,6 +284,10 @@ pub fn drive(run: &mut Run, ctx: &Ctx) -> Result<(), String> {
     }
     if run.state.needs.is_some() {
         return Ok(());
+    }
+    // 007: a feature's loop has its own machine (research S-9).
+    if run.state.feature_loop.is_some() {
+        return super::feature::drive(run, ctx);
     }
     if let Some(n) = unprocessed(run) {
         return process(run, n);
@@ -322,12 +322,12 @@ fn planning(run: &mut Run) -> Result<(), String> {
 }
 
 /// The oldest queued step.
-fn queued(run: &Run) -> Option<u32> {
+pub(crate) fn queued(run: &Run) -> Option<u32> {
     run.state.steps.values().find(|s| s.queued()).map(|s| s.n)
 }
 
 /// A finished step whose result has not been recorded as handled.
-fn unprocessed(run: &Run) -> Option<u32> {
+pub(crate) fn unprocessed(run: &Run) -> Option<u32> {
     run.state
         .steps
         .values()
@@ -335,7 +335,7 @@ fn unprocessed(run: &Run) -> Option<u32> {
         .map(|s| s.n)
 }
 
-fn first_reason(s: &Step) -> Option<&str> {
+pub(crate) fn first_reason(s: &Step) -> Option<&str> {
     match &s.verified {
         Some((false, r)) => r.first().map(String::as_str),
         _ => None,
@@ -879,7 +879,12 @@ fn start(run: &mut Run, ctx: &Ctx, n: u32) -> Result<(), String> {
             let base = git::head(&wt)?;
             (wt, base)
         }
-        StepKind::Build | StepKind::Repair | StepKind::Take | StepKind::Plain => {
+        StepKind::Build
+        | StepKind::Repair
+        | StepKind::Take
+        | StepKind::Plain
+        | StepKind::Handover
+        | StepKind::Make => {
             let part = step.part.clone().unwrap_or_else(|| plan::MAIN.to_string());
             let branch = part_branch(id, &part);
             let from = run
@@ -1044,7 +1049,7 @@ fn start(run: &mut Run, ctx: &Ctx, n: u32) -> Result<(), String> {
 /// Runs gates on `commit` in a fresh worktree of its own, on a thread. The worktree is checked
 /// to be at `commit` before anything runs (found in review: a worktree left behind by a failed
 /// removal must never stand in for another commit).
-fn run_gates(
+pub(crate) fn run_gates(
     run: &mut Run,
     ctx: &Ctx,
     kind: GateKind,
@@ -1140,6 +1145,9 @@ pub fn on_done(run: &mut Run, _ctx: &Ctx, done: Done) -> Result<(), String> {
                     commit: None,
                 });
             }
+            if run.state.feature_loop.is_some() {
+                return super::feature::process(run, n);
+            }
             process(run, n)
         }
         Done::Gates {
@@ -1228,9 +1236,12 @@ fn process(run: &mut Run, n: u32) -> Result<(), String> {
     }
     match step.kind {
         StepKind::PlanTurn | StepKind::Decide => plan_turn_done(run, &step),
-        StepKind::Build | StepKind::Repair | StepKind::Take | StepKind::Plain => {
-            build_done(run, &step)
-        }
+        StepKind::Build
+        | StepKind::Repair
+        | StepKind::Take
+        | StepKind::Plain
+        | StepKind::Handover
+        | StepKind::Make => build_done(run, &step),
         StepKind::Review => review_done(run, &step),
     }
 }

@@ -78,9 +78,17 @@ fn push(v: &mut Vec<String>, items: impl IntoIterator<Item = String>) {
 
 /// The allow rules, the deny rules and the permission mode for `rights` (research S-7).
 pub fn rules(r: &Rights) -> (Vec<String>, Vec<String>, &'static str) {
-    let mut allow: Vec<String> = ["Read", "Grep", "Glob", "mcp__fallow__*"]
-        .map(String::from)
-        .to_vec();
+    // Fallow's tools by name: an agent may call `ask` and `progress`; `approve` is Claude Code's
+    // permission prompt, never the agent's to call (Phase 3 review).
+    let mut allow: Vec<String> = [
+        "Read",
+        "Grep",
+        "Glob",
+        "mcp__fallow__ask",
+        "mcp__fallow__progress",
+    ]
+    .map(String::from)
+    .to_vec();
     let mut deny = Vec::new();
     match &r.edits {
         Edits::None => {}
@@ -567,10 +575,15 @@ mod tests {
             "Write",
             "Bash(python -m unittest:*)",
             "PowerShell(python -m unittest:*)",
-            "mcp__fallow__*",
+            "mcp__fallow__ask",
         ] {
             assert!(has(&a, r), "lacks {r}");
         }
+        assert!(
+            !a.iter()
+                .any(|x| x.contains("approve") && !x.starts_with("--")),
+            "approve is never allowed"
+        );
         assert!(
             s.contains("--disallowedTools Edit(specs/007-x/spec.md) Write(specs/007-x/spec.md)")
         );

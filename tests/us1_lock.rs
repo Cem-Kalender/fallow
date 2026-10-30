@@ -217,7 +217,142 @@ fn the_lock_names_every_problem_then_commits_and_creates_the_loop() {
         },
     );
     assert!(after.unwrap_err().contains("locked"));
+    // Nor can the lead, the stepper or a second lock.
+    let said = sreq(
+        tx,
+        Req::Say {
+            conv: conv.clone(),
+            text: "One more change.".into(),
+        },
+    );
+    assert!(said.unwrap_err().contains("locked"));
+    let step = sreq(
+        tx,
+        Req::SetStep {
+            project: project.clone(),
+            feature: feature.clone(),
+            to: "plan".into(),
+        },
+    );
+    assert!(step.unwrap_err().contains("locked"));
+    let again = lock(tx).unwrap_err();
+    assert!(again.contains("already locked"), "{again}");
+    let runs = ask(tx, Request::List).unwrap();
+    assert_eq!(runs.as_array().unwrap().len(), 1, "one loop");
 
+    drop(e);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_plain_folder_gets_git_and_its_features_their_branches() {
+    let root = scratch("lock-plain");
+    let folder = root.join("thesis");
+    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::write(folder.join("plot.py"), "print(1)\n").unwrap();
+    let scenario = root.join("scenario.toml");
+    std::fs::write(
+        &scenario,
+        "[[step]]\nkind = \"lead_turn\"\nfiles = [{ path = \"specs/001-plots/spec.md\", text = \"# Plots\\n\" }]\noutput = { reply = \"Drafted.\", step = \"specify\" }\n",
+    )
+    .unwrap();
+    let e = start_studio(&root, &scenario, None);
+    let tx = &e.tx;
+    let project = sreq(
+        tx,
+        Req::AddProject {
+            path: folder.clone(),
+        },
+    )
+    .unwrap()["project"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let f = sreq(
+        tx,
+        Req::NewFeature {
+            project: project.clone(),
+            title: "Plots".into(),
+        },
+    )
+    .unwrap();
+    let conv = f["conversation"].as_str().unwrap().to_string();
+    sreq(
+        tx,
+        Req::Say {
+            conv: conv.clone(),
+            text: "Draft it.".into(),
+        },
+    )
+    .unwrap();
+    turn_ended(tx, &conv, 1);
+    // In a plain folder the lead wrote in the folder itself.
+    assert!(folder.join("specs/001-plots/spec.md").exists());
+    let fv = sreq(
+        tx,
+        Req::Feature {
+            project: project.clone(),
+            feature: "001-plots".into(),
+        },
+    )
+    .unwrap();
+    assert!(
+        fv["lock_check"]["problems"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|p| p.as_str().unwrap().contains("plain folder"))
+    );
+    // A folder inside another repository is refused.
+    let inner = root.join("repo-around");
+    std::fs::create_dir_all(inner.join("sub")).unwrap();
+    git(&inner, &["init", "-q"]);
+    let sub = sreq(
+        tx,
+        Req::AddProject {
+            path: inner.join("sub"),
+        },
+    )
+    .unwrap()["project"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(
+        sreq(tx, Req::GitInit { id: sub })
+            .unwrap_err()
+            .contains("inside the repository")
+    );
+    // Git for the thesis: the feature gets its branch and worktree, the session moves there.
+    sreq(
+        tx,
+        Req::GitInit {
+            id: project.clone(),
+        },
+    )
+    .unwrap();
+    let fv = sreq(
+        tx,
+        Req::Feature {
+            project: project.clone(),
+            feature: "001-plots".into(),
+        },
+    )
+    .unwrap();
+    assert_eq!(fv["branch"], "001-plots");
+    assert!(fv["base_branch"].is_string());
+    let c = sreq(tx, Req::Conversation { id: conv.clone() }).unwrap();
+    let wd = c["workdir"].as_str().unwrap();
+    assert!(wd.contains("worktrees"), "{wd}");
+    let d = sreq(
+        tx,
+        Req::Doc {
+            project: project.clone(),
+            feature: "001-plots".into(),
+            path: "specs/001-plots/spec.md".into(),
+        },
+    )
+    .unwrap();
+    assert_eq!(d["text"].as_str().unwrap().trim_end(), "# Plots");
     drop(e);
     let _ = std::fs::remove_dir_all(&root);
 }

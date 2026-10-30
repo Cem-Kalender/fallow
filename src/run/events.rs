@@ -90,6 +90,10 @@ pub enum StepKind {
     Decide,
     Review,
     Plain,
+    /// 007: the phase's builder writes its handover (FR-010a).
+    Handover,
+    /// 007: a maker step of the pipeline other than the builder (a test-writer, a docs-writer).
+    Make,
 }
 
 impl StepKind {
@@ -102,13 +106,20 @@ impl StepKind {
             StepKind::Decide => "decide",
             StepKind::Review => "review",
             StepKind::Plain => "plain",
+            StepKind::Handover => "handover",
+            StepKind::Make => "make",
         }
     }
 
     pub fn role(self) -> &'static str {
         match self {
             StepKind::PlanTurn | StepKind::Decide => "planner",
-            StepKind::Build | StepKind::Take | StepKind::Repair | StepKind::Plain => "builder",
+            StepKind::Build
+            | StepKind::Take
+            | StepKind::Repair
+            | StepKind::Plain
+            | StepKind::Handover
+            | StepKind::Make => "builder",
             StepKind::Review => "reviewer",
         }
     }
@@ -259,6 +270,13 @@ pub enum Event {
         /// The session to resume; none for a new one.
         resume: Option<String>,
         reason: String,
+        /// 007: the task, the phase and the agent definition of a loop's step.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        task: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        phase: Option<u32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        def: Option<String>,
     },
     StepStarted {
         n: u32,

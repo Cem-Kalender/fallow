@@ -514,7 +514,8 @@ impl Engine {
             .get(id)
             .cloned()
             .ok_or_else(|| format!("there is no project {id}"))?;
-        let conv = self.studio.project_conversation(id)?;
+        // Reading creates nothing: the page asks for the conversation with a POST.
+        let conv = p.conversation.clone().unwrap_or_default();
         let mut v = self.project_summary(&p);
         v["pipeline"] = json!(p.pipeline);
         v["autonomy"] = json!(p.level);
@@ -720,6 +721,11 @@ impl Engine {
             .clone()
             .ok_or("the feature has no branch to merge into")?;
         let build = format!("fallow/{}/build", f.name());
+        if prep.lock == 1 && git::rev(&p.path, &format!("refs/heads/{build}")).is_ok() {
+            return Err(format!(
+                "the branch {build} already exists: remove it to lock this feature"
+            ));
+        }
         git::create_branch(&p.path, &build, &prep.commit)?;
         let mut notices = Vec::new();
         let squad = match git::show(&p.path, &prep.commit, crate::config::squad::SQUAD_FILE) {
@@ -910,8 +916,19 @@ impl Engine {
                 Err("answered by the engine's loop".into())
             }
             Request::Studio(req) => {
+                use crate::studio::Req;
+                let reads = matches!(
+                    req,
+                    Req::Project { .. }
+                        | Req::Conversation { .. }
+                        | Req::Feature { .. }
+                        | Req::Doc { .. }
+                        | Req::ToolOpen { .. }
+                );
                 let out = self.studio_request(req);
-                self.bus.publish(json!({ "type": "studio" }));
+                if !reads {
+                    self.bus.publish(json!({ "type": "studio" }));
+                }
                 out
             }
             Request::Lock {

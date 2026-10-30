@@ -65,7 +65,7 @@ A request returns as soon as there is something newer than `after`, or after 25 
 - **The lead's result** is structured: `{reply, step?, documents_changed[], proposed_feature?, proposed_pipeline?, question?}`.
 
 **Verified** (T002, 2026-10-30, `claude` 2.1.314 on Windows):
-- `--resume <id> --fork-session` starts a new session id. It appears in the `system/init` event and in every later event's `session_id`. The fork remembers the original conversation (a word given in the first session was recalled), and the original session is left unchanged.
+- `--resume <id> --fork-session` starts a new session id, also from another folder: a session made in one folder forked from a second folder still recalled the first conversation (checked 2026-10-30 after the Phase 3 review asked; the spec session forks the project conversation from the feature's worktree). It appears in the `system/init` event and in every later event's `session_id`. The fork remembers the original conversation (a word given in the first session was recalled), and the original session is left unchanged.
 - `--include-partial-messages` adds `{"type":"stream_event","event":{...}}` lines carrying the API's own stream events: `message_start`, `content_block_start` (`content_block.type` is `text`, `tool_use` or `thinking`), `content_block_delta` (`delta.type` is `text_delta`, `input_json_delta` or `thinking_delta`), `content_block_stop`, `message_delta` and `message_stop`. The complete `assistant` message still follows, as without the flag.
 - Thinking arrives as `thinking` content blocks and `thinking_delta` deltas, and as `thinking` items in the `assistant` message. The Claude runtime drops all three.
 

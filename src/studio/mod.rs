@@ -286,6 +286,7 @@ impl Studio {
             busy: false,
             cost_usd: 0.0,
             seq: 0,
+            pending_edits: Vec::new(),
         };
         let mut c = Conv::new(dir, log, state);
         c.append(CEvent::ConversationCreated {
@@ -317,6 +318,11 @@ impl Studio {
             .collect();
         for c in &convs {
             if let Some(c) = self.convs.remove(c) {
+                // A running turn ends; its bridge's token stops working.
+                c.stop.store(true, std::sync::atomic::Ordering::Relaxed);
+                if let Some(t) = &c.token {
+                    self.tools.remove(t);
+                }
                 let _ = std::fs::remove_dir_all(&c.dir);
             }
         }
@@ -383,9 +389,16 @@ impl Studio {
 
     /// `git init` and an initial commit of what is there, at the engineer's request (edge cases).
     pub fn git_init(&mut self, id: &str) -> Result<Value, String> {
-        let p = self.project(id)?;
+        let p = self.project(id)?.clone();
         if p.kind() == project::Kind::Git {
             return Err(format!("{} is already a git repository", p.name));
+        }
+        if let Some(top) = git::inside_repo(&p.path) {
+            return Err(format!(
+                "{} is inside the repository {}: add that folder as the project instead",
+                p.path.display(),
+                top.display()
+            ));
         }
         let path = p.path.clone();
         let run = |args: &[&str]| -> Result<(), String> {
@@ -402,7 +415,31 @@ impl Studio {
         };
         run(&["init", "-q"])?;
         git::commit_all(&path, "Initial commit (Fallow)", None)?;
-        Ok(json!({ "kind": "git" }))
+        // The features and conversations move onto branches and worktrees, as in any git
+        // project (research S-6), so nothing more is written in the engineer's own checkout.
+        let head = git::head(&path)?;
+        let base = git::branch(&path).ok_or("git init left no branch checked out")?;
+        std::fs::create_dir_all(self.worktrees(&p.id)).map_err(|e| e.to_string())?;
+        for f in &p.features {
+            let name = f.name().to_string();
+            git::create_branch(&path, &name, &head)?;
+            let wd = self.worktrees(&p.id).join(&name);
+            git::worktree_add(&path, &wd, Some(&name), &head)?;
+            if let Some(c) = f.conversation.as_ref().and_then(|c| self.convs.get_mut(c)) {
+                c.append(CEvent::WorkdirSet { workdir: wd })?;
+            }
+            if let Some(fm) = self.project_mut(id)?.feature_mut(&name) {
+                fm.base_branch = Some(base.clone());
+                fm.branch = Some(name.clone());
+            }
+        }
+        let wd = self.worktrees(&p.id).join("_project");
+        if let Some(c) = p.conversation.as_ref().and_then(|c| self.convs.get_mut(c)) {
+            git::worktree_add(&path, &wd, None, &head)?;
+            c.append(CEvent::WorkdirSet { workdir: wd })?;
+        }
+        self.store.save()?;
+        Ok(json!({ "kind": "git", "branch": base }))
     }
 
     // ---- Conversations ----------------------------------------------------------------------
@@ -461,6 +498,11 @@ impl Studio {
             .as_deref()
             .and_then(|f| p.feature(f))
             .cloned();
+        if let Some(f) = &feature {
+            if !f.locks.is_empty() && !f.unlocked {
+                return Err("the feature is locked: unlock it to change its spec".into());
+            }
+        }
         let git_project = p.kind() == project::Kind::Git;
         // The lead's working copy.
         if git_project && workdir != p.path {
@@ -516,7 +558,7 @@ impl Studio {
         let mode = c.state.mode;
         let first = c.state.turns.is_empty();
         let n = c.state.turns.len() as u32 + 1;
-        let edits: Vec<DocEdit> = c.edits.clone();
+        let edits: Vec<DocEdit> = c.state.pending_edits.clone();
         let session = match &c.state.session {
             Some(s) => Session::Resume(s.clone()),
             None => {
@@ -603,8 +645,12 @@ impl Studio {
             mode,
             session: session.id().to_string(),
         })?;
-        c.edits.clear();
         c.live.clear();
+        c.head_before = if git_project && c.state.workdir != p.path {
+            git::head(&c.state.workdir).ok()
+        } else {
+            None
+        };
         c.activity.clear();
         c.token = Some(token);
         c.stop = Arc::new(AtomicBool::new(false));
@@ -701,6 +747,14 @@ impl Studio {
         let mut discarded = Vec::new();
         let mut changed: Vec<String> = Vec::new();
         if p.kind() == project::Kind::Git && workdir != p.path {
+            // Commits the lead made itself are undone; their changes are judged like any other
+            // (Phase 3 review: Fallow alone commits, and only spec documents).
+            let before = self.convs.get(conv).and_then(|c| c.head_before.clone());
+            if let Some(b) = before {
+                if git::head(&workdir).ok().as_deref() != Some(b.as_str()) {
+                    git::reset_mixed(&workdir, &b)?;
+                }
+            }
             let all = git::changes_all(&workdir).unwrap_or_default();
             let is_spec = |path: &str| {
                 rights::SPEC_DIRS
@@ -949,37 +1003,38 @@ impl Studio {
         std::fs::write(&file, text).map_err(|e| format!("{}: {e}", file.display()))?;
         let _ = p;
         let c = self.conv_mut(&conv)?;
-        // One pending edit per document, against what the lead last saw.
-        let base = c
-            .edits
-            .iter()
-            .position(|e| e.path == path)
-            .map(|i| c.edits.remove(i));
-        let d = match base {
+        // One pending edit per document since the lead last saw it, kept in the log.
+        let d = match c.state.pending_edits.iter().find(|e| e.path == path) {
             Some(prev) => format!("{}{}", prev.diff, conv::diff(&old, text)),
             None => conv::diff(&old, text),
         };
-        c.edits.push(DocEdit {
-            path: path.to_string(),
-            diff: d,
-        });
         let v = version_of(text);
         c.append(CEvent::DocEdited {
             path: path.to_string(),
             version: u64::from_str_radix(&v[..8], 16).unwrap_or(0),
+            diff: d,
         })?;
         Ok(json!({ "version": v }))
     }
 
     /// Moves the stepper (FR-006): the lead's next turn runs that step.
     pub fn set_step(&mut self, project: &str, feature: &str, to: &str) -> Result<Value, String> {
-        if !STEPS.contains(&to) {
-            return Err(format!("{to:?} is not a Spec Kit step"));
+        // `done` follows analyze running; the engineer cannot set it (Phase 3 review).
+        if !STEPS.contains(&to) || to == "done" {
+            return Err(format!("{to:?} is not a Spec Kit step to move to"));
         }
         let p = self.project_mut(project)?;
         let f = p
             .feature_mut(feature)
             .ok_or_else(|| format!("there is no feature {feature}"))?;
+        if !f.locks.is_empty() && !f.unlocked {
+            return Err("the feature is locked: unlock it to change its spec".into());
+        }
+        // Going back before analyze means analyze must run again.
+        let at = |s: &str| STEPS.iter().position(|x| *x == s).unwrap_or(0);
+        if at(to) <= at("analyze") {
+            f.analyzed = false;
+        }
         f.step = to.to_string();
         let conv = f.conversation.clone();
         self.store.save()?;
@@ -1010,7 +1065,7 @@ impl Studio {
                 "the project is a plain folder: a loop needs git (Fallow can set it up)".into(),
             );
         }
-        let analyzed = f.analyzed || f.step == "done";
+        let analyzed = f.analyzed;
         match lock::check(
             &f.dir,
             read("spec.md").as_deref(),
@@ -1033,6 +1088,15 @@ impl Studio {
     pub fn lock_prepare(&mut self, project: &str, feature: &str) -> Result<LockPrep, Vec<String>> {
         let locked = self.lock_check(project, feature)?;
         let (p, f, wd) = self.feature_ctx(project, feature).map_err(|e| vec![e])?;
+        // Every check before anything is committed (Phase 3 review).
+        if !f.locks.is_empty() && !f.unlocked {
+            return Err(vec!["the feature is already locked".into()]);
+        }
+        if f.base_branch.is_none() || wd == p.path {
+            return Err(vec![
+                "the feature has no branch of its own: set up git for the project first".into(),
+            ]);
+        }
         if let Some(c) = f.conversation.as_ref().and_then(|c| self.convs.get(c)) {
             if c.state.busy {
                 return Err(vec!["the lead's turn is running".into()]);

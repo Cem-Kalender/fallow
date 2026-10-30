@@ -33,6 +33,10 @@ pub struct Step {
     pub verified_commit: Option<String>,
     /// The event number that queued it, to tell rounds apart.
     pub queued_seq: u64,
+    /// 007: a loop step's task (`T014`), phase and agent definition (`builder`).
+    pub task: Option<String>,
+    pub phase: Option<u32>,
+    pub def: Option<String>,
 }
 
 impl Step {
@@ -370,6 +374,9 @@ impl RunState {
                 part,
                 resume,
                 reason,
+                task,
+                phase,
+                def,
             } => {
                 self.steps.insert(
                     *n,
@@ -393,6 +400,9 @@ impl RunState {
                         verified: None,
                         verified_commit: None,
                         queued_seq: l.seq,
+                        task: task.clone(),
+                        phase: *phase,
+                        def: def.clone(),
                     },
                 );
             }

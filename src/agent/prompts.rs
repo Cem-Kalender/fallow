@@ -318,6 +318,141 @@ pub fn lead_turn(t: &LeadTurn) -> String {
     s
 }
 
+// ---- 007: the loop over a locked tasks.md (research S-9) --------------------------------------
+
+/// What a loop's instructions draw on.
+pub struct LoopCx<'a> {
+    pub feature_dir: &'a str,
+    pub title: &'a str,
+    /// The commands the agent may run besides reading.
+    pub may_run: &'a [String],
+    /// The handovers of earlier phases, as paths.
+    pub handovers: &'a [String],
+}
+
+fn may_run_line(may: &[String]) -> String {
+    if may.is_empty() {
+        "Besides reading files, you may run no commands.".into()
+    } else {
+        format!(
+            "Besides reading files, you may run only these commands, each with any arguments, one per call: {}. Anything else is refused.",
+            may.iter()
+                .map(|c| format!("`{c}`"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    }
+}
+
+/// A task of the locked `tasks.md` for the phase's builder. The first task of a phase starts a
+/// new session from the locked documents and the handovers only (FR-010a).
+pub fn loop_task(
+    cx: &LoopCx,
+    phase: (&str, &str),
+    task: (&str, &str),
+    first_in_session: bool,
+) -> String {
+    let mut s = header("build", Some(task.0));
+    if first_in_session {
+        s.push_str(&format!(
+            "You build phase {} (\"{}\") of the locked feature \"{}\". Its documents are in `{}`: spec.md, plan.md and tasks.md, locked: never change them. Fallow ticks the tasks and commits your work after each task, and runs the project's gates against the baseline.\n\n",
+            phase.0, phase.1, cx.title, cx.feature_dir
+        ));
+        if cx.handovers.is_empty() {
+            s.push_str("This is the first phase: there are no handovers yet.\n\n");
+        } else {
+            s.push_str(&format!(
+                "Read the handovers of the earlier phases first: {}. You start from them and the locked documents only.\n\n",
+                cx.handovers
+                    .iter()
+                    .map(|h| format!("`{h}`"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        }
+    }
+    s.push_str(&format!(
+        "Task {}:\n{}\n\nDo this task only. Write the tests it names before its code, and run them. {}\n\nIf the spec or plan does not settle something, use the `ask` tool instead of guessing; if the answer is that the question waits for the engineer, return `status: blocked` with the question id.\n\nReturn `status`, `task` ({}), the `files` you changed, the `commands` you ran with their results, and a `summary`.",
+        task.0,
+        task.1,
+        may_run_line(cx.may_run),
+        task.0
+    ));
+    s
+}
+
+/// A repair of a task, or of a story after its checkpoint, in the phase's session.
+pub fn loop_repair(what: &str, reasons: &[String]) -> String {
+    let mut s = header("repair", Some(what));
+    s.push_str(&format!("Fallow could not accept {what} yet:\n"));
+    for r in reasons {
+        s.push_str(&format!("- {r}\n"));
+    }
+    s.push_str("\nFix this, run the tests, and return the same result as before (`task` names what you repaired). Fallow commits your changes when the step ends.");
+    s
+}
+
+/// The handover at the end of a phase (FR-010a).
+pub fn loop_handover(cx: &LoopCx, phase_n: u32, phase: (&str, &str), path: &str) -> String {
+    let mut s = header("handover", Some(&format!("phase-{phase_n}")));
+    s.push_str(&format!(
+        "Phase {} (\"{}\") of \"{}\" is done and verified. Write its handover to `{path}`, for the builder of the next phase, who starts from the locked documents in `{}` and the handovers only. Use exactly these sections:\n\n## Built\nWhat this phase built, and where.\n\n## Decisions\nThe choices you made, and the questions answered on the way.\n\n## For the next phase\nWhat the next builder should know.\n\nChange nothing else. Return `status: done`, `path` and a `summary`.",
+        phase.0, phase.1, cx.title, cx.feature_dir
+    ));
+    s
+}
+
+/// One acceptance scenario, for a checker's instruction.
+pub struct Scenario<'a> {
+    pub id: &'a str,
+    pub text: &'a str,
+    pub must_fail: bool,
+}
+
+/// A checker at a user story's checkpoint (FR-012): every scenario checked by running something.
+pub fn loop_check(
+    cx: &LoopCx,
+    agent: &str,
+    story: &str,
+    story_title: &str,
+    scenarios: &[Scenario],
+    commit: &str,
+) -> String {
+    let mut s = header("review", Some(story));
+    s.push_str(&format!(
+        "You are the {agent} of \"{}\". Check user story {story} (\"{story_title}\") at commit {commit}, checked out in your worktree, as a black box. Never change files: a checker whose worktree changes stops counting.\n\nFor every acceptance scenario below, run something that checks it and report exactly what you ran and what happened. Reading the code is not a check. For each scenario that must fail, show the case that must be refused and that it was (`failing_case`).\n\n",
+        cx.title
+    ));
+    for sc in scenarios {
+        s.push_str(&format!(
+            "- {}: {}{}\n",
+            sc.id,
+            sc.text,
+            if sc.must_fail { " (must fail)" } else { "" }
+        ));
+    }
+    s.push_str(&format!(
+        "\n{}\n\nReturn `answers`, one per scenario, with `criterion` (the id above), `ran`, `result`, `passed`, and `failing_case` for those that must fail; `findings` for problems beyond the scenarios, each with `severity`, `where`, `ran` and `result`; and a `summary`.",
+        may_run_line(cx.may_run)
+    ));
+    s
+}
+
+/// A maker step of the pipeline other than the builder (a test-writer, a docs-writer).
+pub fn loop_make(cx: &LoopCx, agent: &str, what: &str) -> String {
+    let mut s = header("make", Some(agent));
+    s.push_str(&format!(
+        "You are the {agent} of the locked feature \"{}\" (documents in `{}`, locked: never change them). {what}\n\n{}\n\nReturn `status`, `task` (\"{agent}\"), the `files` you changed, the `commands` you ran with their results, and a `summary`.",
+        cx.title,
+        cx.feature_dir,
+        may_run_line(cx.may_run)
+    ));
+    s
+}
+
+/// The note a resumed step gets after Fallow stopped (research R-2).
+pub const LOOP_INTERRUPTED: &str = "You were interrupted because Fallow stopped. Check the state of your working copy, continue the same task, and return your result.";
+
 #[cfg(test)]
 mod tests {
     use super::*;

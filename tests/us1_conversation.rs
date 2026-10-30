@@ -29,11 +29,13 @@ kind = "lead_turn"
 when = "started the feature"
 say = "Drafting the spec."
 files = [{ path = "specs/001-cart/spec.md", text = "# Cart\n" }, { path = "notes.txt", text = "scratch\n" }]
+commit = "the lead commits everything itself"
 output = { reply = "I wrote the first spec.", step = "specify" }
 
 [[step]]
 kind = "lead_turn"
 when = "edited these documents"
+say = "Reading your edit now."
 sleep_ms = 2500
 output = { reply = "I saw your edit.", step = "clarify" }
 "##,
@@ -119,6 +121,13 @@ output = { reply = "I saw your edit.", step = "clarify" }
     assert_eq!(t["discarded"], serde_json::json!(["notes.txt"]), "{t}");
     let commit = t["commit"].as_str().expect("the spec was committed");
     assert_eq!(git(&repo, &["rev-parse", "001-cart"]), commit);
+    // The lead's own commit was undone: Fallow's commit holds the spec only.
+    assert!(git(&repo, &["log", "-1", "--format=%s", "001-cart"]).starts_with("spec:"));
+    assert!(!git(&repo, &["log", "--format=%s", "001-cart"]).contains("the lead commits"));
+    assert_eq!(
+        git(&repo, &["show", "--name-only", "--format=", "001-cart"]),
+        "specs/001-cart/spec.md"
+    );
     assert_eq!(
         git(&repo, &["show", "001-cart:specs/001-cart/spec.md"]),
         "# Cart"
@@ -191,7 +200,12 @@ output = { reply = "I saw your edit.", step = "clarify" }
         },
     )
     .unwrap();
-    let busy = wait_conv(tx, &sc, "the turn running", |v| v["busy"] == true);
+    let busy = wait_conv(tx, &sc, "the reply streaming", |v| {
+        v["busy"] == true
+            && v["live"]
+                .as_str()
+                .is_some_and(|l| l.contains("Reading your edit"))
+    });
     assert_eq!(
         busy["turns"][1]["edits"][0]["path"],
         "specs/001-cart/spec.md"

@@ -5,7 +5,7 @@ The page and the service talk over loopback HTTP, as in 006 (research R-6):
 - **Request checks**: the Host and Origin headers.
 - **Content Security Policy**: `default-src 'self'`.
 
-All bodies are JSON. Errors are `{"error": "<message for the engineer>"}` with 4xx. Every action that changes something is recorded as a steering entry (constitution II).
+All bodies are JSON. Errors are `{"ok": false, "error": "<message for the engineer>"}` with 409; a refused lock lists every problem in that message, one per line. Every action that changes something is recorded as a steering entry (constitution II).
 
 ## Static
 

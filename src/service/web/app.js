@@ -77,17 +77,29 @@ const Fallow = (() => {
   }
 
   // ---- The confirmation dialog (constitution II) --------------------------------------
-  function confirm({ title, text, items = [], ok = "Confirm" }) {
+  // Resolves to `false` when cancelled; with `input`, to the value typed (or `false`).
+  function confirm({ title, text, items = [], ok = "Confirm", input = null }) {
     const d = document.getElementById("confirm");
     d.querySelector("#confirm-title").textContent = title;
     d.querySelector("#confirm-text").textContent = text || "";
     const ul = d.querySelector("#confirm-list");
     ul.innerHTML = items.map((i) => `<li>${esc(i)}</li>`).join("");
     d.querySelector("#confirm-ok").textContent = ok;
+    const field = d.querySelector("#confirm-field");
+    const box = d.querySelector("#confirm-input");
+    field.hidden = !input;
+    if (input) {
+      d.querySelector("#confirm-label").textContent = input.label;
+      box.value = input.value || "";
+    }
     return new Promise((resolve) => {
-      d.addEventListener("close", () => resolve(d.returnValue === "ok"), { once: true });
+      d.addEventListener("close", () => {
+        if (d.returnValue !== "ok") return resolve(false);
+        resolve(input ? box.value.trim() : true);
+      }, { once: true });
       d.returnValue = "";
       d.showModal();
+      if (input) box.focus();
     });
   }
 
@@ -283,11 +295,25 @@ const Fallow = (() => {
     return out;
   }
 
+  const chipInner = (mode) => h`${icon.shield}${MODE_LABEL[mode]}<span class="hint">· Shift+Tab</span>`;
+
+  // Updates the mode chip and the send button in place, so focus stays where it is (FR-032).
+  function syncComposer(c) {
+    const chip = document.querySelector("[data-act=mode]");
+    if (chip && chip.dataset.mode !== c.mode) {
+      chip.innerHTML = chipInner(c.mode).s;
+      chip.dataset.mode = c.mode;
+      chip.setAttribute("aria-label", `Mode: ${MODE_LABEL[c.mode]}. Shift+Tab switches it.`);
+    }
+    const send = document.querySelector(".composer [type=submit]");
+    if (send) send.disabled = !!c.busy;
+  }
+
   function composer(c, placeholder) {
     const mode = c ? c.mode : "ask";
     return h`<form class="composer" data-submit="say">
       <div class="composer-row">
-        <button type="button" class="mode-chip" data-act="mode" title="Shift+Tab switches the mode" aria-label="${`Mode: ${MODE_LABEL[mode]}. Shift+Tab switches it.`}">${icon.shield}${MODE_LABEL[mode]}<span class="hint">· Shift+Tab</span></button>
+        <button type="button" class="mode-chip" data-act="mode" data-mode="${mode}" title="Shift+Tab switches the mode" aria-label="${`Mode: ${MODE_LABEL[mode]}. Shift+Tab switches it.`}">${chipInner(mode)}</button>
         <label for="say" class="sr">Message the lead</label>
         <textarea id="say" rows="2" placeholder="${placeholder}"></textarea>
         <button class="btn" type="submit"${raw(c && c.busy ? " disabled" : "")}>Send</button>
@@ -305,15 +331,16 @@ const Fallow = (() => {
     if (name === "approve") {
       const body = { id: el.dataset.id, answer: el.dataset.answer };
       if (body.answer === "always") {
-        const words = (el.dataset.command || "").split(/\s+/).filter(Boolean);
-        body.prefix = words.slice(0, Math.min(words.length, 2)).join(" ");
-        const ok = await confirm({
+        // The engineer chooses how much of the command to allow (research S-7); the whole
+        // command by default.
+        const prefix = await confirm({
           title: "Allow always in this project?",
-          text: "Commands starting with this will run without asking, in this project's chats and for its agents.",
-          items: [body.prefix],
+          text: "Commands starting with this will run without asking, in this project's chats and for its agents. Shorten it to allow more.",
           ok: "Allow always",
+          input: { label: "Allow commands starting with", value: el.dataset.command || "" },
         });
-        if (!ok) return true;
+        if (!prefix) return true;
+        body.prefix = prefix;
       }
       try { await post(`/api/conversations/${conv}/approve`, body); } catch (e) { alertLine(e.message); }
       after();
@@ -387,7 +414,7 @@ const Fallow = (() => {
   }
 
   return { esc, h, raw, md, LOGO, icon, api, get, post, watch, live, confirm, register, route, show, start, money,
-    MODE_LABEL, messages, composer, chatAct, sendSay, alertLine, atEnd, stagePill, filesRead,
+    MODE_LABEL, messages, composer, syncComposer, chatAct, sendSay, alertLine, atEnd, stagePill, filesRead,
     get headerWatch() { return headerWatch; } };
 
 })();

@@ -344,6 +344,9 @@ pub fn commit_all(
 ) -> Result<Option<String>, String> {
     match paths {
         Some(ps) => {
+            // Only these paths: whatever an agent staged itself is unstaged first (Phase 3
+            // review: a plain commit took everything in the index).
+            git(dir, &["reset", "-q"])?;
             // One path at a time: a path that matches nothing is not an error here.
             for p in ps {
                 let _ = git(dir, &["add", "-A", "--", p]);
@@ -376,6 +379,19 @@ pub fn commit_all(
     args.extend(["commit", "-q", "--no-verify", "-m", message]);
     git(dir, &args)?;
     head(dir).map(Some)
+}
+
+/// Moves the worktree's branch back to `commit`, keeping the files as they are (`reset --mixed`):
+/// commits an agent made itself are undone, their changes left to be judged.
+pub fn reset_mixed(dir: &Path, commit: &str) -> Result<(), String> {
+    git(dir, &["reset", "-q", "--mixed", commit]).map(|_| ())
+}
+
+/// Whether `dir` is inside a git repository (at its top or below).
+pub fn inside_repo(dir: &Path) -> Option<PathBuf> {
+    git(dir, &["rev-parse", "--show-toplevel"])
+        .ok()
+        .map(|s| PathBuf::from(s.trim()))
 }
 
 /// Throws away uncommitted changes and untracked files in the worktree `dir` (a run's own

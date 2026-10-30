@@ -12,6 +12,8 @@ pub fn for_kind(kind: StepKind) -> Option<Value> {
         StepKind::PlanTurn => Some(plan_turn()),
         StepKind::Review => Some(review()),
         StepKind::Plain => None,
+        StepKind::Handover => Some(handover()),
+        StepKind::Make => Some(build()),
     }
 }
 
@@ -47,6 +49,20 @@ fn build() -> Value {
                 }
             },
             "question": { "type": "string", "description": "When blocked: the question" },
+            "task": { "type": "string", "description": "007: the task this step did (T014)" },
+            "summary": { "type": "string" }
+        }
+    })
+}
+
+/// 007: the handover at the end of a phase (contracts/step-results.md).
+fn handover() -> Value {
+    json!({
+        "type": "object",
+        "required": ["status", "path", "summary"],
+        "properties": {
+            "status": { "type": "string", "enum": ["done", "failed"] },
+            "path": { "type": "string" },
             "summary": { "type": "string" }
         }
     })
@@ -94,6 +110,20 @@ fn review() -> Value {
                         "result": { "type": "string" },
                         "passed": { "type": "boolean" },
                         "failing_case": { "type": "string", "description": "For must-fail criteria: the case that must fail, and that it did" }
+                    }
+                }
+            },
+            "findings": {
+                "type": "array",
+                "description": "007: problems beyond the criteria",
+                "items": {
+                    "type": "object",
+                    "required": ["severity", "where", "ran", "result"],
+                    "properties": {
+                        "severity": { "type": "string", "enum": ["low", "medium", "high", "critical"] },
+                        "where": { "type": "string" },
+                        "ran": { "type": "string" },
+                        "result": { "type": "string" }
                     }
                 }
             },

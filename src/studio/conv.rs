@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 use serde_json::{Value, json};
 
 use crate::agent::Activity;
-use crate::conversation::events::{DocEdit, Event, State};
+use crate::conversation::events::{Event, State};
 use crate::run::engine::Reply;
 use crate::run::events::Log;
 
@@ -37,9 +37,9 @@ pub struct Conv {
     pub activity: Vec<Activity>,
     /// Changes since Fallow started that are not events (partial text, activity lines).
     pub ticks: u64,
-    /// Documents the engineer edited since the lead's last turn.
-    pub edits: Vec<DocEdit>,
     pub pending: Option<Pending>,
+    /// Where the lead's working copy stood when its turn began.
+    pub head_before: Option<String>,
     /// The token of the running turn's MCP bridge.
     pub token: Option<String>,
 }
@@ -55,8 +55,8 @@ impl Conv {
             live: String::new(),
             activity: Vec::new(),
             ticks: 0,
-            edits: Vec::new(),
             pending: None,
+            head_before: None,
             token: None,
         }
     }
@@ -106,7 +106,13 @@ impl Conv {
         v["live"] = json!(self.live);
         v["activity"] = json!(self.activity);
         v["mark"] = json!(self.mark());
-        v["pending_edits"] = json!(self.edits.iter().map(|e| &e.path).collect::<Vec<_>>());
+        v["pending_edits"] = json!(
+            self.state
+                .pending_edits
+                .iter()
+                .map(|e| &e.path)
+                .collect::<Vec<_>>()
+        );
         v["pending_approval"] = match &self.pending {
             Some(p) => json!({
                 "id": p.id,

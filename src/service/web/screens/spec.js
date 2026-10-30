@@ -3,7 +3,7 @@
 // while a turn runs), and the lock.
 "use strict";
 (() => {
-  const { h, raw, get, post, api, messages, composer, chatAct, sendSay, alertLine, atEnd, live, icon, confirm } = Fallow;
+  const { h, raw, get, post, api, messages, composer, syncComposer, chatAct, sendSay, alertLine, atEnd, live, icon, confirm } = Fallow;
   let state = null; // the feature view
   let route = null;
   let stop = null;
@@ -19,10 +19,11 @@
   function stepper(f) {
     const steps = f.steps.filter((s) => s !== "done");
     const at = f.steps.indexOf(f.step);
+    const locked = f.stage !== "spec_session";
     const items = steps.map((s, i) => {
       const done = i < at;
       const now = i === at;
-      return h`<li><button class="step${done ? " done" : ""}${now ? " now" : ""}" data-act="step" data-to="${s}" aria-current="${now ? "step" : "false"}">${done ? icon.check : now ? raw('<span class="dot blue"></span>') : ""}${STEP_LABEL[s]}</button></li>`;
+      return h`<li><button class="step${done ? " done" : ""}${now ? " now" : ""}" data-act="step" data-to="${s}" aria-current="${now ? "step" : "false"}"${raw(locked ? " disabled" : "")}>${done ? icon.check : now ? raw('<span class="dot blue"></span>') : ""}${STEP_LABEL[s]}</button></li>`;
     });
     const ready = f.lock_check && f.lock_check.ok;
     items.push(h`<li><span class="step${ready ? " now" : ""}">${icon.lock}Lock</span></li>`);
@@ -102,10 +103,7 @@
     // An open editor is left alone, so its cursor and draft survive the lead's streaming.
     if (!(editing && document.getElementById("editor"))) document.getElementById("docs").innerHTML = docs(f).s;
     document.getElementById("lock").innerHTML = lockBar(f).s;
-    const fresh = document.createElement("div");
-    fresh.innerHTML = composer(c, "").s;
-    document.querySelector("[data-act=mode]").replaceWith(fresh.querySelector("[data-act=mode]"));
-    document.querySelector(".composer [type=submit]").disabled = !!c.busy;
+    syncComposer(c);
   }
 
   function render(app) {
@@ -122,8 +120,9 @@
       </div>
       <div class="studio">
         <section class="chat-col narrow" aria-label="Conversation">
+          ${f.kind === "folder" ? h`<div class="notice">A plain folder: Fallow cannot check what a command the lead runs writes, and a loop needs git.</div>` : ""}
           <div class="chat" id="chat">${messages(c)}</div>
-          ${composer(c, "Answer, or tell the lead what to change…")}
+          ${f.stage === "spec_session" ? composer(c, "Answer, or tell the lead what to change…") : h`<div class="composer small muted">The feature is locked: its spec session continues when you unlock it.</div>`}
         </section>
         <section class="docs" aria-label="Documents">
           <div id="docs">${docs(f)}</div>
@@ -207,7 +206,15 @@
       if (conv && (await chatAct(conv, name, el, again))) return;
       try {
         if (name === "say") return sendSay(conv, again);
-        if (name === "tab") { await openDoc(el.dataset.path); return render(appEl); }
+        if (name === "tab") {
+          if (editing) {
+            const ed = document.getElementById("editor");
+            const changed = ed && doc && ed.value !== doc.text;
+            if (changed && !(await confirm({ title: "Leave your unsaved edit?", text: "Switching documents drops what you typed in this one.", items: [tab], ok: "Drop it" }))) return;
+          }
+          await openDoc(el.dataset.path);
+          return render(appEl);
+        }
         if (name === "edit") { editing = { text: doc ? doc.text : "" }; return render(appEl); }
         if (name === "cancel") { editing = null; return render(appEl); }
         if (name === "save") { const text = document.getElementById("editor").value; editing.text = text; return save(text, doc.version); }

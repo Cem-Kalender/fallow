@@ -4,6 +4,7 @@
 pub mod activity;
 pub mod engine;
 pub mod events;
+pub mod feature;
 pub mod machine;
 pub mod questions;
 pub mod relock;

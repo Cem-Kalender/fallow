@@ -3,7 +3,7 @@
 // the right.
 "use strict";
 (() => {
-  const { h, raw, get, post, messages, composer, chatAct, sendSay, alertLine, atEnd, stagePill, live, confirm } = Fallow;
+  const { h, raw, get, post, messages, composer, syncComposer, chatAct, sendSay, alertLine, atEnd, stagePill, live, confirm } = Fallow;
   let state = null;
   let stop = null;
 
@@ -55,11 +55,7 @@
     if (wasAtEnd) chat.scrollTop = chat.scrollHeight;
     document.getElementById("knows").innerHTML = knows(p, c).s;
     document.getElementById("ideas").innerHTML = h`${ideas(c)}`.s;
-    const chip = document.querySelector("[data-act=mode]");
-    const fresh = document.createElement("div");
-    fresh.innerHTML = composer(c, "").s;
-    chip.replaceWith(fresh.querySelector("[data-act=mode]"));
-    document.querySelector(".composer [type=submit]").disabled = !!c.busy;
+    syncComposer(c);
   }
 
   function render(app) {
@@ -95,6 +91,7 @@
         </aside>
         <section class="chat-col" aria-label="Conversation with the lead">
           <div class="chat-head"><div class="avatar" aria-hidden="true">L</div><div><b>Project conversation</b> <span class="small muted">· lead · reads the code, never edits it here</span></div></div>
+          ${p.kind === "folder" ? h`<div class="notice">This project is a plain folder: Fallow cannot check what a command the lead runs writes. Set up git to work in a copy of your own.</div>` : ""}
           <div class="chat" id="chat">${messages(c)}</div>
           ${composer(c, "Ask about the code, plan features, or design a pipeline…")}
         </section>
@@ -116,6 +113,10 @@
   async function load(app, id) {
     try {
       state = await get(`/api/projects/${encodeURIComponent(id)}`);
+      if (!state.conversation) {
+        await post(`/api/projects/${encodeURIComponent(id)}/conversation`);
+        state = await get(`/api/projects/${encodeURIComponent(id)}`);
+      }
       render(app);
     } catch (e) {
       app.innerHTML = h`<div class="page"><div class="card empty">${e.message}</div></div>`.s;

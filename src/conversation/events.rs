@@ -83,6 +83,14 @@ pub enum Event {
     DocEdited {
         path: String,
         version: u64,
+        /// The edit since the lead last saw the document, for its next turn (kept so it
+        /// survives a restart; Phase 3 review).
+        #[serde(default)]
+        diff: String,
+    },
+    /// The lead works in another place from now on (a plain folder that got git).
+    WorkdirSet {
+        workdir: PathBuf,
     },
 }
 
@@ -130,6 +138,8 @@ pub struct State {
     pub busy: bool,
     pub cost_usd: f64,
     pub seq: u64,
+    /// The engineer's edits since the lead's last turn, one per document.
+    pub pending_edits: Vec<DocEdit>,
 }
 
 impl State {
@@ -163,6 +173,7 @@ impl State {
             busy: false,
             cost_usd: 0.0,
             seq: first.seq,
+            pending_edits: Vec::new(),
         };
         for l in &events[1..] {
             s.apply(l);
@@ -182,6 +193,7 @@ impl State {
                 ..
             } => {
                 self.busy = true;
+                self.pending_edits.clear();
                 self.turns.push(Turn {
                     n: *n,
                     said: said.clone(),
@@ -247,7 +259,16 @@ impl State {
             }
             Event::ModeSet { mode } => self.mode = *mode,
             Event::StepSet { step } => self.step = Some(step.clone()),
-            Event::DocEdited { .. } => {}
+            Event::DocEdited { path, diff, .. } => {
+                if !diff.is_empty() {
+                    self.pending_edits.retain(|e| &e.path != path);
+                    self.pending_edits.push(DocEdit {
+                        path: path.clone(),
+                        diff: diff.clone(),
+                    });
+                }
+            }
+            Event::WorkdirSet { workdir } => self.workdir = workdir.clone(),
         }
     }
 
