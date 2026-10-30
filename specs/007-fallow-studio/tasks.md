@@ -226,7 +226,7 @@ Unless a task says otherwise, tests use the `fake` runtime (research S-13).
 
 ### Implementation for User Story 2
 
-- [ ] T044 [US2] Loop state in `src/run/state.rs`: the loop, its phases and tasks (data-model.md) from the lock's `tasks.md`; the folds of the new events; phase sessions; the build branch `fallow/NNN/build` from the lock commit, with `NNN-name` merged in at task boundaries (research S-9). Then remove 006's planner path, the service's `run` request (`src/service/mod.rs`), `src/plan/`, parts, and their tests, now replaced (T007).
+- [X] T044 [US2] Loop state in `src/run/state.rs`: the loop, its phases and tasks (data-model.md) from the lock's `tasks.md`; the folds of the new events; phase sessions; the build branch `fallow/NNN/build` from the lock commit, with `NNN-name` merged in at task boundaries (research S-9). Then remove 006's planner path, the service's `run` request (`src/service/mod.rs`), `src/plan/`, parts, and their tests, now replaced (T007).
 - [X] T045 [US2] Scheduling from the pipeline in `src/run/machine.rs` (research S-9):
   - the builder per task: a new session at the start of a phase, then resumed;
   - `fallow:gates` per task or per phase;

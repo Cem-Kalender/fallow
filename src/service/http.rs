@@ -16,7 +16,7 @@ use serde_json::{Value, json};
 use tiny_http::{Header, Method, Response, Server, StatusCode};
 
 use super::ask;
-use crate::run::engine::{Create, Msg, Reply, Request};
+use crate::run::engine::{Msg, Reply, Request};
 
 const INDEX: &str = include_str!("web/index.html");
 const APP_JS: &str = include_str!("web/app.js");
@@ -562,43 +562,12 @@ fn handle(mut req: tiny_http::Request, tx: &Sender<Msg>, port: u16, secret: &str
                 _ => respond(req, 404, "text/plain", "no such step".into()),
             }
         }
-        (false, ["api", "runs"]) => {
-            let mut roles = std::collections::BTreeMap::new();
-            if let Some(m) = body["roles"].as_object() {
-                for (role, v) in m {
-                    roles.insert(
-                        role.clone(),
-                        crate::config::RoleChoice {
-                            agent: v["agent"].as_str().unwrap_or_default().to_string(),
-                            model: v["model"].as_str().unwrap_or_default().to_string(),
-                        },
-                    );
-                }
-            }
-            let c = Create {
-                repo: body["repo"].as_str().unwrap_or_default().into(),
-                task: body["task"].as_str().unwrap_or_default().to_string(),
-                target: body["target"]
-                    .as_str()
-                    .filter(|s| !s.is_empty())
-                    .map(str::to_string),
-                autonomy: body["autonomy"]
-                    .as_str()
-                    .and_then(crate::config::Autonomy::parse),
-                limit_usd: body["limit_usd"].as_f64(),
-                limit_min: body["limit_min"].as_u64(),
-                roles,
-            };
-            json_reply(req, ask(tx, Request::Create(c)))
-        }
         (false, ["api", "runs", r, action @ ..]) => {
             let Some(i) = id(r) else {
                 return respond(req, 404, "text/plain", "no such run".into());
             };
             let text = body["text"].as_str().unwrap_or_default().to_string();
             let request = match action {
-                ["plan", "say"] => Request::Say { id: i, text },
-                ["plan", "approve"] => Request::Approve { id: i },
                 ["answer"] => Request::Answer { id: i, text },
                 ["limits"] => Request::Limits {
                     id: i,

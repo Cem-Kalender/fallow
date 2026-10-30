@@ -13,9 +13,9 @@ use std::sync::mpsc::{self, Sender};
 
 use serde_json::{Value, json};
 
-use crate::config::{Autonomy, ConfigPaths, RoleChoice, Settings};
+use crate::config::{ConfigPaths, Settings};
 use crate::mcp::pipe;
-use crate::run::engine::{self, Create, Ctx, Engine, Msg, Reply, Request};
+use crate::run::engine::{self, Ctx, Engine, Msg, Reply, Request};
 
 pub const SERVICE_FILE: &str = "service.json";
 
@@ -233,36 +233,6 @@ fn cli_request(req: &Value, tx: &Sender<Msg>, port: u16, secret: &str) -> Value 
             json!({ "ok": true, "url": page_url(port, secret, req["path"].as_str().unwrap_or("/")) })
         }
         Some("status") => reply(ask(tx, Request::List)),
-        Some("run") => {
-            let mut roles = std::collections::BTreeMap::new();
-            for r in req["roles"].as_array().into_iter().flatten() {
-                if let (Some(role), Some(agent)) = (r["role"].as_str(), r["agent"].as_str()) {
-                    roles.insert(
-                        role.to_string(),
-                        RoleChoice {
-                            agent: agent.to_string(),
-                            model: r["model"].as_str().unwrap_or_default().to_string(),
-                        },
-                    );
-                }
-            }
-            let c = Create {
-                repo: PathBuf::from(req["repo"].as_str().unwrap_or(".")),
-                task: req["task"].as_str().unwrap_or_default().to_string(),
-                target: req["target"].as_str().map(str::to_string),
-                autonomy: req["autonomy"].as_str().and_then(Autonomy::parse),
-                limit_usd: req["limit_usd"].as_f64(),
-                limit_min: req["limit_min"].as_u64(),
-                roles,
-            };
-            match ask(tx, Request::Create(c)) {
-                Reply::Ok(v) => {
-                    let id = v["id"].as_u64().unwrap_or(0);
-                    json!({ "ok": true, "id": id, "url": page_url(port, secret, "/") })
-                }
-                other => reply(other),
-            }
-        }
         Some("stop") => {
             let _ = tx.send(Msg::Shutdown);
             json!({ "ok": true })

@@ -1396,6 +1396,47 @@ pub fn process(run: &mut Run, n: u32) -> Result<(), String> {
     }
 }
 
+/// The engineer's answer to a builder's question (FR-015): the same step again, in its session,
+/// with the answer.
+pub fn answered(run: &mut Run, last: &Step, text: &str) -> Result<(), String> {
+    let session = last
+        .session
+        .clone()
+        .filter(|s| !run.state.lost_sessions.contains(s));
+    let what = last.part.as_deref().unwrap_or("the task");
+    let instruction = match &session {
+        Some(_) => format!(
+            "Fallow step: {} ({what})\n\nThe engineer answers your question:\n\n{text}\n\nContinue the same work in your worktree and return your result; Fallow commits your changes when the step ends.",
+            last.kind.label()
+        ),
+        None => format!(
+            "{}\n\nThe engineer answered a question about this:\n\n{text}",
+            machine::instruction_of(run, last.n)
+        ),
+    };
+    let def = last.def.clone().unwrap_or_else(|| "builder".into());
+    queue(
+        run,
+        last.kind,
+        last.part.as_deref(),
+        last.task.as_deref(),
+        last.phase,
+        &def,
+        session,
+        "the engineer answered",
+        instruction,
+    )?;
+    if let Some(t) = &last.task {
+        run.append(Event::Task {
+            id: t.clone(),
+            state: TaskState::Current,
+            commit: None,
+            repairs: repairs_of(run, t),
+        })?;
+    }
+    Ok(())
+}
+
 /// The locked documents changed between `base` and `commit`, besides Fallow's own tick of
 /// `task` in tasks.md.
 fn locked_changes(

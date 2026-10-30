@@ -17,8 +17,7 @@ use serde_json::{Value, json};
 use super::events::*;
 use super::state::RunState;
 use crate::agent::{self, Activity};
-use crate::config::{Autonomy, RoleChoice, Settings, Squad};
-use crate::plan::Plan;
+use crate::config::{Settings, Squad};
 use crate::verify::gates::GateResult;
 use crate::verify::git;
 
@@ -49,14 +48,6 @@ pub enum Request {
     Activity {
         id: u64,
         n: u32,
-    },
-    Create(Create),
-    Say {
-        id: u64,
-        text: String,
-    },
-    Approve {
-        id: u64,
     },
     Answer {
         id: u64,
@@ -113,18 +104,6 @@ pub enum Request {
     RelockPreview { project: String, feature: String },
 }
 
-/// What starting a run takes (contracts/cli.md `fallow run`, web-api.md `POST /api/runs`).
-#[derive(Debug, Clone, Default)]
-pub struct Create {
-    pub repo: PathBuf,
-    pub task: String,
-    pub target: Option<String>,
-    pub autonomy: Option<Autonomy>,
-    pub limit_usd: Option<f64>,
-    pub limit_min: Option<u64>,
-    pub roles: BTreeMap<String, RoleChoice>,
-}
-
 #[derive(Debug)]
 pub enum Reply {
     Ok(Value),
@@ -163,8 +142,6 @@ pub struct Run {
     pub log: Log,
     pub state: RunState,
     pub busy: Option<Busy>,
-    /// The approved plan, read from the repository when needed.
-    pub plan: Option<Plan>,
     /// Ends the running step early (stop, take over).
     pub stop: Arc<AtomicBool>,
     /// Pages waiting for the next change (long polling), with when they started waiting.
@@ -329,8 +306,7 @@ impl Engine {
                         log,
                         state,
                         busy: None,
-                        plan: None,
-                        stop: Arc::new(AtomicBool::new(false)),
+                                    stop: Arc::new(AtomicBool::new(false)),
                         waiters: Vec::new(),
                         activity: 0,
                         group: None,
@@ -925,7 +901,6 @@ impl Engine {
             log,
             state,
             busy: None,
-            plan: None,
             stop: Arc::new(AtomicBool::new(false)),
             waiters: Vec::new(),
             activity: 0,
@@ -1140,13 +1115,6 @@ impl Engine {
             Request::RelockPreview { project, feature } => {
                 self.relock_preview(&project, &feature)
             }
-            Request::Create(c) => self.create(c),
-            Request::Say { id, text } => run_mut(self, id)
-                .and_then(|r| super::machine::say(r, &text))
-                .map(|()| json!({})),
-            Request::Approve { id } => run_mut(self, id)
-                .and_then(super::machine::approve)
-                .map(|()| json!({})),
             Request::Answer { id, text } => run_mut(self, id)
                 .and_then(|r| super::machine::answer(r, &text))
                 .map(|()| json!({})),
@@ -1190,136 +1158,6 @@ impl Engine {
         }
     }
 
-    /// Starts a run (FR-032 setup check, then `run_created` and the first planning turn).
-    fn create(&mut self, c: Create) -> Result<Value, String> {
-        if c.task.trim().is_empty() {
-            return Err("the task is empty".into());
-        }
-        let top = git_toplevel(&c.repo)?;
-        let current = git::branch(&top);
-        let target = match c.target.clone().or_else(|| current.clone()) {
-            Some(t) => t,
-            None => {
-                return Err("the repository is on a detached HEAD: name the target branch".into());
-            }
-        };
-        // The run starts from the target branch, which must be a local branch.
-        let start_commit = git::rev(&top, &format!("refs/heads/{target}"))
-            .map_err(|_| format!("there is no local branch {target:?} to start from"))?;
-        // Uncommitted changes are left out only when they are on the branch the run starts from.
-        let left_out = if current.as_deref() == Some(target.as_str()) {
-            git::changes(&top).unwrap_or_default()
-        } else {
-            Vec::new()
-        };
-        // The squad file at the starting commit (contracts/config.md).
-        let mut notices = Vec::new();
-        let squad = match git::show(&top, &start_commit, crate::config::squad::SQUAD_FILE) {
-            Ok(Some(text)) => Squad::parse(crate::config::squad::SQUAD_FILE, &text, &mut notices),
-            _ => Squad::parse(crate::config::squad::SQUAD_FILE, "", &mut notices),
-        };
-        let s = &self.ctx.settings;
-        let mut roles = s.roles.clone();
-        for (role, choice) in &squad.roles {
-            if let Some(base) = roles.get(role).cloned() {
-                roles.insert(role.clone(), base.overlaid(choice));
-            }
-        }
-        for (role, choice) in &c.roles {
-            if let Some(base) = roles.get(role).cloned() {
-                roles.insert(role.clone(), base.overlaid(choice));
-            }
-        }
-        let mut missing = Vec::new();
-        for (role, choice) in &roles {
-            match s.agents.get(&choice.agent) {
-                None => missing.push(format!(
-                    "{role}: no agent named {:?} in the settings",
-                    choice.agent
-                )),
-                Some(a) if crate::platform::find_program(&a.command).is_none() => missing.push(
-                    format!("{role}: {} is not installed or not on the path", a.command),
-                ),
-                _ => {}
-            }
-        }
-        for g in &squad.gates {
-            if let Some(p) = g.command.split_whitespace().next() {
-                if crate::platform::find_program(p).is_none() {
-                    missing.push(format!("gate {}: {p} is not on the path", g.name));
-                }
-            }
-        }
-        if !missing.is_empty() {
-            return Err(format!("the run cannot start: {}", missing.join("; ")));
-        }
-        let id = self.next_id();
-        let dir = runs_dir(&self.data).join(id.to_string());
-        let (mut log, _, _) = Log::open(&dir)?;
-        let created = Event::RunCreated {
-            repo: top.clone(),
-            target,
-            start_commit: start_commit.clone(),
-            task: c.task.trim().to_string(),
-            mode: Mode::Solo,
-            autonomy: c.autonomy.or(squad.autonomy).unwrap_or(s.defaults.autonomy),
-            limits: Limits {
-                usd: c
-                    .limit_usd
-                    .or(squad.limit_usd)
-                    .unwrap_or(s.defaults.limit_usd),
-                minutes: c
-                    .limit_min
-                    .or(squad.limit_min)
-                    .unwrap_or(s.defaults.limit_min),
-                step_minutes: s.defaults.step_min,
-            },
-            roles,
-            repair_cap: squad.repair_cap.unwrap_or(s.defaults.repair_cap),
-            gates: squad
-                .gates
-                .iter()
-                .map(|g| GateSpec {
-                    name: g.name.clone(),
-                    command: g.command.clone(),
-                    timeout_min: g.timeout_min,
-                    baseline: g.baseline,
-                    failures: match &g.failures {
-                        crate::config::Failures::Auto => "auto".into(),
-                        crate::config::Failures::ExitCode => "exit-code".into(),
-                        crate::config::Failures::Regex(p) => p.clone(),
-                    },
-                })
-                .collect(),
-            allow: squad.allow.clone(),
-            test_patterns: squad.test_patterns.clone(),
-            recorded: false,
-            left_out,
-        };
-        let first = log.append(created)?;
-        let state = RunState::fold(id, &[first])?;
-        let mut run = Run {
-            dir,
-            log,
-            state,
-            busy: None,
-            plan: None,
-            stop: Arc::new(AtomicBool::new(false)),
-            waiters: Vec::new(),
-            activity: 0,
-            group: None,
-            waiting: None,
-        };
-        for n in notices {
-            run.append(Event::Note {
-                text: n.to_string(),
-            })?;
-        }
-        super::machine::start_planning(&mut run)?;
-        self.runs.insert(id, run);
-        Ok(json!({ "id": id }))
-    }
-
     fn next_id(&self) -> u64 {
         let path = self.data.join("next_id");
         let stored: u64 = std::fs::read_to_string(&path)
@@ -1336,22 +1174,6 @@ fn run_mut(e: &mut Engine, id: u64) -> Result<&mut Run, String> {
     e.runs
         .get_mut(&id)
         .ok_or_else(|| format!("there is no run {id}"))
-}
-
-fn git_toplevel(dir: &Path) -> Result<PathBuf, String> {
-    let out = crate::platform::command("git")
-        .current_dir(dir)
-        .args(["rev-parse", "--show-toplevel"])
-        .output()
-        .map_err(|e| format!("git: {e}"))?;
-    if !out.status.success() {
-        return Err(format!("{} is not a git repository", dir.display()));
-    }
-    let p = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    if git::head(Path::new(&p)).is_err() {
-        return Err(format!("{p} has no commit yet"));
-    }
-    Ok(PathBuf::from(p))
 }
 
 /// One line of the runs list.
@@ -1404,13 +1226,5 @@ pub fn view(r: &Run) -> Value {
     v["waiting"] = json!(r.waiting);
     v["interventions"] = json!(r.state.interventions());
     v["minutes_used"] = json!(r.state.minutes_used(super::time::unix_now()));
-    // Before approval, the plan the engineer is asked to approve (its commands among it).
-    let plan = r.plan.clone().or_else(|| {
-        r.state
-            .plan_commit
-            .as_deref()
-            .and_then(|c| crate::plan::at(&r.state.repo, c).ok().flatten())
-    });
-    v["plan"] = serde_json::to_value(&plan).unwrap_or(Value::Null);
     v
 }
