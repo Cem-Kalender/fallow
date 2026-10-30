@@ -69,7 +69,7 @@ How it works:
 
 *GATE: Must pass before Phase 0 research. Re-checked after Phase 1 design.*
 
-Checked against v6.0.0. The amendment to v6.1.0 (constitution-proposal.md) states four rules that 007 relies on: the lead's answers, rights by kind, writing into projects, and unverified results. **Status**: PASS, once the amendment is approved. Until then, the rows marked "amend" are open.
+Checked against v6.0.0. The amendment to v6.1.0 (constitution-proposal.md) states four rules that 007 relies on: the lead's answers, rights by kind, writing into projects, and unverified results. **Status**: PASS. The amendment was approved and applied on 2026-10-30.
 
 | Principle | How the design meets it | Status |
 |---|---|---|

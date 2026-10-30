@@ -1,6 +1,6 @@
 # Constitution amendment proposal: 6.0.0 → 6.1.0
 
-**Status**: proposed with the plan of 007, 2026-10-30. It needs the project owner's approval before `/speckit-constitution` applies it.
+**Status**: approved by the project owner and applied on 2026-10-30 (constitution v6.1.0).
 
 **Bump**: MINOR. Guidance is materially expanded, and no principle is removed or loosened:
 - the lead's role;
