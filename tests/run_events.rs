@@ -272,12 +272,19 @@ fn a_loop_folds_its_phases_tasks_questions_and_outcome() {
     assert!(!f.unlocked);
     assert_eq!(f.affected, ["US1"]);
     assert_eq!(f.phases[0].state, PhaseState::Done);
-    assert_eq!(f.phases[0].session.as_deref(), Some("s1"), "kept when a later event omits it");
+    assert_eq!(
+        f.phases[0].session.as_deref(),
+        Some("s1"),
+        "kept when a later event omits it"
+    );
     assert!(f.phases[0].handover.is_some());
     assert_eq!(f.tasks["T001"].state, TaskState::Accepted);
     assert_eq!(f.tasks["T001"].repairs, 1);
     assert_eq!(f.tasks["T011"].phase, 3);
     assert_eq!(f.questions["q1"].state, QuestionState::WaitingEngineer);
-    assert_eq!(f.outcome, Some((false, vec!["no review at checkpoints".to_string()])));
+    assert_eq!(
+        f.outcome,
+        Some((false, vec!["no review at checkpoints".to_string()]))
+    );
     let _ = std::fs::remove_dir_all(&d);
 }

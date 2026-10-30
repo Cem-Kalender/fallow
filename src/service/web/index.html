@@ -5,51 +5,41 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Fallow</title>
 <link rel="stylesheet" href="/app.css">
+<script src="/app.js" defer></script>
+<script src="/screens/dashboard.js" defer></script>
+<script src="/screens/project.js" defer></script>
+<script src="/screens/spec.js" defer></script>
+<script src="/screens/loop.js" defer></script>
+<script src="/screens/pipelines.js" defer></script>
 </head>
-<body data-page="index">
-<div class="wrap">
-  <header class="top">
-    <div class="title">
-      <h1>Fallow</h1>
-      <div class="meta"><span>Runs on this machine</span><span id="held"></span></div>
+<body>
+<header class="top-bar">
+  <a class="logo" href="#/" aria-label="Fallow dashboard">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke-width="2" aria-hidden="true"><path d="M4 20c4-1 6-5 8-9s4-7 8-7"></path><path d="M4 14c3 0 5-2 6-4"></path><path d="M12 20c3-1 5-3 6-6"></path></svg>
+    Fallow
+  </a>
+  <nav aria-label="Main" class="nav-links">
+    <a class="nav" data-nav="dashboard" href="#/">Dashboard</a>
+    <a class="nav" data-nav="spec" href="#/specs">Spec sessions</a>
+    <a class="nav" data-nav="loop" href="#/loops">Loops</a>
+    <a class="nav" data-nav="pipelines" href="#/pipelines">Pipelines &amp; agents</a>
+  </nav>
+  <div class="grow"></div>
+  <span id="needs-count" class="pill orange" hidden></span>
+  <span id="header-status" class="small muted"></span>
+</header>
+<div id="app" aria-live="polite"></div>
+<dialog id="confirm" class="confirm" aria-labelledby="confirm-title">
+  <form method="dialog">
+    <h2 id="confirm-title"></h2>
+    <p id="confirm-text" class="body-ink lh mt-8"></p>
+    <ul id="confirm-list"></ul>
+    <div class="row mt-16">
+      <div class="grow"></div>
+      <button class="btn btn2" value="cancel">Cancel</button>
+      <button id="confirm-ok" class="btn" value="ok">Confirm</button>
     </div>
-  </header>
-
-  <section class="card">
-    <h2>Start a run</h2>
-    <form id="start" class="form">
-      <label for="repo">Repository folder
-        <input type="text" id="repo" name="repo" placeholder="C:\Repos\minishop" required>
-      </label>
-      <label for="task">Task
-        <textarea id="task" name="task" rows="3" placeholder="Make product search case-insensitive and add a search command" required></textarea>
-      </label>
-      <div class="row">
-        <label for="autonomy">Autonomy
-          <select id="autonomy" name="autonomy">
-            <option value="">default</option>
-            <option value="high">high</option>
-            <option value="medium">medium</option>
-            <option value="low">low</option>
-          </select>
-        </label>
-        <label for="limit_usd">Cost limit ($)
-          <input type="text" id="limit_usd" name="limit_usd" placeholder="10">
-        </label>
-        <label for="limit_min">Time limit (min)
-          <input type="text" id="limit_min" name="limit_min" placeholder="120">
-        </label>
-      </div>
-      <div class="btns"><button class="primary" type="submit">Start the run</button></div>
-      <p class="note" id="startNote"></p>
-    </form>
-  </section>
-
-  <section class="card">
-    <h2>Runs</h2>
-    <div id="runs" class="runs"><p class="empty">No runs yet.</p></div>
-  </section>
-</div>
-<script src="/app.js"></script>
+  </form>
+</dialog>
 </body>
 </html>

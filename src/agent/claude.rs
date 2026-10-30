@@ -13,8 +13,24 @@ use super::{Agent, Availability, Call, Event, Outcome, Runtime, Session, ToolKin
 
 /// Read-only shell commands every agent may run, besides the ones Claude Code allows by itself.
 const READ_SHELL: &[&str] = &[
-    "ls", "dir", "cat", "type", "head", "tail", "findstr", "grep", "git status", "git diff",
-    "git log", "git show", "echo", "pwd", "wc", "sort", "which", "where",
+    "ls",
+    "dir",
+    "cat",
+    "type",
+    "head",
+    "tail",
+    "findstr",
+    "grep",
+    "git status",
+    "git diff",
+    "git log",
+    "git show",
+    "echo",
+    "pwd",
+    "wc",
+    "sort",
+    "which",
+    "where",
 ];
 
 /// The runtime for an agent program that speaks `claude -p`: Claude Code itself, or
@@ -572,7 +588,9 @@ mod tests {
         ] {
             assert!(has(&a, r), "lacks {r}");
         }
-        assert!(s.contains("--disallowedTools Edit(specs/007-x/spec.md) Write(specs/007-x/spec.md)"));
+        assert!(
+            s.contains("--disallowedTools Edit(specs/007-x/spec.md) Write(specs/007-x/spec.md)")
+        );
         assert!(s.contains("--session-id u-1"));
         assert!(s.contains("--model sonnet"));
         assert!(s.contains("--max-budget-usd 4.50"));
@@ -619,7 +637,12 @@ mod tests {
             {"type":"tool_use","id":"t1","name":"Edit","input":{"file_path":"shop/cart.py","old_string":"a","new_string":"b"}},
             {"type":"tool_use","id":"t2","name":"PowerShell","input":{"command":"python -m unittest"}}]}}));
         assert_eq!(e.len(), 3);
-        assert_eq!(e[0], Event::Message { text: "Looking.".into() });
+        assert_eq!(
+            e[0],
+            Event::Message {
+                text: "Looking.".into()
+            }
+        );
         assert_eq!(
             e[1],
             Event::ToolCall {
@@ -629,13 +652,26 @@ mod tests {
                 detail: "-a\n+b\n".into()
             }
         );
-        assert!(matches!(&e[2], Event::ToolCall { kind: ToolKind::Run, summary, .. } if summary == "python -m unittest"));
+        assert!(
+            matches!(&e[2], Event::ToolCall { kind: ToolKind::Run, summary, .. } if summary == "python -m unittest")
+        );
         let r = events(&json!({"type":"user","message":{"content":[
             {"type":"tool_result","tool_use_id":"t2","is_error":true,"content":"Permission to use Bash has been denied because Claude Code is running in don't ask mode."}]}}));
-        assert!(matches!(&r[0], Event::ToolResult { refused: true, ok: false, .. }));
-        let d = events(&json!({"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hel"}}}));
+        assert!(matches!(
+            &r[0],
+            Event::ToolResult {
+                refused: true,
+                ok: false,
+                ..
+            }
+        ));
+        let d = events(
+            &json!({"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hel"}}}),
+        );
         assert_eq!(d, [Event::MessageDelta { text: "Hel".into() }]);
-        let t = events(&json!({"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"hmm"}}}));
+        let t = events(
+            &json!({"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"hmm"}}}),
+        );
         assert!(t.is_empty());
     }
 

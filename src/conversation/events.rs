@@ -326,7 +326,12 @@ mod tests {
                     failure: None,
                 },
             ),
-            logged(6, Event::ModeSet { mode: Mode::ReadOnly }),
+            logged(
+                6,
+                Event::ModeSet {
+                    mode: Mode::ReadOnly,
+                },
+            ),
             logged(
                 7,
                 Event::StepSet {

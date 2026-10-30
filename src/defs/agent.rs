@@ -1,0 +1,488 @@
+//! Agent definitions (007 contracts/agent-definition.md, research S-11): markdown with a small
+//! frontmatter in a strict subset of YAML. Anything outside the subset is refused at its line.
+
+use serde::Serialize;
+
+use crate::project::commands::command_problem;
+use crate::speckit::Problem;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Kind {
+    Maker,
+    Checker,
+    Lead,
+}
+
+impl Kind {
+    /// The result shape the kind returns (contracts/step-results.md).
+    pub fn returns(self) -> &'static str {
+        match self {
+            Kind::Maker => "work",
+            Kind::Checker => "verdict",
+            Kind::Lead => "reply",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize)]
+pub struct Limits {
+    pub minutes: Option<u64>,
+    pub turns: Option<u32>,
+    pub usd: Option<f64>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Source {
+    Default,
+    User,
+    Project,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct AgentDef {
+    pub name: String,
+    pub description: String,
+    pub runtime: String,
+    pub model: String,
+    pub kind: Kind,
+    pub may_run: Vec<String>,
+    pub returns: String,
+    pub limits: Limits,
+    pub body: String,
+    pub source: Source,
+}
+
+/// A frontmatter value in the subset: a string, a list of strings, or a map of numbers.
+#[derive(Debug, Clone, PartialEq)]
+enum Value {
+    Str(String),
+    List(Vec<String>),
+    Map(Vec<(String, String)>),
+}
+
+fn unquote(s: &str) -> Result<String, String> {
+    let s = s.trim();
+    if let Some(inner) = s.strip_prefix('"') {
+        let inner = inner
+            .strip_suffix('"')
+            .ok_or("a quoted value must end with \"")?;
+        if inner.contains('"') {
+            return Err("a quote inside a quoted value".into());
+        }
+        Ok(inner.to_string())
+    } else {
+        if s.starts_with(['\'', '&', '*', '|', '>', '!', '%', '@', '`']) {
+            return Err(format!("{s:?}: only plain or double-quoted values"));
+        }
+        Ok(s.to_string())
+    }
+}
+
+/// Splits `a, "b, c", d` on commas outside quotes.
+fn split_items(s: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut quoted = false;
+    for c in s.chars() {
+        match c {
+            '"' => {
+                quoted = !quoted;
+                cur.push(c);
+            }
+            ',' if !quoted => {
+                out.push(cur.trim().to_string());
+                cur.clear();
+            }
+            _ => cur.push(c),
+        }
+    }
+    if !cur.trim().is_empty() {
+        out.push(cur.trim().to_string());
+    }
+    out
+}
+
+/// Removes a `#` comment that is not inside quotes.
+fn strip_comment(line: &str) -> &str {
+    let mut quoted = false;
+    for (i, c) in line.char_indices() {
+        match c {
+            '"' => quoted = !quoted,
+            '#' if !quoted && (i == 0 || line[..i].ends_with(' ')) => return &line[..i],
+            _ => {}
+        }
+    }
+    line
+}
+
+fn value(raw: &str) -> Result<Value, String> {
+    let raw = raw.trim();
+    if let Some(inner) = raw.strip_prefix('[') {
+        let inner = inner.strip_suffix(']').ok_or("a list must end with ]")?;
+        let items = split_items(inner)
+            .into_iter()
+            .map(|i| unquote(&i))
+            .collect::<Result<Vec<_>, _>>()?;
+        return Ok(Value::List(items));
+    }
+    if let Some(inner) = raw.strip_prefix('{') {
+        let inner = inner.strip_suffix('}').ok_or("a map must end with }")?;
+        let mut pairs = Vec::new();
+        for item in split_items(inner) {
+            let (k, v) = item.split_once(':').ok_or("a map item is `key: value`")?;
+            pairs.push((k.trim().to_string(), unquote(v)?));
+        }
+        return Ok(Value::Map(pairs));
+    }
+    Ok(Value::Str(unquote(raw)?))
+}
+
+const KEYS: &[&str] = &[
+    "name",
+    "description",
+    "runtime",
+    "model",
+    "kind",
+    "may_run",
+    "returns",
+    "limits",
+];
+
+/// Parses the definition in `text` (the file `file`, named `<name>.md`). `runtimes` are the
+/// runtime names Fallow knows.
+pub fn parse(
+    file: &str,
+    stem: &str,
+    text: &str,
+    source: Source,
+    runtimes: &[&str],
+) -> Result<AgentDef, Vec<Problem>> {
+    let p = |line: usize, m: String| Problem::new(file, line, m);
+    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
+    let lines: Vec<&str> = text.lines().collect();
+    if lines.first().map(|l| l.trim_end()) != Some("---") {
+        return Err(vec![p(1, "a definition starts with a `---` line".into())]);
+    }
+    let Some(end) = lines.iter().skip(1).position(|l| l.trim_end() == "---") else {
+        return Err(vec![p(
+            1,
+            "the frontmatter has no closing `---` line".into(),
+        )]);
+    };
+    let end = end + 1;
+    let mut problems = Vec::new();
+    let mut fields: Vec<(String, Value, usize)> = Vec::new();
+    for (i, line) in lines[1..end].iter().enumerate() {
+        let at = i + 2;
+        let line = strip_comment(line);
+        if line.trim().is_empty() {
+            continue;
+        }
+        if line.starts_with([' ', '\t']) {
+            problems.push(p(
+                at,
+                "no nesting or multi-line values: one `key: value` per line".into(),
+            ));
+            continue;
+        }
+        let Some((k, v)) = line.split_once(':') else {
+            problems.push(p(at, "a line is `key: value`".into()));
+            continue;
+        };
+        let k = k.trim();
+        if !KEYS.contains(&k) {
+            problems.push(p(at, format!("unknown key {k:?}")));
+            continue;
+        }
+        if fields.iter().any(|(f, ..)| f == k) {
+            problems.push(p(at, format!("{k} is given twice")));
+            continue;
+        }
+        match value(v) {
+            Ok(v) => fields.push((k.to_string(), v, at)),
+            Err(e) => problems.push(p(at, format!("{k}: {e}"))),
+        }
+    }
+    let get = |k: &str| fields.iter().find(|(f, ..)| f == k);
+    let str_of = |k: &str, problems: &mut Vec<Problem>| -> Option<(String, usize)> {
+        match get(k) {
+            Some((_, Value::Str(s), at)) => Some((s.clone(), *at)),
+            Some((_, _, at)) => {
+                problems.push(p(*at, format!("{k} is a single value")));
+                None
+            }
+            None => None,
+        }
+    };
+    let name = match str_of("name", &mut problems) {
+        Some((n, at)) => {
+            if n.is_empty()
+                || !n
+                    .chars()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+            {
+                problems.push(p(at, format!("name {n:?}: use a-z, 0-9 and -")));
+            } else if n != stem {
+                problems.push(p(
+                    at,
+                    format!("name {n:?} differs from the file name {stem:?}"),
+                ));
+            }
+            n
+        }
+        None => {
+            problems.push(p(1, "name is required".into()));
+            String::new()
+        }
+    };
+    let description = match str_of("description", &mut problems) {
+        Some((d, _)) if !d.is_empty() => d,
+        _ => {
+            problems.push(p(1, "description is required".into()));
+            String::new()
+        }
+    };
+    let runtime = match str_of("runtime", &mut problems) {
+        Some((r, at)) => {
+            if !runtimes.contains(&r.as_str()) {
+                problems.push(p(
+                    at,
+                    format!(
+                        "runtime {r:?} is not one Fallow knows ({})",
+                        runtimes.join(", ")
+                    ),
+                ));
+            }
+            r
+        }
+        None => {
+            problems.push(p(1, "runtime is required".into()));
+            String::new()
+        }
+    };
+    let model = str_of("model", &mut problems)
+        .map(|(m, _)| m)
+        .unwrap_or_default();
+    let kind = match str_of("kind", &mut problems) {
+        Some((k, at)) => match k.as_str() {
+            "maker" => Some(Kind::Maker),
+            "checker" => Some(Kind::Checker),
+            "lead" => Some(Kind::Lead),
+            _ => {
+                problems.push(p(at, format!("kind {k:?}: maker, checker or lead")));
+                None
+            }
+        },
+        None => {
+            problems.push(p(1, "kind is required".into()));
+            None
+        }
+    };
+    let returns = match str_of("returns", &mut problems) {
+        Some((r, at)) => {
+            if let Some(k) = kind {
+                if r != k.returns() {
+                    problems.push(p(
+                        at,
+                        format!(
+                            "returns {r:?}: a {} returns {:?}",
+                            match k {
+                                Kind::Maker => "maker",
+                                Kind::Checker => "checker",
+                                Kind::Lead => "lead",
+                            },
+                            k.returns()
+                        ),
+                    ));
+                }
+            }
+            r
+        }
+        None => {
+            problems.push(p(1, "returns is required".into()));
+            String::new()
+        }
+    };
+    let may_run = match get("may_run") {
+        Some((_, Value::List(items), at)) => {
+            for i in items {
+                if i != "gates" && i != "plan.commands" {
+                    if let Some(why) = command_problem(i) {
+                        problems.push(p(*at, format!("may_run {i:?}: {why}")));
+                    }
+                }
+            }
+            items.clone()
+        }
+        Some((_, _, at)) => {
+            problems.push(p(*at, "may_run is a list: [gates, \"npm audit\"]".into()));
+            Vec::new()
+        }
+        None => Vec::new(),
+    };
+    let limits = match get("limits") {
+        Some((_, Value::Map(pairs), at)) => {
+            let mut l = Limits::default();
+            for (k, v) in pairs {
+                let bad = |problems: &mut Vec<Problem>| {
+                    problems.push(p(
+                        *at,
+                        format!("limits.{k}: {v:?} is not a positive number"),
+                    ))
+                };
+                match k.as_str() {
+                    "minutes" => match v.parse::<u64>() {
+                        Ok(n) if n > 0 => l.minutes = Some(n),
+                        _ => bad(&mut problems),
+                    },
+                    "turns" => match v.parse::<u32>() {
+                        Ok(n) if n > 0 => l.turns = Some(n),
+                        _ => bad(&mut problems),
+                    },
+                    "usd" => match v.parse::<f64>() {
+                        Ok(n) if n > 0.0 => l.usd = Some(n),
+                        _ => bad(&mut problems),
+                    },
+                    _ => problems.push(p(
+                        *at,
+                        format!("limits: unknown key {k:?} (minutes, turns, usd)"),
+                    )),
+                }
+            }
+            l
+        }
+        Some((_, _, at)) => {
+            problems.push(p(
+                *at,
+                "limits is a map: {minutes: 20, turns: 60, usd: 1.5}".into(),
+            ));
+            Limits::default()
+        }
+        None => Limits::default(),
+    };
+    let body = lines[end + 1..].join("\n").trim().to_string();
+    if body.is_empty() {
+        problems.push(p(
+            end + 1,
+            "the instruction after the frontmatter is empty".into(),
+        ));
+    }
+    if !problems.is_empty() {
+        return Err(problems);
+    }
+    Ok(AgentDef {
+        name,
+        description,
+        runtime,
+        model,
+        kind: kind.expect("checked"),
+        may_run,
+        returns,
+        limits,
+        body,
+        source,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const RT: &[&str] = &["claude", "fake"];
+
+    fn parse_ok(stem: &str, text: &str) -> AgentDef {
+        parse("x.md", stem, text, Source::User, RT).unwrap()
+    }
+
+    fn errors(stem: &str, text: &str) -> Vec<String> {
+        parse("x.md", stem, text, Source::User, RT)
+            .unwrap_err()
+            .iter()
+            .map(|p| p.to_string())
+            .collect()
+    }
+
+    #[test]
+    fn the_contracts_example_parses() {
+        let d = parse_ok(
+            "security-reviewer",
+            "---\nname: security-reviewer\ndescription: Reads a story's changes\nruntime: claude\nmodel: opus\nkind: checker            # maker | checker | lead\nmay_run: [gates, plan.commands, \"npm audit\"]\nreturns: verdict\nlimits: {minutes: 20, turns: 60, usd: 1.5}\n---\n\nYou check the changes.\n",
+        );
+        assert_eq!(d.kind, Kind::Checker);
+        assert_eq!(d.may_run, ["gates", "plan.commands", "npm audit"]);
+        assert_eq!(d.limits.minutes, Some(20));
+        assert_eq!(d.limits.usd, Some(1.5));
+        assert_eq!(d.body, "You check the changes.");
+        assert_eq!(d.model, "opus");
+    }
+
+    #[test]
+    fn the_shipped_defaults_parse() {
+        for (stem, text) in super::super::DEFAULT_AGENTS {
+            let d = parse("x.md", stem, text, Source::Default, RT)
+                .unwrap_or_else(|e| panic!("{stem}: {e:?}"));
+            assert_eq!(d.returns, d.kind.returns());
+        }
+    }
+
+    #[test]
+    fn what_is_outside_the_subset_is_refused_at_its_line() {
+        let e = errors("a", "---\nname: a\nfoo: 1\n---\nx\n");
+        assert!(
+            e.iter()
+                .any(|x| x.starts_with("x.md:3:") && x.contains("unknown key")),
+            "{e:?}"
+        );
+        let e = errors("a", "---\nname: a\nmay_run:\n  - gates\n---\nx\n");
+        assert!(
+            e.iter()
+                .any(|x| x.starts_with("x.md:4:") && x.contains("no nesting")),
+            "{e:?}"
+        );
+        let e = errors("a", "---\nname: &anchor a\n---\nx\n");
+        assert!(e.iter().any(|x| x.starts_with("x.md:2:")), "{e:?}");
+        let e = errors("a", "name: a\n");
+        assert!(e[0].contains("starts with a `---`"));
+    }
+
+    #[test]
+    fn the_rules_are_checked() {
+        let base = |extra: &str| {
+            format!(
+                "---\nname: b\ndescription: d\nruntime: claude\nkind: maker\nreturns: work\n{extra}---\nDo it.\n"
+            )
+        };
+        assert!(
+            errors("c", &base(""))
+                .iter()
+                .any(|e| e.contains("differs from the file name"))
+        );
+        let e = errors("b", &base("may_run: [\"git push\"]\n"));
+        assert!(
+            e.iter().any(|x| x.contains("not a command agents may run")),
+            "{e:?}"
+        );
+        let e = errors("b", &base("limits: {minutes: 0}\n"));
+        assert!(
+            e.iter().any(|x| x.contains("not a positive number")),
+            "{e:?}"
+        );
+        let e = errors(
+            "b",
+            "---\nname: b\ndescription: d\nruntime: gpt\nkind: checker\nreturns: work\n---\nx\n",
+        );
+        assert!(e.iter().any(|x| x.contains("runtime \"gpt\"")), "{e:?}");
+        assert!(
+            e.iter()
+                .any(|x| x.contains("a checker returns \"verdict\"")),
+            "{e:?}"
+        );
+        let e = errors(
+            "b",
+            "---\nname: b\ndescription: d\nruntime: claude\nkind: maker\nreturns: work\n---\n\n",
+        );
+        assert!(e.iter().any(|x| x.contains("empty")), "{e:?}");
+    }
+}

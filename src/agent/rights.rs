@@ -94,7 +94,11 @@ fn push_unique(v: &mut Vec<String>, items: impl IntoIterator<Item = String>) {
 
 /// The commands an agent may run: its definition's `may_run`, with `gates` and `plan.commands`
 /// expanded (contracts/agent-definition.md).
-pub fn expand_may_run(may_run: &[String], gates: &[GateSpec], plan_commands: &[String]) -> Vec<String> {
+pub fn expand_may_run(
+    may_run: &[String],
+    gates: &[GateSpec],
+    plan_commands: &[String],
+) -> Vec<String> {
     let mut out = Vec::new();
     for m in may_run {
         match m.as_str() {
@@ -198,7 +202,10 @@ mod tests {
 
     #[test]
     fn kinds_get_their_rights() {
-        let m = maker(vec!["python -m unittest".into()], vec!["specs/007-x/spec.md".into()]);
+        let m = maker(
+            vec!["python -m unittest".into()],
+            vec!["specs/007-x/spec.md".into()],
+        );
         assert_eq!(m.edits, Edits::Anywhere);
         assert_eq!(m.protect, ["specs/007-x/spec.md"]);
         let c = checker(vec!["python -m unittest".into()]);
@@ -226,7 +233,10 @@ mod tests {
                 "{m:?}: the lead writes only spec documents"
             );
         }
-        assert_eq!(lead_in_loop(approved.clone()), lead(Mode::Approved, approved));
+        assert_eq!(
+            lead_in_loop(approved.clone()),
+            lead(Mode::Approved, approved)
+        );
     }
 
     #[test]
@@ -239,14 +249,26 @@ mod tests {
         }
         assert_eq!(
             seen,
-            [Mode::Ask, Mode::RunAnything, Mode::ReadOnly, Mode::Approved, Mode::Ask]
+            [
+                Mode::Ask,
+                Mode::RunAnything,
+                Mode::ReadOnly,
+                Mode::Approved,
+                Mode::Ask
+            ]
         );
     }
 
     #[test]
     fn rule_prefixes() {
-        assert_eq!(prefix_of_rule("Bash(npm run lint:*)").as_deref(), Some("npm run lint"));
-        assert_eq!(prefix_of_rule("PowerShell(make:*)").as_deref(), Some("make"));
+        assert_eq!(
+            prefix_of_rule("Bash(npm run lint:*)").as_deref(),
+            Some("npm run lint")
+        );
+        assert_eq!(
+            prefix_of_rule("PowerShell(make:*)").as_deref(),
+            Some("make")
+        );
         assert_eq!(prefix_of_rule("Edit"), None);
     }
 }

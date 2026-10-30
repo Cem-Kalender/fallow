@@ -2,6 +2,7 @@
 //! serves the run page. The command line reaches it over the user-only pipe; the page over
 //! loopback HTTP with a per-launch secret (`http`).
 
+pub mod bus;
 pub mod http;
 pub mod notify;
 
@@ -51,6 +52,18 @@ pub fn serve(
         Ok(Some(said)) => eprintln!("fallow: {said}"),
         Ok(None) => {}
         Err(e) => eprintln!("fallow: {e}"),
+    }
+    if let Some(dir) = &paths.dir {
+        match crate::defs::install_defaults(dir) {
+            Ok(news) => {
+                for n in news {
+                    eprintln!(
+                        "fallow: an update changed the default {n}; your edited copy is kept, the new one is {n}.new"
+                    );
+                }
+            }
+            Err(e) => eprintln!("fallow: {e}"),
+        }
     }
     let (settings, notices) = Settings::load(paths.settings().as_deref());
     for n in &notices {

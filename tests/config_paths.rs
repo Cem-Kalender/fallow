@@ -118,9 +118,11 @@ fn the_006_settings_move_once() {
     let said = p.prepare().unwrap();
     assert!(said.unwrap().contains("moved"));
     assert!(!old.exists());
-    assert!(std::fs::read_to_string(p.settings().unwrap())
-        .unwrap()
-        .contains("repair_cap = 4"));
+    assert!(
+        std::fs::read_to_string(p.settings().unwrap())
+            .unwrap()
+            .contains("repair_cap = 4")
+    );
     // A second start finds the new file and moves nothing.
     std::fs::write(&old, "stale").unwrap();
     assert_eq!(p.prepare().unwrap(), None);

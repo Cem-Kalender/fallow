@@ -1,5 +1,6 @@
-//! 006 research R-6: long polling. A page that is behind gets an answer at once; one that is up
-//! to date waits until the run changes.
+//! Long polling (006 research R-6; 007 research S-4): a loop's scope. A page that is behind gets
+//! an answer at once; one that is up to date waits until the loop changes (an event or an
+//! activity line).
 
 mod common;
 
@@ -20,48 +21,59 @@ fn a_wait_answers_at_once_when_behind_and_with_the_next_change_otherwise() {
     .unwrap();
     let (tx, _h) = start_engine(&root, &scenario);
     let id = create(&tx, &repo, "t");
-    let wait = |seq: u64, activity: u64| {
+    let wait = |after: u64| {
         let (rtx, rrx) = std::sync::mpsc::channel();
-        tx.send(Msg::Request(Request::Wait { id, seq, activity }, rtx))
-            .unwrap();
+        tx.send(Msg::Request(
+            Request::Events {
+                scope: format!("loop:{id}"),
+                after,
+            },
+            rtx,
+        ))
+        .unwrap();
         rrx
     };
     // Behind: answered at once.
-    let r = wait(0, 0).recv_timeout(Duration::from_secs(2)).unwrap();
-    let Reply::Ok(m) = r else { panic!() };
-    let seq = m["seq"].as_u64().unwrap();
-    assert!(seq > 0);
-    // Up to date (the turn is under way): answered only when it changes something.
-    let v = wait_for(&tx, id, "the turn running", |v| {
+    let Reply::Ok(m) = wait(0).recv_timeout(Duration::from_secs(2)).unwrap() else {
+        panic!()
+    };
+    assert!(m["seq"].as_u64().unwrap() > 0);
+    // Wait until the turn has said its first line (it then works for 1.5 s).
+    wait_for(&tx, id, "the turn running", |v| {
         v["steps"]["1"]["started"].is_string()
     });
-    let seq = v["seq"].as_u64().unwrap().max(seq);
-    // The step has said its first line (it then works for 1.5 s).
-    let mut activity = 0;
-    let mut seq = seq;
-    for _ in 0..100 {
-        let Reply::Ok(now) = wait(0, 0).recv_timeout(Duration::from_secs(2)).unwrap() else {
-            panic!()
-        };
-        activity = now["activity"].as_u64().unwrap();
-        seq = now["seq"].as_u64().unwrap();
-        if activity > 0 {
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(20));
-    }
+    // The step works for 1.5 s after its first line: the next change is its end.
+    std::thread::sleep(Duration::from_millis(200));
+    let Reply::Ok(now) = wait(0).recv_timeout(Duration::from_secs(2)).unwrap() else {
+        panic!()
+    };
+    let mark = now["seq"].as_u64().unwrap();
+    // Up to date: answered only when the loop changes.
     let start = Instant::now();
-    let rx = wait(seq, activity);
-    let Reply::Ok(m) = rx.recv_timeout(Duration::from_secs(30)).unwrap() else {
+    let Reply::Ok(m) = wait(mark).recv_timeout(Duration::from_secs(30)).unwrap() else {
         panic!()
     };
     assert!(
-        m["seq"].as_u64().unwrap() > seq || m["activity"].as_u64().unwrap() > activity,
+        m["seq"].as_u64().unwrap() > mark,
         "answered with a change: {m}"
     );
     assert!(
-        start.elapsed() > Duration::from_millis(500),
+        start.elapsed() > Duration::from_millis(300),
         "it waited for the change"
     );
+    // A scope that does not exist is refused.
+    let (rtx, rrx) = std::sync::mpsc::channel();
+    tx.send(Msg::Request(
+        Request::Events {
+            scope: "loop:999".into(),
+            after: 0,
+        },
+        rtx,
+    ))
+    .unwrap();
+    assert!(matches!(
+        rrx.recv_timeout(Duration::from_secs(2)).unwrap(),
+        Reply::Err(_)
+    ));
     let _ = std::fs::remove_dir_all(&root);
 }

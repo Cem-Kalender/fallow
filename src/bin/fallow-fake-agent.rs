@@ -163,7 +163,11 @@ fn mcp_call(config: &Path, tool: &str, arguments: Value) -> Result<String, Strin
         json!({"protocolVersion": "2025-06-18", "capabilities": {},
                "clientInfo": {"name": "fallow-fake-agent", "version": "0"}}),
     )?;
-    let r = request(2, "tools/call", json!({"name": tool, "arguments": arguments}))?;
+    let r = request(
+        2,
+        "tools/call",
+        json!({"name": tool, "arguments": arguments}),
+    )?;
     let _ = child.kill();
     Ok(r["content"]
         .as_array()
@@ -302,9 +306,11 @@ fn main() -> ExitCode {
     if let Some(say) = &step.say {
         if partial {
             for chunk in say.split_inclusive(' ') {
-                emit(json!({"type": "stream_event", "session_id": session, "event": {
+                emit(
+                    json!({"type": "stream_event", "session_id": session, "event": {
                     "type": "content_block_delta", "index": 0,
-                    "delta": {"type": "text_delta", "text": chunk}}}));
+                    "delta": {"type": "text_delta", "text": chunk}}}),
+                );
             }
         }
         emit(
@@ -317,8 +323,9 @@ fn main() -> ExitCode {
         emit(json!({"type": "assistant", "message": {"content": [
             {"type": "tool_use", "id": id, "name": "mcp__fallow__ask", "input": {"question": q}}]}}));
         answer = match &mcp_config {
-            Some(c) => mcp_call(c, "ask", json!({"question": q}))
-                .unwrap_or_else(|e| format!("error: {e}")),
+            Some(c) => {
+                mcp_call(c, "ask", json!({"question": q})).unwrap_or_else(|e| format!("error: {e}"))
+            }
             None => "error: no --mcp-config".into(),
         };
         emit(json!({"type": "user", "message": {"content": [
@@ -393,17 +400,21 @@ fn main() -> ExitCode {
         return ExitCode::from(code as u8);
     }
     let head = git(&cwd, &["rev-parse", "HEAD"]);
-    let output = step.output.as_ref().and_then(|o| serde_json::to_value(o).ok()).map(|v| {
-        substitute(
-            v,
-            &[
-                ("$HEAD", &head),
-                ("$SESSION", &session),
-                ("$ANSWER", &answer),
-                ("$APPROVED", &approved),
-            ],
-        )
-    });
+    let output = step
+        .output
+        .as_ref()
+        .and_then(|o| serde_json::to_value(o).ok())
+        .map(|v| {
+            substitute(
+                v,
+                &[
+                    ("$HEAD", &head),
+                    ("$SESSION", &session),
+                    ("$ANSWER", &answer),
+                    ("$APPROVED", &approved),
+                ],
+            )
+        });
     let mut denials: Vec<Value> = step
         .denied
         .iter()

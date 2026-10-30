@@ -92,27 +92,27 @@ Unless a task says otherwise, tests use the `fake` runtime (research S-13).
   - the 006 settings file is moved there once;
   - user-only ACLs on new directories (006's platform code).
 - [X] T014 [P] Add the conversation and loop events of contracts/storage.md in `src/run/events.rs` and `src/conversation/events.rs`, with their folds and round-trip tests. 006's runs stay readable.
-- [ ] T015 [P] Write the `tasks.md` and `spec.md` readers in `src/speckit/{tasks,spec}.rs`, as contracts/spec-kit-files.md describes:
+- [X] T015 [P] Write the `tasks.md` and `spec.md` readers in `src/speckit/{tasks,spec}.rs`, as contracts/spec-kit-files.md describes:
   - phases, tasks, story phases, scenarios `USn/k`, must-fail marks, the reserved list, and markers;
   - `plan.md`'s `## Commands` section, checked like approved commands;
   - errors with file and line;
   - the task tick writer;
   - unit tests on Spec Kit's own template output and on broken files.
-- [ ] T016 [P] Write the agent definition parser in `src/defs/agent.rs`: the strict YAML subset of research S-11, with errors at the line, and unit tests.
-- [ ] T017 [P] Write the pipeline parser and checks in `src/defs/pipeline.rs`: `when` and `at`, `paths`, `on_fail`, `parallel_with` and caps, and the derived `verifying` with its missing list. Unit tests cover each check.
-- [ ] T018 Resolve definitions in `src/defs/mod.rs`:
+- [X] T016 [P] Write the agent definition parser in `src/defs/agent.rs`: the strict YAML subset of research S-11, with errors at the line, and unit tests.
+- [X] T017 [P] Write the pipeline parser and checks in `src/defs/pipeline.rs`: `when` and `at`, `paths`, `on_fail`, `parallel_with` and caps, and the derived `verifying` with its missing list. Unit tests cover each check.
+- [X] T018 Resolve definitions in `src/defs/mod.rs`:
   - built in, then `~/.fallow`, then the project;
   - on first start, the defaults are copied, and they are never overwritten after that;
   - a changed default is written as `<name>.md.new`.
-- [ ] T019 Extend long polling to scopes (`global`, `loop:<id>`, `conv:<id>`) in `src/service/http.rs`, as contracts/web-api.md describes.
-- [ ] T020 Build the page shell from the mockup:
+- [X] T019 Extend long polling to scopes (`global`, `loop:<id>`, `conv:<id>`) in `src/service/http.rs`, as contracts/web-api.md describes.
+- [X] T020 Build the page shell from the mockup:
   - `src/service/web/index.html`, the logo SVG, the header with the nav, and the needs-you count;
   - `app.css`: the colour tokens of research S-2, the mockup's classes (`card`, `pill`, `btn`, `btn2`, `nav`, `stage`, `task`, `ev`, `row`) and `@font-face` rules for `/fonts/*`;
   - `app.js`: the hash router, the long-poll client, and the render helpers;
   - a confirmation dialog that names what is affected, used by every destructive action on every screen (stop, unlock, removing a project, deleting data, definitions or pipelines; constitution II);
   - serve the fonts; keep the CSP `default-src 'self'`;
   - remove 006's `run.html` and its route (T007).
-- [ ] T021 [P] Extend `tests/web_api_auth.rs`: the new routes need the secret and pass the Host and Origin checks, and the page and fonts load nothing external (CI gate V).
+- [X] T021 [P] Extend the page's security tests (they are unit tests in `src/service/http.rs`; there is no `tests/web_api_auth.rs`): the new routes need the secret and pass the Host and Origin checks, and the page and fonts load nothing external (CI gate V).
 
 **Checkpoint**: the shell opens at `fallow` with the empty dashboard. The parsers and the runtimes pass their tests.
 

@@ -50,13 +50,6 @@ pub enum Request {
         id: u64,
         n: u32,
     },
-    /// Waits until the run has an event after `seq` or activity after `activity` (long
-    /// polling, research R-6): answered at once if it already has.
-    Wait {
-        id: u64,
-        seq: u64,
-        activity: u64,
-    },
     Create(Create),
     Say {
         id: u64,
@@ -87,6 +80,14 @@ pub enum Request {
     Stop {
         id: u64,
         reason: Option<String>,
+    },
+    /// 007: the dashboard's summary (contracts/web-api.md `GET /api/dashboard`).
+    Dashboard,
+    /// 007: waits for a change in a scope (`global`, `loop:<id>`, `conv:<id>`) after `after`
+    /// (research S-4): answered at once if there is one.
+    Events {
+        scope: String,
+        after: u64,
     },
 }
 
@@ -154,9 +155,14 @@ impl Run {
         Ok(())
     }
 
-    /// Where the run is, for a waiting page.
+    /// Where the run is, for a waiting page: one number that grows with every event and every
+    /// activity line (`seq`), and both parts.
     pub fn mark(&self) -> Value {
-        json!({ "seq": self.state.seq, "activity": self.activity })
+        json!({
+            "seq": self.state.seq + self.activity,
+            "event_seq": self.state.seq,
+            "activity": self.activity,
+        })
     }
 
     /// Answers every waiting page.
@@ -197,6 +203,10 @@ pub struct Engine {
     pub ctx: Ctx,
     /// Messages for the console ("needs you" lines, problems on resume).
     pub console: Vec<String>,
+    /// 007: the page's global scope (research S-4).
+    pub bus: crate::service::bus::Bus,
+    /// What the bus last said about each run: its event number and what it needed.
+    published: BTreeMap<u64, (u64, Option<String>)>,
 }
 
 pub fn runs_dir(data: &Path) -> PathBuf {
@@ -213,6 +223,8 @@ impl Engine {
             runs: BTreeMap::new(),
             ctx,
             console: Vec::new(),
+            bus: crate::service::bus::Bus::default(),
+            published: BTreeMap::new(),
         };
         let mut ids: Vec<u64> = std::fs::read_dir(runs_dir(&e.data))
             .map_err(|err| err.to_string())?
@@ -265,16 +277,8 @@ impl Engine {
                 Err(_) => break,
             };
             match msg {
-                Msg::Request(Request::Wait { id, seq, activity }, reply) => {
-                    match self.runs.get_mut(&id) {
-                        Some(r) if r.state.seq > seq || r.activity > activity => {
-                            let _ = reply.send(Reply::Ok(r.mark()));
-                        }
-                        Some(r) => r.waiters.push((Instant::now(), reply)),
-                        None => {
-                            let _ = reply.send(Reply::Err(format!("there is no run {id}")));
-                        }
-                    }
+                Msg::Request(Request::Events { scope, after }, reply) => {
+                    self.events(&scope, after, reply);
                 }
                 Msg::Request(r, reply) => {
                     let out = self.request(r);
@@ -296,6 +300,7 @@ impl Engine {
                     }
                 }
                 Msg::Tick => {
+                    self.bus.prune();
                     let ids: Vec<u64> = self.runs.keys().copied().collect();
                     for id in ids {
                         if let Some(r) = self.runs.get_mut(&id) {
@@ -311,10 +316,110 @@ impl Engine {
                     break;
                 }
             }
+            self.publish_changes();
             for line in self.console.drain(..) {
                 eprintln!("{line}");
             }
         }
+    }
+
+    /// Tells the global scope which loops changed and what started or stopped needing the
+    /// engineer.
+    fn publish_changes(&mut self) {
+        let mut out = Vec::new();
+        for (id, r) in &self.runs {
+            let now = (r.state.seq, needs(r));
+            let before = self.published.get(id).cloned();
+            if before.as_ref() == Some(&now) {
+                continue;
+            }
+            if before.as_ref().map(|b| b.0) != Some(now.0) {
+                out.push(json!({ "type": "loop_progress", "run": id }));
+            }
+            let was = before.and_then(|b| b.1);
+            match (&was, &now.1) {
+                (None, Some(why)) => {
+                    out.push(json!({ "type": "needs_you", "run": id, "why": why }))
+                }
+                (Some(_), None) => out.push(json!({ "type": "needs_you_cleared", "run": id })),
+                (Some(a), Some(b)) if a != b => {
+                    out.push(json!({ "type": "needs_you", "run": id, "why": b }))
+                }
+                _ => {}
+            }
+            self.published.insert(*id, now);
+        }
+        for e in out {
+            self.bus.publish(e);
+        }
+    }
+
+    /// Long polling by scope (research S-4).
+    fn events(&mut self, scope: &str, after: u64, reply: Sender<Reply>) {
+        if scope == "global" {
+            return self.bus.wait(after, reply);
+        }
+        if let Some(id) = scope
+            .strip_prefix("loop:")
+            .and_then(|s| s.parse::<u64>().ok())
+        {
+            // A loop's mark is its event number plus the activity lines since Fallow started.
+            match self.runs.get_mut(&id) {
+                Some(r) => {
+                    let mark = r.state.seq + r.activity;
+                    if mark != after {
+                        let _ =
+                            reply.send(Reply::Ok(json!({ "seq": mark, "reset": mark < after })));
+                    } else {
+                        r.waiters.push((Instant::now(), reply));
+                    }
+                }
+                None => {
+                    let _ = reply.send(Reply::Err(format!("there is no loop {id}")));
+                }
+            }
+            return;
+        }
+        let _ = reply.send(Reply::Err(format!("no such scope {scope:?}")));
+    }
+
+    /// The dashboard's summary (contracts/web-api.md). Projects and features arrive with US1.
+    fn dashboard(&self) -> Value {
+        let today = super::time::rfc3339(super::time::unix_now());
+        let today = today.get(..10).unwrap_or_default();
+        let needs_you: Vec<Value> = self
+            .runs
+            .values()
+            .filter_map(|r| {
+                needs(r).map(|why| json!({ "run": r.id(), "why": why, "task": r.state.task }))
+            })
+            .collect();
+        let loops: Vec<Value> = self
+            .runs
+            .values()
+            .rev()
+            .filter(|r| !r.state.stage.is_final())
+            .map(summary)
+            .collect();
+        let agents_running = self
+            .runs
+            .values()
+            .filter(|r| matches!(r.busy, Some(Busy::Step(_))))
+            .count();
+        let cost_today: f64 = self
+            .runs
+            .values()
+            .filter(|r| r.state.created.starts_with(today))
+            .map(|r| r.state.cost_usd)
+            .sum();
+        json!({
+            "projects": [],
+            "features": [],
+            "needs_you": needs_you,
+            "loops": loops,
+            "agents_running": agents_running,
+            "cost_today": cost_today,
+        })
     }
 
     fn drive(&mut self, id: u64) {
@@ -352,7 +457,8 @@ impl Engine {
                         .collect(),
                 )
             }),
-            Request::Wait { id, .. } => run_mut(self, id).map(|r| r.mark()),
+            Request::Dashboard => Ok(self.dashboard()),
+            Request::Events { .. } => Err("events are answered by the engine's loop".into()),
             Request::Create(c) => self.create(c),
             Request::Say { id, text } => run_mut(self, id)
                 .and_then(|r| super::machine::say(r, &text))

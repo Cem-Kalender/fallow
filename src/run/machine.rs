@@ -959,9 +959,7 @@ fn start(run: &mut Run, ctx: &Ctx, n: u32) -> Result<(), String> {
     }
     let rights = match role {
         "planner" => rights::Rights {
-            edits: rights::Edits::Only(
-                rights::PLAN_GLOBS.iter().map(|s| s.to_string()).collect(),
-            ),
+            edits: rights::Edits::Only(rights::PLAN_GLOBS.iter().map(|s| s.to_string()).collect()),
             ..rights::checker(commands)
         },
         "reviewer" => rights::checker(commands),

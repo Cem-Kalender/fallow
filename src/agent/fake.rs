@@ -17,7 +17,10 @@ impl Fake {
     /// `exe` is `fallow-fake-agent`, `scenario` the TOML file it plays.
     pub fn new(exe: impl Into<String>, scenario: &Path) -> Fake {
         Fake {
-            inner: Claude::new(exe, vec!["--scenario".into(), scenario.display().to_string()]),
+            inner: Claude::new(
+                exe,
+                vec!["--scenario".into(), scenario.display().to_string()],
+            ),
         }
     }
 }

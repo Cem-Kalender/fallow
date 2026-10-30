@@ -19,7 +19,7 @@ All bodies are JSON. Errors are `{"error": "<message for the engineer>"}` with 4
 
 | Method and path | Returns |
 |---|---|
-| `GET /api/events?scope=<global\|loop:<id>\|conv:<id>>&after=<seq>` | `{seq, events[]}`, as soon as there are events after `seq`, or after 25 s with none (S-4) |
+| `GET /api/events?scope=<global\|loop:<id>\|conv:<id>>&after=<seq>` | As soon as the scope has changed since `after`, or `{seq, timeout: true}` after 25 s (S-4). `global`: `{seq, events[]}`, the events after `after`. `loop:<id>` and `conv:<id>`: `{seq}`, a mark that grows with every event and activity line; the page then reads what it shows. `reset: true` when `after` is from before a restart |
 
 The global events are `project`, `feature`, `loop_progress`, `needs_you` and `needs_you_cleared`.
 

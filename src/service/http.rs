@@ -1,4 +1,5 @@
-//! The run page on loopback (006 research R-6, contracts/web-api.md, constitution V).
+//! The page on loopback (006 research R-6; 007 research S-1, S-3, S-4, contracts/web-api.md;
+//! constitution V).
 //!
 //! - Bound to `127.0.0.1` only, on a free port.
 //! - A per-launch secret, given only to the command line over the user-only pipe, is exchanged on
@@ -18,9 +19,45 @@ use super::ask;
 use crate::run::engine::{Create, Msg, Reply, Request};
 
 const INDEX: &str = include_str!("web/index.html");
-const RUN: &str = include_str!("web/run.html");
 const APP_JS: &str = include_str!("web/app.js");
 const APP_CSS: &str = include_str!("web/app.css");
+
+/// The screens' scripts (research S-2), served at `/screens/<name>.js`.
+const SCREENS: &[(&str, &str)] = &[
+    ("dashboard.js", include_str!("web/screens/dashboard.js")),
+    ("project.js", include_str!("web/screens/project.js")),
+    ("spec.js", include_str!("web/screens/spec.js")),
+    ("loop.js", include_str!("web/screens/loop.js")),
+    ("pipelines.js", include_str!("web/screens/pipelines.js")),
+];
+
+/// The fonts Fallow ships (research S-3), served at `/fonts/<name>`.
+const FONTS: &[(&str, &[u8])] = &[
+    (
+        "inter-400.woff2",
+        include_bytes!("../../assets/fonts/inter-400.woff2"),
+    ),
+    (
+        "inter-500.woff2",
+        include_bytes!("../../assets/fonts/inter-500.woff2"),
+    ),
+    (
+        "inter-600.woff2",
+        include_bytes!("../../assets/fonts/inter-600.woff2"),
+    ),
+    (
+        "inter-700.woff2",
+        include_bytes!("../../assets/fonts/inter-700.woff2"),
+    ),
+    (
+        "jetbrains-mono-400.woff2",
+        include_bytes!("../../assets/fonts/jetbrains-mono-400.woff2"),
+    ),
+    (
+        "jetbrains-mono-500.woff2",
+        include_bytes!("../../assets/fonts/jetbrains-mono-500.woff2"),
+    ),
+];
 
 /// The largest request body accepted.
 const MAX_BODY: usize = 1024 * 1024;
@@ -118,7 +155,7 @@ fn common_headers() -> Vec<Header> {
     vec![
         header(
             "Content-Security-Policy",
-            "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'",
+            "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; font-src 'self'; connect-src 'self'; frame-ancestors 'none'",
         ),
         header("X-Frame-Options", "DENY"),
         header("Cache-Control", "no-store"),
@@ -129,6 +166,15 @@ fn common_headers() -> Vec<Header> {
 
 fn respond(req: tiny_http::Request, code: u16, content_type: &str, body: String) {
     let mut r = Response::from_string(body).with_status_code(code);
+    for h in common_headers() {
+        r.add_header(h);
+    }
+    r.add_header(header("Content-Type", content_type));
+    let _ = req.respond(r);
+}
+
+fn respond_bytes(req: tiny_http::Request, content_type: &str, body: &'static [u8]) {
+    let mut r = Response::from_data(body).with_status_code(200);
     for h in common_headers() {
         r.add_header(h);
     }
@@ -251,10 +297,40 @@ fn handle(mut req: tiny_http::Request, tx: &Sender<Msg>, port: u16, secret: &str
     let id = |s: &str| s.parse::<u64>().ok();
     match (is_get, parts.as_slice()) {
         (true, []) => respond(req, 200, "text/html; charset=utf-8", INDEX.into()),
-        (true, ["runs", r]) if id(r).is_some() => {
-            respond(req, 200, "text/html; charset=utf-8", RUN.into())
-        }
         (true, ["app.js"]) => respond(req, 200, "text/javascript; charset=utf-8", APP_JS.into()),
+        (true, ["screens", name]) => match SCREENS.iter().find(|(n, _)| n == name) {
+            Some((_, js)) => respond(req, 200, "text/javascript; charset=utf-8", (*js).into()),
+            None => respond(req, 404, "text/plain", "not found".into()),
+        },
+        (true, ["fonts", name]) => match FONTS.iter().find(|(n, _)| n == name) {
+            Some((_, data)) => respond_bytes(req, "font/woff2", data),
+            None => respond(req, 404, "text/plain", "not found".into()),
+        },
+        (true, ["api", "dashboard"]) => json_reply(req, ask(tx, Request::Dashboard)),
+        (true, ["api", "events"]) => {
+            let q = url.split_once('?').map(|(_, q)| q).unwrap_or("");
+            let arg = |k: &str| {
+                q.split('&')
+                    .find_map(|kv| kv.strip_prefix(&format!("{k}=")))
+                    .map(|v| v.replace("%3A", ":").replace("%3a", ":"))
+            };
+            let after = arg("after")
+                .and_then(|v| v.parse::<u64>().ok())
+                .unwrap_or(0);
+            let scope = arg("scope").unwrap_or_else(|| "global".into());
+            let (rtx, rrx) = std::sync::mpsc::channel();
+            if tx
+                .send(Msg::Request(Request::Events { scope, after }, rtx))
+                .is_err()
+            {
+                return respond(req, 503, "text/plain", "the service is stopping".into());
+            }
+            // Long polling (research S-4): the next change, or after 25 s with nothing new.
+            match rrx.recv_timeout(std::time::Duration::from_secs(25)) {
+                Ok(reply) => json_reply(req, reply),
+                Err(_) => json_reply(req, Reply::Ok(json!({ "seq": after, "timeout": true }))),
+            }
+        }
         (true, ["app.css"]) => respond(req, 200, "text/css; charset=utf-8", APP_CSS.into()),
         (true, ["api", "runs"]) => json_reply(req, ask(tx, Request::List)),
         (true, ["api", "runs", r]) => match id(r) {
@@ -265,38 +341,6 @@ fn handle(mut req: tiny_http::Request, tx: &Sender<Msg>, port: u16, secret: &str
             match (id(r), n.parse::<u32>().ok()) {
                 (Some(i), Some(n)) => json_reply(req, ask(tx, Request::Activity { id: i, n })),
                 _ => respond(req, 404, "text/plain", "no such step".into()),
-            }
-        }
-        (true, ["api", "runs", r, "wait"]) => {
-            let Some(i) = id(r) else {
-                return respond(req, 404, "text/plain", "no such run".into());
-            };
-            let q = url.split_once('?').map(|(_, q)| q).unwrap_or("");
-            let num = |k: &str| {
-                q.split('&')
-                    .find_map(|kv| kv.strip_prefix(&format!("{k}=")))
-                    .and_then(|v| v.parse::<u64>().ok())
-                    .unwrap_or(0)
-            };
-            let (rtx, rrx) = std::sync::mpsc::channel();
-            let wait = Request::Wait {
-                id: i,
-                seq: num("seq"),
-                activity: num("activity"),
-            };
-            if tx.send(Msg::Request(wait, rtx)).is_err() {
-                return respond(req, 503, "text/plain", "the service is stopping".into());
-            }
-            // Long polling (research R-6): the answer comes with the next change, or after
-            // 25 s with nothing new.
-            match rrx.recv_timeout(std::time::Duration::from_secs(25)) {
-                Ok(reply) => json_reply(req, reply),
-                Err(_) => json_reply(
-                    req,
-                    Reply::Ok(
-                        json!({ "seq": num("seq"), "activity": num("activity"), "timeout": true }),
-                    ),
-                ),
             }
         }
         (false, ["api", "runs"]) => {
@@ -465,13 +509,98 @@ mod tests {
     }
 
     #[test]
+    fn studios_routes_need_the_secret_like_every_other() {
+        // 007 T021 (constitution V): the new pages, scripts, fonts and APIs pass the same checks.
+        let ok_host = Some("127.0.0.1:5000");
+        let cookie = Some("fallow_5000=abc123");
+        for path in [
+            "/api/events?scope=global&after=0",
+            "/api/dashboard",
+            "/fonts/inter-400.woff2",
+            "/screens/dashboard.js",
+        ] {
+            assert!(
+                matches!(
+                    check(5000, S, "GET", path, ok_host, None, None),
+                    Gate::Refuse { code: 401, .. }
+                ),
+                "{path} without the cookie"
+            );
+            assert!(
+                matches!(
+                    check(
+                        5000,
+                        S,
+                        "GET",
+                        path,
+                        Some("evil.example:5000"),
+                        None,
+                        cookie
+                    ),
+                    Gate::Refuse { code: 403, .. }
+                ),
+                "{path} from another host name"
+            );
+            assert_eq!(
+                check(5000, S, "GET", path, ok_host, None, cookie),
+                Gate::Pass,
+                "{path}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_fonts_and_screens_are_all_served() {
+        let css_fonts: Vec<&str> = APP_CSS
+            .split("url(/fonts/")
+            .skip(1)
+            .filter_map(|s| s.split(')').next())
+            .collect();
+        assert_eq!(css_fonts.len(), FONTS.len());
+        for f in css_fonts {
+            assert!(
+                FONTS.iter().any(|(n, _)| *n == f),
+                "app.css names {f}, which is not served"
+            );
+        }
+        for (_, data) in FONTS {
+            assert!(data.starts_with(b"wOF2"), "a woff2 file");
+        }
+        for s in INDEX.split("src=\"/screens/").skip(1) {
+            let name = s.split('"').next().unwrap();
+            assert!(
+                SCREENS.iter().any(|(n, _)| *n == name),
+                "index.html loads {name}, which is not served"
+            );
+        }
+    }
+
+    #[test]
+    fn the_page_uses_no_inline_style_or_script() {
+        // The page's policy refuses inline styles and scripts (style-src and script-src 'self').
+        for (name, text) in [("index.html", INDEX), ("app.js", APP_JS)]
+            .into_iter()
+            .chain(SCREENS.iter().copied())
+        {
+            assert!(!text.contains(" style=\""), "{name} has an inline style");
+            assert!(!text.contains(" onclick="), "{name} has an inline handler");
+        }
+        assert!(
+            !INDEX.contains("<script>"),
+            "an inline script in index.html"
+        );
+    }
+
+    #[test]
     fn the_page_loads_nothing_from_elsewhere() {
         for (name, text) in [
             ("index.html", INDEX),
-            ("run.html", RUN),
             ("app.js", APP_JS),
             ("app.css", APP_CSS),
-        ] {
+        ]
+        .into_iter()
+        .chain(SCREENS.iter().copied())
+        {
             assert!(
                 !text.contains("http://") && !text.contains("https://"),
                 "{name} names an outside URL"
