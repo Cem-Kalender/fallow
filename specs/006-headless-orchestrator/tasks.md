@@ -249,6 +249,7 @@ Reached on 2026-10-29:
   - review failures are routed from the latest answer to each criterion of the plan.
 
 - **The third real run (Sonnet, the sandbox, the engineer on the page):** "a `total` command" went from plan to merge in 3.5 minutes for $0.31, with two interventions (approve, merge) and no refused commands. The planner noticed that the task's example product does not exist. The reviewer ran all 8 criteria, including the 4 that must fail.
+- **The fourth real run (Sonnet, a restart mid-build):** for "a cart", the engineer stopped Fallow 46 s into the build and started it again. The build step ended as interrupted and was resumed one second later in the same session ("resumed after Fallow stopped"). It finished with 11 passing tests. The review passed and the run merged, with no repair round. The interrupted step reports no cost, because Claude Code reports cost only at the end of a step.
 - **What the second real run found (Sonnet, the sandbox):** the reviewer could not run the program it checks, so the plan now names the commands agents may run (`commands`, approved with the plan); and the service opened a console window for every git and gate command, now hidden (research R-4).
 
 Known gaps: time spent waiting for the engineer outside a pause (a builder's question, the repair cap) counts against the time limit; a gate thread that panics leaves the run busy until Fallow restarts.
