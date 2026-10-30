@@ -107,6 +107,10 @@ pub enum Request {
         budget_usd: Option<f64>,
         budget_minutes: Option<u64>,
     },
+    /// 007: unlocks a locked feature; its loop halts after the current step (FR-009).
+    Unlock { project: String, feature: String },
+    /// 007: the stories a new lock would reopen, from the working copy (research S-17).
+    RelockPreview { project: String, feature: String },
 }
 
 /// What starting a run takes (contracts/cli.md `fallow run`, web-api.md `POST /api/runs`).
@@ -678,6 +682,96 @@ impl Engine {
         }
     }
 
+    /// The loop of an unlocked feature that a new lock goes on with.
+    fn live_loop(&self, project: &str, feature: &str) -> Option<u64> {
+        let (_, f, _) = self.studio.feature_ctx(project, feature).ok()?;
+        let id = f.run?;
+        let r = self.runs.get(&id)?;
+        (f.unlocked && r.state.feature_loop.is_some() && !r.state.stage.is_final()).then_some(id)
+    }
+
+    /// Unlocks a feature (FR-009): recorded on its loop, which halts after its current step,
+    /// and the spec session opens again.
+    fn unlock(&mut self, project: &str, feature: &str) -> Result<Value, String> {
+        let (_, f, _) = self.studio.feature_ctx(project, feature)?;
+        if f.locks.is_empty() || f.unlocked {
+            return Err("the feature is not locked".into());
+        }
+        let id = f.run.ok_or("the feature has no loop")?;
+        let r = self.runs.get_mut(&id).ok_or("the feature's loop is missing")?;
+        if r.state.stage.is_final() {
+            return Err("the loop has ended: changes go in a new feature".into());
+        }
+        r.append(Event::Steering {
+            kind: SteeringKind::Unlock,
+            target: None,
+            detail: None,
+        })?;
+        r.append(Event::Unlocked)?;
+        self.studio.mark_unlocked(project, feature)?;
+        Ok(json!({ "unlocked": true, "loop": id }))
+    }
+
+    /// What a new lock would reopen, from the documents as they are now (research S-17).
+    fn relock_preview(&self, project: &str, feature: &str) -> Result<Value, String> {
+        let (p, f, wd) = self.studio.feature_ctx(project, feature)?;
+        let old = f.locks.last().ok_or("the feature was never locked")?;
+        let docs = super::relock::docs(
+            &p.path,
+            &f.dir,
+            &old.commit,
+            super::relock::Side::WorkingCopy(&wd),
+        )?;
+        let a = super::relock::affected(&docs);
+        Ok(json!({ "affected": a.stories, "why": a.why }))
+    }
+
+    /// A new lock of an unlocked feature: the loop goes on, with the affected stories reopened
+    /// (research S-17).
+    fn relock(&mut self, project: &str, feature: &str, id: u64) -> Result<Value, String> {
+        let (_, f, _) = self.studio.feature_ctx(project, feature)?;
+        let old = f.locks.last().cloned().ok_or("the feature was never locked")?;
+        let prep = self.studio.lock_prepare(project, feature).map_err(|problems| {
+            format!(
+                "the feature cannot be locked yet:\n- {}",
+                problems.join("\n- ")
+            )
+        })?;
+        let docs = super::relock::docs(
+            &prep.project.path,
+            &prep.feature.dir,
+            &old.commit,
+            super::relock::Side::Commit(&prep.commit),
+        )?;
+        let a = super::relock::affected(&docs);
+        let r = self.runs.get_mut(&id).ok_or("the feature's loop is missing")?;
+        r.append(Event::Relocked {
+            lock: prep.lock,
+            commit: prep.commit.clone(),
+            affected: a.stories.clone(),
+            phases: prep.phases.clone(),
+        })?;
+        for w in &a.why {
+            r.append(Event::Note { text: w.clone() })?;
+        }
+        if r.state.stage == Stage::Ready {
+            r.append(Event::Stage {
+                to: Stage::Building,
+                why: format!("lock {}: the affected stories are built and checked again", prep.lock),
+            })?;
+        }
+        let rec = crate::project::LockRec {
+            n: prep.lock,
+            commit: prep.commit.clone(),
+            at: super::time::rfc3339(super::time::unix_now()),
+            affected: a.stories.clone(),
+            ..old
+        };
+        self.studio.lock_record(project, feature, rec, id)?;
+        self.drive(id);
+        Ok(json!({ "lock": prep.lock, "commit": prep.commit, "loop": id, "affected": a.stories }))
+    }
+
     /// Locks a feature and creates its loop (FR-008, FR-016a; research S-9).
     fn lock(
         &mut self,
@@ -688,6 +782,9 @@ impl Engine {
         budget_usd: Option<f64>,
         budget_minutes: Option<u64>,
     ) -> Result<Value, String> {
+        if let Some(id) = self.live_loop(project, feature) {
+            return self.relock(project, feature, id);
+        }
         let prep = self
             .studio
             .lock_prepare(project, feature)
@@ -949,6 +1046,14 @@ impl Engine {
                 );
                 self.bus.publish(json!({ "type": "studio" }));
                 out
+            }
+            Request::Unlock { project, feature } => {
+                let out = self.unlock(&project, &feature);
+                self.bus.publish(json!({ "type": "studio" }));
+                out
+            }
+            Request::RelockPreview { project, feature } => {
+                self.relock_preview(&project, &feature)
             }
             Request::Create(c) => self.create(c),
             Request::Say { id, text } => run_mut(self, id)

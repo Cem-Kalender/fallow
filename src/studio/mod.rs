@@ -908,7 +908,7 @@ impl Studio {
         Ok(json!({ "feature": name, "conversation": conv }))
     }
 
-    fn feature_ctx(
+    pub(crate) fn feature_ctx(
         &self,
         project: &str,
         feature: &str,
@@ -1117,6 +1117,16 @@ impl Studio {
             commands: locked.commands,
             library: lib,
         })
+    }
+
+    /// The engineer unlocked the feature (FR-009): the spec session opens again.
+    pub fn mark_unlocked(&mut self, project: &str, feature: &str) -> Result<(), String> {
+        let p = self.project_mut(project)?;
+        let f = p
+            .feature_mut(feature)
+            .ok_or_else(|| format!("there is no feature {feature}"))?;
+        f.unlocked = true;
+        self.store.save()
     }
 
     /// Records a lock and its loop (data-model.md, Lock).

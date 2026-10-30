@@ -118,6 +118,9 @@ pub struct PhaseStatus {
     /// The phase's builder session (FR-010a).
     pub session: Option<String>,
     pub handover: Option<String>,
+    /// Reopened by a new lock (the event's number): its story is repaired with the change and
+    /// checked again (research S-17).
+    pub reopened: Option<u64>,
 }
 
 /// A task of a loop and where it is (007 data-model.md, Task).
@@ -165,6 +168,8 @@ pub struct LoopState {
     pub unlocked: bool,
     /// The stories reopened by the latest new lock.
     pub affected: Vec<String>,
+    /// The lock commit before the latest new lock, to show the builder what changed.
+    pub prev_lock_commit: Option<String>,
     /// How the loop ended: verified, and what was not checked.
     pub outcome: Option<(bool, Vec<String>)>,
 }
@@ -623,12 +628,14 @@ impl RunState {
                             state: PhaseState::Pending,
                             session: None,
                             handover: None,
+                            reopened: None,
                         })
                         .collect(),
                     tasks,
                     questions: BTreeMap::new(),
                     unlocked: false,
                     affected: Vec::new(),
+                    prev_lock_commit: None,
                     outcome: None,
                 });
             }
@@ -713,8 +720,9 @@ impl RunState {
                 if let Some(f) = self.feature_loop.as_mut() {
                     f.unlocked = false;
                     f.lock = *lock;
-                    f.lock_commit = commit.clone();
+                    f.prev_lock_commit = Some(std::mem::replace(&mut f.lock_commit, commit.clone()));
                     f.affected = affected.clone();
+                    f.outcome = None;
                     if !phases.is_empty() {
                         // The new lock's tasks: a phase keeps where it was when it is the same
                         // phase (place and title); new tasks start pending.
@@ -728,6 +736,7 @@ impl RunState {
                                 state: kept.map_or(PhaseState::Pending, |k| k.state),
                                 session: kept.and_then(|k| k.session.clone()),
                                 handover: kept.and_then(|k| k.handover.clone()),
+                                reopened: None,
                             });
                             for t in &p.tasks {
                                 f.tasks.entry(t.id.clone()).or_insert(TaskStatus {
@@ -737,6 +746,29 @@ impl RunState {
                                     repairs: 0,
                                 });
                             }
+                        }
+                    }
+                    // The affected stories' phases reopen, in a fresh session (research S-17);
+                    // a done phase with a new task goes on with it.
+                    let tasks = &f.tasks;
+                    for p in &mut f.phases {
+                        let story_hit = p
+                            .spec
+                            .story
+                            .iter()
+                            .chain(p.spec.tasks.iter().filter_map(|t| t.story.as_ref()))
+                            .any(|s| affected.contains(s));
+                        let new_task = p.spec.tasks.iter().any(|t| {
+                            tasks
+                                .get(&t.id)
+                                .is_none_or(|s| s.state != TaskState::Accepted)
+                        });
+                        if story_hit {
+                            p.state = PhaseState::Pending;
+                            p.session = None;
+                            p.reopened = Some(l.seq);
+                        } else if new_task && p.state == PhaseState::Done {
+                            p.state = PhaseState::Pending;
                         }
                     }
                 }

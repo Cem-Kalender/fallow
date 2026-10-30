@@ -217,7 +217,7 @@ Unless a task says otherwise, tests use the `fake` runtime (research S-13).
   - a task's failing gate becomes a repair in the phase session, and after the cap the loop asks the engineer;
   - a failing review becomes a repair, then the checkpoint runs again, capped by `review_rounds`;
   - steps cut short do not count.
-- [ ] T042 [P] [US2] `tests/us2_unlock.rs`:
+- [X] T042 [P] [US2] `tests/us2_unlock.rs`:
   - unlocking pauses the loop after its current step;
   - the relock preview names the affected stories (research S-17);
   - after the relock, only those phases are rebuilt and reviewed;
@@ -241,7 +241,7 @@ Unless a task says otherwise, tests use the `fake` runtime (research S-13).
   - `ready`, or `done_unverified` with its missing list;
   - the merge of exactly the gated commit, refused when it does not merge cleanly.
 - [X] T051 [US2] Budgets in `src/run/time.rs` and `src/run/state.rs` (FR-016a): the per-task suggestion, pausing at the limit, and excluding paused time and time waiting for the engineer. This also fixes 006's known gap.
-- [ ] T052 [US2] Unlock and relock in `src/run/relock.rs` (research S-17): the affected stories from the two lock commits, the preview API, reopening phases, and a new baseline.
+- [X] T052 [US2] Unlock and relock in `src/run/relock.rs` (research S-17): the affected stories from the two lock commits, the preview API, reopening phases, and a new baseline.
 - [ ] T053 [US2] The concurrency cap and the memory budget across loops and conversations in `src/run/engine.rs` (research S-19): restore 005/006's memory sampler into `src/platform/`, check the budget before a step starts, put chat turns first, and show "waiting for a slot".
 
 **Checkpoint**: Q3 and Q5 of quickstart.md work with real agents. US2's tests pass.

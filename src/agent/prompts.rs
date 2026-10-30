@@ -392,6 +392,26 @@ pub fn loop_repair(what: &str, reasons: &[String]) -> String {
     s
 }
 
+/// A story reopened by a new lock (research S-17): a fresh session, with the change.
+pub fn loop_relock(cx: &LoopCx, story: &str, lock: u32, change: &str) -> String {
+    let mut s = header("repair", Some(story));
+    s.push_str(&format!(
+        "You are the builder of \"{}\". The engineer changed the locked documents in `{}` (lock {lock}), and user story {story} is affected. Its work is already built and committed in this worktree.\n\nRead the documents again, then bring the code and tests of {story} in line with the change, and run the tests. Fallow commits your changes when the step ends, runs the gates, and the story is checked again.\n",
+        cx.title, cx.feature_dir
+    ));
+    if !cx.handovers.is_empty() {
+        s.push_str("\nThe handovers of the phases before:\n");
+        for h in cx.handovers {
+            s.push_str(&format!("- `{h}`\n"));
+        }
+    }
+    if !change.trim().is_empty() {
+        s.push_str(&format!("\nThe change:\n\n```diff\n{}\n```\n", super::clip(change, 12_000)));
+    }
+    s.push_str(&format!("\nReturn `status: done`, `task: \"{story}\"`, the `files` you changed and a `summary`."));
+    s
+}
+
 /// The handover at the end of a phase (FR-010a).
 pub fn loop_handover(cx: &LoopCx, phase_n: u32, phase: (&str, &str), path: &str) -> String {
     let mut s = header("handover", Some(&format!("phase-{phase_n}")));

@@ -212,6 +212,8 @@ pub enum SteeringKind {
     Merge,
     RequestChanges,
     Reject,
+    /// 007: the engineer unlocked the feature (FR-009).
+    Unlock,
 }
 
 impl SteeringKind {

@@ -226,10 +226,22 @@ fn step(run: &mut Run, ctx: &Ctx) -> Result<(), String> {
     if !wt.join(".git").exists() {
         git::worktree_add(&run.state.repo, &wt, Some(&l.build_branch), &l.lock_commit)?;
     }
-    // The baseline, on the lock commit, before anything is judged against it.
+    // A new lock is taken into the build branch first.
+    if !git::is_ancestor(&run.state.repo, &l.lock_commit, &git::head(&wt)?) {
+        return take_lock(run, &l, &wt);
+    }
+    // The baseline, on the lock commit, before anything is judged against it; a new lock gets
+    // a new baseline.
     let missing: Vec<GateDef> = machine::gate_defs(run)
         .into_iter()
-        .filter(|g| g.baseline && run.state.baseline(&g.name).is_none())
+        .filter(|g| {
+            g.baseline
+                && !run.state.gate_runs.iter().any(|r| {
+                    r.kind == GateKind::Baseline
+                        && r.result.gate == g.name
+                        && r.result.commit == l.lock_commit
+                })
+        })
         .collect();
     if !missing.is_empty() {
         return machine::run_gates(
@@ -348,8 +360,38 @@ fn repairs_of(run: &Run, part: &str) -> u32 {
         .steps
         .values()
         .filter(|s| s.kind == StepKind::Repair && s.part.as_deref() == Some(part))
-        .filter(|s| !machine::cut_short(s))
+        .filter(|s| !machine::cut_short(s) && !s.reason.starts_with(RELOCK))
         .count() as u32
+}
+
+/// The reason of the step that brings a reopened story in line with a new lock.
+const RELOCK: &str = "the new lock";
+
+/// Takes a new lock's documents into the build branch at a task boundary (research S-9, S-17),
+/// keeping the ticks of the tasks already accepted.
+fn take_lock(run: &mut Run, l: &LoopState, wt: &std::path::Path) -> Result<(), String> {
+    let msg = format!("lock {} of {}", l.lock, l.feature);
+    if let Err(e) = git::merge_theirs(wt, &l.lock_commit, &msg) {
+        return run.append(Event::NeedsEngineer {
+            why: format!("Fallow could not take lock {} into the build branch: {e}", l.lock),
+            options: vec!["retry".into(), "stop".into()],
+        });
+    }
+    let rel = format!("specs/{}/tasks.md", l.feature);
+    let file = wt.join(&rel);
+    let mut text = std::fs::read_to_string(&file).unwrap_or_default();
+    for (id, t) in &l.tasks {
+        if t.state == TaskState::Accepted {
+            if let Some(ticked) = speckit::tasks::tick(&text, id) {
+                text = ticked;
+            }
+        }
+    }
+    std::fs::write(&file, &text).map_err(|e| format!("{}: {e}", file.display()))?;
+    git::commit_all(wt, &format!("{msg}: the accepted tasks stay ticked"), Some(&[rel.as_str()]))?;
+    run.append(Event::Note {
+        text: format!("lock {} was taken into the build branch", l.lock),
+    })
 }
 
 /// The gates of a commit, recorded under `part`: the failures, or `None` while some have not
@@ -535,6 +577,61 @@ fn phase(
             session: None,
             handover: None,
         });
+    }
+    // A phase reopened by a new lock: its story's builder brings the work in line with the
+    // change, in a fresh session, before anything else (research S-17).
+    if let (Some(at), Some(story)) = (p.reopened, story_of(p)) {
+        let first = l
+            .phases
+            .iter()
+            .filter(|q| q.reopened == Some(at) && story_of(q).as_deref() == Some(story.as_str()))
+            .map(|q| q.spec.n)
+            .min();
+        let mine = run
+            .state
+            .steps
+            .values()
+            .rev()
+            .find(|s| {
+                s.kind == StepKind::Repair
+                    && s.part.as_deref() == Some(story.as_str())
+                    && s.queued_seq > at
+            })
+            .cloned();
+        match mine {
+            None if first == Some(n) => {
+                let may = may_of(run, lib, &builder);
+                let hand = handovers_before(l, n);
+                let change = l
+                    .prev_lock_commit
+                    .as_deref()
+                    .and_then(|old| {
+                        git::diff_between(
+                            &run.state.repo,
+                            old,
+                            &l.lock_commit,
+                            &format!("specs/{}", l.feature),
+                        )
+                        .ok()
+                    })
+                    .unwrap_or_default();
+                let text = prompts::loop_relock(&loop_cx(l, &may, &hand), &story, l.lock, &change);
+                return queue(
+                    run,
+                    StepKind::Repair,
+                    Some(&story),
+                    None,
+                    Some(n),
+                    &builder,
+                    None,
+                    &format!("{RELOCK} ({}) changed {story}", l.lock),
+                    text,
+                )
+                .map(|_| ());
+            }
+            Some(s) if s.verified.is_none() => return Ok(()),
+            _ => {}
+        }
     }
     // Makers at the start of the phase (a test-writer at a story's phase).
     for s in pl.steps.iter().filter(|s| {
@@ -808,6 +905,14 @@ fn phase(
         session: None,
         handover: None,
     })
+}
+
+/// The story a phase belongs to: its own, or its tasks'.
+fn story_of(p: &PhaseStatus) -> Option<String> {
+    p.spec
+        .story
+        .clone()
+        .or_else(|| p.spec.tasks.iter().find_map(|t| t.story.clone()))
 }
 
 /// The stories whose last task (or story phase) is phase `n`: their checkpoint is there.

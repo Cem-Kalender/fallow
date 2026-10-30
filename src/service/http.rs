@@ -401,6 +401,19 @@ fn studio_route(
                 None => Some(Err("finding is required".into())),
             }
         }
+        ("POST", ["api", "features", p, f, "unlock"]) => {
+            if body.get("confirm").and_then(Value::as_bool) != Some(true) {
+                return Some(Err("unlocking needs {\"confirm\": true}".into()));
+            }
+            Some(Ok(Request::Unlock {
+                project: p.to_string(),
+                feature: f.to_string(),
+            }))
+        }
+        ("GET", ["api", "features", p, f, "relock-preview"]) => Some(Ok(Request::RelockPreview {
+            project: p.to_string(),
+            feature: f.to_string(),
+        })),
         ("POST", ["api", "features", p, f, "lock"]) => {
             let level = match s("autonomy").as_deref() {
                 None => None,

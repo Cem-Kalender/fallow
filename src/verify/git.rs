@@ -313,6 +313,21 @@ pub fn merge_into(dir: &Path, commit: &str, message: &str) -> Result<String, Vec
     }
 }
 
+/// The change between two commits below `path`, as a unified diff.
+pub fn diff_between(dir: &Path, from: &str, to: &str, path: &str) -> Result<String, String> {
+    git(dir, &["diff", from, to, "--", path])
+}
+
+/// Merges `commit` into the branch checked out in `dir`, taking `commit`'s side of any
+/// conflicting hunk (a new lock's documents over the build's ticks, which Fallow then restores).
+pub fn merge_theirs(dir: &Path, commit: &str, message: &str) -> Result<String, String> {
+    git(dir, &["merge", "--no-ff", "-X", "theirs", "-m", message, commit])
+        .inspect_err(|_| {
+            let _ = git(dir, &["merge", "--abort"]);
+        })
+        .and_then(|_| head(dir))
+}
+
 /// Whether `dir`'s tracked files are unchanged and `HEAD` is still `at`. New untracked files,
 /// such as the caches running a check leaves behind, do not count (found on a real run).
 pub fn unchanged(dir: &Path, at: &str) -> Result<bool, String> {
