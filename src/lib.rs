@@ -7,10 +7,14 @@
 
 pub mod agent;
 pub mod config;
+pub mod conversation;
+pub mod defs;
 pub mod mcp;
 pub mod plan;
 pub mod platform;
+pub mod project;
 pub mod publish;
 pub mod run;
 pub mod service;
+pub mod speckit;
 pub mod verify;

@@ -2,6 +2,7 @@
 //! opening the browser. Windows is the target of 006 (clarified 2026-10-29); the Unix code keeps
 //! the door open and is not built in CI.
 
+pub mod notify;
 pub mod random;
 
 /// A command for a console program that opens no window of its own. The service has no

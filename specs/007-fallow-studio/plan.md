@@ -80,7 +80,7 @@ Checked against v6.0.0. The amendment to v6.1.0 (constitution-proposal.md) state
 | V. Local and Private | A data view shows what Fallow keeps and its size, with deletion (FR-003b). Run records keep the field rules (S-20). Fonts and Spec Kit are shipped, nothing is downloaded, and the CSP stays `default-src 'self'`. Notifications are local and carry no code. Data stays in the user-only directories. No new network path | PASS (amend: notifications) |
 | VI. Least Privilege | Rights by kind, enforced by the runtime's own permission rules. Chat modes use rules and a prompt tool, never skip-permissions. The lead edits spec paths only, in worktrees. Project writes are only where files are missing, on an add the engineer asked for | PASS (amend: rights by kind; project writes) |
 | VII. Runs Survive | Loop and conversation event logs, flushed before acting. Resume per task in its phase session. Tested at every stage | PASS |
-| VIII. Small and Measured | No new crates. Plain JS. Fonts about 150 KB and Spec Kit about 120 KB, embedded. 006's benchmarks gain a dashboard-ready measurement. Run records per loop; SC-002 is not claimed until measured on a task set (S-20) | PASS |
+| VIII. Small and Measured | No new crates. Plain JS. Fonts (139 KB) and Spec Kit (307 KB), embedded. 006's benchmarks gain a dashboard-ready measurement. Run records per loop; SC-002 is not claimed until measured on a task set (S-20) | PASS |
 
 **Re-check after Phase 1 design**: PASS, subject to the amendment. The contracts add no network access and no messaging path between agents. The only writes outside Fallow's directories and its working copies are the ones the amendment names.
 

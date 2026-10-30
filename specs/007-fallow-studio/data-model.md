@@ -177,7 +177,7 @@ spec_session ──lock──▶ locked ──loop starts──▶ building ─�
 **PipelineStep**:
 - `agent`: a definition's name, or `fallow:gates`;
 - `when`: `task`, `phase`, `checkpoint` or `once`;
-- `at?`: `start` or `end`, for `phase` and `once`;
+- `at?`: `start` or `end`, for `phase`, `checkpoint` and `once`;
 - `paths[]?`;
 - `on_fail`: `repair` or `engineer`;
 - `parallel_with?`: the checker steps at the same point that run together.

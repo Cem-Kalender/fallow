@@ -10,17 +10,12 @@ use fallow::mcp::bridge;
 use fallow::service;
 
 const USAGE: &str = "\
-Fallow takes a coding task from a plan you approve to a result it has verified itself.
+Fallow works out features with you following Spec Kit, then builds them in a loop it verifies
+itself, on a local dashboard.
 
 Usage:
-  fallow                       open the runs page (starts the service if needed)
-  fallow run \"<task>\" [options]  start a run in the current repository
-      --target <branch>          the branch the result is for (default: the current branch)
-      --autonomy high|medium|low how much is decided without you
-      --limit-usd <n>            the run's cost limit
-      --limit-min <n>            the run's time limit
-      --role <role>=<agent>[:<model>]  the agent of planner, builder or reviewer
-  fallow status                list the runs
+  fallow                       open the dashboard (starts the service if needed)
+  fallow status                list the loops
   fallow stop                  stop the service (runs resume at the next start)
   fallow serve [--config-dir <dir>] [--data-dir <dir>]
                                run the service in the foreground
@@ -154,77 +149,6 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         "bench" => fail("measured series arrive with 006 user story 7"),
-        "run" => {
-            let mut rest = args
-                .iter()
-                .skip(1)
-                .map(|a| a.to_string_lossy().into_owned());
-            let mut task: Option<String> = None;
-            let mut req = json!({ "cmd": "run" });
-            let mut roles = Vec::new();
-            while let Some(a) = rest.next() {
-                let mut value = |name: &str| rest.next().ok_or(format!("{name} needs a value"));
-                match a.as_str() {
-                    "--target" => match value("--target") {
-                        Ok(v) => req["target"] = json!(v),
-                        Err(e) => return usage(e),
-                    },
-                    "--autonomy" => match value("--autonomy") {
-                        Ok(v) if matches!(v.as_str(), "high" | "medium" | "low") => {
-                            req["autonomy"] = json!(v)
-                        }
-                        Ok(v) => return usage(format!("--autonomy {v}: high, medium or low")),
-                        Err(e) => return usage(e),
-                    },
-                    "--limit-usd" => match value("--limit-usd").map(|v| v.parse::<f64>()) {
-                        Ok(Ok(v)) if v > 0.0 => req["limit_usd"] = json!(v),
-                        _ => return usage("--limit-usd needs a positive number"),
-                    },
-                    "--limit-min" => match value("--limit-min").map(|v| v.parse::<u64>()) {
-                        Ok(Ok(v)) if v > 0 => req["limit_min"] = json!(v),
-                        _ => return usage("--limit-min needs a positive whole number"),
-                    },
-                    "--role" => match value("--role") {
-                        Ok(v) => {
-                            let Some((role, choice)) = v.split_once('=') else {
-                                return usage("--role role=agent[:model]");
-                            };
-                            let (agent, model) = choice.split_once(':').unwrap_or((choice, ""));
-                            roles.push(json!({ "role": role, "agent": agent, "model": model }));
-                        }
-                        Err(e) => return usage(e),
-                    },
-                    s if s.starts_with("--") => return usage(format!("unknown option {s}")),
-                    s => {
-                        if task.is_some() {
-                            return usage("give the task as one quoted argument");
-                        }
-                        task = Some(s.to_string());
-                    }
-                }
-            }
-            let Some(task) = task.filter(|t| !t.trim().is_empty()) else {
-                return usage("fallow run needs a task");
-            };
-            let cwd = match std::env::current_dir() {
-                Ok(d) => d,
-                Err(e) => return fail(e),
-            };
-            req["task"] = json!(task);
-            req["repo"] = json!(cwd.display().to_string());
-            req["roles"] = json!(roles);
-            if let Err(e) = service::ensure_running() {
-                return fail(e);
-            }
-            match answer(service::request(req)) {
-                Ok(v) => {
-                    println!("Run #{} started.", v["id"]);
-                    open(v["url"].as_str().unwrap_or_default());
-                    ExitCode::SUCCESS
-                }
-                Err(e) => fail(e),
-            }
-        }
         other => usage(format!("unknown command {other:?}")),
     }
 }

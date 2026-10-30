@@ -186,30 +186,6 @@ fn check_criteria(at: &str, part: &str, list: &[Criterion], problems: &mut Vec<S
 
 /// Parses a plan. Problems are `file:line: message` (the T050 lesson: name them, never say the
 /// file is missing).
-/// Why a plan command cannot be allowed: it must be one plain command, not a chain, a
-/// redirection, a shell or git (Fallow does git itself).
-fn command_problem(c: &str) -> Option<&'static str> {
-    let c = c.trim();
-    if c.is_empty() {
-        return Some("empty");
-    }
-    if c.contains(['&', ';', '|', '>', '<', '`', '$', '\n', '\r']) {
-        return Some("one plain command only, without chaining, redirection or variables");
-    }
-    let program = c.split_whitespace().next().unwrap_or("").to_lowercase();
-    let program = program.trim_end_matches(".exe");
-    if matches!(
-        program,
-        "git" | "cmd" | "powershell" | "pwsh" | "bash" | "sh" | "rm" | "del" | "curl" | "wget"
-    ) {
-        return Some("not a command agents may run");
-    }
-    if c.split_whitespace().count() < 2 {
-        return Some("name the program and what it runs (\"python -m shop\", not \"python\")");
-    }
-    None
-}
-
 pub fn parse(file: &str, text: &str) -> Result<Plan, Vec<String>> {
     let raw: RawPlan = match toml::from_str(text) {
         Ok(r) => r,
@@ -222,7 +198,7 @@ pub fn parse(file: &str, text: &str) -> Result<Plan, Vec<String>> {
     let top = format!("{file}:1");
     let mut problems = Vec::new();
     for c in &raw.commands {
-        if let Some(why) = command_problem(c) {
+        if let Some(why) = crate::project::commands::command_problem(c) {
             problems.push(format!("{top}: command {c:?}: {why}"));
         }
     }

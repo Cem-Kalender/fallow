@@ -37,7 +37,7 @@ Decisions for the plan. Each one has its rationale and the alternatives that wer
 - **Which files**: Inter (400, 500, 600, 700) and JetBrains Mono (400, 500), as Latin-subset `woff2` files under `assets/fonts/`, with their SIL Open Font License files.
 - **How they are served**: embedded in the binary and served by the page's own server (`/fonts/...`), so the CSP stays `default-src 'self'`.
 
-**Rationale**: constitution V says the page loads nothing from outside Fallow, so Google Fonts cannot be used at run time. The OFL allows embedding and redistribution. The six files are about 150 KB in all.
+**Rationale**: constitution V says the page loads nothing from outside Fallow, so Google Fonts cannot be used at run time. The OFL allows embedding and redistribution. The six files are 139 KB in all (Inter 23–24 KB per weight, JetBrains Mono 21–22 KB), from Fontsource 5.1.0.
 
 **Alternatives**:
 - The system font stack. Rejected: the engineer asked for the mockup's fonts exactly.
@@ -64,7 +64,10 @@ A request returns as soon as there is something newer than `after`, or after 25 
 - **Answers during a loop**: each time the lead answers an agent's question, Fallow forks the spec session again (`--fork-session`). The lead knows everything the engineer said, and the spec session itself is not changed by the loop.
 - **The lead's result** is structured: `{reply, step?, documents_changed[], proposed_feature?, proposed_pipeline?, question?}`.
 
-**Verified**: `claude` 2.1.314 has `--fork-session`, `--include-partial-messages` and `--resume`.
+**Verified** (T002, 2026-10-30, `claude` 2.1.314 on Windows):
+- `--resume <id> --fork-session` starts a new session id. It appears in the `system/init` event and in every later event's `session_id`. The fork remembers the original conversation (a word given in the first session was recalled), and the original session is left unchanged.
+- `--include-partial-messages` adds `{"type":"stream_event","event":{...}}` lines carrying the API's own stream events: `message_start`, `content_block_start` (`content_block.type` is `text`, `tool_use` or `thinking`), `content_block_delta` (`delta.type` is `text_delta`, `input_json_delta` or `thinking_delta`), `content_block_stop`, `message_delta` and `message_stop`. The complete `assistant` message still follows, as without the flag.
+- Thinking arrives as `thinking` content blocks and `thinking_delta` deltas, and as `thinking` items in the `assistant` message. The Claude runtime drops all three.
 
 **Alternatives**:
 - One long-lived interactive process per conversation (stdin streaming). Rejected: it dies with Fallow, a restart loses it, and 006's resumable calls already survive restarts.
@@ -97,7 +100,14 @@ A request returns as soon as there is something newer than `after`, or after 25 
   - "Always" adds the command's program prefix to the project's approved commands, after the engineer confirms the prefix.
 - **Run anything**: plus `Bash` and `PowerShell` with no restriction. Edits outside the spec paths stay denied, and S-6's commit-or-discard still applies after the turn.
 
-**To verify on a real run** (as R-3 did in 006): that `--permission-prompt-tool` is called for an unlisted command under `--print`. The help of 2.1.314 lists `--permission-prompts host` and names the tool option. If it does not work, Ask falls back to ending the turn with the refused command and asking the engineer to allow it, then resuming the turn.
+**Verified** (T001, 2026-10-30, `claude` 2.1.314 on Windows, with a stub MCP server):
+- **The tool is called only in the `default` permission mode.** Under `dontAsk`, an unlisted command is denied without calling the tool, and lands in `permission_denials`. So Ask runs with `--permission-mode default`, the same allow rules, and `--permission-prompt-tool mcp__fallow__approve`. The other modes keep `dontAsk`.
+- **The call's arguments** are `{tool_name, input, tool_use_id}`, for example `{"tool_name":"Bash","input":{"command":"…","description":"…"}}`.
+- **The answer** is the tool's text content, holding JSON:
+  - `{"behavior":"allow","updatedInput":<input>}` runs the command;
+  - `{"behavior":"deny","message":"…"}` refuses it. The agent sees the message as the tool's error, and the refusal is also listed in `permission_denials`.
+- **Edits and writes are asked about too** in `default` mode. Fallow's `approve` answers `deny` at once, without asking the engineer, for `Edit`, `Write` and `NotebookEdit` outside the spec paths, and for every tool other than `Bash` and `PowerShell`.
+- **Read-only commands run without asking**, in both modes: `git log -1` ran under `dontAsk` with only `Read` allowed. This is Claude Code's built-in allowance for read-only commands. **Read only** mode therefore also passes `--disallowedTools Bash PowerShell`, so that it runs nothing at all.
 
 **Rationale**: the rights are enforced by the agent's own permission system, never by asking it to behave (constitution VI). No mode uses `--dangerously-skip-permissions`.
 
@@ -253,7 +263,7 @@ Adding a project copies each of them only if it does not exist. If the project h
 
 `xtask spec-kit` refreshes the embedded copy from a Spec Kit checkout that a developer chooses. Fallow itself never downloads it.
 
-**Rationale**: FR-002 (no download) and constitution V. The files are small, about 120 KB.
+**Rationale**: FR-002 (no download) and constitution V. The files are small: 307 KB in 35 files.
 
 ## S-16 Projects, conversations and the dashboard's data
 

@@ -7,7 +7,9 @@
 
 pub mod allow;
 pub mod claude;
+pub mod fake;
 pub mod prompts;
+pub mod rights;
 pub mod schemas;
 
 use std::path::PathBuf;

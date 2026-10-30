@@ -29,30 +29,31 @@ Unless a task says otherwise, tests use the `fake` runtime (research S-13).
 
 **Purpose**: verify the two Claude Code behaviours the design relies on, add the files Fallow ships, and remove 006's single-task flow.
 
-- [ ] T001 Verify research S-7 on Windows:
+- [X] T001 Verify research S-7 on Windows:
   - in a scratch repository, run `claude -p` with `--permission-mode dontAsk`, an allowlist without `Bash(git log:*)`, `--mcp-config` naming a stub MCP server that has an `approve` tool, and `--permission-prompt-tool mcp__fallow__approve`;
   - ask it to run `git log -1`;
   - record in `specs/007-fallow-studio/research.md` S-7 whether the tool is called, the input it gets, and how `allow` and `deny` answers are taken. If it is not called, record that Ask uses the fallback.
-- [ ] T002 Verify research S-5:
+- [X] T002 Verify research S-5:
   - run `claude -p --resume <id> --fork-session --include-partial-messages --output-format stream-json`;
   - record in research.md S-5 the new session id's place in the stream, the partial-message event shape, and how thinking blocks appear, so the Claude runtime can drop them.
-- [ ] T003 [P] Add Inter (400, 500, 600, 700) and JetBrains Mono (400, 500) as Latin-subset woff2 files, with `OFL.txt`, in `assets/fonts/`. List their sizes in research.md S-3.
-- [ ] T004 [P] Copy Spec Kit 1.0.12 into `assets/spec-kit/`, with its MIT `LICENSE`:
+- [X] T003 [P] Add Inter (400, 500, 600, 700) and JetBrains Mono (400, 500) as Latin-subset woff2 files, with `OFL.txt`, in `assets/fonts/`. List their sizes in research.md S-3.
+- [X] T004 [P] Copy Spec Kit 1.0.12 into `assets/spec-kit/`, with its MIT `LICENSE`:
   - `.specify/scripts/bash/*`, `.specify/templates/*` and `.specify/init-options.json` from this repository;
   - the constitution template as `.specify/memory/constitution.md`;
   - `.claude/skills/speckit-*/SKILL.md`.
 
   Add `xtask/src/spec_kit.rs` (`cargo xtask spec-kit <checkout>`) to refresh the copy.
-- [ ] T005 [P] Write the default agent definitions in `assets/agents/`: `lead.md`, `builder.md`, `reviewer.md`, `test-writer.md`, `security-reviewer.md` and `docs-writer.md`, as contracts/agent-definition.md describes. The lead's body covers the Spec Kit steps, `(must fail)` markers, the reserved list, and answering questions only from the documents or the conversations.
-- [ ] T006 [P] Write the default pipelines `assets/pipelines/{standard,test-first,solo}.toml`, as contracts/pipeline.md describes.
-- [ ] T007 Remove what 007 replaces (research S-18), keeping the build and the reused tests green:
+- [X] T005 [P] Write the default agent definitions in `assets/agents/`: `lead.md`, `builder.md`, `reviewer.md`, `test-writer.md`, `security-reviewer.md` and `docs-writer.md`, as contracts/agent-definition.md describes. The lead's body covers the Spec Kit steps, `(must fail)` markers, the reserved list, and answering questions only from the documents or the conversations.
+- [X] T006 [P] Write the default pipelines `assets/pipelines/{standard,test-first,solo}.toml`, as contracts/pipeline.md describes.
+- [X] T007 Remove what 007 replaces (research S-18), keeping the build and the reused tests green:
   - the `run` command in `src/main.rs`;
   - the planner's turns (`plan_turn`, `say`, `queue_plan_turn`) in `src/run/machine.rs`;
   - parts and owned files;
   - `src/plan/`: move `command_problem` and its test to `src/project/commands.rs`;
   - `src/service/web/run.html`;
   - **not yet** 006's tests of verification, repairs, resume and limits (`tests/us1_*.rs`), or the planner path they drive: constitution VII's resume gate must not lapse. T044 removes them once T038 to T043 replace them.
-- [ ] T008 [P] Create the module skeletons with doc comments naming their contracts, as in plan.md:
+  - **Done (2026-10-30)**: the `run` command is removed, and `command_problem` moved to `src/project/commands.rs`. The planner's turns, `src/plan/` and parts are still what the kept tests drive, so they go with T044. `run.html` goes with T020, which rewrites the page.
+- [X] T008 [P] Create the module skeletons with doc comments naming their contracts, as in plan.md:
   - `src/project/`, `src/conversation/`, `src/speckit/` and `src/defs/`;
   - `src/agent/{rights,fake}.rs`;
   - `src/run/{questions,relock,activity}.rs`;

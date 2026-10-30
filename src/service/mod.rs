@@ -3,6 +3,7 @@
 //! loopback HTTP with a per-launch secret (`http`).
 
 pub mod http;
+pub mod notify;
 
 use std::io::BufReader;
 use std::path::PathBuf;

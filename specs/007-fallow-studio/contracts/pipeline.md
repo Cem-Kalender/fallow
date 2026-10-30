@@ -50,8 +50,8 @@ on_fail = "engineer"
 | Key | Rules |
 |---|---|
 | `agent` | A definition's name, or `fallow:gates` |
-| `when` | `task`: every task. `phase`: every phase. `checkpoint`: at the end of every user story's phase. `once`: the whole loop |
-| `at` | For `phase` and `once`: `"start"` or `"end"` (the default) |
+| `when` | `task`: every task. `phase`: every phase. `checkpoint`: every user story's phase. `once`: the whole loop |
+| `at` | For `phase`, `checkpoint` and `once`: `"start"` or `"end"` (the default). A checkpoint step at the end is the story's checkpoint |
 | `paths` | Globs. The step runs only when the changes since its last run touch one of them |
 | `on_fail` | `repair`: back to the phase's builder session with the reasons. `engineer`: the loop asks |
 | `parallel_with` | Checker steps at the same point that run at the same time, within the concurrency cap |
@@ -62,12 +62,13 @@ on_fail = "engineer"
 - `fallow:gates` only with `when = "task"` or `"phase"`.
 - Every named agent exists. `on_fail = "repair"` only when a builder exists.
 - A `when = "task"` step that is a checker is refused: checkers run at phases and checkpoints.
+- A checker at the start (`at = "start"`) is refused: there is nothing to check yet.
 
 ## Verifying or not (FR-015)
 
 A pipeline is **verifying** when both hold:
 - `fallow:gates` runs with `when = "task"`;
-- at least one checker runs at every checkpoint, with no `paths` limit.
+- at least one checker runs at the end of every checkpoint, with no `paths` limit.
 
 A loop with a pipeline that is not verifying ends as `done_unverified`, and the page names what is missing ("no gates", "no review at checkpoints"). The designer shows the same warning while the pipeline is being edited.
 
@@ -76,5 +77,5 @@ A loop with a pipeline that is not verifying ends as `done_unverified`, and the 
 | Name | Steps |
 |---|---|
 | standard | builder per task, gates per task, reviewer at checkpoints |
-| test-first | test-writer at the start of every user story's phase (`when = "phase"`, `at = "start"`), builder per task, gates per task, reviewer at checkpoints |
+| test-first | test-writer at the start of every user story's phase (`when = "checkpoint"`, `at = "start"`), builder per task, gates per task, reviewer at checkpoints |
 | solo | builder per task, gates per task. Not verifying: no review |

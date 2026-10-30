@@ -1,0 +1,27 @@
+name = "test-first"
+description = "Standard, with each user story's acceptance tests written first by the test-writer"
+
+[caps]
+task_repairs = 3
+review_rounds = 3
+
+[[step]]
+agent = "test-writer"
+when = "checkpoint"
+at = "start"
+on_fail = "engineer"
+
+[[step]]
+agent = "builder"
+when = "task"
+on_fail = "repair"
+
+[[step]]
+agent = "fallow:gates"
+when = "task"
+on_fail = "repair"
+
+[[step]]
+agent = "reviewer"
+when = "checkpoint"
+on_fail = "repair"
