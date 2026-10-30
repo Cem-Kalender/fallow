@@ -204,7 +204,7 @@ Unless a task says otherwise, tests use the `fake` runtime (research S-13).
   - a review per checkpoint answering every `USn/k`;
   - `ready`, then a merge of exactly the gated commit;
   - `tasks.md` on the target shows every task ticked.
-- [ ] T039 [P] [US2] `tests/us2_false_claims.rs` (CI gate I). Each of these is rejected or never reaches `ready`:
+- [X] T039 [P] [US2] `tests/us2_false_claims.rs` (CI gate I). Each of these is rejected or never reaches `ready`:
   - an edit to the locked documents;
   - a wrong task id;
   - files that were claimed but not changed;
@@ -213,7 +213,7 @@ Unless a task says otherwise, tests use the `fake` runtime (research S-13).
   - a checker whose worktree changed;
   - a pipeline without gates or without a review, which ends `done_unverified` with its missing list.
 - [ ] T040 [P] [US2] `tests/us2_resume.rs` (CI gate VII): stops mid-task, mid-gates, mid-handover, mid-checkpoint and at ready. Each resumes in the right session, without repeating a completed task, gate run or review.
-- [ ] T041 [P] [US2] `tests/us2_repairs.rs`:
+- [X] T041 [P] [US2] `tests/us2_repairs.rs`:
   - a task's failing gate becomes a repair in the phase session, and after the cap the loop asks the engineer;
   - a failing review becomes a repair, then the checkpoint runs again, capped by `review_rounds`;
   - steps cut short do not count.

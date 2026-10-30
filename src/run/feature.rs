@@ -28,6 +28,10 @@ use crate::verify::git;
 
 /// How many times a phase's handover is asked for again before the engineer is asked.
 const HANDOVER_TRIES: usize = 2;
+/// How many times a checker is asked for a complete verdict before the engineer is asked.
+const CHECK_TRIES: usize = 3;
+/// The start of a reason that a verdict was incomplete.
+const INCOMPLETE: &str = "incomplete verdict: ";
 
 fn lp(run: &Run) -> Result<LoopState, String> {
     run.state
@@ -792,7 +796,7 @@ fn phase(
     }
     // The checkpoints of the stories whose last tasks are in this phase.
     for story in stories_ending_at(l, n) {
-        if let Some(done) = checkpoint(run, l, pl, lib, &story, n)? {
+        if let Some(done) = checkpoint(run, ctx, l, pl, lib, &story, n)? {
             if !done {
                 return Ok(());
             }
@@ -847,6 +851,7 @@ fn stories_ending_at(l: &LoopState, n: u32) -> Vec<String> {
 /// head. `Some(true)` when they all passed since the last repair, `Some(false)` while waiting.
 fn checkpoint(
     run: &mut Run,
+    ctx: &Ctx,
     l: &LoopState,
     pl: &Pipeline,
     lib: &Library,
@@ -932,13 +937,11 @@ fn checkpoint(
                         Some((true, _)) => {
                             if let Some(c) = r.verified_commit.clone() {
                                 if pl.steps.iter().any(|s| s.agent == pipeline::GATES) {
-                                    match gated_story(run, story, &c) {
-                                        GateState::Missing => {
-                                            return Err(
-                                                "gates of the story's repair must run first".into(),
-                                            );
-                                        }
-                                        GateState::Failed(f) => {
+                                    // The repair is gated like a task before the checkers
+                                    // look again.
+                                    match gated(run, ctx, story, &c)? {
+                                        None => return Ok(Some(false)),
+                                        Some(f) if !f.is_empty() => {
                                             repair_or_ask(
                                                 run,
                                                 story,
@@ -950,7 +953,7 @@ fn checkpoint(
                                             )?;
                                             return Ok(Some(false));
                                         }
-                                        GateState::Passed => {}
+                                        Some(_) => {}
                                     }
                                 }
                             }
@@ -1001,6 +1004,57 @@ fn checkpoint(
             }
             Some(None) => return Ok(Some(false)),
             Some(Some((false, reasons))) => {
+                // Incomplete: the checker is asked again, not the engineer (FR-012).
+                if reasons.iter().all(|r| r.starts_with(INCOMPLETE)) {
+                    let tries = run
+                        .state
+                        .steps
+                        .values()
+                        .filter(|s| {
+                            s.kind == StepKind::Review
+                                && s.part.as_deref() == Some(story)
+                                && s.def.as_deref() == Some(c.agent.as_str())
+                                && s.queued_seq > last_repair
+                                && !machine::cut_short(s)
+                        })
+                        .count();
+                    if tries >= CHECK_TRIES {
+                        run.append(Event::NeedsEngineer {
+                            why: format!(
+                                "{} gave no usable verdict on {story} after {tries} tries: {}",
+                                c.agent,
+                                reasons.join("; ")
+                            ),
+                            options: vec!["retry".into(), "stop".into()],
+                        })?;
+                        return Ok(Some(false));
+                    }
+                    let missing: Vec<String> = reasons
+                        .iter()
+                        .map(|r| r.trim_start_matches(INCOMPLETE).to_string())
+                        .collect();
+                    let session = last
+                        .as_ref()
+                        .and_then(|s| s.session.clone())
+                        .filter(|s| !run.state.lost_sessions.contains(s))
+                        .filter(|_| !reasons.iter().any(|r| r.contains("worktree changed")));
+                    let text = match &session {
+                        Some(_) => prompts::loop_check_missing(story, &missing),
+                        None => machine::instruction_of(run, last.as_ref().map_or(0, |s| s.n)),
+                    };
+                    queue(
+                        run,
+                        StepKind::Review,
+                        Some(story),
+                        None,
+                        Some(n),
+                        &c.agent,
+                        session,
+                        &format!("{} checks {story} again", c.agent),
+                        text,
+                    )?;
+                    return Ok(Some(false));
+                }
                 if c.on_fail == OnFail::Engineer {
                     run.append(Event::NeedsEngineer {
                         why: format!(
@@ -1028,42 +1082,6 @@ fn checkpoint(
         all &= true;
     }
     Ok(Some(all))
-}
-
-enum GateState {
-    Missing,
-    Failed(Vec<String>),
-    Passed,
-}
-
-fn gated_story(run: &Run, story: &str, commit: &str) -> GateState {
-    let defs = machine::gate_defs(run);
-    let runs: Vec<_> = run
-        .state
-        .gate_runs
-        .iter()
-        .filter(|g| {
-            g.kind == GateKind::Part
-                && g.part.as_deref() == Some(story)
-                && g.result.commit == commit
-        })
-        .collect();
-    if defs
-        .iter()
-        .any(|d| !runs.iter().any(|g| g.result.gate == d.name))
-    {
-        return GateState::Missing;
-    }
-    let failed: Vec<String> = runs
-        .iter()
-        .filter(|g| !gate_ok(run, g))
-        .map(|g| format!("gate {} {}", g.result.gate, g.result.outcome.label()))
-        .collect();
-    if failed.is_empty() {
-        GateState::Passed
-    } else {
-        GateState::Failed(failed)
-    }
 }
 
 /// Every phase is done: the outcome (FR-015) and ready to merge.
@@ -1329,6 +1347,16 @@ fn work_done(run: &mut Run, step: &Step, value: &Value) -> Result<(), String> {
                 );
             };
             let base = step.base.clone().unwrap_or_else(|| l.lock_commit.clone());
+            // A change to the locked documents is undone by Fallow first, so a repair can go on
+            // from a clean state; the step is still refused (FR-009, false claims).
+            let touched: Vec<String> = git::changes_all(&wt)
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|f| is_protected(&l, f))
+                .collect();
+            if !touched.is_empty() {
+                git::restore_paths(&wt, &base, &touched)?;
+            }
             // Fallow ticks the task in tasks.md, in the task's own commit (research S-8).
             if step.kind == StepKind::Build {
                 if let Some(t) = &step.task {
@@ -1370,6 +1398,12 @@ fn work_done(run: &mut Run, step: &Step, value: &Value) -> Result<(), String> {
                 }
             };
             let mut reasons = Vec::new();
+            if !touched.is_empty() {
+                reasons.push(format!(
+                    "the locked documents were changed (Fallow undid it): {}",
+                    touched.join(", ")
+                ));
+            }
             if !git::on_branch(&run.state.repo, &commit, &l.build_branch) {
                 reasons.push(format!("commit {commit} is not on {}", l.build_branch));
             }
@@ -1544,7 +1578,7 @@ fn check_done(run: &mut Run, step: &Step, value: &Value) -> Result<(), String> {
     }
     if let (Some(wt), Some(base)) = (&step.worktree, &step.base) {
         if !git::unchanged(wt, base).unwrap_or(false) {
-            failed.push("the checker's worktree changed: a checker never edits".into());
+            missing.push("a check that changes nothing: the checker's worktree changed".into());
         }
     }
     let complete = missing.is_empty();
@@ -1563,7 +1597,7 @@ fn check_done(run: &mut Run, step: &Step, value: &Value) -> Result<(), String> {
     reasons.extend(
         missing
             .into_iter()
-            .map(|m| format!("incomplete verdict: {m}")),
+            .map(|m| format!("{INCOMPLETE}{m}")),
     );
     run.append(Event::Verified {
         n,

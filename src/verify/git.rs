@@ -387,6 +387,20 @@ pub fn reset_mixed(dir: &Path, commit: &str) -> Result<(), String> {
     git(dir, &["reset", "-q", "--mixed", commit]).map(|_| ())
 }
 
+/// Puts `paths` in the worktree `dir` back as they are at `commit` (a path that is not there is
+/// removed). Fallow undoes an agent's change to files it may not change.
+pub fn restore_paths(dir: &Path, commit: &str, paths: &[String]) -> Result<(), String> {
+    for p in paths {
+        if git(dir, &["cat-file", "-e", &format!("{commit}:{p}")]).is_ok() {
+            git(dir, &["checkout", "-q", commit, "--", p])?;
+        } else {
+            let _ = git(dir, &["rm", "-q", "--cached", "--ignore-unmatch", "--", p]);
+            let _ = std::fs::remove_file(dir.join(p));
+        }
+    }
+    Ok(())
+}
+
 /// Whether `dir` is inside a git repository (at its top or below).
 pub fn inside_repo(dir: &Path) -> Option<PathBuf> {
     git(dir, &["rev-parse", "--show-toplevel"])

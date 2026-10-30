@@ -438,6 +438,17 @@ pub fn loop_check(
     s
 }
 
+/// A checker resumed after an incomplete verdict (FR-012).
+pub fn loop_check_missing(story: &str, missing: &[String]) -> String {
+    let mut s = header("review", Some(story));
+    s.push_str("Your verdict did not count yet. It is missing:\n");
+    for m in missing {
+        s.push_str(&format!("- {m}\n"));
+    }
+    s.push_str("\nCheck these as before, by running something, and return the complete `answers`, including the ones you already gave.");
+    s
+}
+
 /// A maker step of the pipeline other than the builder (a test-writer, a docs-writer).
 pub fn loop_make(cx: &LoopCx, agent: &str, what: &str) -> String {
     let mut s = header("make", Some(agent));
