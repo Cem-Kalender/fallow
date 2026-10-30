@@ -6,9 +6,9 @@ Fallow reads `tasks.md` and `spec.md` at the lock and refuses a lock whose files
 
 | Element | Pattern | Use |
 |---|---|---|
-| Phase | `## Phase <n>: <title>` | Phases in order |
+| Phase | `## Phase <n>: <title>`, where `<n>` starts with a digit (`3`, `3a`) | Phases in order; Fallow numbers them by place and keeps the label |
 | Task | `- [ ] T<nnn> [P]? [US<n>]? <text>` (also `[X]` or `[x]` when done) | Tasks in order within their phase; ids must be unique |
-| Story phase | A phase whose tasks carry `[US<n>]`, or whose title contains `User Story <n>` | Its end is that story's checkpoint |
+| Story phase | A phase whose tasks all carry the same `[US<n>]`, or (with no labels) whose title names one `User Story <n>` | A story's checkpoint is after the last phase holding its tasks |
 | Checkpoint line | `**Checkpoint**: ...` | Shown in the task tree; not required |
 
 **Rules**:
@@ -23,7 +23,7 @@ Fallow reads `tasks.md` and `spec.md` at the lock and refuses a lock whose files
 | User story | `### User Story <n> - <title> (Priority: P<k>)` | Stories and their order |
 | Acceptance scenario | A numbered item under `**Acceptance Scenarios**:` in that story | The criterion `US<n>/<k>` |
 | Must fail | A scenario whose text ends with `(must fail)` | Its verdict must show the case that was refused |
-| Open marker | `[NEEDS CLARIFICATION` | Highlighted in the editor, and blocks the lock |
+| Open marker | `[NEEDS CLARIFICATION: …]` outside inline code | Highlighted in the editor, and blocks the lock |
 | Engineer's items | A `**Reserved for the engineer**:` list under a story or in Requirements | Questions about them always go to the engineer (FR-020a) |
 | Clarifications | `## Clarifications`, with `### Session <date>` or `### Loop <date>` | Where answers are committed |
 

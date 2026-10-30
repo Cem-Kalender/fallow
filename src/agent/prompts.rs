@@ -249,6 +249,75 @@ pub fn with_notes(mut instruction: String, notes: &[String]) -> String {
 /// The note prepended when a step is resumed after Fallow stopped (research R-2).
 pub const INTERRUPTED: &str = "You were interrupted because Fallow stopped. Check the state of your working copy (git status, git log), continue the same task, and return your result.";
 
+/// Fallow's standing rules for the lead (007 FR-005 to FR-007a, constitution VI), before the
+/// definition's own instruction.
+pub fn lead_system(body: &str) -> String {
+    format!(
+        "You are the lead of a Fallow project, in a chat with the engineer. Fallow, not you, runs \
+the build later, and verifies every claim. You never write code here: you may change only \
+`specs/`, `.specify/memory/` and `.fallow/drafts/`. In a git project Fallow commits your spec documents \
+after each turn and throws away anything else you changed; it tells the engineer. Run one command \
+per tool call, without chaining. Finish every turn by returning the structured result asked for.\n\n{body}"
+    )
+}
+
+/// A document the engineer edited on the page since the lead's last turn.
+pub struct Edit<'a> {
+    pub path: &'a str,
+    pub diff: &'a str,
+}
+
+/// One turn of the lead's chat.
+pub struct LeadTurn<'a> {
+    pub project: &'a str,
+    /// `Some` in a spec session: the feature's folder, title, and the Spec Kit step to run.
+    pub feature: Option<(&'a str, &'a str, &'a str)>,
+    /// The first turn of this conversation (a spec session's first turn is a fork of the project
+    /// conversation).
+    pub first: bool,
+    pub said: &'a str,
+    pub edits: &'a [Edit<'a>],
+    /// A plain folder: Fallow cannot check what commands write.
+    pub plain_folder: bool,
+}
+
+/// The instruction of a lead's turn (header `Fallow step: lead_turn`).
+pub fn lead_turn(t: &LeadTurn) -> String {
+    let mut s = header("lead_turn", None);
+    match t.feature {
+        None => {
+            if t.first {
+                s.push_str(&format!(
+                    "This is the project conversation of {}. Answer from the code and the project's documents; say which files you read. When the engineer wants something built, propose it as `proposed_feature`. When asked to design a pipeline, propose it as `proposed_pipeline` (TOML). Spec Kit steps run in a feature's spec session, not here; set `step` to none.\n\n",
+                    t.project
+                ));
+            }
+        }
+        Some((dir, title, step)) => {
+            if t.first {
+                s.push_str(&format!(
+                    "The engineer started the feature \"{title}\" from this conversation. Its folder is `{dir}`; Fallow created it and wrote `.specify/feature.json` pointing at it, so Spec Kit's skills find it: do not create another feature folder or branch. This is now the feature's spec session.\n\n"
+                ));
+            }
+            s.push_str(&format!(
+                "Feature folder: `{dir}`. The Spec Kit step to work on: {step}. Run it with its skill when the engineer's message asks for it or when the step before is done, and set `step` to the step you ran. Ask clarify questions one at a time as `question`. After analyze, return every finding in `findings`.\n\n"
+            ));
+        }
+    }
+    if t.plain_folder && t.first {
+        s.push_str("This project is a plain folder, not a git repository: Fallow cannot check what a command writes. Change only the spec documents.\n\n");
+    }
+    if !t.edits.is_empty() {
+        s.push_str("The engineer edited these documents on the page since your last turn; take the edits as decisions:\n");
+        for e in t.edits {
+            s.push_str(&format!("\n`{}`:\n```diff\n{}```\n", e.path, e.diff));
+        }
+        s.push('\n');
+    }
+    s.push_str(&format!("The engineer says:\n\n{}\n", t.said));
+    s
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

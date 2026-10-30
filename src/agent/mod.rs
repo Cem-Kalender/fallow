@@ -62,6 +62,9 @@ pub struct Call {
     pub system: Option<String>,
     /// Stream the reply as it is written (`message_delta` events), for chats.
     pub partial: bool,
+    /// The process group to start the agent in. Fallow keeps it to check that an MCP bridge
+    /// connecting for this call is one of the agent's own processes (006 research R-5).
+    pub group: Option<std::sync::Arc<crate::platform::job::Group>>,
 }
 
 /// What a tool call does, as the feed shows it.

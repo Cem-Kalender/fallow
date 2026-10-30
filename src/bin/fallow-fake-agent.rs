@@ -188,6 +188,8 @@ fn main() -> ExitCode {
     let mut mcp_config: Option<PathBuf> = None;
     let mut prompt_tool: Option<String> = None;
     let mut mode = String::from("default");
+    let mut allowed: Vec<String> = Vec::new();
+    let mut disallowed: Vec<String> = Vec::new();
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
@@ -217,6 +219,17 @@ fn main() -> ExitCode {
                     mode = m.clone();
                 }
                 i += 1;
+            }
+            "--allowedTools" | "--disallowedTools" => {
+                let into = if args[i] == "--allowedTools" {
+                    &mut allowed
+                } else {
+                    &mut disallowed
+                };
+                while let Some(v) = args.get(i + 1).filter(|v| !v.starts_with("--")) {
+                    into.push(v.clone());
+                    i += 1;
+                }
             }
             _ => {}
         }
@@ -339,7 +352,20 @@ fn main() -> ExitCode {
         emit(json!({"type": "assistant", "message": {"content": [
             {"type": "tool_use", "id": id, "name": "Bash", "input": input}]}}));
         // As Claude Code does (T001): the prompt tool is asked only in the default mode.
+        // As Claude Code does: a deny rule wins, an allow rule runs it without asking, and only
+        // what neither covers is asked about (default mode) or refused (dontAsk).
+        let covers = |rules: &[String]| {
+            rules.iter().any(|r| {
+                r == "Bash"
+                    || r.strip_prefix("Bash(")
+                        .and_then(|x| x.strip_suffix(":*)"))
+                        .is_some_and(|p| cmd == p || cmd.starts_with(&format!("{p} ")))
+            })
+        };
         let verdict = match (&prompt_tool, mode.as_str(), &mcp_config) {
+            _ if covers(&disallowed) => json!({"behavior": "deny",
+                "message": "Permission to use Bash has been denied."}),
+            _ if covers(&allowed) => json!({"behavior": "allow"}),
             (Some(t), "default", Some(c)) => {
                 let tool = t.trim_start_matches("mcp__fallow__");
                 mcp_call(

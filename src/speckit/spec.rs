@@ -94,6 +94,18 @@ fn numbered(line: &str) -> Option<&str> {
     t[digits..].strip_prefix(". ").map(str::trim)
 }
 
+/// Whether `line` holds an open clarification marker, `[NEEDS CLARIFICATION: …]`, outside
+/// inline code (a mention of the marker in backticks is not one; Phase 2 review).
+fn open_marker(line: &str) -> bool {
+    let mut outside = String::new();
+    for (i, part) in line.split('`').enumerate() {
+        if i % 2 == 0 {
+            outside.push_str(part);
+        }
+    }
+    outside.contains("[NEEDS CLARIFICATION:")
+}
+
 fn must_fail(text: &str) -> bool {
     text.trim_end()
         .trim_end_matches('.')
@@ -117,7 +129,7 @@ pub fn read(file: &str, text: &str) -> Result<Spec, Vec<Problem>> {
         if in_code {
             continue;
         }
-        if line.contains("[NEEDS CLARIFICATION") {
+        if open_marker(line) {
             spec.markers.push(Marker {
                 line: at,
                 text: line.trim().to_string(),
@@ -346,11 +358,14 @@ The shopper adds items.
         .unwrap();
         assert_eq!(s.stories.len(), 7);
         assert!(s.story("US2").unwrap().scenarios.len() >= 6);
-        assert!(
-            s.markers.is_empty() || s.markers.iter().all(|m| m.text.contains('`')),
-            "only mentions of the marker in backticks: {:?}",
-            s.markers
-        );
+        assert!(s.markers.is_empty(), "{:?}", s.markers);
+        assert!(open_marker("x [NEEDS CLARIFICATION: which?] y"));
+        assert!(!open_marker(
+            "open `[NEEDS CLARIFICATION]` markers are highlighted"
+        ));
+        assert!(!open_marker(
+            "see `[NEEDS CLARIFICATION: x]` in the template"
+        ));
     }
 
     #[test]

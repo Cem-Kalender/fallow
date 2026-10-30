@@ -151,6 +151,9 @@ pub fn parse(
             if !matches!(s.when, When::Task | When::Phase) {
                 problems.push(at("fallow:gates runs per task or per phase".into()));
             }
+            if !s.paths.is_empty() {
+                problems.push(at("fallow:gates runs on every change: no `paths`".into()));
+            }
             continue;
         }
         match kind_of(&s.agent) {
@@ -159,6 +162,9 @@ pub fn parse(
             Some(Kind::Maker) => {
                 if s.when == When::Task {
                     makers_per_task += 1;
+                    if !s.paths.is_empty() {
+                        problems.push(at("the builder builds every task: no `paths`".into()));
+                    }
                 }
             }
             Some(Kind::Checker) => {
@@ -293,6 +299,16 @@ on_fail = "engineer"
         assert_eq!(
             pl.missing,
             ["no gates after each task", "no review at checkpoints"]
+        );
+    }
+
+    #[test]
+    fn gates_and_the_builder_take_no_paths() {
+        let e = p("name = \"p\"\n[[step]]\nagent = \"builder\"\nwhen = \"task\"\non_fail = \"repair\"\n[[step]]\nagent = \"fallow:gates\"\nwhen = \"task\"\npaths = [\"docs/**\"]\non_fail = \"repair\"\n[[step]]\nagent = \"reviewer\"\nwhen = \"checkpoint\"\non_fail = \"repair\"\n").unwrap_err();
+        assert!(
+            e.iter()
+                .any(|x| x.contains("step 2") && x.contains("no `paths`")),
+            "{e:?}"
         );
     }
 

@@ -64,7 +64,9 @@ const Fallow = (() => {
         try {
           const v = await get(`/api/events?scope=${encodeURIComponent(scope)}&after=${after}`);
           if (stopped) break;
-          if (typeof v.seq === "number" && v.seq > after) after = v.seq;
+          // Always continue from the service's number, even when it is lower (a reset): the
+          // service answers at once whenever the page's number differs from its own.
+          if (typeof v.seq === "number") after = v.seq;
           if (!v.timeout) onChange(v);
         } catch (_) {
           await new Promise((r) => setTimeout(r, 2000));
@@ -114,7 +116,12 @@ const Fallow = (() => {
 
   function show() {
     const r = route();
-    document.querySelectorAll("[data-nav]").forEach((a) => a.classList.toggle("on", a.dataset.nav === r.nav));
+    document.querySelectorAll("[data-nav]").forEach((a) => {
+      const on = a.dataset.nav === r.nav;
+      a.classList.toggle("on", on);
+      if (on) a.setAttribute("aria-current", "page");
+      else a.removeAttribute("aria-current");
+    });
     if (current && current.leave) current.leave();
     const app = document.getElementById("app");
     const screen = screens[r.screen];

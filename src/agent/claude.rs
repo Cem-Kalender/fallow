@@ -11,28 +11,6 @@ use serde_json::Value;
 use super::rights::{Edits, Rights};
 use super::{Agent, Availability, Call, Event, Outcome, Runtime, Session, ToolKind, clip};
 
-/// Read-only shell commands every agent may run, besides the ones Claude Code allows by itself.
-const READ_SHELL: &[&str] = &[
-    "ls",
-    "dir",
-    "cat",
-    "type",
-    "head",
-    "tail",
-    "findstr",
-    "grep",
-    "git status",
-    "git diff",
-    "git log",
-    "git show",
-    "echo",
-    "pwd",
-    "wc",
-    "sort",
-    "which",
-    "where",
-];
-
 /// The runtime for an agent program that speaks `claude -p`: Claude Code itself, or
 /// `fallow-fake-agent` in tests.
 #[derive(Debug, Clone)]
@@ -119,9 +97,10 @@ pub fn rules(r: &Rights) -> (Vec<String>, Vec<String>, &'static str) {
     if r.no_commands {
         push(&mut deny, ["Bash", "PowerShell"].map(String::from));
     } else {
-        for c in READ_SHELL.iter().copied().chain(["cd"]) {
-            push(&mut allow, shell_rules(c));
-        }
+        // Reading commands are Claude Code's own read-only allowance (T001), which judges each
+        // command; a prefix rule would allow `sort -o FILE` or `git diff --output=FILE` too
+        // (Phase 2 review). Moving around the worktree is allowed.
+        push(&mut allow, shell_rules("cd"));
         for c in &r.commands {
             push(&mut allow, shell_rules(c.trim()));
         }
@@ -413,9 +392,12 @@ pub fn run(agent: &Agent, c: &Call, sink: &mut dyn FnMut(Event), stop: &AtomicBo
         // CREATE_NO_WINDOW: no console window for the service's children.
         cmd.creation_flags(0x0800_0000);
     }
-    let mut group = match crate::platform::job::Group::new() {
-        Ok(g) => g,
-        Err(e) => return fail(format!("cannot create a process group: {e}"), started),
+    let group = match &c.group {
+        Some(g) => std::sync::Arc::clone(g),
+        None => match crate::platform::job::Group::new() {
+            Ok(g) => std::sync::Arc::new(g),
+            Err(e) => return fail(format!("cannot create a process group: {e}"), started),
+        },
     };
     let mut child = match cmd.spawn() {
         Ok(ch) => ch,
@@ -566,6 +548,7 @@ mod tests {
             time_limit: Duration::from_secs(60),
             system: Some("rules".into()),
             partial: false,
+            group: None,
         }
     }
 
@@ -612,7 +595,9 @@ mod tests {
         let a = args(&c);
         let s = a.join(" ");
         assert!(s.contains("--permission-mode dontAsk"));
-        assert!(s.contains("--disallowedTools Bash PowerShell"));
+        let (_, deny, _) = rules(&c.rights);
+        assert!(has(&deny, "Bash") && has(&deny, "PowerShell"), "{deny:?}");
+        assert!(has(&deny, "Write(.fallow/squad.toml)"));
         assert!(has(&a, "Edit(specs/**)") && !has(&a, "Edit"));
         assert!(!s.contains("python -m shop"));
         c.rights = rights::lead(Mode::Ask, vec!["python -m shop".into()]);
@@ -623,7 +608,11 @@ mod tests {
         c.rights = rights::lead(Mode::RunAnything, Vec::new());
         let a = args(&c);
         assert!(has(&a, "Bash") && has(&a, "PowerShell"));
-        assert!(!has(&a, "Edit") && has(&a, "Write(.fallow/**)"));
+        assert!(
+            !has(&a, "Edit")
+                && has(&a, "Write(.fallow/drafts/**)")
+                && has(&a, "Edit(.fallow/pipelines/**)")
+        );
         c.rights = rights::checker(vec!["python -m unittest".into()]);
         let a = args(&c);
         assert!(!has(&a, "Edit") && !has(&a, "Write"));

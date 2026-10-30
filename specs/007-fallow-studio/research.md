@@ -81,7 +81,7 @@ A request returns as soon as there is something newer than `after`, or after 25 
   - The engineer's edits from the page are written into that worktree.
   - After each turn, Fallow commits the changed documents (`spec: <step> turn <n>`), and discards changes anywhere else, saying so in the chat.
   - The project conversation works in a worktree checked out at the project branch's head, refreshed before each turn, and discarded changes the same way.
-- **A plain folder:** the lead works in the folder itself. Only `specs/`, `.specify/` and `.fallow/` may be written, which the lead's permission rules enforce. Fallow cannot check what a command wrote elsewhere, and says so in the session (constitution I: state what cannot be verified). At the first lock, Fallow offers `git init` with an initial commit of what is there.
+- **A plain folder:** the lead works in the folder itself. Only `specs/`, `.specify/memory/` and `.fallow/drafts/` may be written, which the lead's permission rules enforce. Fallow cannot check what a command wrote elsewhere, and says so in the session (constitution I: state what cannot be verified). At the first lock, Fallow offers `git init` with an initial commit of what is there.
 
 **Rationale**: worktrees keep the engineer's own working copy untouched, even in the "Run anything" mode. Committing every turn gives history and a clean base for the lock.
 
@@ -90,7 +90,7 @@ A request returns as soon as there is something newer than `after`, or after 25 
 **Decision**: the four modes of FR-007a map onto Claude Code's own permission controls:
 - **All modes**:
   - reading: `Read`, `Glob`, `Grep`;
-  - writing: `Edit`/`Write` only on `specs/**`, `.specify/memory/**` and `.fallow/**`;
+  - writing: `Edit`/`Write` only on `specs/**`, `.specify/memory/**` and `.fallow/drafts/**`; `.fallow/agents/**`, `.fallow/pipelines/**` and `.fallow/squad.toml` are denied, because they decide what agents may run and only the engineer saves them (FR-026, FR-028; Phase 2 review);
   - everything else is denied: under `--permission-mode dontAsk`, except Ask (below).
 - **Read only**: no command rules, and `--disallowedTools Bash PowerShell`, because Claude Code runs read-only commands by itself even under `dontAsk` (T001).
 - **Approved commands**: plus `Bash(<cmd>:*)` and the PowerShell mirror for each approved command, as 006 does for the gates and the plan's commands (006 research R-4).

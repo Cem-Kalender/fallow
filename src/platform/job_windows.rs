@@ -52,7 +52,7 @@ impl Group {
     }
 
     /// Puts the agent into the job right after spawn.
-    pub fn adopt(&mut self, pid: u32) -> io::Result<()> {
+    pub fn adopt(&self, pid: u32) -> io::Result<()> {
         // SAFETY: OpenProcess with a PID; the handle is closed below.
         let h = unsafe { OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE, 0, pid) };
         if h.is_null() {

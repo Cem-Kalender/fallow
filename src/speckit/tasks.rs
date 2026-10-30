@@ -23,18 +23,21 @@ pub fn read(file: &str, text: &str) -> Result<Vec<PhaseSpec>, Vec<Problem>> {
                 ));
                 continue;
             };
-            let Ok(n) = n.trim().parse::<u32>() else {
+            let label = n.trim();
+            if !label.starts_with(|c: char| c.is_ascii_digit()) {
                 problems.push(Problem::new(
                     file,
                     at,
-                    format!("phase number {:?} is not a number", n.trim()),
+                    format!("phase number {label:?} is not a number"),
                 ));
                 continue;
-            };
+            }
+            let n = phases.iter().filter(|(_, p)| p.n != 0).count() as u32 + 1;
             phases.push((
                 at,
                 PhaseSpec {
                     n,
+                    label: label.to_string(),
                     title: title.trim().to_string(),
                     story: None,
                     tasks: Vec::new(),
@@ -49,6 +52,7 @@ pub fn read(file: &str, text: &str) -> Result<Vec<PhaseSpec>, Vec<Problem>> {
                     at,
                     PhaseSpec {
                         n: 0,
+                        label: String::new(),
                         title: String::new(),
                         story: None,
                         tasks: Vec::new(),
@@ -170,14 +174,16 @@ fn task_line(line: &str) -> Option<(String, bool, Option<String>, String)> {
     Some((id.to_string(), parallel, story, rest.trim().to_string()))
 }
 
-/// A phase is a user story's when its tasks carry the same `[USn]`, or its title names
-/// `User Story n`.
+/// A phase is a user story's when its tasks carry the same `[USn]`, or (with no labels) its
+/// title names one `User Story n`. A phase whose tasks carry different stories is no single
+/// story's (Phase 2 review); the loop places each story's checkpoint after its last task.
 fn story_of(p: &PhaseSpec) -> Option<String> {
     let labels: Vec<&String> = p.tasks.iter().filter_map(|t| t.story.as_ref()).collect();
     if let Some(first) = labels.first() {
-        if labels.iter().all(|l| l == first) {
-            return Some((*first).clone());
-        }
+        return labels.iter().all(|l| l == first).then(|| (*first).clone());
+    }
+    if p.title.to_lowercase().matches("user story ").count() != 1 {
+        return None;
     }
     let lower = p.title.to_lowercase();
     let i = lower.find("user story ")?;
@@ -276,6 +282,33 @@ mod tests {
         assert!(e[0].to_string().contains("used twice"));
         let e = read("tasks.md", "## Phase x: A\n- [ ] T001 a\n").unwrap_err();
         assert!(e[0].to_string().contains("not a number"));
+    }
+
+    #[test]
+    fn lettered_phases_and_mixed_stories() {
+        let p = read(
+            "t",
+            "## Phase 3a: A\n- [ ] T001 [US1] a\n## Phase 3b: B\n- [ ] T002 [US1] b\n- [ ] T003 [US3] c\n",
+        )
+        .unwrap();
+        assert_eq!((p[0].n, p[0].label.as_str()), (1, "3a"));
+        assert_eq!((p[1].n, p[1].label.as_str()), (2, "3b"));
+        assert_eq!(p[0].story.as_deref(), Some("US1"));
+        assert_eq!(p[1].story, None, "two stories: no single story");
+        for f in [
+            "001-llm-aware-tui-editor",
+            "002-agent-sessions",
+            "005-adaptive-delegation",
+        ] {
+            let path = format!("{}/specs/{f}/tasks.md", env!("CARGO_MANIFEST_DIR"));
+            if let Ok(text) = std::fs::read_to_string(&path) {
+                assert!(
+                    read("tasks.md", &text).is_ok(),
+                    "{f}: {:?}",
+                    read("tasks.md", &text).err()
+                );
+            }
+        }
     }
 
     #[test]

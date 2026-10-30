@@ -670,12 +670,37 @@ impl RunState {
                 lock,
                 commit,
                 affected,
+                phases,
             } => {
                 if let Some(f) = self.feature_loop.as_mut() {
                     f.unlocked = false;
                     f.lock = *lock;
                     f.lock_commit = commit.clone();
                     f.affected = affected.clone();
+                    if !phases.is_empty() {
+                        // The new lock's tasks: a phase keeps where it was when it is the same
+                        // phase (place and title); new tasks start pending.
+                        let old = std::mem::take(&mut f.phases);
+                        for p in phases {
+                            let kept = old
+                                .iter()
+                                .find(|o| o.spec.n == p.n && o.spec.title == p.title);
+                            f.phases.push(PhaseStatus {
+                                spec: p.clone(),
+                                state: kept.map_or(PhaseState::Pending, |k| k.state),
+                                session: kept.and_then(|k| k.session.clone()),
+                                handover: kept.and_then(|k| k.handover.clone()),
+                            });
+                            for t in &p.tasks {
+                                f.tasks.entry(t.id.clone()).or_insert(TaskStatus {
+                                    phase: p.n,
+                                    state: TaskState::Pending,
+                                    commit: None,
+                                    repairs: 0,
+                                });
+                            }
+                        }
+                    }
                 }
             }
             Event::Outcome { verified, missing } => {

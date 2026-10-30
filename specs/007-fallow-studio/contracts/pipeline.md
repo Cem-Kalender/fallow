@@ -59,7 +59,7 @@ on_fail = "engineer"
 ## Checks (refused with the step's index)
 
 - Exactly one `maker` step with `when = "task"`: the builder.
-- `fallow:gates` only with `when = "task"` or `"phase"`.
+- `fallow:gates` only with `when = "task"` or `"phase"`, and without `paths`; the builder without `paths`.
 - Every named agent exists. `on_fail = "repair"` only when a builder exists.
 - A `when = "task"` step that is a checker is refused: checkers run at phases and checkpoints.
 - A checker at the start (`at = "start"`) is refused: there is nothing to check yet.

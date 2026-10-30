@@ -983,6 +983,7 @@ fn start(run: &mut Run, ctx: &Ctx, n: u32) -> Result<(), String> {
         time_limit: Duration::from_secs(run.state.limits.step_minutes * 60),
         system: Some(prompts::system(role)),
         partial: false,
+        group: None,
     };
     run.append(Event::StepStarted {
         n,

@@ -42,8 +42,17 @@ fn a_wait_answers_at_once_when_behind_and_with_the_next_change_otherwise() {
     wait_for(&tx, id, "the turn running", |v| {
         v["steps"]["1"]["started"].is_string()
     });
-    // The step works for 1.5 s after its first line: the next change is its end.
-    std::thread::sleep(Duration::from_millis(200));
+    // The step works for 1.5 s after its first line: wait for that line, then the next change
+    // is the step's end.
+    let end = Instant::now() + Duration::from_secs(30);
+    while Instant::now() < end {
+        let lines = ask(&tx, Request::Activity { id, n: 1 }).unwrap_or_default();
+        if lines.as_array().is_some_and(|a| !a.is_empty()) {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    std::thread::sleep(Duration::from_millis(100));
     let Reply::Ok(now) = wait(0).recv_timeout(Duration::from_secs(2)).unwrap() else {
         panic!()
     };

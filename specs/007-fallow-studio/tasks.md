@@ -98,6 +98,7 @@ Unless a task says otherwise, tests use the `fake` runtime (research S-13).
   - errors with file and line;
   - the task tick writer;
   - unit tests on Spec Kit's own template output and on broken files.
+  - The tests read this repository's own `specs/*/tasks.md` and `spec.md`, made with Spec Kit, rather than its templates, which hold placeholders (`Phase N`, `TXXX`).
 - [X] T016 [P] Write the agent definition parser in `src/defs/agent.rs`: the strict YAML subset of research S-11, with errors at the line, and unit tests.
 - [X] T017 [P] Write the pipeline parser and checks in `src/defs/pipeline.rs`: `when` and `at`, `paths`, `on_fail`, `parallel_with` and caps, and the derived `verifying` with its missing list. Unit tests cover each check.
 - [X] T018 Resolve definitions in `src/defs/mod.rs`:
@@ -105,6 +106,7 @@ Unless a task says otherwise, tests use the `fake` runtime (research S-13).
   - on first start, the defaults are copied, and they are never overwritten after that;
   - a changed default is written as `<name>.md.new`.
 - [X] T019 Extend long polling to scopes (`global`, `loop:<id>`, `conv:<id>`) in `src/service/http.rs`, as contracts/web-api.md describes.
+  - `conv:<id>` is answered once conversations exist (T029); until then it is refused as an unknown scope.
 - [X] T020 Build the page shell from the mockup:
   - `src/service/web/index.html`, the logo SVG, the header with the nav, and the needs-you count;
   - `app.css`: the colour tokens of research S-2, the mockup's classes (`card`, `pill`, `btn`, `btn2`, `nav`, `stage`, `task`, `ev`, `row`) and `@font-face` rules for `/fonts/*`;

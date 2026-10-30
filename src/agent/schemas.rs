@@ -101,3 +101,64 @@ fn review() -> Value {
         }
     })
 }
+
+/// The lead's reply in a chat (007 contracts/step-results.md, `reply`).
+pub fn reply() -> Value {
+    json!({
+        "type": "object",
+        "required": ["reply"],
+        "properties": {
+            "reply": { "type": "string", "description": "Markdown the engineer reads in the chat" },
+            "step": {
+                "type": "string",
+                "enum": ["constitution", "specify", "clarify", "plan", "tasks", "analyze", "none"],
+                "description": "The Spec Kit step you ran this turn; none in the project conversation or when no step ran"
+            },
+            "documents_changed": { "type": "array", "items": { "type": "string" } },
+            "question": {
+                "type": "object",
+                "description": "A clarify question shown as choices",
+                "required": ["text", "options"],
+                "properties": {
+                    "text": { "type": "string" },
+                    "why": { "type": "string" },
+                    "options": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "required": ["label", "text"],
+                            "properties": {
+                                "label": { "type": "string" },
+                                "text": { "type": "string" },
+                                "recommended": { "type": "boolean" }
+                            }
+                        }
+                    }
+                }
+            },
+            "findings": {
+                "type": "array",
+                "description": "After the analyze step: every finding with its severity",
+                "items": {
+                    "type": "object",
+                    "required": ["severity", "text"],
+                    "properties": {
+                        "severity": { "type": "string", "enum": ["CRITICAL", "HIGH", "MEDIUM", "LOW"] },
+                        "text": { "type": "string" }
+                    }
+                }
+            },
+            "files_read": { "type": "array", "items": { "type": "string" } },
+            "proposed_feature": {
+                "type": "object",
+                "required": ["title", "summary"],
+                "properties": {
+                    "title": { "type": "string" },
+                    "summary": { "type": "string" },
+                    "after": { "type": "string" }
+                }
+            },
+            "proposed_pipeline": { "type": "string", "description": "A pipeline as TOML" }
+        }
+    })
+}

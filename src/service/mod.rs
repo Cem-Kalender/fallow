@@ -182,7 +182,7 @@ fn cli_request(req: &Value, tx: &Sender<Msg>, port: u16, secret: &str) -> Value 
             match ask(tx, Request::Create(c)) {
                 Reply::Ok(v) => {
                     let id = v["id"].as_u64().unwrap_or(0);
-                    json!({ "ok": true, "id": id, "url": page_url(port, secret, &format!("/runs/{id}")) })
+                    json!({ "ok": true, "id": id, "url": page_url(port, secret, "/") })
                 }
                 other => reply(other),
             }

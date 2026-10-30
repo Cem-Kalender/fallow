@@ -390,6 +390,9 @@ pub enum Event {
         lock: u32,
         commit: String,
         affected: Vec<String>,
+        /// The phases of the new lock's `tasks.md` (it may have changed).
+        #[serde(default)]
+        phases: Vec<PhaseSpec>,
     },
     /// How a loop ended: verified (ready to merge), or done but not verified, naming what was
     /// not checked (FR-015).
@@ -418,10 +421,13 @@ pub struct TaskSpec {
     pub text: String,
 }
 
-/// A phase of `tasks.md`, as locked. `story` is set for a user story's phase.
+/// A phase of `tasks.md`, as locked. `n` is its place (1, 2, …); `label` is the number the file
+/// gives it (`3a`). `story` is set for a user story's phase.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PhaseSpec {
     pub n: u32,
+    #[serde(default)]
+    pub label: String,
     pub title: String,
     pub story: Option<String>,
     pub tasks: Vec<TaskSpec>,

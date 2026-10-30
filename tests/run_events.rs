@@ -202,12 +202,14 @@ fn a_loop_folds_its_phases_tasks_questions_and_outcome() {
             phases: vec![
                 PhaseSpec {
                     n: 1,
+                    label: "1".into(),
                     title: "Setup".into(),
                     story: None,
                     tasks: vec![task("T001", None)],
                 },
                 PhaseSpec {
                     n: 3,
+                    label: "3".into(),
                     title: "User Story 1".into(),
                     story: Some("US1".into()),
                     tasks: vec![task("T010", Some("US1")), task("T011", Some("US1"))],
@@ -249,6 +251,7 @@ fn a_loop_folds_its_phases_tasks_questions_and_outcome() {
             lock: 2,
             commit: "l2".into(),
             affected: vec!["US1".into()],
+            phases: Vec::new(),
         },
         Event::Outcome {
             verified: false,

@@ -116,7 +116,7 @@ pub fn run(
         outcome,
         failing,
     };
-    let mut group = match crate::platform::job::Group::new() {
+    let group = match crate::platform::job::Group::new() {
         Ok(g) => g,
         Err(e) => return done(Outcome::NotStarted { why: e.to_string() }, BTreeSet::new()),
     };

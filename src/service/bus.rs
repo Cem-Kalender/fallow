@@ -44,6 +44,12 @@ impl Bus {
         if after > self.seq {
             return json!({ "seq": self.seq, "events": [], "reset": true });
         }
+        // Events the page missed are no longer kept: it reads everything again.
+        let oldest = self.events.front().map_or(self.seq + 1, |(s, _)| *s);
+        if after + 1 < oldest {
+            let events: Vec<&Value> = self.events.iter().map(|(_, v)| v).collect();
+            return json!({ "seq": self.seq, "events": events, "reset": true });
+        }
         let events: Vec<&Value> = self
             .events
             .iter()
@@ -100,6 +106,18 @@ mod tests {
         assert_eq!(
             v["reset"], true,
             "a page from before a restart starts again"
+        );
+        for i in 0..(KEEP as u64 + 10) {
+            b.publish(json!({"type": "loop_progress", "run": i}));
+        }
+        let (tx, rx) = std::sync::mpsc::channel();
+        b.wait(1, tx);
+        let Reply::Ok(v) = rx.try_recv().unwrap() else {
+            panic!()
+        };
+        assert_eq!(
+            v["reset"], true,
+            "history the page missed is gone: it reads again"
         );
     }
 }

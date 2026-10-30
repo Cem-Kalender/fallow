@@ -21,6 +21,7 @@ fn call(cwd: &std::path::Path, limit: Duration) -> Call {
         time_limit: limit,
         system: None,
         partial: false,
+        group: None,
     }
 }
 

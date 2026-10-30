@@ -68,4 +68,7 @@ Unknown keys, nesting, multi-line values and anchors are refused, with the file 
 | security-reviewer | checker | claude, opus | Security checks of a story's changes, each proven by running something |
 | docs-writer | maker | claude, sonnet | Updates the README and quickstart once, at the end |
 
-On first start, each default is copied to `~/.fallow/agents/` and never overwritten after that. When an update of Fallow changes a default, it writes `<name>.md.new` beside it and says so on the designer (FR-025).
+On first start, each default is copied to `~/.fallow/agents/`. The engineer's changes are never overwritten (FR-025). When an update of Fallow changes a default:
+- a copy the engineer never edited is replaced by the new default;
+- an edited copy is kept, and the new default is written beside it as `<name>.md.new`, which the designer mentions;
+- a default the engineer deleted is not put back.

@@ -4,10 +4,18 @@
 
 use crate::run::events::GateSpec;
 
-/// The files the lead writes: spec documents only (constitution VI, FR-007a).
-pub const SPEC_GLOBS: &[&str] = &["specs/**", ".specify/memory/**", ".fallow/**"];
+/// The files the lead writes: spec documents, and drafts the engineer may take up (constitution
+/// VI, FR-007a). Never `.fallow/agents`, `.fallow/pipelines` or `.fallow/squad.toml`: those decide
+/// what agents may run, and only the engineer saves them (FR-026, FR-028; Phase 2 review).
+pub const SPEC_GLOBS: &[&str] = &["specs/**", ".specify/memory/**", ".fallow/drafts/**"];
 /// The folders of `SPEC_GLOBS`, which Fallow commits after a lead's turn.
-pub const SPEC_DIRS: &[&str] = &["specs", ".specify/memory", ".fallow"];
+pub const SPEC_DIRS: &[&str] = &["specs", ".specify/memory", ".fallow/drafts"];
+/// What controls agents, denied to the lead whatever else it may write.
+pub const CONTROL_GLOBS: &[&str] = &[
+    ".fallow/agents/**",
+    ".fallow/pipelines/**",
+    ".fallow/squad.toml",
+];
 
 /// 006's planner wrote these; kept while 006's planner path remains (removed with T044).
 pub const PLAN_GLOBS: &[&str] = &[".fallow/**", "contracts/**", "specs/**", "docs/**"];
@@ -139,7 +147,7 @@ pub fn checker(commands: Vec<String>) -> Rights {
 pub fn lead(mode: Mode, approved: Vec<String>) -> Rights {
     let mut r = Rights {
         edits: Edits::Only(SPEC_GLOBS.iter().map(|s| s.to_string()).collect()),
-        protect: Vec::new(),
+        protect: CONTROL_GLOBS.iter().map(|s| s.to_string()).collect(),
         commands: Vec::new(),
         any_command: false,
         no_commands: false,

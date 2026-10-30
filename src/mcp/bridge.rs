@@ -14,7 +14,7 @@ use std::sync::mpsc;
 use super::pipe;
 
 pub const USAGE: &str = "\
-Usage: fallow mcp-bridge --fallow-pid <PID> --step <HEX>
+Usage: fallow mcp-bridge --fallow-pid <PID> --step <HEX> [--endpoint <SUFFIX>]
 
 Internal: agent steps start this to reach Fallow's step tools. Fallow writes these arguments
 itself, into the step's MCP configuration.
@@ -24,12 +24,15 @@ itself, into the step's MCP configuration.
 pub struct Args {
     pub fallow_pid: u32,
     pub token: String,
+    /// A suffix of the service's endpoint name, for an engine that listens on its own (tests).
+    pub endpoint: Option<String>,
 }
 
 /// Parses the arguments after `mcp-bridge`.
 pub fn parse<I: IntoIterator<Item = OsString>>(args: I) -> Result<Args, String> {
     let mut pid = None;
     let mut token = None;
+    let mut endpoint = None;
     let mut it = args.into_iter().map(|a| a.to_string_lossy().into_owned());
     while let Some(a) = it.next() {
         let (name, inline) = match a.split_once('=') {
@@ -62,12 +65,20 @@ pub fn parse<I: IntoIterator<Item = OsString>>(args: I) -> Result<Args, String> 
                 }
                 token = Some(t);
             }
+            "--endpoint" => {
+                let e = value()?;
+                if !e.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') {
+                    return Err("--endpoint: letters, digits and - only".into());
+                }
+                endpoint = Some(e);
+            }
             other => return Err(format!("unknown argument {other:?}")),
         }
     }
     Ok(Args {
         fallow_pid: pid.ok_or("--fallow-pid is required")?,
         token: token.ok_or("--step is required")?,
+        endpoint,
     })
 }
 
@@ -82,7 +93,10 @@ enum Ended {
 /// refuses the connection.
 pub fn run(a: &Args) -> ExitCode {
     let endpoint = match pipe::service_endpoint() {
-        Ok(e) => e,
+        Ok(e) => match &a.endpoint {
+            Some(suffix) => format!("{e}-{suffix}"),
+            None => e,
+        },
         Err(e) => {
             eprintln!("fallow mcp-bridge: {e}");
             return ExitCode::from(3);
@@ -172,5 +186,8 @@ mod tests {
         assert!(p(&["--fallow-pid", "1", "--step", "XY"]).is_err());
         assert!(p(&["--bogus"]).is_err());
         assert!(p(&["--fallow-pid", "nope", "--step", &t]).is_err());
+        let a = p(&["--fallow-pid", "1", "--step", &t, "--endpoint", "test-7"]).unwrap();
+        assert_eq!(a.endpoint.as_deref(), Some("test-7"));
+        assert!(p(&["--fallow-pid", "1", "--step", &t, "--endpoint", "../x"]).is_err());
     }
 }
