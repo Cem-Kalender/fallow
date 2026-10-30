@@ -128,46 +128,46 @@ Unless a task says otherwise, tests use the `fake` runtime (research S-13).
 
 ### Tests for User Story 1
 
-- [ ] T022 [P] [US1] `tests/us1_projects.rs`:
+- [X] T022 [P] [US1] `tests/us1_projects.rs`:
   - adding a project installs Spec Kit only where files are missing, overwriting nothing (CI gate VI);
   - an existing Spec Kit version is reported;
   - the git and folder kinds are recognised;
   - a missing path is shown as missing;
   - removing a project deletes nothing in its folder.
-- [ ] T023 [P] [US1] `tests/us1_conversation.rs`:
+- [X] T023 [P] [US1] `tests/us1_conversation.rs`:
   - a turn resumes its session, and a spec session forks from the project conversation;
   - the reply streams as events;
   - after a turn, changes outside the spec paths are discarded and named (CI gate VI), and the spec documents are committed;
   - the engineer's edits reach the next turn;
   - a document edit with an old version returns 409.
-- [ ] T024 [P] [US1] `tests/us1_modes.rs`:
+- [X] T024 [P] [US1] `tests/us1_modes.rs`:
   - each mode gives the expected rights;
   - Shift+Tab's order is right;
   - `approve` handles once, always (the prefix is added after confirmation), deny, and the 10-minute time-out;
   - a new conversation starts in Ask.
-- [ ] T025 [P] [US1] `tests/us1_lock.rs`:
+- [X] T025 [P] [US1] `tests/us1_lock.rs`:
   - the lock is refused for open markers, analyze not done, a critical finding, a story without a must-fail scenario, and a broken `tasks.md`, naming each;
   - a lock commits the documents and creates the loop with its phases and the suggested budget.
 
 ### Implementation for User Story 1
 
-- [ ] T026 [US1] Projects in `src/project/mod.rs`: `projects.json` written atomically; add, remove and patch; the kind; the missing state; features scanned from `specs/NNN-*`.
-- [ ] T027 [US1] Spec Kit installation in `src/project/install.rs`: the embedded files are copied only where missing; the version is detected; the result is reported.
-- [ ] T028 [US1] Approved commands in `src/project/commands.rs`: the check, the list per project, and the API to read and edit it.
-- [ ] T029 [US1] Conversations in `src/conversation/mod.rs`:
+- [X] T026 [US1] Projects in `src/project/mod.rs`: `projects.json` written atomically; add, remove and patch; the kind; the missing state; features scanned from `specs/NNN-*`.
+- [X] T027 [US1] Spec Kit installation in `src/project/install.rs`: the embedded files are copied only where missing; the version is detected; the result is reported.
+- [X] T028 [US1] Approved commands in `src/project/commands.rs`: the check, the list per project, and the API to read and edit it.
+- [X] T029 [US1] Conversations in `src/conversation/mod.rs`:
   - turns through the runtime, with the session and its fork;
   - worktrees for git projects (research S-6);
   - commit or discard after each turn;
   - the notice for plain folders;
   - the conversation's event log, and resume after a restart.
-- [ ] T030 [US1] Chat modes and approvals in `src/conversation/modes.rs`, and the `approve` tool in `src/mcp/`, as contracts/mcp-tools.md describes. Use the fallback when T001 says so.
-- [ ] T031 [US1] The lead's instructions in `src/agent/prompts.rs`: per Spec Kit step, the `reply` schema in `src/agent/schemas.rs`, and the proposed feature.
-- [ ] T032 [US1] Features in `src/conversation/features.rs`:
+- [X] T030 [US1] Chat modes and approvals in `src/conversation/modes.rs`, and the `approve` tool in `src/mcp/`, as contracts/mcp-tools.md describes. Use the fallback when T001 says so.
+- [X] T031 [US1] The lead's instructions in `src/agent/prompts.rs`: per Spec Kit step, the `reply` schema in `src/agent/schemas.rs`, and the proposed feature.
+- [X] T032 [US1] Features in `src/conversation/features.rs`:
   - a new feature gets its number, its branch, its worktree and a fork of the project conversation;
   - the stepper and its moves;
   - documents read and written with versions; while a lead turn runs, writes are refused (research S-21);
   - the branches of research S-9: `NNN-name` from the base branch, which is recorded as the merge target.
-- [ ] T033 [US1] The lock in `src/speckit/lock.rs`: the checks, the budget suggestion, the lock commit, the `git init` offer for plain folders, and creating the loop. The loop's start arrives in US2.
+- [X] T033 [US1] The lock in `src/speckit/lock.rs`: the checks, the budget suggestion, the lock commit, the `git init` offer for plain folders, and creating the loop. The loop's start arrives in US2.
 - [ ] T034 [US1] The API routes for projects, conversations and features, as contracts/web-api.md describes, in `src/service/http.rs`.
 - [ ] T035 [US1] The project conversation screen in `src/service/web/screens/project.js`, matching `mockup/Project.dc.html`:
   - the features and project files column;

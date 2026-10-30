@@ -77,6 +77,7 @@ pub fn serve(
         tx: tx.clone(),
         exe,
         pid: std::process::id(),
+        config: paths.dir.clone(),
     };
     // The pipe first: it is what makes this the only service.
     let secret = crate::platform::random::hex(32).map_err(|e| e.to_string())?;
@@ -123,9 +124,10 @@ pub fn serve(
     Ok(())
 }
 
-/// One connection on the pipe: the command line asks one thing and gets one answer. Agent
-/// steps' bridges are refused until their tools arrive (user story 2).
+/// One connection on the pipe: the command line asks one thing and gets one answer; an agent's
+/// MCP bridge serves its tools (`step_conn`).
 fn pipe_conn(conn: pipe::Conn, tx: &Sender<Msg>, port: u16, secret: &str) {
+    let peer = conn.peer.pid;
     let mut reader = BufReader::new(conn.reader);
     let mut writer = conn.writer;
     let mut line = Vec::new();
@@ -135,12 +137,85 @@ fn pipe_conn(conn: pipe::Conn, tx: &Sender<Msg>, port: u16, secret: &str) {
     let Ok(hello) = serde_json::from_slice::<Value>(&line) else {
         return;
     };
+    if hello["kind"] == "step" {
+        if let Some(token) = hello["token"].as_str() {
+            step_conn(token, peer, reader, writer, tx);
+        }
+        return;
+    }
     if hello["kind"] != "cli" {
         return;
     }
     let req = &hello["request"];
     let answer = cli_request(req, tx, port, secret);
     let _ = pipe::write_line(&mut *writer, &answer.to_string());
+}
+
+/// How long a tool call may wait for its answer (an approval waits up to 10 minutes).
+const TOOL_WAIT: std::time::Duration = std::time::Duration::from_secs(11 * 60);
+
+/// An agent's MCP bridge (006 research R-5, 007 contracts/mcp-tools.md): the token must be live
+/// and the bridge one of the agent's own processes; then MCP over the pipe, each tool call
+/// answered by the engine.
+fn step_conn(
+    token: &str,
+    peer: u32,
+    mut reader: BufReader<Box<dyn std::io::Read + Send>>,
+    mut writer: Box<dyn std::io::Write + Send>,
+    tx: &Sender<Msg>,
+) {
+    use crate::mcp::rpc;
+    let tools = match ask(
+        tx,
+        Request::Studio(crate::studio::Req::ToolOpen {
+            token: token.to_string(),
+            pid: peer,
+        }),
+    ) {
+        Reply::Ok(v) => v,
+        Reply::Err(_) => return,
+    };
+    let mut server = rpc::Server::new(tools).with_instructions(Some(
+        "Fallow's tools for this step of a Fallow loop or chat.".into(),
+    ));
+    let mut line = Vec::new();
+    loop {
+        line.clear();
+        match pipe::read_line(&mut reader, &mut line) {
+            Ok(true) if line.len() <= pipe::MAX_LINE => {}
+            _ => return,
+        }
+        let text = String::from_utf8_lossy(&line);
+        let out = match server.handle(&text) {
+            rpc::Action::Reply(l) => l,
+            rpc::Action::Call {
+                id,
+                name,
+                arguments,
+                ..
+            } => {
+                let (rtx, rrx) = mpsc::channel();
+                let call = Request::ToolCall {
+                    token: token.to_string(),
+                    name,
+                    args: arguments,
+                };
+                if tx.send(Msg::Request(call, rtx)).is_err() {
+                    return;
+                }
+                let content = |text: String, error: bool| json!({ "content": [{ "type": "text", "text": text }], "isError": error });
+                match rrx.recv_timeout(TOOL_WAIT) {
+                    Ok(Reply::Ok(v)) => rpc::result_line(&id, content(v.to_string(), false)),
+                    Ok(Reply::Err(e)) => rpc::result_line(&id, content(e, true)),
+                    Err(_) => rpc::result_line(&id, content("no answer in time".into(), true)),
+                }
+            }
+            rpc::Action::Cancelled(_) | rpc::Action::None => continue,
+        };
+        if pipe::write_line(&mut *writer, &out).is_err() {
+            return;
+        }
+    }
 }
 
 fn page_url(port: u16, secret: &str, path: &str) -> String {
@@ -268,10 +343,59 @@ pub fn engine_for_tests(
         tx: tx.clone(),
         exe: std::env::current_exe().unwrap_or_default(),
         pid: std::process::id(),
+        config: None,
     };
     let engine = Engine::load(data, ctx)?;
     let h = std::thread::spawn(move || engine.serve(rx));
     Ok((tx, h))
+}
+
+/// For tests: an engine that also serves agents' MCP bridges, on a pipe of its own, so tests can
+/// drive the tools end to end. `exe` is Fallow's binary (`mcp-bridge`); `config` the engineer's
+/// configuration folder.
+pub struct ToolEngine {
+    pub tx: Sender<Msg>,
+    pub handle: std::thread::JoinHandle<()>,
+    _listener: pipe::Listener,
+}
+
+pub fn engine_with_tools(
+    data: PathBuf,
+    settings: Settings,
+    config: Option<PathBuf>,
+    exe: PathBuf,
+    approval_wait: Option<std::time::Duration>,
+) -> Result<ToolEngine, String> {
+    static N: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    let suffix = format!(
+        "test-{}-{}",
+        std::process::id(),
+        N.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    );
+    let (tx, rx) = mpsc::channel::<Msg>();
+    let ctx = Ctx {
+        settings,
+        tx: tx.clone(),
+        exe,
+        pid: std::process::id(),
+        config,
+    };
+    let tx_pipe = tx.clone();
+    let listener = pipe::listen(
+        &format!("{}-{suffix}", pipe::service_endpoint()?),
+        Arc::new(move |conn| pipe_conn(conn, &tx_pipe, 0, "")),
+    )?;
+    let mut engine = Engine::load(data, ctx)?;
+    engine.studio.endpoint = Some(suffix);
+    if let Some(w) = approval_wait {
+        engine.studio.approval_wait = w;
+    }
+    let handle = std::thread::spawn(move || engine.serve(rx));
+    Ok(ToolEngine {
+        tx,
+        handle,
+        _listener: listener,
+    })
 }
 
 pub use engine::summary;

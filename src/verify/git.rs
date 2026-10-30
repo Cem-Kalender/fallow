@@ -57,6 +57,17 @@ pub fn changes(dir: &Path) -> Result<Vec<String>, String> {
         .collect())
 }
 
+/// Changed or untracked files, each untracked file named on its own (not its folder).
+pub fn changes_all(dir: &Path) -> Result<Vec<String>, String> {
+    Ok(
+        git(dir, &["status", "--porcelain", "--untracked-files=all"])?
+            .lines()
+            .filter(|l| l.len() > 3)
+            .map(|l| l[3..].trim_matches('"').to_string())
+            .collect(),
+    )
+}
+
 /// Commits in `to` that are not in `from` (`rev-list from..to`).
 pub fn commits_between(dir: &Path, from: &str, to: &str) -> Result<Vec<String>, String> {
     Ok(git(dir, &["rev-list", &format!("{from}..{to}")])?

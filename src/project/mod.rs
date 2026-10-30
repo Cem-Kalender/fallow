@@ -66,6 +66,11 @@ pub struct Feature {
     /// Unlocked to change the spec (FR-009).
     #[serde(default)]
     pub unlocked: bool,
+    /// The analyze step ran, and what it found (FR-008).
+    #[serde(default)]
+    pub analyzed: bool,
+    #[serde(default)]
+    pub findings: Vec<crate::speckit::lock::Finding>,
 }
 
 fn first_step() -> String {

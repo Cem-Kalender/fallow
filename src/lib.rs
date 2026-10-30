@@ -17,4 +17,5 @@ pub mod publish;
 pub mod run;
 pub mod service;
 pub mod speckit;
+pub mod studio;
 pub mod verify;

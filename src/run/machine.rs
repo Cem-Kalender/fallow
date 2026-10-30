@@ -169,6 +169,9 @@ pub fn start_planning(run: &mut Run) -> Result<(), String> {
 /// resumed in their sessions on the next pass; a question that only a transient error raised is
 /// cleared, so the run is tried again.
 pub fn resume(run: &mut Run) -> Result<(), String> {
+    if run.state.feature_loop.is_some() {
+        return Ok(());
+    }
     // A stop recorded without its stage: the run is stopped.
     if run.state.stopped.is_some() {
         return run.append(Event::Stage {
@@ -260,6 +263,10 @@ fn limit_hit(run: &Run) -> Option<(String, String)> {
 /// Decides and starts what comes next. Does nothing while something runs.
 pub fn drive(run: &mut Run, ctx: &Ctx) -> Result<(), String> {
     if run.busy.is_some() || run.state.stage.is_final() || run.state.stopped.is_some() {
+        return Ok(());
+    }
+    // 007: a feature's loop is driven by its own machine (US2, T045).
+    if run.state.feature_loop.is_some() {
         return Ok(());
     }
     if run.state.stage == Stage::Paused {

@@ -171,3 +171,67 @@ pub fn good_files() -> Vec<(&'static str, &'static str)> {
         ("tests/test_calc.py", CALC_TEST),
     ]
 }
+
+// ---- 007: the studio --------------------------------------------------------------------
+
+use fallow::studio::Req;
+
+/// Settings where the `claude` runtime (the lead's) is the fake agent playing `scenario`.
+pub fn studio_settings(scenario: &Path) -> Settings {
+    let exe = env!("CARGO_BIN_EXE_fallow-fake-agent");
+    let text = format!(
+        "[agents.claude]\ncommand = {exe:?}\nargs = [\"--scenario\", {:?}]\n",
+        scenario.display().to_string()
+    );
+    let mut n = Vec::new();
+    let s = Settings::parse("settings.toml", &text, &mut n);
+    assert!(n.is_empty(), "{n:?}");
+    s
+}
+
+/// An engine that serves MCP bridges, with Fallow's own binary for `mcp-bridge`.
+pub fn start_studio(
+    root: &Path,
+    scenario: &Path,
+    approval_wait: Option<Duration>,
+) -> fallow::service::ToolEngine {
+    let config = root.join("config");
+    std::fs::create_dir_all(&config).unwrap();
+    fallow::service::engine_with_tools(
+        root.join("data"),
+        studio_settings(scenario),
+        Some(config),
+        PathBuf::from(env!("CARGO_BIN_EXE_fallow")),
+        approval_wait,
+    )
+    .unwrap()
+}
+
+pub fn sreq(tx: &Sender<Msg>, r: Req) -> Result<Value, String> {
+    ask(tx, Request::Studio(r))
+}
+
+/// Waits until `pred` holds for the conversation's view.
+pub fn wait_conv(tx: &Sender<Msg>, conv: &str, what: &str, pred: impl Fn(&Value) -> bool) -> Value {
+    let end = Instant::now() + Duration::from_secs(90);
+    let mut last = Value::Null;
+    while Instant::now() < end {
+        if let Ok(v) = sreq(tx, Req::Conversation { id: conv.into() }) {
+            if pred(&v) {
+                return v;
+            }
+            last = v;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    panic!("timed out waiting for {what}: {last}");
+}
+
+/// Waits until the conversation's latest turn has ended, and returns the view.
+pub fn turn_ended(tx: &Sender<Msg>, conv: &str, n: usize) -> Value {
+    wait_conv(tx, conv, "the turn's end", |v| {
+        v["busy"] == false
+            && v["turns"].as_array().is_some_and(|t| t.len() >= n)
+            && !v["turns"][n - 1]["reply"].is_null()
+    })
+}
