@@ -170,6 +170,8 @@ pub struct LoopState {
     pub affected: Vec<String>,
     /// The lock commit before the latest new lock, to show the builder what changed.
     pub prev_lock_commit: Option<String>,
+    /// The event number of the latest new lock: tries and repairs count from there.
+    pub relocked_seq: u64,
     /// How the loop ended: verified, and what was not checked.
     pub outcome: Option<(bool, Vec<String>)>,
 }
@@ -321,7 +323,9 @@ impl RunState {
     /// Starts or stops the clock of the time spent waiting for the engineer, which a pause
     /// already covers.
     fn wait_clock(&mut self, at: &str) {
-        let waiting = self.needs.is_some() && self.paused_since.is_none();
+        // Unlocked, the loop waits for the engineer's new lock (research S-17).
+        let unlocked = self.feature_loop.as_ref().is_some_and(|f| f.unlocked);
+        let waiting = (self.needs.is_some() || unlocked) && self.paused_since.is_none();
         match (&self.waiting_since, waiting) {
             (None, true) => self.waiting_since = Some(at.to_string()),
             (Some(since), false) => {
@@ -636,6 +640,7 @@ impl RunState {
                     unlocked: false,
                     affected: Vec::new(),
                     prev_lock_commit: None,
+                    relocked_seq: 0,
                     outcome: None,
                 });
             }
@@ -723,10 +728,18 @@ impl RunState {
                     f.prev_lock_commit = Some(std::mem::replace(&mut f.lock_commit, commit.clone()));
                     f.affected = affected.clone();
                     f.outcome = None;
+                    f.relocked_seq = l.seq;
                     if !phases.is_empty() {
                         // The new lock's tasks: a phase keeps where it was when it is the same
-                        // phase (place and title); new tasks start pending.
+                        // phase (place and title), and a new or moved phase starts fresh; a task
+                        // keeps its result only when its text is the same (ids can be renumbered).
                         let old = std::mem::take(&mut f.phases);
+                        let old_text = |id: &str| {
+                            old.iter()
+                                .flat_map(|p| p.spec.tasks.iter())
+                                .find(|t| t.id == id)
+                                .map(|t| t.text.clone())
+                        };
                         for p in phases {
                             let kept = old
                                 .iter()
@@ -736,15 +749,23 @@ impl RunState {
                                 state: kept.map_or(PhaseState::Pending, |k| k.state),
                                 session: kept.and_then(|k| k.session.clone()),
                                 handover: kept.and_then(|k| k.handover.clone()),
-                                reopened: None,
+                                reopened: if kept.is_some() { None } else { Some(l.seq) },
                             });
                             for t in &p.tasks {
-                                f.tasks.entry(t.id.clone()).or_insert(TaskStatus {
+                                let same = old_text(&t.id).as_deref() == Some(t.text.as_str());
+                                let fresh = TaskStatus {
                                     phase: p.n,
                                     state: TaskState::Pending,
                                     commit: None,
                                     repairs: 0,
-                                });
+                                };
+                                match f.tasks.get_mut(&t.id) {
+                                    Some(s) if same => s.phase = p.n,
+                                    Some(s) => *s = fresh,
+                                    None => {
+                                        f.tasks.insert(t.id.clone(), fresh);
+                                    }
+                                }
                             }
                         }
                     }

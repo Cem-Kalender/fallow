@@ -47,7 +47,7 @@ Every step returns a structured result that follows a JSON Schema (given with `-
 - the checker's worktree is unchanged;
 - refused commands make the verdict incomplete (006).
 
-A checker other than the reviewer (for example the security reviewer) answers its own checks in `findings`. A finding of severity `high` or `critical` fails the step.
+A checker other than the reviewer (for example the security reviewer) answers its own checks in `findings`. "The reviewer" is the pipeline's first checker at the checkpoint's end without `paths`, the one that makes the pipeline verifying. A checker at a phase's end or `once` also answers in `findings`. A finding of severity `high` or `critical` fails the step.
 
 ## `reply` (the lead, in chats)
 

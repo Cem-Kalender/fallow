@@ -96,3 +96,54 @@ fn a_failing_review_is_repaired_gated_and_checked_again() {
     drop(e);
     let _ = std::fs::remove_dir_all(&root);
 }
+
+#[test]
+fn the_engineers_options_let_the_loop_go_on() {
+    use fallow::run::engine::Request;
+    let root = scratch("options");
+    let note = |n: &str| repair_step("T002", &[(&*format!("tests/note{n}.txt"), n)]);
+    let steps = [
+        task_step("T001", &[("calc/__init__.py", "")], ""),
+        handover_step(1, ""),
+        task_step("T002", &[("calc/__init__.py", ADD_WRONG), ("tests/__init__.py", ""), ("tests/test_add.py", TEST_ADD)], ""),
+        note("1"),
+        note("2"),
+        note("3"),
+        // After "allow one more repair".
+        repair_step("T002", &[("calc/__init__.py", CALC_INIT)]),
+        task_step("T003", &[("tests/test_add2.py", "")], ""),
+        handover_step(2, ""),
+        check_step("US1", true, ""),
+        // T004's builder asks a question, then goes on with the answer in its session.
+        "[[step]]\nkind = \"build\"\npart = \"T004\"\noutput = { status = \"blocked\", task = \"T004\", question = \"Should sub() accept floats?\", summary = \"asking\" }\n\n".to_string(),
+        task_step("T004", &[("calc/__init__.py", CALC_INIT_SUB), ("tests/test_sub.py", TEST_SUB)], "when = \"ints only, please\""),
+        handover_step(3, ""),
+        check_step("US2", true, ""),
+    ]
+    .concat();
+    let (e, _repo, id) = locked_calc(&root, &steps, None);
+    let tx = &e.tx;
+    let v = wait_for(tx, id, "the cap", |v| !v["needs"].is_null());
+    assert!(v["needs"]["options"].as_array().unwrap().iter().any(|o| o == "allow one more repair"), "{}", v["needs"]);
+    ask(tx, Request::Retry { id }).unwrap();
+    let v = wait_for(tx, id, "the question", |v| {
+        v["needs"]["why"].as_str().is_some_and(|w| w.contains("floats"))
+    });
+    assert_eq!(v["feature_loop"]["tasks"]["T002"]["state"], "accepted");
+    assert_eq!(steps_of(&v, "repair", "T002").len(), 4, "one more repair after the cap");
+    ask(
+        tx,
+        Request::Answer {
+            id,
+            text: "No, ints only, please.".into(),
+        },
+    )
+    .unwrap();
+    let v = wait_for(tx, id, "ready to merge", |v| v["stage"] == "ready");
+    let b = steps_of(&v, "build", "T004");
+    assert_eq!(b.len(), 2);
+    assert_eq!(b[1]["resume"], b[0]["session"], "the answer goes to the asking session");
+    assert_eq!(v["feature_loop"]["outcome"][0], true);
+    drop(e);
+    let _ = std::fs::remove_dir_all(&root);
+}

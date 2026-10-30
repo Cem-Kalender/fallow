@@ -81,7 +81,7 @@ fn the_page_checks_every_request() {
     );
     assert!(lower.contains("x-frame-options: deny"));
     assert!(lower.contains("cache-control: no-store"));
-    let r = get(port, "/api/runs", &host, &cookie);
+    let r = get(port, "/api/dashboard", &host, &cookie);
     assert!(
         r.starts_with("HTTP/1.1 200") && r.contains("\"ok\":true"),
         "{r}"
@@ -92,7 +92,7 @@ fn the_page_checks_every_request() {
         raw(
             port,
             &format!(
-                "POST /api/runs/1/merge HTTP/1.1\r\nHost: {host}\r\n{cookie}{origin}Content-Type: application/json\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{{}}"
+                "POST /api/loops/1/merge HTTP/1.1\r\nHost: {host}\r\n{cookie}{origin}Content-Type: application/json\r\nContent-Length: 16\r\nConnection: close\r\n\r\n{{\"confirm\":true}}"
             ),
         )
     };

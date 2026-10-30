@@ -98,6 +98,21 @@ pub enum Request {
         budget_usd: Option<f64>,
         budget_minutes: Option<u64>,
     },
+    /// 007: a loop's screen, its feed, and one task's story (US3).
+    Loop { id: u64 },
+    LoopActivity {
+        id: u64,
+        filter: super::activity::Filter,
+    },
+    Task { id: u64, task: String },
+    /// 007: the engineer's pause, "go on", and note for the next step (FR-019).
+    Pause { id: u64 },
+    GoOn { id: u64 },
+    Note {
+        id: u64,
+        text: String,
+        agent: Option<String>,
+    },
     /// 007: unlocks a locked feature; its loop halts after the current step (FR-009).
     Unlock { project: String, feature: String },
     /// 007: the stories a new lock would reopen, from the working copy (research S-17).
@@ -1139,6 +1154,32 @@ impl Engine {
             Request::Stop { id, reason } => run_mut(self, id)
                 .and_then(|r| super::machine::stop(r, reason))
                 .map(|()| json!({})),
+            Request::Loop { id } => {
+                let ctx = &self.ctx;
+                self.runs
+                    .get(&id)
+                    .ok_or_else(|| format!("there is no loop {id}"))
+                    .and_then(|r| super::activity::view(r, ctx))
+            }
+            Request::LoopActivity { id, filter } => self
+                .runs
+                .get(&id)
+                .ok_or_else(|| format!("there is no loop {id}"))
+                .map(|r| super::activity::activity(r, &filter)),
+            Request::Task { id, task } => self
+                .runs
+                .get(&id)
+                .ok_or_else(|| format!("there is no loop {id}"))
+                .and_then(|r| super::activity::task(r, &task)),
+            Request::Pause { id } => run_mut(self, id)
+                .and_then(super::machine::pause)
+                .map(|()| json!({})),
+            Request::GoOn { id } => run_mut(self, id)
+                .and_then(super::machine::go_on)
+                .map(|()| json!({})),
+            Request::Note { id, text, agent } => run_mut(self, id)
+                .and_then(|r| super::machine::note(r, &text, agent))
+                .map(|()| json!({})),
         };
         let id = match &out {
             Ok(v) => v["id"].as_u64(),
@@ -1198,8 +1239,18 @@ pub fn needs(r: &Run) -> Option<String> {
     if let Some(n) = &s.needs {
         return Some(n.why.clone());
     }
-    if s.feature_loop.is_some() {
-        return (s.stage == Stage::Ready).then(|| "Ready to merge".into());
+    if let Some(l) = &s.feature_loop {
+        if s.stage != Stage::Ready {
+            return None;
+        }
+        // An unverified result never in the words of a verified one (constitution).
+        return Some(match &l.outcome {
+            Some((false, missing)) => format!(
+                "Done, not verified by Fallow ({}): review it before merging",
+                missing.join(", ")
+            ),
+            _ => "Ready to merge".into(),
+        });
     }
     match s.stage {
         Stage::Planning if s.plan_approvable && r.busy.is_none() => {

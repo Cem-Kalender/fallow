@@ -551,22 +551,57 @@ fn handle(mut req: tiny_http::Request, tx: &Sender<Msg>, port: u16, secret: &str
             }
         }
         (true, ["app.css"]) => respond(req, 200, "text/css; charset=utf-8", APP_CSS.into()),
-        (true, ["api", "runs"]) => json_reply(req, ask(tx, Request::List)),
-        (true, ["api", "runs", r]) => match id(r) {
-            Some(i) => json_reply(req, ask(tx, Request::Get { id: i })),
-            None => respond(req, 404, "text/plain", "no such run".into()),
+        // A loop (contracts/web-api.md, Loops).
+        (true, ["api", "loops", r]) => match id(r) {
+            Some(i) => json_reply(req, ask(tx, Request::Loop { id: i })),
+            None => respond(req, 404, "text/plain", "no such loop".into()),
         },
-        (true, ["api", "runs", r, "steps", n, "activity"]) => {
+        (true, ["api", "loops", r, "activity"]) => match id(r) {
+            Some(i) => {
+                let arg = |k: &str| query_arg(&url, k).filter(|v| !v.is_empty());
+                json_reply(
+                    req,
+                    ask(
+                        tx,
+                        Request::LoopActivity {
+                            id: i,
+                            filter: crate::run::activity::Filter {
+                                agent: arg("agent"),
+                                kind: arg("kind"),
+                                task: arg("task"),
+                                after: arg("after").and_then(|v| v.parse().ok()).unwrap_or(0),
+                            },
+                        },
+                    ),
+                )
+            }
+            None => respond(req, 404, "text/plain", "no such loop".into()),
+        },
+        (true, ["api", "loops", r, "tasks", t]) => match id(r) {
+            Some(i) => json_reply(
+                req,
+                ask(
+                    tx,
+                    Request::Task {
+                        id: i,
+                        task: percent_decode(t),
+                    },
+                ),
+            ),
+            None => respond(req, 404, "text/plain", "no such loop".into()),
+        },
+        (true, ["api", "loops", r, "steps", n, "activity"]) => {
             match (id(r), n.parse::<u32>().ok()) {
                 (Some(i), Some(n)) => json_reply(req, ask(tx, Request::Activity { id: i, n })),
                 _ => respond(req, 404, "text/plain", "no such step".into()),
             }
         }
-        (false, ["api", "runs", r, action @ ..]) => {
+        (false, ["api", "loops", r, action @ ..]) => {
             let Some(i) = id(r) else {
-                return respond(req, 404, "text/plain", "no such run".into());
+                return respond(req, 404, "text/plain", "no such loop".into());
             };
             let text = body["text"].as_str().unwrap_or_default().to_string();
+            let confirmed = body["confirm"].as_bool() == Some(true);
             let request = match action {
                 ["answer"] => Request::Answer { id: i, text },
                 ["limits"] => Request::Limits {
@@ -578,8 +613,21 @@ fn handle(mut req: tiny_http::Request, tx: &Sender<Msg>, port: u16, secret: &str
                         .map(|r| r.min(u32::MAX as u64) as u32),
                     once: body["once"].as_bool().unwrap_or(false),
                 },
+                ["merge"] | ["stop"] if !confirmed => {
+                    return json_reply(req, Reply::Err("this needs {\"confirm\": true}".into()));
+                }
                 ["merge"] => Request::Merge { id: i },
                 ["retry"] => Request::Retry { id: i },
+                ["pause"] => Request::Pause { id: i },
+                ["resume"] => Request::GoOn { id: i },
+                ["note"] => Request::Note {
+                    id: i,
+                    text,
+                    agent: body["agent"]
+                        .as_str()
+                        .filter(|s| !s.is_empty())
+                        .map(str::to_string),
+                },
                 ["stop"] => Request::Stop {
                     id: i,
                     reason: body["reason"]

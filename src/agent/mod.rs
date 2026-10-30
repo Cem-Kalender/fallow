@@ -124,6 +124,9 @@ pub enum Event {
 pub struct Activity {
     /// Milliseconds since the step started.
     pub t: u64,
+    /// When it happened, in milliseconds since the epoch (0 in lines written before 007 US3).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub at: u64,
     /// `say`, `read`, `edit`, `write`, `run`, `search`, `tool`, `result`, `error`, `refused`,
     /// `progress`.
     pub kind: String,
@@ -133,6 +136,10 @@ pub struct Activity {
     /// The tool call a result belongs to.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub id: String,
+}
+
+fn is_zero(v: &u64) -> bool {
+    *v == 0
 }
 
 /// The longest text kept for one line's `detail`: a diff or a command's output.
@@ -166,6 +173,7 @@ pub fn clip(s: &str, n: usize) -> String {
 pub fn activity_of(e: &Event, t: u64) -> Option<Activity> {
     let line = |kind: &str, text: String, detail: String, id: &str| Activity {
         t,
+        at: 0,
         kind: kind.into(),
         text,
         detail,
@@ -208,7 +216,8 @@ pub fn activity_of(e: &Event, t: u64) -> Option<Activity> {
                 "error"
             },
             clip(output, 200),
-            if output.chars().count() > 200 {
+            // The whole output when the one-line summary loses something (lines, length).
+            if output.chars().count() > 200 || output.trim().contains('\n') {
                 trim_to(output, DETAIL_MAX)
             } else {
                 String::new()

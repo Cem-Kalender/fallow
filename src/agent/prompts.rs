@@ -219,6 +219,25 @@ pub fn loop_check(
     s
 }
 
+/// A checker other than the one answering the scenarios (a security reviewer), or a checker
+/// at a phase's end or once: it reports its own checks as findings (contracts/step-results.md).
+pub fn loop_check_findings(
+    cx: &LoopCx,
+    part: &str,
+    agent: &str,
+    what: &str,
+    commit: &str,
+) -> String {
+    let mut s = header("review", Some(part));
+    s.push_str(&format!(
+        "You are the {agent} of \"{}\" (documents in `{}`). {what} Work at commit {commit}, checked out in your worktree. Never change files: a checker whose worktree changes stops counting.\n\nCheck what your definition says by running something, and report each problem as a finding with its `severity` (`low`, `medium`, `high`, `critical`), `where` it is, what you `ran` and the `result`. A `high` or `critical` finding fails the step. A suspicion you could not show by running something is at most `low`.\n\n{}\n\nReturn `findings` (empty when you found nothing) and a `summary`.",
+        cx.title,
+        cx.feature_dir,
+        may_run_line(cx.may_run)
+    ));
+    s
+}
+
 /// A checker resumed after an incomplete verdict (FR-012).
 pub fn loop_check_missing(story: &str, missing: &[String]) -> String {
     let mut s = header("review", Some(story));
@@ -231,8 +250,8 @@ pub fn loop_check_missing(story: &str, missing: &[String]) -> String {
 }
 
 /// A maker step of the pipeline other than the builder (a test-writer, a docs-writer).
-pub fn loop_make(cx: &LoopCx, agent: &str, what: &str) -> String {
-    let mut s = header("make", Some(agent));
+pub fn loop_make(cx: &LoopCx, part: &str, agent: &str, what: &str) -> String {
+    let mut s = header("make", Some(part));
     s.push_str(&format!(
         "You are the {agent} of the locked feature \"{}\" (documents in `{}`, locked: never change them). {what}\n\n{}\n\nReturn `status`, `task` (\"{agent}\"), the `files` you changed, the `commands` you ran with their results, and a `summary`.",
         cx.title,

@@ -72,3 +72,19 @@ fn a_chat_turn_goes_first_and_the_loop_waits_for_a_slot() {
     drop(e);
     let _ = std::fs::remove_dir_all(&root);
 }
+
+#[test]
+fn a_step_waits_for_a_free_slot_and_for_memory_room() {
+    use fallow::run::engine::{STEP_MB, Slots};
+    let s = Slots::default();
+    // Two free slots and room for three steps: two start, the third waits for a slot.
+    s.set(2, 3 * STEP_MB);
+    assert!(s.take().is_ok());
+    assert!(s.take().is_ok());
+    let why = s.take().unwrap_err();
+    assert!(why.starts_with("waiting for a slot") && why.contains("most agents"), "{why}");
+    // A free slot but too little memory: it waits for room.
+    s.set(4, STEP_MB - 1);
+    let why = s.take().unwrap_err();
+    assert!(why.starts_with("waiting for a slot") && why.contains("memory"), "{why}");
+}

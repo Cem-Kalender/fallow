@@ -116,3 +116,45 @@ fn a_pipeline_without_reviews_ends_done_but_not_verified() {
     drop(e);
     let _ = std::fs::remove_dir_all(&root);
 }
+
+#[test]
+fn an_agents_own_commits_and_a_checker_that_edits_count_for_nothing() {
+    let root = scratch("claims-git");
+    let steps = [
+        // T001 commits an edit to the locked spec itself.
+        task_step("T001", &[("calc/__init__.py", ""), ("specs/001-calc/spec.md", "hacked\n")], "commit = \"sneaky\""),
+        repair_step("T001", &[("calc/__init__.py", "# calc\n")]),
+        handover_step(1, ""),
+        task_step("T002", &[("calc/__init__.py", CALC_INIT)], ""),
+        task_step("T003", &[("tests/__init__.py", ""), ("tests/test_add.py", TEST_ADD)], ""),
+        handover_step(2, ""),
+        // The reviewer changes a file in its worktree: its verdict does not count.
+        check_step("US1", true, "files = [{ path = \"calc/__init__.py\", text = \"x\" }]"),
+        check_step("US1", true, ""),
+        task_step("T004", &[("calc/__init__.py", CALC_INIT_SUB), ("tests/test_sub.py", TEST_SUB)], ""),
+        handover_step(3, ""),
+        check_step("US2", true, ""),
+    ]
+    .concat();
+    let (e, repo, id) = locked_calc(&root, &steps, None);
+    let tx = &e.tx;
+    let v = wait_for(tx, id, "ready to merge", |v| v["stage"] == "ready");
+    let t1 = refused(&v, |s| s["task"] == "T001");
+    assert!(t1.iter().any(|r| r.contains("locked documents were changed")), "{t1:?}");
+    let spec_now = git(&repo, &["show", "fallow/001-calc/build:specs/001-calc/spec.md"]);
+    assert!(spec_now.contains("User Story 1"), "the committed edit did not survive: {spec_now}");
+    let log = git(&repo, &["log", "--format=%s", "fallow/001-calc/build"]);
+    assert!(!log.lines().any(|l| l == "sneaky"), "the agent's own commit is not kept: {log}");
+    let c = refused(&v, |s| s["kind"] == "review");
+    assert!(c.iter().any(|r| r.contains("worktree changed")), "{c:?}");
+    // What is merged is what was gated: only handovers and ticks follow the last gate run.
+    let gated = v["gate_runs"].as_array().unwrap().iter().rev().find(|g| g["kind"] == "part").unwrap()["result"]["commit"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let integrated = v["integrated"].as_str().unwrap();
+    let after = git(&repo, &["diff", "--name-only", &gated, integrated]);
+    assert!(after.lines().all(|f| f.starts_with("specs/001-calc/handover/") || f == "specs/001-calc/tasks.md"), "{after}");
+    drop(e);
+    let _ = std::fs::remove_dir_all(&root);
+}

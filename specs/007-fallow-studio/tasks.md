@@ -196,7 +196,7 @@ Unless a task says otherwise, tests use the `fake` runtime (research S-13).
 
 ### Tests for User Story 2
 
-- [ ] T038 [P] [US2] `tests/us2_loop.rs`:
+- [X] T038 [P] [US2] `tests/us2_loop.rs`:
   - a two-story feature with the Standard pipeline;
   - a commit, a tick and a gate run per task;
   - a new session per phase, resumed within it;
@@ -232,7 +232,7 @@ Unless a task says otherwise, tests use the `fake` runtime (research S-13).
   - `fallow:gates` per task or per phase;
   - checkpoint, phase and once steps, in fresh sessions;
   - the `paths` filter;
-  - `parallel_with` within the cap.
+  - `parallel_with` within the cap. *Built so far: such checkers run one after the other at the same point, since a loop runs one step at a time. Running them at once is left for US5 (several loops and steps at once).*
 - [X] T046 [US2] Checks per task in `src/verify/claims.rs` and `src/run/machine.rs`: the claim against the worktree, the locked documents untouched, the task tick, Fallow's commit, and the gates against the baseline.
 - [X] T047 [US2] The handover step: its instruction in `src/agent/prompts.rs`, its schema in `src/agent/schemas.rs`, its check of the three sections and that nothing else changed, and Fallow's commit.
 - [X] T048 [US2] Checker verdicts in `src/verify/verdict.rs`: criteria `USn/k` from `spec.md`, must-fail cases, and findings with severity, where `high` or above fails.
@@ -256,18 +256,18 @@ Unless a task says otherwise, tests use the `fake` runtime (research S-13).
 
 ### Tests for User Story 3
 
-- [ ] T054 [P] [US3] `tests/us3_activity.rs`:
+- [X] T054 [P] [US3] `tests/us3_activity.rs`:
   - runtime events become activity attributed to the agent and the task: diffs, outputs and results (ok, failed, refused);
   - no thinking is shown;
   - Fallow's own check entries appear;
   - the activity reaches long polling within 2 s, p95 over a scripted loop (SC-005).
-- [ ] T055 [P] [US3] `tests/us3_task_detail.rs`: the task endpoint returns its steps, diff, commands, commit and gate result. A reopened page gets the whole history.
+- [X] T055 [P] [US3] `tests/us3_task_detail.rs`: the task endpoint returns its steps, diff, commands, commit and gate result. A reopened page gets the whole history.
 
 ### Implementation for User Story 3
 
-- [ ] T056 [US3] Activity in `src/run/activity.rs`: from runtime events to activity lines with agent and task; Fallow's check entries (commits, gates, verdicts, answers); kept per step.
-- [ ] T057 [US3] The loop API in `src/service/http.rs`: state, pipeline stage, phases and tasks, agents with runtime, model, branch, status and cost, checks, activity with filters, and the task detail.
-- [ ] T058 [US3] The loop screen in `src/service/web/screens/loop.js`, matching `mockup/Run.dc.html`:
+- [X] T056 [US3] Activity in `src/run/activity.rs`: from runtime events to activity lines with agent and task; Fallow's check entries (commits, gates, verdicts, answers); kept per step.
+- [X] T057 [US3] The loop API in `src/service/http.rs`: state, pipeline stage, phases and tasks, agents with runtime, model, branch, status and cost, checks, activity with filters, and the task detail.
+- [X] T058 [US3] The loop screen in `src/service/web/screens/loop.js`, matching `mockup/Run.dc.html`:
   - the header with totals and pause and stop;
   - the pipeline strip with the current stage;
   - the question banner;

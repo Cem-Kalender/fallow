@@ -23,6 +23,10 @@
 //! say = "a reply"                # an assistant message, streamed as deltas with
 //!                                # --include-partial-messages
 //! ask = "a question"             # calls Fallow's MCP `ask` tool; its answer replaces $ANSWER
+//! run = [{ command = "python -m unittest", output = "OK", ok = true }]
+//!                                # commands it "ran" (scripted output), refused like Claude
+//!                                # Code when the rules do not allow them
+//! think = "..."                  # a thinking block, which Fallow must never show
 //! approve = "python -c 1"        # a command outside the rules: asks the --permission-prompt-tool
 //!                                # in the default mode, or is refused under dontAsk;
 //!                                # $APPROVED becomes "allow" or "deny"
@@ -69,6 +73,22 @@ struct Step {
     say: Option<String>,
     ask: Option<String>,
     approve: Option<String>,
+    #[serde(default)]
+    run: Vec<Ran>,
+    think: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct Ran {
+    command: String,
+    #[serde(default)]
+    output: String,
+    #[serde(default = "yes")]
+    ok: bool,
+}
+
+fn yes() -> bool {
+    true
 }
 
 fn cost() -> f64 {
@@ -329,6 +349,32 @@ fn main() -> ExitCode {
         emit(
             json!({"type": "assistant", "session_id": session, "message": {"content": [{"type": "text", "text": say}]}}),
         );
+    }
+    if let Some(t) = &step.think {
+        emit(json!({"type": "assistant", "session_id": session, "message": {"content": [
+            {"type": "thinking", "thinking": t, "signature": "x"}]}}));
+    }
+    for r in &step.run {
+        let id = tool_id();
+        let cmd = r.command.as_str();
+        emit(json!({"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "id": id, "name": "Bash", "input": {"command": cmd}}]}}));
+        let covers = |rules: &[String]| {
+            rules.iter().any(|x| {
+                x == "Bash"
+                    || x.strip_prefix("Bash(")
+                        .and_then(|y| y.strip_suffix(":*)"))
+                        .is_some_and(|p| cmd == p || cmd.starts_with(&format!("{p} ")))
+            })
+        };
+        if covers(&disallowed) || !covers(&allowed) {
+            emit(json!({"type": "user", "message": {"content": [
+                {"type": "tool_result", "tool_use_id": id, "is_error": true,
+                 "content": "Permission to use Bash has been denied because Claude Code is running in don't ask mode."}]}}));
+        } else {
+            emit(json!({"type": "user", "message": {"content": [
+                {"type": "tool_result", "tool_use_id": id, "is_error": !r.ok, "content": r.output}]}}));
+        }
     }
     let mut answer = String::new();
     if let Some(q) = &step.ask {

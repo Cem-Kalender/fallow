@@ -313,19 +313,44 @@ pub fn merge_into(dir: &Path, commit: &str, message: &str) -> Result<String, Vec
     }
 }
 
+/// The change a commit made (its first parent to it), as a unified diff.
+pub fn patch_of(dir: &Path, commit: &str) -> Result<String, String> {
+    git(dir, &["show", "--format=", "--patch", "--no-color", commit])
+}
+
 /// The change between two commits below `path`, as a unified diff.
 pub fn diff_between(dir: &Path, from: &str, to: &str, path: &str) -> Result<String, String> {
     git(dir, &["diff", from, to, "--", path])
 }
 
-/// Merges `commit` into the branch checked out in `dir`, taking `commit`'s side of any
-/// conflicting hunk (a new lock's documents over the build's ticks, which Fallow then restores).
-pub fn merge_theirs(dir: &Path, commit: &str, message: &str) -> Result<String, String> {
-    git(dir, &["merge", "--no-ff", "-X", "theirs", "-m", message, commit])
+/// Starts merging `commit` into the branch checked out in `dir`, taking `commit`'s side of any
+/// conflicting hunk (a new lock's documents over the build's ticks, which Fallow then restores),
+/// without committing: `commit_merge` ends it. A merge left over from before is aborted first.
+pub fn merge_theirs(dir: &Path, commit: &str) -> Result<(), String> {
+    let _ = git(dir, &["merge", "--abort"]);
+    git(dir, &["merge", "--no-ff", "--no-commit", "-X", "theirs", commit])
         .inspect_err(|_| {
             let _ = git(dir, &["merge", "--abort"]);
         })
-        .and_then(|_| head(dir))
+        .map(|_| ())
+}
+
+/// Ends a merge started by `merge_theirs` with everything in the worktree, as one commit.
+pub fn commit_merge(dir: &Path, message: &str) -> Result<String, String> {
+    git(dir, &["add", "-A", "--", "."])?;
+    let has_author = git(dir, &["config", "user.email"]).is_ok_and(|e| !e.trim().is_empty());
+    let mut args: Vec<&str> = Vec::new();
+    if !has_author {
+        args.extend([
+            "-c",
+            "user.name=Fallow",
+            "-c",
+            "user.email=fallow@localhost.invalid",
+        ]);
+    }
+    args.extend(["commit", "-q", "--no-verify", "-m", message]);
+    git(dir, &args)?;
+    head(dir)
 }
 
 /// Whether `dir`'s tracked files are unchanged and `HEAD` is still `at`. New untracked files,

@@ -26,6 +26,8 @@ pub const INTERRUPTED: &str = "interrupted: ";
 pub const SESSION_LOST: &str = "session lost: ";
 /// The start of a question raised because Fallow itself could not go on (a transient error).
 pub const COULD_NOT_GO_ON: &str = "Fallow could not go on: ";
+/// The detail of the engineer's "go on" after a pause (a retry's detail is "retry").
+pub(crate) const RESUMED: &str = "resume";
 pub(crate) const INTERRUPTED_WHY: &str = "interrupted: Fallow stopped while the step ran";
 
 pub(crate) fn gate_defs(run: &Run) -> Vec<GateDef> {
@@ -178,6 +180,10 @@ pub fn drive(run: &mut Run, ctx: &Ctx) -> Result<(), String> {
         return Ok(());
     }
     if run.state.stage == Stage::Paused {
+        // The engineer's own pause holds until they let the loop go on.
+        if super::feature::paused_by_engineer(run) {
+            return Ok(());
+        }
         // A pause that lost its question (the engineer's action cleared it) asks again, or
         // ends when the limits allow the run to go on.
         if run.state.needs.is_none() {
@@ -295,7 +301,7 @@ pub(crate) fn run_gates(
 }
 
 /// Records what a worker reports; what follows is decided by the next pass of `drive`.
-pub fn on_done(run: &mut Run, _ctx: &Ctx, done: Done) -> Result<(), String> {
+pub fn on_done(run: &mut Run, ctx: &Ctx, done: Done) -> Result<(), String> {
     match done {
         Done::Step { n, outcome } => {
             let end = match (&outcome.result, &outcome.failure) {
@@ -321,7 +327,7 @@ pub fn on_done(run: &mut Run, _ctx: &Ctx, done: Done) -> Result<(), String> {
                 });
             }
             if run.state.feature_loop.is_some() {
-                return super::feature::process(run, n);
+                return super::feature::process(run, ctx, n);
             }
             run.append(Event::Verified {
                 n,
@@ -458,6 +464,57 @@ pub fn raise_limits(
     })
 }
 
+/// The engineer pauses the loop (FR-019): the step under way ends, nothing new starts.
+pub fn pause(run: &mut Run) -> Result<(), String> {
+    if run.state.stage.is_final() {
+        return Err("the run is over".into());
+    }
+    if super::feature::paused_by_engineer(run) {
+        return Err("the loop is already paused".into());
+    }
+    run.append(Event::Steering {
+        kind: SteeringKind::Pause,
+        target: None,
+        detail: None,
+    })?;
+    if run.state.stage != Stage::Paused {
+        run.append(Event::Stage {
+            to: Stage::Paused,
+            why: "paused by the engineer".into(),
+        })?;
+    }
+    Ok(())
+}
+
+/// The engineer lets a paused loop go on.
+pub fn go_on(run: &mut Run) -> Result<(), String> {
+    if !super::feature::paused_by_engineer(run) {
+        return Err("the loop is not paused".into());
+    }
+    run.append(Event::Steering {
+        kind: SteeringKind::Resume,
+        target: None,
+        detail: Some(RESUMED.into()),
+    })?;
+    // The next pass goes back to building, or asks about a limit that holds.
+    Ok(())
+}
+
+/// A note for the next step, for one agent or any (FR-019).
+pub fn note(run: &mut Run, text: &str, agent: Option<String>) -> Result<(), String> {
+    if run.state.stage.is_final() {
+        return Err("the run is over".into());
+    }
+    if text.trim().is_empty() {
+        return Err("the note is empty".into());
+    }
+    run.append(Event::Steering {
+        kind: SteeringKind::Note,
+        target: agent,
+        detail: Some(text.trim().to_string()),
+    })
+}
+
 /// The engineer asks Fallow to try again after a question it raised (a transient error, or a
 /// review that gave no usable verdict).
 pub fn retry(run: &mut Run) -> Result<(), String> {
@@ -467,7 +524,11 @@ pub fn retry(run: &mut Run) -> Result<(), String> {
     let Some(n) = &run.state.needs else {
         return Err("nothing is waiting".into());
     };
-    if !n.options.iter().any(|o| o == "retry") {
+    if !n
+        .options
+        .iter()
+        .any(|o| o == "retry" || o == "allow one more repair")
+    {
         return Err("this question needs an answer, not a retry".into());
     }
     run.append(Event::Steering {
@@ -481,6 +542,9 @@ pub fn retry(run: &mut Run) -> Result<(), String> {
 pub fn merge(run: &mut Run, tx: std::sync::mpsc::Sender<Msg>) -> Result<(), String> {
     if run.state.stage != Stage::Ready {
         return Err("the run is not ready to merge".into());
+    }
+    if run.state.feature_loop.as_ref().is_some_and(|l| l.unlocked) {
+        return Err("the feature is unlocked: lock it again before merging".into());
     }
     if run.busy.is_some() {
         return Err("a merge is already running".into());

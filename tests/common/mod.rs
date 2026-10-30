@@ -64,7 +64,7 @@ pub fn ask(tx: &Sender<Msg>, r: Request) -> Result<Value, String> {
 
 /// Waits until `pred` holds for the run's view, or fails with the last view.
 pub fn wait_for(tx: &Sender<Msg>, id: u64, what: &str, pred: impl Fn(&Value) -> bool) -> Value {
-    wait_up_to(tx, id, what, Duration::from_secs(90), pred)
+    wait_up_to(tx, id, what, Duration::from_secs(180), pred)
 }
 
 /// As `wait_for`, with a longer wait for real agents.

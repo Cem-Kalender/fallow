@@ -12,7 +12,8 @@ pub fn total_memory_mb() -> Option<u64> {
     let mut m: MEMORYSTATUSEX = unsafe { std::mem::zeroed() };
     m.dwLength = std::mem::size_of::<MEMORYSTATUSEX>() as u32;
     // SAFETY: `m` lives for the call.
-    (unsafe { GlobalMemoryStatusEx(&mut m) } != 0).then(|| m.ullTotalPhys / (1024 * 1024))
+    let ok = unsafe { GlobalMemoryStatusEx(&mut m) } != 0;
+    ok.then_some(m.ullTotalPhys / (1024 * 1024))
 }
 
 /// The machine's physical memory in MB, if it can be read.

@@ -66,9 +66,11 @@ The global events are `project`, `feature`, `loop_progress`, `needs_you` and `ne
 | Method and path | Body | Returns |
 |---|---|---|
 | `GET /api/loops/<l>` | | `{state, pipeline, stage, phases[], agents[], checks, questions[], budget, used, repairs, steering[]}` |
-| `GET /api/loops/<l>/activity?agent=&kind=&after=` | | Activity events (FR-018) |
+| `GET /api/loops/<l>/activity?agent=&kind=&task=&after=` | | `{entries[], next}`: activity events (FR-018, data-model.md), oldest first, each with its place `i`, `at` (ms), `step`, `agent` (`fallow` for Fallow's checks, `you` for steering), `task`, `kind`, `text`, and `detail`, `output` and `result` where they apply. `after` skips the first entries; Fallow's checks can sort in before agent lines already seen, so a page reloads the feed rather than paging. `kind=check` is Fallow's checks |
+| `GET /api/loops/<l>/steps/<n>/activity` | | One step's raw activity lines |
 | `GET /api/loops/<l>/tasks/<t>` | | The task's steps, diff, commands, commit and gate result (SC-004) |
-| `POST /api/loops/<l>/pause` and `/resume` | | |
+| `POST /api/loops/<l>/pause` and `/resume` | | Pause after the step under way; `resume` lets the loop go on |
+| `POST /api/loops/<l>/answer` | `{text}` | Answers a builder's `blocked` question: the step runs again in its session with the answer |
 | `POST /api/loops/<l>/stop` | `{confirm: true}` | |
 | `POST /api/loops/<l>/note` | `{text, agent?}` | A note for the next step |
 | `POST /api/loops/<l>/limits` | `{usd?, minutes?, once?}` | 006's semantics |
