@@ -19,11 +19,12 @@ Fallow Studio puts proper spec-driven development in front of that loop and make
 3. They lock the result.
 4. Fallow then runs the locked `tasks.md` as an orchestration loop the engineer can watch: which agent does what, what it says, what it ran, and what Fallow checked.
 
-**The reference for the look and layout** is the approved mockup, the canvas "Fallow Studio" (https://claude.ai/artifact/CyJcgKNpnC8tx2W1nLj13B). A copy of its four screens is kept with this spec in `mockup/`. Its four screens are:
+**The reference for the look and layout** is the approved mockup, the canvas "Fallow Studio" (https://claude.ai/artifact/CyJcgKNpnC8tx2W1nLj13B). A copy of its screens is kept with this spec in `mockup/`. Its five screens are:
 - Dashboard;
 - Spec session;
 - Orchestration loop;
-- Pipeline designer.
+- Pipeline designer;
+- Project conversation.
 
 ## Clarifications
 
@@ -300,7 +301,7 @@ Claude Code is the first runtime. Others (Codex, Gemini) can be added later with
 **The look**
 
 - **FR-030**: The page MUST match the approved mockup:
-  - its four screens and their layout and components;
+  - its five screens and their layout and components;
   - its fonts: Inter for the interface, JetBrains Mono for code, paths and commands;
   - its colors:
     - ground #F6F6F3, panels #FFFFFF, borders #E3E2DC;
@@ -321,7 +322,7 @@ Claude Code is the first runtime. Others (Codex, Gemini) can be added later with
   - designing pipelines;
   - deciding which features to make.
 
-  The engineer MUST be able to start a feature from it, which opens the feature's spec session with the relevant context carried over. The project conversation MUST be kept with the project and survive restarts. Its screen follows the mockup's style; it is designed as a fifth screen before it is built.
+  The engineer MUST be able to start a feature from it, which opens the feature's spec session with the relevant context carried over. The project conversation MUST be kept with the project and survive restarts. Its screen is the mockup's fifth screen, "Project conversation".
 
 ### Key Entities
 
@@ -353,8 +354,8 @@ Claude Code is the first runtime. Others (Codex, Gemini) can be added later with
   - the gate result.
 - **SC-005**: An agent's action appears on the page within 2 seconds, p95 over the reference run.
 - **SC-006**: A loop stopped at any stage resumes after a restart without repeating a completed task, gate run or review.
-- **SC-007**: A side-by-side check of the four screens against the mockup, at 1440 px wide, shows the same fonts, colors, logo and layout. The engineer approves it.
-- **SC-008**: The four screens work at 390 px wide with no horizontal page scrolling.
+- **SC-007**: A side-by-side check of the five screens against the mockup, at 1440 px wide, shows the same fonts, colors, logo and layout. The engineer approves it.
+- **SC-008**: The five screens work at 390 px wide with no horizontal page scrolling.
 - **SC-009**: Fallow's own process stays within the constitution's memory budgets (under 60 MB idle, under 200 MB with 4 concurrent agent steps), and the dashboard answers within 500 ms of Fallow starting.
 
 ## Assumptions

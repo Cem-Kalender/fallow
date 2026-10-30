@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Project conversation</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#F6F6F3}
+a{color:#2F52C9}a:hover{color:#1F3A99}
+.nav{color:#4A4945;text-decoration:none;padding:8px 12px;border-radius:8px;font-size:14px;font-weight:500}
+.nav:hover{background:#ECEBE6;color:#1C1C1A}
+.navon{background:#1C1C1A;color:#FFFFFF}
+.navon:hover{background:#1C1C1A;color:#FFFFFF}
+.card{background:#FFFFFF;border:1px solid #E3E2DC;border-radius:12px}
+.pill{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;padding:3px 9px;border-radius:999px;white-space:nowrap}
+.mono{font-family:'JetBrains Mono',ui-monospace,monospace}
+.btn{display:inline-flex;align-items:center;justify-content:center;min-height:40px;padding:0 16px;border-radius:8px;font:600 14px Inter,sans-serif;text-decoration:none;border:1px solid #1C1C1A;background:#1C1C1A;color:#FFFFFF;cursor:pointer}
+.btn:hover{background:#000000;color:#FFFFFF}
+.btn2{background:#FFFFFF;color:#1C1C1A;border:1px solid #D4D3CC}
+.btn2:hover{background:#F0EFEA;color:#1C1C1A}
+.th{font-size:12px;font-weight:600;color:#5E5D58;text-transform:uppercase;letter-spacing:.04em;margin:0}
+.feat{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:9px 10px;border-radius:8px;text-decoration:none;color:#1C1C1A;font-size:14px}
+.feat:hover{background:#F0EFEA;color:#1C1C1A}
+.act{display:inline-flex;align-items:center;gap:6px;color:#4A4945;font-size:13px}
+.row{display:flex;justify-content:space-between;gap:8px;font-size:13px;padding:6px 0;border-bottom:1px solid #EFEEE9}
+</style>
+</helmet>
+<div style="width:100%;min-height:1000px;box-sizing:border-box;font-family:Inter,system-ui,sans-serif;color:#1C1C1A;background:#F6F6F3;display:flex;flex-direction:column">
+
+<header style="display:flex;flex-wrap:wrap;align-items:center;gap:16px;padding:12px 24px;border-bottom:1px solid #E3E2DC;background:#FFFFFF">
+<div style="display:flex;align-items:center;gap:10px;font-weight:700;font-size:17px;margin-right:12px">
+<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#2F52C9" stroke-width="2" aria-hidden="true"><path d="M4 20c4-1 6-5 8-9s4-7 8-7"></path><path d="M4 14c3 0 5-2 6-4"></path><path d="M12 20c3-1 5-3 6-6"></path></svg>
+Fallow
+</div>
+<nav aria-label="Main" style="display:flex;flex-wrap:wrap;gap:4px">
+<a class="nav" href="Main.dc.html">Dashboard</a>
+<a class="nav" href="Spec.dc.html">Spec sessions</a>
+<a class="nav" href="Run.dc.html">Loops</a>
+<a class="nav" href="Pipeline.dc.html">Pipelines &amp; agents</a>
+</nav>
+<div style="flex:1"></div>
+<span class="pill" style="background:#FBEDE3;color:#9A3A0B">2 need you</span>
+</header>
+
+<div style="display:flex;flex-wrap:wrap;align-items:center;gap:12px 20px;padding:14px 24px;background:#FFFFFF;border-bottom:1px solid #E3E2DC">
+<div>
+<div style="font-size:13px;color:#5E5D58"><a href="Main.dc.html">Projects</a> › </div>
+<h1 style="margin:2px 0 0;font-size:22px">shop-demo</h1>
+</div>
+<span class="mono" style="font-size:12px;color:#5E5D58">C:\Repos\FallowSandbox</span>
+<div style="display:flex;gap:6px;flex-wrap:wrap"><span class="pill" style="background:#EEF1FB;color:#2F52C9">git · master</span><span class="pill" style="background:#E6F3EA;color:#226640">Spec Kit 1.0.12</span><span class="pill" style="background:#F0EFEA;color:#4A4945">pipeline Standard</span></div>
+<div style="flex:1"></div>
+<a class="btn" href="Spec.dc.html">+ New feature</a>
+</div>
+
+<div style="display:flex;flex-wrap:wrap;flex:1;min-height:0">
+
+<aside aria-label="Features" style="flex:1 1 240px;max-width:300px;padding:20px 16px;border-right:1px solid #E3E2DC;background:#FFFFFF;display:flex;flex-direction:column;gap:6px">
+<h2 class="th" style="padding:0 10px 6px">Features</h2>
+<a class="feat" href="Spec.dc.html"><span><span class="mono" style="font-size:12px;color:#5E5D58">008</span> checkout</span><span class="pill" style="background:#F3EEFB;color:#5B3BB0">spec</span></a>
+<a class="feat" href="Run.dc.html"><span><span class="mono" style="font-size:12px;color:#5E5D58">007</span> cart</span><span class="pill" style="background:#EEF1FB;color:#2F52C9">building</span></a>
+<a class="feat" href="Run.dc.html"><span><span class="mono" style="font-size:12px;color:#5E5D58">006</span> total</span><span class="pill" style="background:#F0EFEA;color:#4A4945">merged</span></a>
+<a class="feat" href="Run.dc.html"><span><span class="mono" style="font-size:12px;color:#5E5D58">005</span> catalog</span><span class="pill" style="background:#F0EFEA;color:#4A4945">merged</span></a>
+<div style="border-top:1px solid #E3E2DC;margin:12px 0 6px"></div>
+<h2 class="th" style="padding:0 10px 6px">Project files</h2>
+<a class="feat" href="Spec.dc.html"><span>constitution.md</span><span style="font-size:12px;color:#5E5D58">v1.2.0</span></a>
+<a class="feat" href="Pipeline.dc.html"><span>.fallow/agents/</span><span style="font-size:12px;color:#5E5D58">1 override</span></a>
+<a class="feat" href="Pipeline.dc.html"><span>.fallow/squad.toml</span><span style="font-size:12px;color:#5E5D58">gates</span></a>
+</aside>
+
+<section aria-label="Conversation with the lead" style="flex:999 1 520px;min-width:0;display:flex;flex-direction:column;background:#FBFBF9">
+<div style="padding:12px 24px;border-bottom:1px solid #E3E2DC;display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:#FFFFFF">
+<div style="flex:none;width:28px;height:28px;border-radius:8px;background:#F3EEFB;color:#5B3BB0;font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center">L</div>
+<div><b>Project conversation</b> <span style="font-size:13px;color:#5E5D58">· lead · claude opus · reads the code, never edits it here</span></div>
+</div>
+
+<div style="flex:1;padding:20px 24px;display:flex;flex-direction:column;gap:16px;max-width:860px;width:100%;box-sizing:border-box;margin:0 auto">
+
+<div style="align-self:flex-end;max-width:85%;background:#1C1C1A;color:#FFFFFF;padding:12px 14px;border-radius:12px 12px 2px 12px;font-size:14px;line-height:1.5">How are prices handled right now? I want discount codes eventually, but I don't know if the code is ready for it.</div>
+
+<div style="display:flex;gap:10px">
+<div style="flex:none;width:28px;height:28px;border-radius:8px;background:#F3EEFB;color:#5B3BB0;font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center">L</div>
+<div style="flex:1;min-width:0;font-size:14px;line-height:1.55">
+<div class="act" style="margin-bottom:8px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 4h10l6 6v10H4z"></path><path d="M14 4v6h6"></path></svg>Read <span class="mono" style="font-size:12px">shop/catalog.py</span> · <span class="mono" style="font-size:12px">shop/cart.py</span> · <span class="mono" style="font-size:12px">shop/__main__.py</span></div>
+Prices are whole cents in <span class="mono" style="font-size:12px">catalog.py</span>, and <span class="mono" style="font-size:12px">format_price</span> turns them into euros. The cart (007, still building) sums lines but has no notion of an adjustment, so a discount would need a place between the line total and the grand total.
+<div style="margin-top:8px">Two things to settle before discount codes make sense:</div>
+<ul style="margin:6px 0 0;padding-left:20px">
+<li>checkout (008) decides whether discounts apply before tax: you answered <b>before</b> in its spec session;</li>
+<li>codes need somewhere to live: a file like <span class="mono" style="font-size:12px">codes.json</span>, or the catalog.</li>
+</ul>
+</div>
+</div>
+
+<div style="align-self:flex-end;max-width:85%;background:#1C1C1A;color:#FFFFFF;padding:12px 14px;border-radius:12px 12px 2px 12px;font-size:14px;line-height:1.5">Let's keep codes in their own file. Can you turn this into a feature, after checkout?</div>
+
+<div style="display:flex;gap:10px">
+<div style="flex:none;width:28px;height:28px;border-radius:8px;background:#F3EEFB;color:#5B3BB0;font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center">L</div>
+<div style="flex:1;min-width:0;font-size:14px;line-height:1.55">
+Here is the feature I'd start from this conversation. It depends on 008, so its loop should start after 008 merges.
+<div class="card" style="margin-top:10px;padding:16px;border-color:#D9CCF3">
+<div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;align-items:center"><span class="pill" style="background:#F3EEFB;color:#5B3BB0">proposed feature</span><span style="font-size:12px;color:#5E5D58">after 008-checkout</span></div>
+<div style="font-weight:600;font-size:16px;margin-top:8px">009 · discount codes</div>
+<div style="font-size:13px;color:#4A4945;margin-top:4px;line-height:1.5">Codes kept in <span class="mono" style="font-size:12px">codes.json</span>; <span class="mono" style="font-size:12px">checkout --code SPRING10</span> applies one before tax; an unknown or expired code is refused.</div>
+<div style="font-size:12px;color:#5E5D58;margin-top:10px">Carried into the spec session: this conversation, the files read, and the checkout answer.</div>
+<div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap"><a class="btn" href="Spec.dc.html">Start spec session</a><button class="btn btn2">Change it</button></div>
+</div>
+</div>
+</div>
+
+</div>
+
+<form style="padding:16px 24px;border-top:1px solid #E3E2DC;background:#FFFFFF">
+<div style="max-width:860px;margin:0 auto;display:flex;gap:10px;align-items:flex-end">
+<label for="ask" style="position:absolute;left:-9999px">Message the lead about this project</label>
+<textarea id="ask" rows="2" placeholder="Ask about the code, plan features, or design a pipeline…" style="flex:1;resize:none;border:1px solid #D4D3CC;border-radius:10px;padding:10px 12px;font:14px Inter,sans-serif;color:#1C1C1A"></textarea>
+<button class="btn" type="submit">Send</button>
+</div>
+</form>
+</section>
+
+<aside aria-label="What the lead knows" style="flex:1 1 260px;max-width:330px;padding:20px 16px;display:flex;flex-direction:column;gap:12px">
+<div class="card" style="padding:14px">
+<h2 class="th" style="margin-bottom:8px">The lead knows</h2>
+<div class="row"><span>constitution.md</span><span style="color:#226640;font-weight:600">read</span></div>
+<div class="row"><span>specs of 4 features</span><span style="color:#226640;font-weight:600">read</span></div>
+<div class="row"><span>files read here</span><span>3</span></div>
+<div class="row" style="border:0"><span>answers you gave</span><span>12</span></div>
+<div style="font-size:12px;color:#5E5D58;margin-top:6px;line-height:1.45">It uses this when it answers builders' questions during a loop.</div>
+</div>
+<div class="card" style="padding:14px">
+<h2 class="th" style="margin-bottom:8px">Ideas from this conversation</h2>
+<div class="row"><span>009 discount codes</span><span class="pill" style="background:#F3EEFB;color:#5B3BB0">proposed</span></div>
+<div class="row"><span>receipt as PDF</span><span class="pill" style="background:#F0EFEA;color:#4A4945">parked</span></div>
+<div class="row" style="border:0"><span>stock alerts</span><span class="pill" style="background:#F0EFEA;color:#4A4945">parked</span></div>
+</div>
+<div class="card" style="padding:14px">
+<h2 class="th" style="margin-bottom:8px">Ask the lead to</h2>
+<div style="display:flex;flex-direction:column;gap:8px">
+<button class="btn btn2" style="min-height:36px;font-size:13px;justify-content:flex-start">Explain a part of the code</button>
+<button class="btn btn2" style="min-height:36px;font-size:13px;justify-content:flex-start">Propose the next feature</button>
+<a class="btn btn2" href="Pipeline.dc.html" style="min-height:36px;font-size:13px;justify-content:flex-start">Design a pipeline with me</a>
+</div>
+</div>
+</aside>
+
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":1000}}'>
+class Component extends DCLogic {
+renderVals() {
+return {};
+}
+}
+</script>
+</body>
+</html>
