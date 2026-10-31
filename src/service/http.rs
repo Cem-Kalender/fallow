@@ -281,6 +281,48 @@ fn studio_route(
     };
     let r = |req: Req| Some(Ok(Request::Studio(req)));
     match (method, parts) {
+        ("GET", ["api", "agents"]) => r(Req::Agents {
+            project: query_arg(url, "project").filter(|p| !p.is_empty()),
+        }),
+        ("PUT", ["api", "agents", name]) => match need("text") {
+            Ok(text) => r(Req::PutAgent {
+                name: name.to_string(),
+                scope: query_arg(url, "scope").unwrap_or_else(|| "user".into()),
+                text,
+            }),
+            Err(e) => Some(Err(e)),
+        },
+        ("DELETE", ["api", "agents", name]) => Some(confirmed().map(|()| {
+            Request::Studio(Req::DeleteAgent {
+                name: name.to_string(),
+                scope: query_arg(url, "scope").unwrap_or_else(|| "user".into()),
+            })
+        })),
+        ("GET", ["api", "pipelines"]) => r(Req::Pipelines {
+            project: query_arg(url, "project").filter(|p| !p.is_empty()),
+        }),
+        ("POST", ["api", "pipelines", "check"]) => match need("toml") {
+            Ok(toml) => r(Req::CheckPipeline {
+                project: s("project").filter(|p| !p.is_empty()),
+                toml,
+            }),
+            Err(e) => Some(Err(e)),
+        },
+        ("PUT", ["api", "pipelines", name]) => match need("toml") {
+            Ok(toml) => r(Req::PutPipeline {
+                name: name.to_string(),
+                scope: query_arg(url, "scope").unwrap_or_else(|| "user".into()),
+                toml,
+            }),
+            Err(e) => Some(Err(e)),
+        },
+        ("DELETE", ["api", "pipelines", name]) => Some(confirmed().map(|()| {
+            Request::Studio(Req::DeletePipeline {
+                name: name.to_string(),
+                scope: query_arg(url, "scope").unwrap_or_else(|| "user".into()),
+            })
+        })),
+        ("GET", ["api", "runtimes"]) => r(Req::Runtimes),
         ("POST", ["api", "projects"]) => match need("path") {
             Ok(p) => r(Req::AddProject { path: p.into() }),
             Err(e) => Some(Err(e)),

@@ -81,3 +81,44 @@ fn what_a_notification_says() {
     assert_eq!(with(json!({ "kind": "stopped", "text": "x" })).body, "007-cart: stopped and needs you");
     assert_eq!(s.url, "http://x/?k=s#/p/shop/f/007-cart/loop");
 }
+
+#[test]
+fn the_switches_and_what_was_raised_before_a_restart() {
+    use fallow::service::notify::Notifier;
+    use serde_json::json;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let dir = scratch("notify-switches");
+    let file = dir.join("notified.json");
+    let item = |k: &str, p: &str| json!({ "key": k, "kind": "ready", "project": p, "project_name": p, "feature": "001-x" });
+    let rec = Arc::new(Recorder::default());
+    let on = Arc::new(AtomicBool::new(true));
+    let mut n = Notifier::new(rec.clone(), on.clone(), None, Some(file.clone()));
+    assert!(!n.load(), "no record on the first start");
+    // What is there at the first start was raised before: not again.
+    n.seed(&[item("a", "shop")]);
+    n.update(&[item("a", "shop")], |_| true);
+    assert_eq!(rec.0.lock().unwrap().len(), 0);
+    // A new item is raised; one of a project that turned them off is not.
+    n.update(&[item("a", "shop"), item("b", "shop"), item("c", "notes")], |p| p != "notes");
+    assert_eq!(rec.0.lock().unwrap().len(), 1, "b only");
+    // The global switch off: nothing; on again: the next one.
+    on.store(false, Ordering::Relaxed);
+    n.update(&[item("a", "shop"), item("b", "shop"), item("c", "notes"), item("d", "shop")], |_| true);
+    assert_eq!(rec.0.lock().unwrap().len(), 1, "switched off");
+    on.store(true, Ordering::Relaxed);
+    let now = [item("b", "shop"), item("c", "notes"), item("d", "shop"), item("e", "shop")];
+    n.update(&now, |_| true);
+    assert_eq!(rec.0.lock().unwrap().len(), 2, "e");
+    // After a restart: what was raised stays raised, and what came meanwhile is new.
+    let mut n = Notifier::new(rec.clone(), on, None, Some(file));
+    assert!(n.load());
+    n.update(&[item("b", "shop"), item("e", "shop"), item("f", "shop")], |_| true);
+    let shown = rec.0.lock().unwrap().clone();
+    assert_eq!(shown.len(), 3, "f only: {shown:?}");
+    // A run outside any project opens the dashboard; names are encoded in the address.
+    let x = fallow::service::notify::notice(&json!({ "kind": "stopped" }), Some("http://x/"));
+    assert_eq!((x.title.as_str(), x.url.as_str()), ("Fallow", "http://x/#/"));
+    let y = fallow::service::notify::notice(&json!({ "kind": "ready", "project": "a b", "feature": "001-c#d" }), Some("http://x/"));
+    assert_eq!(y.url, "http://x/#/p/a%20b/f/001-c%23d/loop");
+    let _ = std::fs::remove_dir_all(&dir);
+}

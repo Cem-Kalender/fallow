@@ -3,6 +3,7 @@
 //! and report back as `Note`s.
 
 pub mod conv;
+pub mod defs;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -144,6 +145,36 @@ pub enum Req {
         token: String,
         pid: u32,
     },
+    /// 007 US6: the agent library and the pipelines (contracts/web-api.md).
+    Agents {
+        project: Option<String>,
+    },
+    PutAgent {
+        name: String,
+        scope: String,
+        text: String,
+    },
+    DeleteAgent {
+        name: String,
+        scope: String,
+    },
+    Pipelines {
+        project: Option<String>,
+    },
+    CheckPipeline {
+        project: Option<String>,
+        toml: String,
+    },
+    PutPipeline {
+        name: String,
+        scope: String,
+        toml: String,
+    },
+    DeletePipeline {
+        name: String,
+        scope: String,
+    },
+    Runtimes,
 }
 
 pub struct Studio {
@@ -337,8 +368,16 @@ impl Studio {
     }
 
     pub fn patch_project(&mut self, id: &str, patch: &Value) -> Result<Value, String> {
+        let config = self.config.clone();
         let p = self.project_mut(id)?;
         if let Some(v) = patch.get("pipeline").and_then(Value::as_str) {
+            // Only a pipeline in force for the project, saved and checked (FR-027, FR-028).
+            if !Library::load(config.as_deref(), Some(&p.path))
+                .pipelines
+                .contains_key(v)
+            {
+                return Err(format!("there is no pipeline {v:?} for this project"));
+            }
             p.pipeline = v.to_string();
         }
         if let Some(v) = patch.get("autonomy").and_then(Value::as_str) {

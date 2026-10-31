@@ -205,13 +205,13 @@
     dataView = d;
     const section = (p) => h`<section class="card pad-16" aria-labelledby="data-${p.id || "other"}">
       <div class="row between base wrap gap-8"><h2 id="data-${p.id || "other"}" class="b m0">${p.name}</h2><span class="small muted">${bytes(p.bytes)}</span></div>
-      <table class="list mt-10"><thead><tr><th class="th">What</th><th class="th">Size</th><th class="th"><span class="sr-only">Delete</span></th></tr></thead><tbody>
+      <div class="table-box mt-10"><table class="list"><thead><tr><th class="th">What</th><th class="th">Size</th><th class="th"><span class="sr-only">Delete</span></th></tr></thead><tbody>
         ${(p.loops || []).map((l) => h`<tr><td>Loop ${l.id}${l.feature ? ` · ${l.feature}` : ""} <span class="tiny muted">${l.running ? "running" : l.stage}</span></td><td class="mono small">${bytes(l.bytes)}${l.worktrees ? h` <span class="tiny muted">(worktrees ${bytes(l.worktrees)})</span>` : ""}</td>
           <td class="right">${l.running ? h`<span class="tiny muted">stop it first</span>` : h`<button class="btn btn2 sm" data-act="delete" data-kind="loop" data-id="${l.id}">Delete…</button>`}</td></tr>`)}
         ${(p.conversations || []).map((c) => h`<tr><td>${c.kind === "spec" ? `Spec session${c.feature ? ` · ${c.feature}` : ""}` : "Project conversation"} <span class="tiny muted">${c.turns} turn${c.turns === 1 ? "" : "s"}</span></td><td class="mono small">${bytes(c.bytes)}</td>
           <td class="right">${c.busy ? h`<span class="tiny muted">the lead is answering</span>` : h`<button class="btn btn2 sm" data-act="delete" data-kind="conv" data-id="${c.id}">Delete…</button>`}</td></tr>`)}
-        ${p.worktrees ? h`<tr><td>Spec sessions' worktrees</td><td class="mono small">${bytes(p.worktrees)}</td><td></td></tr>` : ""}
-      </tbody></table>
+        ${p.worktrees ? h`<tr><td>Conversations' worktrees <span class="tiny muted">deleted with their conversation</span></td><td class="mono small">${bytes(p.worktrees)}</td><td></td></tr>` : ""}
+      </tbody></table></div>
     </section>`;
     app.innerHTML = h`<div class="page col gap-20">
       <div class="row between base wrap gap-8"><h1 class="section-title m0">What Fallow keeps on disk</h1><a href="#/">Back to the dashboard</a></div>

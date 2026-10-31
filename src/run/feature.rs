@@ -1507,6 +1507,22 @@ fn checkpoint(
                         && x.verified.as_ref().is_some_and(|v| v.0)
                 })
                 .and_then(|x| x.base.clone())
+                .or_else(|| {
+                    // Never passed on this story: the changes since the story's work began,
+                    // not the earlier stories' (FR-027).
+                    let phases: Vec<u32> = l
+                        .phases
+                        .iter()
+                        .filter(|p| stories_of(p).iter().any(|x| x == story))
+                        .map(|p| p.spec.n)
+                        .collect();
+                    run.state
+                        .steps
+                        .values()
+                        .filter(|x| x.kind == StepKind::Build && x.phase.is_some_and(|n| phases.contains(&n)))
+                        .min_by_key(|x| x.n)
+                        .and_then(|x| x.base.clone())
+                })
                 .unwrap_or_else(|| l.lock_commit.clone());
             let changed = git::files_between(&run.state.repo, &from, &head).unwrap_or_default();
             paths_match(&s.paths, &changed)
@@ -2432,9 +2448,10 @@ fn check_done(run: &mut Run, ctx: &Ctx, step: &Step, value: &Value) -> Result<()
                 missing.push(format!("a {sev} finding without what was run"));
             } else {
                 failed.push(format!(
-                    "{sev} finding at {}: {}",
+                    "{sev} finding at {}: {} (ran {})",
                     f["where"].as_str().unwrap_or("?"),
-                    f["result"].as_str().unwrap_or("")
+                    f["result"].as_str().unwrap_or(""),
+                    f["ran"].as_str().unwrap_or("")
                 ));
             }
         }

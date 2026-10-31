@@ -77,17 +77,28 @@ pub fn serve(
     let web = http::Web::start(tx.clone(), secret.clone())?;
     let port = web.port;
     // The notification icon (research S-14); without it, Fallow goes on without notifications.
-    let notify_on = Arc::new(std::sync::atomic::AtomicBool::new(true));
+    // The menu's switch is kept across restarts: a file says it is off.
+    let off_file = data.join("notifications-off");
+    let notify_on = Arc::new(std::sync::atomic::AtomicBool::new(!off_file.exists()));
     let home = page_url(port, &secret, "/");
     let tx_tray = std::sync::Mutex::new(tx.clone());
     let tray = crate::platform::notify::Tray::start(
         home.clone(),
         Arc::clone(&notify_on),
         Box::new(move |c| {
-            if c == crate::platform::notify::Choice::Stop {
-                if let Ok(t) = tx_tray.lock() {
-                    let _ = t.send(Msg::Shutdown);
+            match c {
+                crate::platform::notify::Choice::Stop => {
+                    if let Ok(t) = tx_tray.lock() {
+                        let _ = t.send(Msg::Shutdown);
+                    }
                 }
+                crate::platform::notify::Choice::Notifications(true) => {
+                    let _ = std::fs::remove_file(&off_file);
+                }
+                crate::platform::notify::Choice::Notifications(false) => {
+                    let _ = std::fs::write(&off_file, "");
+                }
+                crate::platform::notify::Choice::Open => {}
             }
         }),
     );

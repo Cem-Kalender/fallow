@@ -352,7 +352,9 @@ impl RunState {
     fn wait_clock(&mut self, at: &str) {
         // Unlocked, the loop waits for the engineer's new lock (research S-17).
         let unlocked = self.feature_loop.as_ref().is_some_and(|f| f.unlocked);
-        let waiting = (self.needs.is_some() || unlocked) && self.paused_since.is_none();
+        // Ready, or ended, the loop's clock stops: what follows is the engineer's time.
+        let done = self.stage == Stage::Ready || self.stage.is_final();
+        let waiting = (self.needs.is_some() || unlocked || done) && self.paused_since.is_none();
         match (&self.waiting_since, waiting) {
             (None, true) => self.waiting_since = Some(at.to_string()),
             (Some(since), false) => {

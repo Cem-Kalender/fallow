@@ -13,7 +13,7 @@
     else if (p.kind === "folder") pills.push(h`<span class="pill grey">folder, no git</span>`);
     else pills.push(h`<span class="pill orange">folder missing</span>`);
     if (p.spec_kit) pills.push(h`<span class="pill green">Spec Kit ${p.spec_kit}</span>`);
-    pills.push(h`<span class="pill grey">pipeline ${p.pipeline}</span>`);
+    pills.push(h`<a class="pill grey" href="#/pipelines/${encodeURIComponent(p.id)}">pipeline ${p.pipeline}</a>`);
     return pills;
   }
 
@@ -84,8 +84,9 @@
           <div class="sep"></div>
           <h2 class="th">Project files</h2>
           <div class="feat"><span>constitution.md</span><span class="tiny muted">.specify/memory</span></div>
-          <a class="feat" href="#/pipelines"><span>.fallow/agents/</span><span class="tiny muted">${p.agent_overrides} override${p.agent_overrides === 1 ? "" : "s"}</span></a>
+          <a class="feat" href="#/pipelines/${encodeURIComponent(p.id)}"><span>.fallow/agents/</span><span class="tiny muted">${p.agent_overrides} override${p.agent_overrides === 1 ? "" : "s"}</span></a>
           <div class="feat"><span>approved commands</span><span class="tiny muted">${p.approved_commands.length}</span></div>
+          <label class="feat" for="notify-toggle"><span>Desktop notifications</span><input id="notify-toggle" type="checkbox" data-change="notifications"${raw(p.notifications ? " checked" : "")}></label>
           ${p.kind === "folder" ? h`<button class="btn btn2 sm mt-8" data-act="git-init">Set up git</button>` : ""}
           <button class="btn btn2 sm mt-8" data-act="remove">Remove from Fallow</button>
         </aside>
@@ -108,6 +109,11 @@
       </div></div>`.s;
     const chat = document.getElementById("chat");
     chat.scrollTop = chat.scrollHeight;
+    // What the designer's "Ask the lead" left for the message box; sent only by the engineer.
+    let pre = null;
+    try { pre = sessionStorage.getItem("fallow.prefill"); sessionStorage.removeItem("fallow.prefill"); } catch (_) { pre = null; }
+    const box = document.getElementById("say");
+    if (pre && box) { box.value = pre; box.focus(); }
   }
 
   async function load(app, id) {
@@ -155,6 +161,10 @@
           const f = await post(`/api/projects/${encodeURIComponent(state.id)}/features`, { title });
           location.hash = `#/p/${encodeURIComponent(state.id)}/f/${encodeURIComponent(f.feature)}`;
           return;
+        }
+        if (name === "notifications") {
+          await Fallow.api("PATCH", `/api/projects/${encodeURIComponent(state.id)}`, { notifications: el.checked });
+          return again();
         }
         if (name === "git-init") {
           const ok = await Fallow.confirm({ title: "Set up git in this folder?", text: "Fallow runs git init and commits what is there, so loops can build on branches.", items: [state.path], ok: "Set up git" });

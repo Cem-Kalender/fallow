@@ -471,7 +471,19 @@ pub fn view(run: &Run, ctx: &Ctx) -> Result<Value, String> {
                     })
                 })
                 .collect();
-            json!({ "id": st.id, "title": st.title, "criteria": criteria,
+            // Every checker's latest outcome on the story, with its reasons (FR-026).
+            let mut checkers: Vec<Value> = Vec::new();
+            for x in s.steps.values().rev().filter(|x| {
+                x.kind == StepKind::Review && x.part.as_deref() == Some(st.id.as_str()) && x.verified.is_some()
+            }) {
+                let def = x.def.clone().unwrap_or_default();
+                if checkers.iter().any(|c| c["agent"] == def.as_str()) {
+                    continue;
+                }
+                let (ok, reasons) = x.verified.clone().unwrap_or_default();
+                checkers.push(json!({ "agent": def, "step": x.n, "passed": ok, "reasons": reasons }));
+            }
+            json!({ "id": st.id, "title": st.title, "criteria": criteria, "checkers": checkers,
                     "approved": verdict.map(|v| v.approved), "reviewer": last.and_then(|x| x.def.clone()) })
         })
         .collect();

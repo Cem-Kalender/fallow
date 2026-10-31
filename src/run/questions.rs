@@ -752,16 +752,20 @@ pub fn orphans(run: &mut Run) -> Result<(), String> {
 pub fn confirm(run: &mut Run, q: &str) -> Result<Value, String> {
     let l = lp(run)?;
     let entry = l.questions.get(q).cloned().ok_or("there is no such question")?;
+    if run.state.stage.is_final() {
+        return Err("the loop has ended".into());
+    }
     if entry.state != QuestionState::Decided {
         return Err(format!("{q} is not a decision of the lead"));
     }
+    // The answer stays the lead's, with its commit: confirming changes nothing in the spec.
     record(
         run,
         &entry,
         QuestionState::Confirmed,
-        Some("engineer"),
+        entry.by.as_deref(),
         entry.answer.clone(),
-        None,
+        entry.commit.clone(),
         entry.options.clone(),
         entry.recommended.clone(),
         0.0,

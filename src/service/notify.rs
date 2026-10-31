@@ -2,10 +2,12 @@
 //! notification naming the project, the feature and what is needed, never code or output.
 //!
 //! An item is known by its key (the loop, what it needs, and which question, merge or stop), so
-//! a step tried again or a page read again raises nothing new. Items already there when Fallow
-//! starts were raised before it stopped; they are not raised again.
+//! a step tried again or a page read again raises nothing new. The items raised are kept on disk,
+//! so an item raised before Fallow stopped is not raised again, and one that came while it was
+//! stopped, or while it started, is.
 
 use std::collections::BTreeSet;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -20,7 +22,8 @@ pub struct Notifier {
     /// The page's address with its secret, to which an item's hash is added.
     page: Option<String>,
     seen: BTreeSet<String>,
-    started: bool,
+    /// Where `seen` is kept (`notified.json`), when there is a data folder.
+    file: Option<PathBuf>,
 }
 
 /// What a notification says an item needs: fixed words, never the question, an agent's text or
@@ -42,39 +45,79 @@ fn what(item: &Value) -> &'static str {
 pub fn notice(item: &Value, page: Option<&str>) -> Notice {
     let project = item["project_name"].as_str().unwrap_or_default();
     let feature = item["feature"].as_str().unwrap_or_default();
-    let hash = format!(
-        "#/p/{}/f/{}/loop",
-        item["project"].as_str().unwrap_or_default(),
-        feature
-    );
+    let hash = match item["project"].as_str().filter(|p| !p.is_empty()) {
+        Some(p) => format!("#/p/{}/f/{}/loop", enc(p), enc(feature)),
+        // A run of 006, outside any project: the dashboard.
+        None => "#/".to_string(),
+    };
     Notice {
-        title: format!("Fallow · {project}"),
+        title: if project.is_empty() {
+            "Fallow".to_string()
+        } else {
+            format!("Fallow · {project}")
+        },
         body: format!("{feature}: {}", what(item)),
         url: format!("{}{hash}", page.unwrap_or("")),
     }
 }
 
 impl Notifier {
-    pub fn new(to: Arc<dyn Notify>, on: Arc<AtomicBool>, page: Option<String>) -> Notifier {
+    pub fn new(
+        to: Arc<dyn Notify>,
+        on: Arc<AtomicBool>,
+        page: Option<String>,
+        file: Option<PathBuf>,
+    ) -> Notifier {
         Notifier {
             to,
             on,
             page,
             seen: BTreeSet::new(),
-            started: false,
+            file,
+        }
+    }
+
+    /// Reads the items raised before Fallow stopped. `false` when there is no record: the first
+    /// start, whose items are then `seed`ed.
+    pub fn load(&mut self) -> bool {
+        let Some(f) = &self.file else { return false };
+        match std::fs::read_to_string(f)
+            .ok()
+            .and_then(|t| serde_json::from_str(&t).ok())
+        {
+            Some(seen) => {
+                self.seen = seen;
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Takes `items` as raised, without raising them.
+    pub fn seed(&mut self, items: &[Value]) {
+        self.seen = keys(items);
+        self.save();
+    }
+
+    fn save(&self) {
+        if let Some(f) = &self.file {
+            let _ = std::fs::write(f, serde_json::to_string(&self.seen).unwrap_or_default());
         }
     }
 
     /// Raises one notification for each item not seen before, unless notifications are off,
     /// for every project or for the item's (`enabled`).
+    /// Only the items still there are kept: one that goes and comes back is new.
     pub fn update(&mut self, items: &[Value], enabled: impl Fn(&str) -> bool) {
-        let first = !self.started;
-        self.started = true;
+        let now = keys(items);
+        if now == self.seen {
+            return;
+        }
         for item in items {
             let Some(key) = item["key"].as_str() else {
                 continue;
             };
-            if !self.seen.insert(key.to_string()) || first {
+            if self.seen.contains(key) {
                 continue;
             }
             if !self.on.load(Ordering::Relaxed) || !enabled(item["project"].as_str().unwrap_or_default()) {
@@ -82,5 +125,24 @@ impl Notifier {
             }
             self.to.show(&notice(item, self.page.as_deref()));
         }
+        self.seen = now;
+        self.save();
     }
+}
+
+fn keys(items: &[Value]) -> BTreeSet<String> {
+    items
+        .iter()
+        .filter_map(|i| i["key"].as_str().map(str::to_string))
+        .collect()
+}
+
+/// A part of the page's hash, percent-encoded.
+fn enc(s: &str) -> String {
+    s.bytes()
+        .map(|b| match b {
+            b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'-' | b'_' | b'.' => (b as char).to_string(),
+            _ => format!("%{b:02X}"),
+        })
+        .collect()
 }

@@ -318,3 +318,50 @@ fn every_answer_reaches_the_step_that_asked_whenever_it_comes() {
     drop(e);
     let _ = std::fs::remove_dir_all(&root);
 }
+
+#[test]
+fn a_confirmed_decision_keeps_its_commit_and_a_call_cut_short_goes_to_the_engineer() {
+    // Free: the lead decides; the engineer confirms; the decision stays the lead's, committed.
+    let root = scratch("ask-confirm");
+    let steps = [
+        task_step("T001", &[("calc/__init__.py", "")], ""),
+        handover_step(1, ""),
+        asking_step("T002", FLOATS, None, &[("calc/__init__.py", CALC_INIT)], "done"),
+        lead_answer("q1", "decided", "No floats", "none", ""),
+        task_step("T003", &[("tests/__init__.py", ""), ("tests/test_add.py", TEST_ADD)], "sleep_ms = 4000"),
+    ]
+    .concat();
+    let (e, _repo, id) = lock_level(&root, &steps, Level::Free);
+    let tx = &e.tx;
+    let v = wait_for(tx, id, "the decision", |v| v["feature_loop"]["questions"]["q1"]["state"] == "decided");
+    let commit = question(&v, "q1")["commit"].clone();
+    assert!(commit.is_string(), "{}", question(&v, "q1"));
+    ask(tx, Request::QuestionConfirm { id, q: "q1".into() }).unwrap();
+    let v = ask(tx, Request::Get { id }).unwrap();
+    let q1 = question(&v, "q1");
+    assert_eq!(q1["state"], "confirmed");
+    assert_eq!(q1["commit"], commit, "confirming keeps the answer's commit: {q1}");
+    assert_eq!(q1["by"], "lead");
+    drop(e);
+    let _ = std::fs::remove_dir_all(&root);
+
+    // The lead's call is cut short by a stop of Fallow: after the restart, the question goes
+    // to the engineer, saying why.
+    let root = scratch("ask-orphan");
+    let steps = [
+        asking_step("T001", FLOATS, None, &[("calc/__init__.py", "")], "blocked"),
+        lead_answer("q1", "answer", "No", "spec.md US1", "sleep_ms = 60000"),
+    ]
+    .concat();
+    let (e, _repo, id) = lock_level(&root, &steps, Level::Normal);
+    wait_for(&e.tx, id, "the lead thinking", |v| v["feature_loop"]["questions"]["q1"]["state"] == "with_lead");
+    let e = restart(e, &root);
+    let v = wait_for(&e.tx, id, "relayed after the restart", |v| {
+        v["feature_loop"]["questions"]["q1"]["state"] == "waiting_engineer"
+    });
+    let q1 = question(&v, "q1");
+    assert!(q1["why"].as_str().is_some_and(|w| w.contains("cut short")), "{q1}");
+    assert!(!v["needs"].is_null());
+    drop(e);
+    let _ = std::fs::remove_dir_all(&root);
+}

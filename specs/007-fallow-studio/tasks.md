@@ -352,7 +352,7 @@ Unless a task says otherwise, tests use the `fake` runtime (research S-13).
 
 ### Tests for User Story 6
 
-- [ ] T074 [P] [US6] `tests/us6_defs.rs`:
+- [X] T074 [P] [US6] `tests/us6_defs.rs`:
   - the definitions and pipelines API: create, edit and delete, with errors at the line;
   - override order;
   - `.md.new` on update;
@@ -361,14 +361,21 @@ Unless a task says otherwise, tests use the `fake` runtime (research S-13).
 
 ### Implementation for User Story 6
 
-- [ ] T075 [US6] The definitions, pipelines and runtimes API in `src/service/http.rs`, as contracts/web-api.md describes.
-- [ ] T076 [US6] The pipeline designer screen in `screens/pipelines.js`, matching `mockup/Pipeline.dc.html`:
+- [X] T075 [US6] The definitions, pipelines and runtimes API in `src/service/http.rs`, as contracts/web-api.md describes.
+- [X] T076 [US6] The pipeline designer screen in `screens/pipelines.js`, matching `mockup/Pipeline.dc.html`:
   - the agent library with each agent's source;
   - the flow: add, remove and reorder steps; `when`, `at`, `paths` and `on_fail`; the "always" steps shown fixed;
   - the "not verifying" warning;
   - the definition editor with errors at their lines;
   - save.
-- [ ] T077 [US6] Pipelines the lead proposes: `proposed_pipeline` in a reply opens as a draft in the designer, used only after save. Choosing a pipeline per project, and per feature in the lock dialog.
+- [X] T077 [US6] Pipelines the lead proposes: `proposed_pipeline` in a reply opens as a draft in the designer, used only after save. Choosing a pipeline per project, and per feature in the lock dialog.
+
+Notes on Phase 8 as built:
+- A definition or pipeline that does not pass is refused like other requests (`ok: false`, not a 422), one problem per line (contracts/web-api.md). `POST /api/pipelines/check` was added: the designer checks every change with it, and a pipeline the lead proposed opens through it as a draft.
+- A path-limited checker that has not yet passed on a story compares against the commit before the story's first build, not the lock: it runs only when that story changed its paths (found by T074).
+- What a checker's finding ran is carried into its reason, and the loop page lists every checker's latest outcome per story.
+- Deleting an agent that a pipeline in force still uses, or a pipeline a project chooses, is refused. A default the engineer edited is reset, not deleted.
+- "Ask the lead" in the designer opens the project conversation with the pipeline in the message box; the engineer sends it.
 
 ---
 

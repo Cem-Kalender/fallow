@@ -282,6 +282,7 @@
     const stories = (v.checks.stories || []).map((s) => h`<div class="card pad-14">
       <h2 class="th mb-8">${s.id} acceptance</h2>
       ${s.criteria.map((c) => h`<div class="kv"><span>${plain(c.text)}${c.must_fail ? h` <span class="must">must fail</span>` : ""}</span>${({ passed: h`<span class="pill green">checked</span>`, failed: h`<span class="pill red">failed</span>` })[c.state] || h`<span class="pill grey">not yet</span>`}</div>`)}
+      ${(s.checkers || []).filter((c) => c.agent !== s.reviewer).map((c) => h`<div class="kv"><span>${c.agent}${c.reasons.length ? h`<span class="tiny muted d-block">${c.reasons.join("; ")}</span>` : ""}</span>${c.passed ? h`<span class="pill green">passed</span>` : h`<span class="pill red">failed</span>`}</div>`)}
       <div class="tiny muted mt-6">${s.reviewer ? `Checked by ${s.reviewer}, by running each one.` : "The reviewer confirms each one by running it at the checkpoint."}</div></div>`);
     const STATE = {
       with_lead: h`<span class="pill grey">with the lead</span>`,

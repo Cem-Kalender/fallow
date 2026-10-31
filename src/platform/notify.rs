@@ -99,12 +99,37 @@ mod tray {
         on: Arc<AtomicBool>,
         choose: Mutex<Box<dyn Fn(Choice) + Send>>,
         queue: Mutex<VecDeque<Notice>>,
-        /// The page the last balloon opens.
-        last: Mutex<Option<String>>,
+        /// The page of the last balloon, and how many were shown since the last click: a click
+        /// opens that page only when it can only be that balloon's, the dashboard otherwise
+        /// (older balloons stay in the notification centre and their clicks come here too).
+        last: Mutex<(Option<String>, u32)>,
     }
 
     static SHARED: OnceLock<Shared> = OnceLock::new();
     static HWND_: AtomicIsize = AtomicIsize::new(0);
+    /// The message Explorer broadcasts when the taskbar comes back: the icon is added again.
+    static TASKBAR_CREATED: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+    /// Adds the icon to the notification area.
+    ///
+    /// # Safety
+    /// `hwnd` is this thread's live window.
+    unsafe fn add_icon(hwnd: HWND) -> bool {
+        let mut d = data(hwnd);
+        d.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP | NIF_SHOWTIP;
+        d.uCallbackMessage = CALLBACK;
+        // SAFETY: plain Win32 calls; `d` lives for them.
+        unsafe {
+            d.hIcon = LoadIconW(std::ptr::null_mut(), IDI_APPLICATION);
+            copy_into(&mut d.szTip, "Fallow");
+            if Shell_NotifyIconW(NIM_ADD, &d) == 0 {
+                return false;
+            }
+            d.Anonymous.uVersion = NOTIFYICON_VERSION_4;
+            Shell_NotifyIconW(NIM_SETVERSION, &d);
+        }
+        true
+    }
 
     /// The notification icon, on a thread of its own with its message loop.
     pub struct Tray;
@@ -223,18 +248,13 @@ mod tray {
                 let _ = started.send(Err("cannot create the notification window".into()));
                 return;
             }
-            let mut d = data(hwnd);
-            d.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP | NIF_SHOWTIP;
-            d.uCallbackMessage = CALLBACK;
-            d.hIcon = LoadIconW(std::ptr::null_mut(), IDI_APPLICATION);
-            copy_into(&mut d.szTip, "Fallow");
-            if Shell_NotifyIconW(NIM_ADD, &d) == 0 {
+            let tc = wide("TaskbarCreated");
+            TASKBAR_CREATED.store(RegisterWindowMessageW(tc.as_ptr()), Ordering::Relaxed);
+            if !add_icon(hwnd) {
                 DestroyWindow(hwnd);
                 let _ = started.send(Err("cannot add the notification icon".into()));
                 return;
             }
-            d.Anonymous.uVersion = NOTIFYICON_VERSION_4;
-            Shell_NotifyIconW(NIM_SETVERSION, &d);
             HWND_.store(hwnd as isize, Ordering::Release);
             let _ = started.send(Ok(()));
             let mut msg: MSG = std::mem::zeroed();
@@ -261,7 +281,7 @@ mod tray {
                     copy_into(&mut d.szInfoTitle, &n.title);
                     copy_into(&mut d.szInfo, &n.body);
                     if let Ok(mut last) = s.last.lock() {
-                        *last = Some(n.url.clone());
+                        *last = (Some(n.url.clone()), last.1 + 1);
                     }
                     // SAFETY: `d` lives for the call.
                     unsafe { Shell_NotifyIconW(NIM_MODIFY, &d) };
@@ -272,11 +292,16 @@ mod tray {
                 // NOTIFYICON_VERSION_4: the event is in the low word of `l`.
                 match (l as u32) & 0xFFFF {
                     NIN_BALLOONUSERCLICK => {
-                        let url = s.last.lock().ok().and_then(|l| l.clone());
+                        let url = s.last.lock().ok().and_then(|mut l| {
+                            let one = l.1 == 1;
+                            l.1 = 0;
+                            l.0.clone().filter(|_| one)
+                        });
                         open(url.as_deref().unwrap_or(&s.home));
                     }
-                    NIN_SELECT | NIN_KEYSELECT | WM_LBUTTONUP | WM_LBUTTONDBLCLK => open(&s.home),
-                    WM_CONTEXTMENU | WM_RBUTTONUP => menu(hwnd, s),
+                    // Version 4 sends these besides the plain mouse messages: one each per click.
+                    NIN_SELECT | NIN_KEYSELECT => open(&s.home),
+                    WM_CONTEXTMENU => menu(hwnd, s),
                     _ => {}
                 }
                 0
@@ -289,6 +314,11 @@ mod tray {
                     DestroyWindow(hwnd);
                     PostQuitMessage(0);
                 }
+                0
+            }
+            m if m != 0 && m == TASKBAR_CREATED.load(Ordering::Relaxed) => {
+                // SAFETY: this thread's window.
+                unsafe { add_icon(hwnd) };
                 0
             }
             // SAFETY: as above.
@@ -316,6 +346,8 @@ mod tray {
             // The menu closes when the engineer clicks elsewhere only if the window is in front.
             SetForegroundWindow(hwnd);
             let c = TrackPopupMenu(m, TPM_RETURNCMD | TPM_RIGHTBUTTON, p.x, p.y, 0, hwnd, std::ptr::null());
+            // So that the next click on the icon opens the menu again (as the docs ask).
+            PostMessageW(hwnd, WM_NULL, 0, 0);
             DestroyMenu(m);
             c as usize
         };

@@ -77,6 +77,7 @@ The global events are `project`, `feature`, `loop_progress`, `needs_you` and `ne
 | `POST /api/loops/<l>/retry` | | 006's semantics |
 | `POST /api/loops/<l>/questions/<q>/answer` | `{answer}` | Commits the answer, and resumes the step |
 | `POST /api/loops/<l>/questions/<q>/overrule` | `{answer}` | Commits the reversal, and reopens (S-10) |
+| `POST /api/loops/<l>/questions/<q>/confirm` | | Confirms a decision of the lead (FR-020a) |
 | `POST /api/loops/<l>/merge` | `{confirm: true}` | `ready` or `done_unverified` only. Exactly the gated commit (FR-014) |
 
 ## Agents and pipelines
@@ -86,7 +87,10 @@ The global events are `project`, `feature`, `loop_progress`, `needs_you` and `ne
 | `GET /api/agents?project=<p>` | | The definitions with their source, and parse errors with line numbers |
 | `PUT /api/agents/<name>?scope=user\|project:<p>` | `{text}` | Checked (contracts/agent-definition.md); 422 with problems |
 | `DELETE /api/agents/<name>?scope=...` | `{confirm: true}` | A user's or project's own definition only; defaults are reset, not deleted |
-| `GET /api/pipelines?project=<p>` | | Pipelines with `verifying` and what is missing |
+| `GET /api/pipelines?project=<p>` | | Pipelines with `verifying` and what is missing, their text and file, and the project's chosen one |
+| `POST /api/pipelines/check` | `{toml, project?}` | The pipeline as it would be, or its problems; nothing is saved (the designer, and drafts the lead proposes) |
 | `PUT /api/pipelines/<name>?scope=...` | `{toml}` | Checked (contracts/pipeline.md) |
 | `DELETE /api/pipelines/<name>?scope=...` | `{confirm: true}` | |
 | `GET /api/runtimes` | | `[{name, installed, version, models}]` |
+
+A definition or pipeline that does not pass is refused like any other request (`{ok: false, error}`), the error holding one problem per line, each `file:line: message` for a definition and `file: step N: message` for a pipeline. A default is reset to what Fallow ships rather than deleted. An agent that a pipeline in force still uses, and a pipeline that a project chooses, cannot be deleted. `PATCH /api/projects/<p>` accepts only a `pipeline` in force for the project.

@@ -41,7 +41,16 @@ fn current_task(l: &LoopState) -> Option<String> {
 
 /// What the step is doing now, from its last line: "running `npm test`", "reading api/tags.ts".
 fn doing(run: &Run, n: u32) -> Option<String> {
-    let text = std::fs::read_to_string(run.steps_dir().join(format!("{n}.jsonl"))).ok()?;
+    // Only the end of the step's record: it can be long, and the dashboard is read often.
+    use std::io::{Read, Seek, SeekFrom};
+    let mut f = std::fs::File::open(run.steps_dir().join(format!("{n}.jsonl"))).ok()?;
+    let len = f.metadata().ok()?.len();
+    let from = len.saturating_sub(64 * 1024);
+    f.seek(SeekFrom::Start(from)).ok()?;
+    let mut bytes = Vec::new();
+    f.read_to_end(&mut bytes).ok()?;
+    let text = String::from_utf8_lossy(&bytes);
+    // A line cut by the start is skipped by the parse below.
     let last: Activity = text
         .lines()
         .rev()
@@ -60,7 +69,7 @@ fn doing(run: &Run, n: u32) -> Option<String> {
 }
 
 /// A running loop's card.
-pub fn card(run: &Run, ctx: &Ctx, project_name: &str) -> Option<Value> {
+pub fn card(run: &Run, _ctx: &Ctx, project_name: &str) -> Option<Value> {
     let s = &run.state;
     let l = s.feature_loop.as_ref()?;
     let phases: Vec<Value> = l
@@ -84,8 +93,8 @@ pub fn card(run: &Run, ctx: &Ctx, project_name: &str) -> Option<Value> {
     let current = l.phases.iter().find(|p| p.state != PhaseState::Done);
     let task = current_task(l);
     // The agents, each in a few words.
-    let lib = super::feature::library(run, ctx);
-    let pl = super::feature::pipeline_of(run, &lib).ok();
+    // The pipeline as the loop recorded it, without reading the definitions again.
+    let pl: Option<crate::defs::pipeline::Raw> = toml::from_str(&l.pipeline).ok();
     let running = match run.busy {
         Some(Busy::Step(n)) => s.steps.get(&n),
         _ => None,
@@ -122,7 +131,9 @@ pub fn card(run: &Run, ctx: &Ctx, project_name: &str) -> Option<Value> {
             } else if s.steps.values().any(|x| x.def.as_deref() == Some(name.as_str())) {
                 ("idle", format!("{name} idle"))
             } else {
-                let checker = lib.agent(name).is_some_and(|d| d.kind == crate::defs::Kind::Checker);
+                let checker = pl.as_ref().is_some_and(|p| {
+                    p.steps.iter().any(|st| &st.agent == name && st.when == crate::defs::pipeline::When::Checkpoint)
+                });
                 let until = current
                     .and_then(|p| p.spec.story.clone())
                     .map(|st| format!(" until the {st} checkpoint"))
@@ -143,22 +154,32 @@ pub fn card(run: &Run, ctx: &Ctx, project_name: &str) -> Option<Value> {
     }))
 }
 
-/// What the loop needs from the engineer, as a "Needs you" item: a question, a feature ready to
-/// merge (or done but not verified), or a loop that stopped at a limit, a repair cap or an
-/// error (FR-003a).
-pub fn need(run: &Run, project_name: &str) -> Option<Value> {
+/// What the loop needs from the engineer, as "Needs you" items (FR-003a): each question that
+/// waits for an answer, in the order asked; a feature ready to merge (or done but not
+/// verified); and a stop at a limit, a repair cap or an error.
+pub fn needs(run: &Run, project_name: &str) -> Vec<Value> {
     let s = &run.state;
-    let l = s.feature_loop.as_ref()?;
+    let Some(l) = s.feature_loop.as_ref() else {
+        return Vec::new();
+    };
     if s.stage.is_final() {
-        return None;
+        return Vec::new();
     }
+    let mut out = Vec::new();
     let base = |kind: &str, at: &str| {
         json!({
             "kind": kind, "run": s.id, "project": l.project, "project_name": project_name,
             "feature": l.feature, "at": at,
         })
     };
-    if let Some(q) = super::questions::waiting(l) {
+    let mut waiting: Vec<&super::state::QuestionEntry> = l
+        .questions
+        .values()
+        .filter(|q| q.state == super::events::QuestionState::WaitingEngineer)
+        .collect();
+    // q2 before q10.
+    waiting.sort_by_key(|q| q.id.trim_start_matches('q').parse::<u64>().unwrap_or(u64::MAX));
+    for q in waiting {
         let at = q.history.last().map(|h| h.at.clone()).unwrap_or_default();
         let mut v = base("question", &at);
         v["key"] = json!(format!("{}:question:{}", s.id, q.id));
@@ -166,7 +187,7 @@ pub fn need(run: &Run, project_name: &str) -> Option<Value> {
         v["task"] = json!(q.task);
         v["agent"] = json!(s.steps.get(&q.step).and_then(|x| x.def.clone()));
         v["text"] = json!(q.text);
-        return Some(v);
+        out.push(v);
     }
     if s.stage == Stage::Ready {
         let verified = l.outcome.as_ref().is_some_and(|o| o.0);
@@ -199,19 +220,27 @@ pub fn need(run: &Run, project_name: &str) -> Option<Value> {
                 l.outcome.as_ref().map(|o| o.1.join(", ")).unwrap_or_default()
             )
         });
-        return Some(v);
+        out.push(v);
+        return out;
     }
-    let n = s.needs.as_ref()?;
+    let Some(n) = s.needs.as_ref() else {
+        return out;
+    };
+    // A loop waiting for its questions waits for nothing else, unless it also hit a limit.
+    if !out.is_empty() && s.limit_reached.is_none() {
+        return out;
+    }
     let mut v = base("stopped", &n.at);
     v["key"] = json!(format!("{}:needs:{}", s.id, n.at));
     v["text"] = json!(n.why);
     v["what"] = json!(if s.limit_reached.is_some() {
         "stopped at a limit"
-    } else if n.why.contains("repair") {
+    } else if n.why.contains("repair round") {
         "stopped at the repair cap"
     } else {
         "stopped and needs you"
     });
     v["task"] = json!(current_task(l));
-    Some(v)
+    out.push(v);
+    out
 }

@@ -369,3 +369,4 @@ input.num { width: 56px; padding: 2px 6px; border-radius: 6px; font-weight: 700;
 @media (max-width: 640px) {
   .pl-side, .pl-def { max-width: none; }
 }
+.d-block { display: block; }

@@ -325,6 +325,7 @@ impl Engine {
             Arc::clone(&ctx.notify),
             Arc::clone(&ctx.notify_on),
             ctx.page.clone(),
+            Some(data.join("notified.json")),
         );
         let mut e = Engine {
             notifier,
@@ -349,7 +350,7 @@ impl Engine {
             }) {
                 Ok((log, state, notes)) => {
                     e.console.extend(notes);
-                    let mut run = Run {
+                    let run = Run {
                         dir,
                         log,
                         state,
@@ -362,18 +363,28 @@ impl Engine {
                         tool: None,
                         asking: None,
                     };
-                    if !run.state.stage.is_final() {
-                        if let Err(err) = super::machine::resume(&mut run)
-                            .and_then(|()| super::questions::orphans(&mut run))
-                        {
-                            e.console.push(format!("run {id}: {err}"));
-                        }
-                    }
                     e.runs.insert(id, run);
                 }
                 Err(err) => e
                     .console
                     .push(format!("run {id} could not be loaded: {err}")),
+            }
+        }
+        // What needed the engineer when Fallow stopped was raised then. On the first start
+        // there is no record: what is there now is taken as raised.
+        if !e.notifier.load() {
+            let items = e.needs_items();
+            e.notifier.seed(&items);
+        }
+        let ids: Vec<u64> = e.runs.keys().copied().collect();
+        for id in ids {
+            let run = e.runs.get_mut(&id).expect("loaded");
+            if !run.state.stage.is_final() {
+                if let Err(err) =
+                    super::machine::resume(run).and_then(|()| super::questions::orphans(run))
+                {
+                    e.console.push(format!("run {id}: {err}"));
+                }
             }
         }
         Ok(e)
@@ -591,6 +602,16 @@ impl Engine {
                 }
                 let dir = c.dir.clone();
                 let project = c.state.project.clone();
+                // Its worktree goes with it, when Fallow made one (FR-003b).
+                let wt = c.state.workdir.clone();
+                if wt.starts_with(self.data.join("worktrees")) {
+                    if let Some(p) = self.studio.store.get(&project) {
+                        let _ = git::worktree_remove(&p.path, &wt);
+                    }
+                    if wt.exists() {
+                        std::fs::remove_dir_all(&wt).map_err(|e| format!("{}: {e}", wt.display()))?;
+                    }
+                }
                 crate::project::data::remove(&dir, None)?;
                 self.studio.convs.remove(id);
                 if let Some(p) = self.studio.store.get_mut(&project) {
@@ -621,13 +642,16 @@ impl Engine {
         let mut items: Vec<Value> = self
             .runs
             .values()
-            .filter_map(|r| match r.state.feature_loop.as_ref() {
-                Some(l) => super::dashboard::need(r, &name(&l.project)),
+            .flat_map(|r| match r.state.feature_loop.as_ref() {
+                Some(l) => super::dashboard::needs(r, &name(&l.project)),
                 // A run of 006's single-task flow.
-                None => needs(r).map(|why| {
-                    json!({ "kind": "stopped", "key": format!("{}:needs:{why}", r.id()), "run": r.id(),
-                            "text": why, "task": r.state.task, "at": r.state.stage_at })
-                }),
+                None => needs(r)
+                    .map(|why| {
+                        json!({ "kind": "stopped", "key": format!("{}:needs:{why}", r.id()), "run": r.id(),
+                                "text": why, "task": r.state.task, "at": r.state.stage_at })
+                    })
+                    .into_iter()
+                    .collect(),
             })
             .collect();
         items.sort_by(|a, b| b["at"].as_str().cmp(&a["at"].as_str()));
@@ -953,7 +977,60 @@ impl Engine {
                 Some(id) => super::questions::open(&self.runs[&id], pid),
                 None => self.studio.tool_open(&token, pid),
             },
+            Req::Agents { project } => self.studio.agents_view(project.as_deref()),
+            Req::PutAgent { name, scope, text } => {
+                let scope = crate::studio::defs::Scope::parse(&scope)?;
+                self.studio.put_agent(&name, &scope, &text)
+            }
+            Req::DeleteAgent { name, scope } => {
+                let scope = crate::studio::defs::Scope::parse(&scope)?;
+                self.studio.delete_agent(&name, &scope)
+            }
+            Req::Pipelines { project } => self.studio.pipelines_view(project.as_deref()),
+            Req::CheckPipeline { project, toml } => {
+                self.studio.check_pipeline(project.as_deref(), &toml)
+            }
+            Req::PutPipeline { name, scope, toml } => {
+                let scope = crate::studio::defs::Scope::parse(&scope)?;
+                self.studio.put_pipeline(&name, &scope, &toml)
+            }
+            Req::DeletePipeline { name, scope } => {
+                let scope = crate::studio::defs::Scope::parse(&scope)?;
+                self.studio.delete_pipeline(&name, &scope)
+            }
+            Req::Runtimes => Ok(self.runtimes()),
         }
+    }
+
+    /// `GET /api/runtimes`: the runtimes Fallow knows, whether each is installed, its version,
+    /// and the models a definition may name.
+    fn runtimes(&self) -> Value {
+        use crate::agent::Runtime;
+        let profile = |name: &str| self.ctx.settings.agents.get(name);
+        let list: Vec<Value> = crate::defs::RUNTIMES
+            .iter()
+            .map(|name| {
+                let (a, models): (crate::agent::Availability, &[&str]) = match *name {
+                    "claude" => {
+                        let (cmd, args) = profile("claude")
+                            .map(|p| (p.command.clone(), p.args.clone()))
+                            .unwrap_or_else(|| ("claude".into(), Vec::new()));
+                        (crate::agent::claude::Claude::new(cmd, args).available(), &["opus", "sonnet", "haiku"])
+                    }
+                    _ => (
+                        crate::agent::Availability {
+                            installed: profile(name).is_some_and(|p| {
+                                crate::platform::find_program(&p.command).is_some()
+                            }),
+                            version: None,
+                        },
+                        &[],
+                    ),
+                };
+                json!({ "name": name, "installed": a.installed, "version": a.version, "models": models })
+            })
+            .collect();
+        Value::Array(list)
     }
 
     /// The loop of an unlocked feature that a new lock goes on with.
