@@ -120,7 +120,9 @@ impl Notifier {
             if self.seen.contains(key) {
                 continue;
             }
-            if !self.on.load(Ordering::Relaxed) || !enabled(item["project"].as_str().unwrap_or_default()) {
+            if !self.on.load(Ordering::Relaxed)
+                || !enabled(item["project"].as_str().unwrap_or_default())
+            {
                 continue;
             }
             self.to.show(&notice(item, self.page.as_deref()));

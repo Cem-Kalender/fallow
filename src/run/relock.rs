@@ -138,7 +138,11 @@ pub fn affected(docs: &[Doc]) -> Affected {
                 let ids: BTreeSet<&String> = old.0.keys().chain(new.0.keys()).collect();
                 for id in ids {
                     if old.0.get(id) != new.0.get(id) {
-                        add(&mut out, id, format!("{id}: its section of spec.md changed"));
+                        add(
+                            &mut out,
+                            id,
+                            format!("{id}: its section of spec.md changed"),
+                        );
                     }
                 }
                 if old.1 != new.1 {
@@ -161,7 +165,10 @@ pub fn affected(docs: &[Doc]) -> Affected {
                 };
                 let (a, b) = (rest(&old_phases), rest(&new_phases));
                 if a != b {
-                    elsewhere.push(("tasks.md".into(), changed_lines(&a.join("\n"), &b.join("\n"))));
+                    elsewhere.push((
+                        "tasks.md".into(),
+                        changed_lines(&a.join("\n"), &b.join("\n")),
+                    ));
                 }
             }
             name => elsewhere.push((
@@ -201,7 +208,8 @@ pub fn affected(docs: &[Doc]) -> Affected {
         }
     }
     // In the order of the stories.
-    out.stories.sort_by_key(|s| all.iter().position(|x| x == s).unwrap_or(usize::MAX));
+    out.stories
+        .sort_by_key(|s| all.iter().position(|x| x == s).unwrap_or(usize::MAX));
     out
 }
 
@@ -253,7 +261,9 @@ fn paths_in(line: &str) -> Vec<String> {
         .map(|w| w.trim_end_matches('.'))
         .filter(|w| {
             let ext = w.rsplit_once('.').map(|(a, e)| {
-                !a.is_empty() && (1..=5).contains(&e.len()) && e.chars().all(|c| c.is_ascii_alphanumeric())
+                !a.is_empty()
+                    && (1..=5).contains(&e.len())
+                    && e.chars().all(|c| c.is_ascii_alphanumeric())
             });
             (w.contains('/') && w.len() > 2) || ext == Some(true)
         })
@@ -280,7 +290,11 @@ mod tests {
     #[test]
     fn a_story_section_change_affects_that_story_only() {
         let a = affected(&[
-            doc("spec.md", SPEC, &SPEC.replace("Subtract.", "Subtract, ints only.")),
+            doc(
+                "spec.md",
+                SPEC,
+                &SPEC.replace("Subtract.", "Subtract, ints only."),
+            ),
             doc("tasks.md", TASKS, TASKS),
         ]);
         assert_eq!(a.stories, vec!["US2"]);
@@ -288,7 +302,11 @@ mod tests {
 
     #[test]
     fn a_task_change_affects_its_story() {
-        let a = affected(&[doc("tasks.md", TASKS, &TASKS.replace("add() in", "add() with checks in"))]);
+        let a = affected(&[doc(
+            "tasks.md",
+            TASKS,
+            &TASKS.replace("add() in", "add() with checks in"),
+        )]);
         assert_eq!(a.stories, vec!["US1"]);
     }
 
@@ -296,7 +314,11 @@ mod tests {
     fn a_plan_change_affects_the_stories_whose_tasks_name_its_files() {
         let a = affected(&[
             doc("tasks.md", TASKS, TASKS),
-            doc("plan.md", "# Plan\n", "# Plan\n\n`calc/sub.py` takes floats too.\n"),
+            doc(
+                "plan.md",
+                "# Plan\n",
+                "# Plan\n\n`calc/sub.py` takes floats too.\n",
+            ),
         ]);
         assert_eq!(a.stories, vec!["US2"]);
         let a = affected(&[
@@ -308,6 +330,9 @@ mod tests {
 
     #[test]
     fn nothing_changed_affects_nothing() {
-        assert_eq!(affected(&[doc("spec.md", SPEC, SPEC), doc("tasks.md", TASKS, TASKS)]), Affected::default());
+        assert_eq!(
+            affected(&[doc("spec.md", SPEC, SPEC), doc("tasks.md", TASKS, TASKS)]),
+            Affected::default()
+        );
     }
 }

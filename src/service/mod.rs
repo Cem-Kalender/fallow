@@ -85,21 +85,19 @@ pub fn serve(
     let tray = crate::platform::notify::Tray::start(
         home.clone(),
         Arc::clone(&notify_on),
-        Box::new(move |c| {
-            match c {
-                crate::platform::notify::Choice::Stop => {
-                    if let Ok(t) = tx_tray.lock() {
-                        let _ = t.send(Msg::Shutdown);
-                    }
+        Box::new(move |c| match c {
+            crate::platform::notify::Choice::Stop => {
+                if let Ok(t) = tx_tray.lock() {
+                    let _ = t.send(Msg::Shutdown);
                 }
-                crate::platform::notify::Choice::Notifications(true) => {
-                    let _ = std::fs::remove_file(&off_file);
-                }
-                crate::platform::notify::Choice::Notifications(false) => {
-                    let _ = std::fs::write(&off_file, "");
-                }
-                crate::platform::notify::Choice::Open => {}
             }
+            crate::platform::notify::Choice::Notifications(true) => {
+                let _ = std::fs::remove_file(&off_file);
+            }
+            crate::platform::notify::Choice::Notifications(false) => {
+                let _ = std::fs::write(&off_file, "");
+            }
+            crate::platform::notify::Choice::Open => {}
         }),
     );
     let tray: Option<Arc<crate::platform::notify::Tray>> = match tray {

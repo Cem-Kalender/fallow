@@ -167,9 +167,14 @@ pub fn loop_relock(cx: &LoopCx, story: &str, lock: u32, change: &str) -> String 
         }
     }
     if !change.trim().is_empty() {
-        s.push_str(&format!("\nThe change:\n\n```diff\n{}\n```\n", super::clip(change, 12_000)));
+        s.push_str(&format!(
+            "\nThe change:\n\n```diff\n{}\n```\n",
+            super::clip(change, 12_000)
+        ));
     }
-    s.push_str(&format!("\nReturn `status: done`, `task: \"{story}\"`, the `files` you changed and a `summary`."));
+    s.push_str(&format!(
+        "\nReturn `status: done`, `task: \"{story}\"`, the `files` you changed and a `summary`."
+    ));
     s
 }
 
@@ -288,7 +293,10 @@ pub fn loop_answer(a: &AskCx) -> String {
         a.question
     ));
     if !a.options.is_empty() {
-        s.push_str(&format!("\nThe options it sees: {}.\n", a.options.join("; ")));
+        s.push_str(&format!(
+            "\nThe options it sees: {}.\n",
+            a.options.join("; ")
+        ));
     }
     s.push_str(&format!(
         "\nThe locked documents are in `{}`, with what you and the engineer said in this conversation. You change nothing: Fallow commits your answer to spec.md's Clarifications.\n\nThe autonomy level is {}:\n- strict: relay every question to the engineer, with your recommendation;\n- normal: answer only what the locked documents or the engineer's conversations settle; relay the rest;\n- free: also decide a small open question yourself (`decided`): one that touches no reserved item, no acceptance scenario, no public interface (commands, API, file or data formats) and no dependency.\n",
@@ -313,7 +321,10 @@ pub fn loop_overrule(part: &str, question: &str, old: &str, new: &str, tasks: &[
         "The engineer overruled an answer you worked from.\n\nThe question: {question}\nThe answer you had: {old}\nThe engineer's answer: {new}\n\nFallow committed it to spec.md's Clarifications."
     ));
     if !tasks.is_empty() {
-        s.push_str(&format!(" The work built on the old answer: {}.", tasks.join(", ")));
+        s.push_str(&format!(
+            " The work built on the old answer: {}.",
+            tasks.join(", ")
+        ));
     }
     s.push_str("\n\nBring the code and tests in line with the engineer's answer, and run the tests. Fallow commits your changes when the step ends, runs the gates, and the story is checked again. Return the same result as for a task (`task` names what you repaired).");
     s

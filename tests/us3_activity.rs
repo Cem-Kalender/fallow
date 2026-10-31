@@ -34,8 +34,12 @@ fn the_feed_shows_each_agents_work_and_fallows_checks() {
             1,
         );
     let mut steps = calc_loop_ok();
-    let at = steps.find("[[step]]\nkind = \"build\"\npart = \"T002\"").unwrap();
-    let end = steps[at + 1..].find("[[step]]").map_or(steps.len(), |e| at + 1 + e);
+    let at = steps
+        .find("[[step]]\nkind = \"build\"\npart = \"T002\"")
+        .unwrap();
+    let end = steps[at + 1..]
+        .find("[[step]]")
+        .map_or(steps.len(), |e| at + 1 + e);
     steps.replace_range(at..end, &t2);
     // T001 talks for a while, so the latency of the feed can be measured on a live step.
     let steps = steps.replacen(
@@ -70,7 +74,14 @@ fn the_feed_shows_each_agents_work_and_fallows_checks() {
         };
         let now = unix_ms();
         mark = m["seq"].as_u64().unwrap_or(mark);
-        let a = activity(tx, id, Filter { after: seen, ..Filter::default() });
+        let a = activity(
+            tx,
+            id,
+            Filter {
+                after: seen,
+                ..Filter::default()
+            },
+        );
         for en in a["entries"].as_array().unwrap() {
             if en["agent"] != "fallow" && en["agent"] != "you" {
                 delays.push(now.saturating_sub(en["at"].as_u64().unwrap_or(now)));
@@ -87,52 +98,146 @@ fn the_feed_shows_each_agents_work_and_fallows_checks() {
 
     let all = activity(tx, id, Filter::default());
     let entries = all["entries"].as_array().unwrap();
-    assert!(!all.to_string().contains("SECRET-THOUGHT"), "no thinking is shown");
+    assert!(
+        !all.to_string().contains("SECRET-THOUGHT"),
+        "no thinking is shown"
+    );
     let find = |pred: &dyn Fn(&Value) -> bool| entries.iter().find(|e| pred(e)).cloned();
-    let say = find(&|e| e["kind"] == "say" && e["text"].as_str().unwrap().contains("add() with its type checks"))
-        .expect("the builder's narration");
+    let say = find(&|e| {
+        e["kind"] == "say"
+            && e["text"]
+                .as_str()
+                .unwrap()
+                .contains("add() with its type checks")
+    })
+    .expect("the builder's narration");
     assert_eq!(say["agent"], "builder");
     assert_eq!(say["task"], "T002");
     let write = find(&|e| e["kind"] == "write" && e["task"] == "T002").expect("the write");
     assert!(write["text"].as_str().unwrap().contains("calc/__init__.py"));
-    assert!(write["detail"].as_str().unwrap().contains("def add"), "{write}");
-    let ok = find(&|e| e["kind"] == "run" && e["text"] == "python -m unittest").expect("the test run");
+    assert!(
+        write["detail"].as_str().unwrap().contains("def add"),
+        "{write}"
+    );
+    let ok =
+        find(&|e| e["kind"] == "run" && e["text"] == "python -m unittest").expect("the test run");
     assert_eq!(ok["result"], "ok");
     assert!(ok["output"].as_str().unwrap().contains("Ran 2 tests"));
-    let failed = find(&|e| e["kind"] == "run" && e["text"].as_str().unwrap().contains("tests.test_none")).unwrap();
+    let failed =
+        find(&|e| e["kind"] == "run" && e["text"].as_str().unwrap().contains("tests.test_none"))
+            .unwrap();
     assert_eq!(failed["result"], "failed");
-    let refused = find(&|e| e["kind"] == "run" && e["text"].as_str().unwrap().contains("curl")).unwrap();
+    let refused =
+        find(&|e| e["kind"] == "run" && e["text"].as_str().unwrap().contains("curl")).unwrap();
     assert_eq!(refused["result"], "refused");
     // Fallow's checks: the commit and the gates of T002, and the reviews.
-    let commit = find(&|e| e["agent"] == "fallow" && e["task"] == "T002" && e["text"].as_str().unwrap().contains("committed")).unwrap();
+    let commit = find(&|e| {
+        e["agent"] == "fallow"
+            && e["task"] == "T002"
+            && e["text"].as_str().unwrap().contains("committed")
+    })
+    .unwrap();
     assert_eq!(commit["result"], "ok");
-    assert!(find(&|e| e["agent"] == "fallow" && e["text"].as_str().unwrap().starts_with("gates on T002")).is_some());
-    assert!(find(&|e| e["agent"] == "fallow" && e["text"].as_str().unwrap().contains("approved US1")).is_some());
+    assert!(
+        find(
+            &|e| e["agent"] == "fallow" && e["text"].as_str().unwrap().starts_with("gates on T002")
+        )
+        .is_some()
+    );
+    assert!(
+        find(&|e| e["agent"] == "fallow" && e["text"].as_str().unwrap().contains("approved US1"))
+            .is_some()
+    );
     // In time order, each with its place.
     let ats: Vec<u64> = entries.iter().map(|e| e["at"].as_u64().unwrap()).collect();
     assert!(ats.windows(2).all(|w| w[0] <= w[1]));
     // Filters: by agent, by kind, by task, and after a place.
-    let f = activity(tx, id, Filter { agent: Some("fallow".into()), ..Filter::default() });
-    assert!(f["entries"].as_array().unwrap().iter().all(|e| e["agent"] == "fallow"));
-    let f = activity(tx, id, Filter { kind: Some("run".into()), ..Filter::default() });
+    let f = activity(
+        tx,
+        id,
+        Filter {
+            agent: Some("fallow".into()),
+            ..Filter::default()
+        },
+    );
+    assert!(
+        f["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|e| e["agent"] == "fallow")
+    );
+    let f = activity(
+        tx,
+        id,
+        Filter {
+            kind: Some("run".into()),
+            ..Filter::default()
+        },
+    );
     assert_eq!(f["entries"].as_array().unwrap().len(), 3);
-    let f = activity(tx, id, Filter { task: Some("T002".into()), ..Filter::default() });
-    assert!(f["entries"].as_array().unwrap().iter().all(|e| e["task"] == "T002"));
+    let f = activity(
+        tx,
+        id,
+        Filter {
+            task: Some("T002".into()),
+            ..Filter::default()
+        },
+    );
+    assert!(
+        f["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|e| e["task"] == "T002")
+    );
     let n = entries.len();
-    let f = activity(tx, id, Filter { after: n - 2, ..Filter::default() });
+    let f = activity(
+        tx,
+        id,
+        Filter {
+            after: n - 2,
+            ..Filter::default()
+        },
+    );
     assert_eq!(f["entries"].as_array().unwrap().len(), 2);
 
     // The loop's screen: its agents, checks and totals.
     let s = ask(tx, Request::Loop { id }).unwrap();
-    let builder = s["agents"].as_array().unwrap().iter().find(|a| a["name"] == "builder").unwrap().clone();
+    let builder = s["agents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|a| a["name"] == "builder")
+        .unwrap()
+        .clone();
     assert_eq!(builder["runtime"], "claude");
     assert_eq!(builder["where"], "fallow/001-calc/build");
     assert!(builder["cost_usd"].as_f64().unwrap() > 0.0);
     assert_eq!(s["used"]["tasks"], 4);
     assert_eq!(s["checks"]["commits"].as_array().unwrap().len(), 4);
-    assert!(s["checks"]["gates"].as_array().unwrap().iter().all(|g| g["ok"] == true));
-    let us1 = s["checks"]["stories"].as_array().unwrap().iter().find(|x| x["id"] == "US1").unwrap().clone();
-    assert!(us1["criteria"].as_array().unwrap().iter().all(|c| c["state"] == "passed"), "{us1}");
+    assert!(
+        s["checks"]["gates"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|g| g["ok"] == true)
+    );
+    let us1 = s["checks"]["stories"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|x| x["id"] == "US1")
+        .unwrap()
+        .clone();
+    assert!(
+        us1["criteria"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|c| c["state"] == "passed"),
+        "{us1}"
+    );
     assert_eq!(s["stage"], "ready");
     drop(e);
     let _ = std::fs::remove_dir_all(&root);

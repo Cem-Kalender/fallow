@@ -328,11 +328,14 @@ pub fn diff_between(dir: &Path, from: &str, to: &str, path: &str) -> Result<Stri
 /// without committing: `commit_merge` ends it. A merge left over from before is aborted first.
 pub fn merge_theirs(dir: &Path, commit: &str) -> Result<(), String> {
     let _ = git(dir, &["merge", "--abort"]);
-    git(dir, &["merge", "--no-ff", "--no-commit", "-X", "theirs", commit])
-        .inspect_err(|_| {
-            let _ = git(dir, &["merge", "--abort"]);
-        })
-        .map(|_| ())
+    git(
+        dir,
+        &["merge", "--no-ff", "--no-commit", "-X", "theirs", commit],
+    )
+    .inspect_err(|_| {
+        let _ = git(dir, &["merge", "--abort"]);
+    })
+    .map(|_| ())
 }
 
 /// Ends a merge started by `merge_theirs` as one commit: what the merge staged, and `also`.

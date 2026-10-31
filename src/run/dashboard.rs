@@ -13,7 +13,9 @@ use crate::agent::Activity;
 /// "User Story 1 - Add to cart (Priority: P1) 🎯 MVP".
 pub fn short_title(story: Option<&str>, title: &str) -> String {
     let t = title.split(" (Priority").next().unwrap_or(title);
-    let t = t.trim_end_matches(|c: char| !c.is_ascii() || c.is_whitespace()).trim();
+    let t = t
+        .trim_end_matches(|c: char| !c.is_ascii() || c.is_whitespace())
+        .trim();
     match (story, t.split_once(" - ")) {
         (Some(s), Some((_, rest))) => format!("{s} {}", rest.trim()),
         _ => t.to_string(),
@@ -56,7 +58,14 @@ fn doing(run: &Run, n: u32) -> Option<String> {
         .rev()
         .filter_map(|l| serde_json::from_str::<Activity>(l).ok())
         .find(|a| !matches!(a.kind.as_str(), "say" | "result" | "error" | "refused"))?;
-    let what: String = last.text.lines().next().unwrap_or_default().chars().take(60).collect();
+    let what: String = last
+        .text
+        .lines()
+        .next()
+        .unwrap_or_default()
+        .chars()
+        .take(60)
+        .collect();
     Some(match last.kind.as_str() {
         "run" => format!("running `{what}`"),
         "read" => format!("reading {what}"),
@@ -80,7 +89,11 @@ pub fn card(run: &Run, _ctx: &Ctx, project_name: &str) -> Option<Value> {
                 .spec
                 .tasks
                 .iter()
-                .filter(|t| l.tasks.get(&t.id).is_some_and(|x| x.state == TaskState::Accepted))
+                .filter(|t| {
+                    l.tasks
+                        .get(&t.id)
+                        .is_some_and(|x| x.state == TaskState::Accepted)
+                })
                 .count();
             json!({
                 "n": p.spec.n, "title": short_title(p.spec.story.as_deref(), &p.spec.title),
@@ -89,7 +102,11 @@ pub fn card(run: &Run, _ctx: &Ctx, project_name: &str) -> Option<Value> {
         })
         .collect();
     let total: usize = l.phases.iter().map(|p| p.spec.tasks.len()).sum();
-    let done = l.tasks.values().filter(|t| t.state == TaskState::Accepted).count();
+    let done = l
+        .tasks
+        .values()
+        .filter(|t| t.state == TaskState::Accepted)
+        .count();
     let current = l.phases.iter().find(|p| p.state != PhaseState::Done);
     let task = current_task(l);
     // The agents, each in a few words.
@@ -112,11 +129,17 @@ pub fn card(run: &Run, _ctx: &Ctx, project_name: &str) -> Option<Value> {
         .iter()
         .map(|name| {
             let mine = running.filter(|r| r.def.as_deref() == Some(name.as_str()));
-            let asks = waiting.filter(|q| s.steps.get(&q.step).and_then(|x| x.def.as_deref()) == Some(name.as_str()));
+            let asks = waiting.filter(|q| {
+                s.steps.get(&q.step).and_then(|x| x.def.as_deref()) == Some(name.as_str())
+            });
             let (state, text) = if let Some(q) = asks {
                 ("asks", format!("{name} waits for your answer ({})", q.id))
             } else if let Some(r) = mine {
-                let on = r.task.clone().or_else(|| r.part.clone()).unwrap_or_default();
+                let on = r
+                    .task
+                    .clone()
+                    .or_else(|| r.part.clone())
+                    .unwrap_or_default();
                 let what = match r.kind {
                     StepKind::Review => format!("checking {on}"),
                     StepKind::Handover => format!("writing the handover of {on}"),
@@ -128,17 +151,30 @@ pub fn card(run: &Run, _ctx: &Ctx, project_name: &str) -> Option<Value> {
                     None => format!("{name} {what}"),
                 };
                 ("working", text)
-            } else if s.steps.values().any(|x| x.def.as_deref() == Some(name.as_str())) {
+            } else if s
+                .steps
+                .values()
+                .any(|x| x.def.as_deref() == Some(name.as_str()))
+            {
                 ("idle", format!("{name} idle"))
             } else {
                 let checker = pl.as_ref().is_some_and(|p| {
-                    p.steps.iter().any(|st| &st.agent == name && st.when == crate::defs::pipeline::When::Checkpoint)
+                    p.steps.iter().any(|st| {
+                        &st.agent == name && st.when == crate::defs::pipeline::When::Checkpoint
+                    })
                 });
                 let until = current
                     .and_then(|p| p.spec.story.clone())
                     .map(|st| format!(" until the {st} checkpoint"))
                     .unwrap_or_default();
-                ("idle", if checker { format!("{name} idle{until}") } else { format!("{name} idle") })
+                (
+                    "idle",
+                    if checker {
+                        format!("{name} idle{until}")
+                    } else {
+                        format!("{name} idle")
+                    },
+                )
             };
             json!({ "name": name, "state": state, "text": text })
         })
@@ -178,7 +214,11 @@ pub fn needs(run: &Run, project_name: &str) -> Vec<Value> {
         .filter(|q| q.state == super::events::QuestionState::WaitingEngineer)
         .collect();
     // q2 before q10.
-    waiting.sort_by_key(|q| q.id.trim_start_matches('q').parse::<u64>().unwrap_or(u64::MAX));
+    waiting.sort_by_key(|q| {
+        q.id.trim_start_matches('q')
+            .parse::<u64>()
+            .unwrap_or(u64::MAX)
+    });
     for q in waiting {
         let at = q.history.last().map(|h| h.at.clone()).unwrap_or_default();
         let mut v = base("question", &at);
@@ -193,7 +233,11 @@ pub fn needs(run: &Run, project_name: &str) -> Vec<Value> {
         let verified = l.outcome.as_ref().is_some_and(|o| o.0);
         let mut v = base(if verified { "ready" } else { "unverified" }, &s.stage_at);
         let tasks: usize = l.phases.iter().map(|p| p.spec.tasks.len()).sum();
-        let mut stories: Vec<&str> = l.phases.iter().filter_map(|p| p.spec.story.as_deref()).collect();
+        let mut stories: Vec<&str> = l
+            .phases
+            .iter()
+            .filter_map(|p| p.spec.story.as_deref())
+            .collect();
         stories.dedup();
         // The latest verdict of each story's checkpoint.
         let (mut passed, mut criteria) = (0, 0);
@@ -209,15 +253,30 @@ pub fn needs(run: &Run, project_name: &str) -> Vec<Value> {
                 passed += v.answers.iter().filter(|a| a.passed).count();
             }
         }
-        v["key"] = json!(format!("{}:ready:{}", s.id, s.integrated.clone().unwrap_or_default()));
+        v["key"] = json!(format!(
+            "{}:ready:{}",
+            s.id,
+            s.integrated.clone().unwrap_or_default()
+        ));
         v["tasks"] = json!(tasks);
         v["text"] = json!(if verified {
-            let gates = if s.gates.is_empty() { "" } else { " · gates green vs baseline" };
-            format!("All {} user stor{} reviewed · {passed}/{criteria} criteria{gates}", stories.len(), if stories.len() == 1 { "y" } else { "ies" })
+            let gates = if s.gates.is_empty() {
+                ""
+            } else {
+                " · gates green vs baseline"
+            };
+            format!(
+                "All {} user stor{} reviewed · {passed}/{criteria} criteria{gates}",
+                stories.len(),
+                if stories.len() == 1 { "y" } else { "ies" }
+            )
         } else {
             format!(
                 "Done, not verified by Fallow: {}",
-                l.outcome.as_ref().map(|o| o.1.join(", ")).unwrap_or_default()
+                l.outcome
+                    .as_ref()
+                    .map(|o| o.1.join(", "))
+                    .unwrap_or_default()
             )
         });
         out.push(v);

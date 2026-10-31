@@ -46,8 +46,7 @@ pub struct Asking {
     pub stop: Arc<AtomicBool>,
 }
 
-pub const ONE_OPEN: &str =
-    "you already have a question open: wait for its answer, or end your step with status blocked and its id";
+pub const ONE_OPEN: &str = "you already have a question open: wait for its answer, or end your step with status blocked and its id";
 
 /// The tools of a loop step (contracts/mcp-tools.md).
 pub fn tools() -> Value {
@@ -78,7 +77,12 @@ pub fn tools() -> Value {
 
 /// The MCP configuration of step `n`: a fresh token for Fallow's bridge, written next to the
 /// step's instruction.
-pub fn bridge(run: &Run, ctx: &Ctx, n: u32, group: Arc<Group>) -> Result<(StepTool, PathBuf), String> {
+pub fn bridge(
+    run: &Run,
+    ctx: &Ctx,
+    n: u32,
+    group: Arc<Group>,
+) -> Result<(StepTool, PathBuf), String> {
     let token = crate::mcp::identity::Token::new()
         .map_err(|e| e.to_string())?
         .hex();
@@ -176,7 +180,11 @@ fn level_name(l: Level) -> &'static str {
 
 fn open_of(l: &LoopState, n: u32) -> Option<&QuestionEntry> {
     l.questions.values().find(|q| {
-        q.step == n && matches!(q.state, QuestionState::WithLead | QuestionState::WaitingEngineer)
+        q.step == n
+            && matches!(
+                q.state,
+                QuestionState::WithLead | QuestionState::WaitingEngineer
+            )
     })
 }
 
@@ -234,7 +242,11 @@ fn ask(
     if open_of(&l, n).is_some() || run.asking.is_some() {
         return Err(ONE_OPEN.into());
     }
-    let text = args["question"].as_str().unwrap_or_default().trim().to_string();
+    let text = args["question"]
+        .as_str()
+        .unwrap_or_default()
+        .trim()
+        .to_string();
     if text.is_empty() {
         return Err("the question is empty".into());
     }
@@ -266,7 +278,19 @@ fn ask(
         asked_seq: 0,
         history: Vec::new(),
     };
-    record(run, &entry, QuestionState::WithLead, None, None, None, options.clone(), None, 0.0, Vec::new(), None)?;
+    record(
+        run,
+        &entry,
+        QuestionState::WithLead,
+        None,
+        None,
+        None,
+        options.clone(),
+        None,
+        0.0,
+        Vec::new(),
+        None,
+    )?;
     let stop = Arc::new(AtomicBool::new(false));
     run.asking = Some(Asking {
         q: id.clone(),
@@ -276,11 +300,23 @@ fn ask(
     // Fallow's own refusals go straight to the engineer, without the lead.
     let lead = match lead {
         Ok(x) => x,
-        Err(e) => return lead_done(run, None, &id, Err(format!("the lead cannot be asked: {e}"))),
+        Err(e) => {
+            return lead_done(
+                run,
+                None,
+                &id,
+                Err(format!("the lead cannot be asked: {e}")),
+            );
+        }
     };
     match start_lead(run, ctx, &l, &lead, &entry, stop) {
         Ok(()) => Ok(()),
-        Err(e) => lead_done(run, Some(&lead), &id, Err(format!("the lead cannot be asked: {e}"))),
+        Err(e) => lead_done(
+            run,
+            Some(&lead),
+            &id,
+            Err(format!("the lead cannot be asked: {e}")),
+        ),
     }
 }
 
@@ -295,14 +331,21 @@ fn start_lead(
     stop: Arc<AtomicBool>,
 ) -> Result<(), String> {
     let lib = crate::defs::Library::load(ctx.config.as_deref(), Some(&run.state.repo));
-    let def = lib.agent("lead").cloned().ok_or("there is no lead definition")?;
+    let def = lib
+        .agent("lead")
+        .cloned()
+        .ok_or("there is no lead definition")?;
     let runtime = agent::registry::runtime(&def.runtime, &ctx.settings)
         .map_err(|e| format!("the lead cannot answer: {e}"))?;
     let at = git::head(&lead.workdir)?;
-    let spec_text = git::show(&run.state.repo, &at, &format!("specs/{}/spec.md", l.feature))
-        .ok()
-        .flatten()
-        .unwrap_or_default();
+    let spec_text = git::show(
+        &run.state.repo,
+        &at,
+        &format!("specs/{}/spec.md", l.feature),
+    )
+    .ok()
+    .flatten()
+    .unwrap_or_default();
     let reserved = speckit::spec::read("spec.md", &spec_text)
         .map(|s| s.all_reserved())
         .unwrap_or_default();
@@ -326,7 +369,10 @@ fn start_lead(
         level: level_name(l.level),
         reserved: &reserved,
     });
-    let _ = std::fs::write(run.steps_dir().join(format!("{}.prompt", q.id)), &instruction);
+    let _ = std::fs::write(
+        run.steps_dir().join(format!("{}.prompt", q.id)),
+        &instruction,
+    );
     let session = match &lead.session {
         Some(s) => Session::Fork(s.clone()),
         None => Session::New(crate::platform::random::uuid_v4().map_err(|e| e.to_string())?),
@@ -375,7 +421,11 @@ pub fn relay_reason(
 ) -> Option<String> {
     let outcome = v["outcome"].as_str().unwrap_or_default();
     let answer = v["answer"].as_str().unwrap_or_default();
-    let basis = v["basis"].as_str().unwrap_or_default().trim().to_lowercase();
+    let basis = v["basis"]
+        .as_str()
+        .unwrap_or_default()
+        .trim()
+        .to_lowercase();
     if level == Level::Strict {
         return Some("the autonomy level is strict".into());
     }
@@ -461,10 +511,7 @@ pub fn lead_done(
         (_, None) => Some("Fallow could not find the feature's spec session to commit to".into()),
         (Ok(v), Some(_)) => relay_reason(l.level, v, &entry.text, &reserved),
     };
-    let reply = run
-        .asking
-        .take_if(|a| a.q == q)
-        .map(|a| a.reply);
+    let reply = run.asking.take_if(|a| a.q == q).map(|a| a.reply);
     let send = |v: Value| {
         if let Some(r) = &reply {
             let _ = r.send(Reply::Ok(v));
@@ -502,11 +549,25 @@ pub fn lead_done(
                 return Ok(());
             }
             Err(e) => {
-                return relay(run, &entry, &value, cost, &format!("Fallow could not commit the answer: {e}"), send);
+                return relay(
+                    run,
+                    &entry,
+                    &value,
+                    cost,
+                    &format!("Fallow could not commit the answer: {e}"),
+                    send,
+                );
             }
         }
     }
-    relay(run, &entry, &value, cost, why.as_deref().unwrap_or(""), send)
+    relay(
+        run,
+        &entry,
+        &value,
+        cost,
+        why.as_deref().unwrap_or(""),
+        send,
+    )
 }
 
 fn relay(
@@ -532,7 +593,10 @@ fn relay(
         .find(|o| o["recommended"] == true)
         .and_then(|o| o["label"].as_str().map(str::to_string));
     // What the lead would have said is its recommendation.
-    if let Some(a) = v.and_then(|v| v["answer"].as_str()).filter(|a| !a.trim().is_empty()) {
+    if let Some(a) = v
+        .and_then(|v| v["answer"].as_str())
+        .filter(|a| !a.trim().is_empty())
+    {
         if recommended.is_none() {
             recommended = Some(a.trim().to_string());
         }
@@ -636,7 +700,11 @@ pub fn engineer_answer(run: &mut Run, lead: &Lead, q: &str, answer: &str) -> Res
     if answer.is_empty() {
         return Err("the answer is empty".into());
     }
-    let entry = l.questions.get(q).cloned().ok_or("there is no such question")?;
+    let entry = l
+        .questions
+        .get(q)
+        .cloned()
+        .ok_or("there is no such question")?;
     if entry.state != QuestionState::WaitingEngineer {
         return Err(format!("{q} is not waiting for you"));
     }
@@ -736,9 +804,23 @@ pub fn orphans(run: &mut Run) -> Result<(), String> {
     if run.state.stage.is_final() {
         return Ok(());
     }
-    for q in l.questions.values().filter(|q| q.state == QuestionState::WithLead) {
-        let _ = git::worktree_remove(&run.state.repo, &run.worktrees().join(format!("lead-{}", q.id)));
-        relay(run, q, &Err(String::new()), 0.0, "the lead's call was cut short when Fallow stopped", |_| {})?;
+    for q in l
+        .questions
+        .values()
+        .filter(|q| q.state == QuestionState::WithLead)
+    {
+        let _ = git::worktree_remove(
+            &run.state.repo,
+            &run.worktrees().join(format!("lead-{}", q.id)),
+        );
+        relay(
+            run,
+            q,
+            &Err(String::new()),
+            0.0,
+            "the lead's call was cut short when Fallow stopped",
+            |_| {},
+        )?;
     }
     Ok(())
 }
@@ -746,7 +828,11 @@ pub fn orphans(run: &mut Run) -> Result<(), String> {
 /// The engineer confirms a decision the lead took at the Free level (FR-020a, constitution II).
 pub fn confirm(run: &mut Run, q: &str) -> Result<Value, String> {
     let l = lp(run)?;
-    let entry = l.questions.get(q).cloned().ok_or("there is no such question")?;
+    let entry = l
+        .questions
+        .get(q)
+        .cloned()
+        .ok_or("there is no such question")?;
     if run.state.stage.is_final() {
         return Err("the loop has ended".into());
     }
@@ -786,7 +872,11 @@ pub fn overrule(run: &mut Run, lead: &Lead, q: &str, answer: &str) -> Result<Val
     if l.unlocked {
         return Err("the feature is unlocked: lock it again first".into());
     }
-    let entry = l.questions.get(q).cloned().ok_or("there is no such question")?;
+    let entry = l
+        .questions
+        .get(q)
+        .cloned()
+        .ok_or("there is no such question")?;
     let by_lead = matches!(entry.state, QuestionState::Decided)
         || (entry.state == QuestionState::Answered && entry.by.as_deref() == Some("lead"));
     if !by_lead {
@@ -795,7 +885,14 @@ pub fn overrule(run: &mut Run, lead: &Lead, q: &str, answer: &str) -> Result<Val
     if run.state.stage.is_final() {
         return Err("the loop is over".into());
     }
-    let commit = commit_answer(run, &l, lead, &entry, "engineer, overruling the lead", answer)?;
+    let commit = commit_answer(
+        run,
+        &l,
+        lead,
+        &entry,
+        "engineer, overruling the lead",
+        answer,
+    )?;
     let reopened = built_on(run, &l, &entry);
     record(
         run,
@@ -827,8 +924,7 @@ fn built_on(run: &Run, l: &LoopState, q: &QuestionEntry) -> Vec<String> {
     let mut from_here = false;
     for p in &l.phases {
         let same_story = q.affects.is_some()
-            && (p.spec.story == q.affects
-                || p.spec.tasks.iter().any(|t| t.story == q.affects));
+            && (p.spec.story == q.affects || p.spec.tasks.iter().any(|t| t.story == q.affects));
         if Some(p.spec.n) != phase && !(from_here && same_story) {
             continue;
         }
@@ -874,9 +970,15 @@ mod tests {
     #[test]
     fn an_answer_needs_a_basis() {
         let q = "Floats?";
-        assert_eq!(relay_reason(Level::Normal, &said("answer", "no", "spec.md FR-2"), q, &[]), None);
+        assert_eq!(
+            relay_reason(Level::Normal, &said("answer", "no", "spec.md FR-2"), q, &[]),
+            None
+        );
         for basis in ["none", "", "  None "] {
-            assert!(relay_reason(Level::Normal, &said("answer", "no", basis), q, &[]).is_some(), "{basis:?}");
+            assert!(
+                relay_reason(Level::Normal, &said("answer", "no", basis), q, &[]).is_some(),
+                "{basis:?}"
+            );
         }
         assert!(relay_reason(Level::Normal, &said("answer", " ", "spec.md"), q, &[]).is_some());
     }
@@ -890,10 +992,16 @@ mod tests {
         for flag in ["touches_interface", "adds_dependency"] {
             let mut w = v.clone();
             w[flag] = json!(true);
-            assert!(relay_reason(Level::Free, &w, "Floats?", &[]).is_some(), "{flag}");
+            assert!(
+                relay_reason(Level::Free, &w, "Floats?", &[]).is_some(),
+                "{flag}"
+            );
             let mut w = v.clone();
             w.as_object_mut().unwrap().remove(flag);
-            assert!(relay_reason(Level::Free, &w, "Floats?", &[]).is_some(), "{flag} missing");
+            assert!(
+                relay_reason(Level::Free, &w, "Floats?", &[]).is_some(),
+                "{flag} missing"
+            );
         }
         assert!(relay_reason(Level::Normal, &v, "Floats?", &[]).is_some());
         assert!(relay_reason(Level::Strict, &v, "Floats?", &[]).is_some());
@@ -912,9 +1020,19 @@ mod tests {
             assert!(relay_reason(level, &v, "Floats?", &[]).is_some());
             // The lead's flags are claims: Fallow finds a reserved item in the question or the
             // answer itself, and a missing flag counts as set.
-            let why = relay_reason(level, &ok, "What should the Refusal Wording be?", &["the refusal wording".into()]);
+            let why = relay_reason(
+                level,
+                &ok,
+                "What should the Refusal Wording be?",
+                &["the refusal wording".into()],
+            );
             assert!(why.unwrap().contains("reserved"));
-            let why = relay_reason(level, &said("answer", "use EUR prices", "spec.md"), "Currency?", &["EUR prices".into()]);
+            let why = relay_reason(
+                level,
+                &said("answer", "use EUR prices", "spec.md"),
+                "Currency?",
+                &["EUR prices".into()],
+            );
             assert!(why.is_some());
             let mut v = ok.clone();
             v.as_object_mut().unwrap().remove("reserved");

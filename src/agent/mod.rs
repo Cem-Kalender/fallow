@@ -299,23 +299,37 @@ pub mod registry {
     pub fn runtime(name: &str, settings: &Settings) -> Result<Box<dyn Runtime>, String> {
         let Some((command, args)) = profile(name, settings) else {
             return Err(match name {
-                "fake" => "the runtime \"fake\" is not configured: add [agents.fake] to the settings".to_string(),
-                _ => format!("Fallow knows no runtime {name:?} (it knows {})", crate::defs::RUNTIMES.join(", ")),
+                "fake" => {
+                    "the runtime \"fake\" is not configured: add [agents.fake] to the settings"
+                        .to_string()
+                }
+                _ => format!(
+                    "Fallow knows no runtime {name:?} (it knows {})",
+                    crate::defs::RUNTIMES.join(", ")
+                ),
             });
         };
         if crate::platform::find_program(&command).is_none() {
-            return Err(format!("the runtime {name:?} is not installed: {command} was not found"));
+            return Err(format!(
+                "the runtime {name:?} is not installed: {command} was not found"
+            ));
         }
         Ok(match name {
             "claude" => Box::new(super::claude::Claude::new(command, args)),
             "fake" => Box::new(super::fake::Fake::from_profile(command, args)),
-            _ => return Err(format!("Fallow knows no runtime {name:?} (it knows {})", crate::defs::RUNTIMES.join(", "))),
+            _ => {
+                return Err(format!(
+                    "Fallow knows no runtime {name:?} (it knows {})",
+                    crate::defs::RUNTIMES.join(", ")
+                ));
+            }
         })
     }
 
     type Listed = Vec<(String, Availability, &'static [&'static str])>;
     /// The last list, for the profiles it was made from.
-    static CACHE: std::sync::Mutex<Option<(String, std::time::Instant, Listed)>> = std::sync::Mutex::new(None);
+    static CACHE: std::sync::Mutex<Option<(String, std::time::Instant, Listed)>> =
+        std::sync::Mutex::new(None);
 
     /// `GET /api/runtimes`: each runtime, whether it is installed, its version and its models.
     /// A version is asked of the program on a thread of its own, for at most a few seconds, and
@@ -339,10 +353,11 @@ pub mod registry {
                         std::thread::spawn(move || {
                             let _ = tx.send(r.available());
                         });
-                        rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap_or(Availability {
-                            installed: true,
-                            version: None,
-                        })
+                        rx.recv_timeout(std::time::Duration::from_secs(5))
+                            .unwrap_or(Availability {
+                                installed: true,
+                                version: None,
+                            })
                     }
                     Err(_) => Availability {
                         installed: false,

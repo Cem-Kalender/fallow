@@ -536,7 +536,12 @@ pub fn retry(run: &mut Run) -> Result<(), String> {
     // "Allow one more repair" raises that part's cap by one; a retry starts a new round of
     // tries for what was asked about.
     if n.options.iter().any(|o| o == "allow one more repair") {
-        let part = run.state.steps.values().next_back().and_then(|s| s.part.clone());
+        let part = run
+            .state
+            .steps
+            .values()
+            .next_back()
+            .and_then(|s| s.part.clone());
         return run.append(Event::Steering {
             kind: SteeringKind::Resume,
             target: part,

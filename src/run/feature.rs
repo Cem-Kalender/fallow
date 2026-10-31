@@ -231,7 +231,10 @@ fn step(run: &mut Run, ctx: &Ctx) -> Result<(), String> {
     if let Some(q) = super::questions::waiting(&l).cloned() {
         if run.state.needs.is_none() {
             if let Some(t) = q.task.as_ref().filter(|t| l.tasks.contains_key(*t)) {
-                if l.tasks.get(t).is_some_and(|s| s.state != TaskState::Waiting) {
+                if l.tasks
+                    .get(t)
+                    .is_some_and(|s| s.state != TaskState::Waiting)
+                {
                     run.append(Event::Task {
                         id: t.clone(),
                         state: TaskState::Waiting,
@@ -302,9 +305,24 @@ fn step(run: &mut Run, ctx: &Ctx) -> Result<(), String> {
         );
     }
     let last_phase = l.phases.iter().map(|p| p.spec.n).max().unwrap_or(1);
-    for s in pl.steps.iter().filter(|s| s.when == When::Once && s.at() == At::Start) {
+    for s in pl
+        .steps
+        .iter()
+        .filter(|s| s.when == When::Once && s.at() == At::Start)
+    {
         let what = "Do your work for the whole feature before the builder starts, as your definition says.";
-        if !extra(run, ctx, &l, &pl, &lib, s, &format!("{}@once-start", s.agent), 1, None, what)? {
+        if !extra(
+            run,
+            ctx,
+            &l,
+            &pl,
+            &lib,
+            s,
+            &format!("{}@once-start", s.agent),
+            1,
+            None,
+            what,
+        )? {
             return Ok(());
         }
     }
@@ -314,9 +332,24 @@ fn step(run: &mut Run, ctx: &Ctx) -> Result<(), String> {
         }
         return phase(run, ctx, &l, &pl, &lib, p);
     }
-    for s in pl.steps.iter().filter(|s| s.when == When::Once && s.at() == At::End) {
+    for s in pl
+        .steps
+        .iter()
+        .filter(|s| s.when == When::Once && s.at() == At::End)
+    {
         let what = "Every phase of the feature is built and verified. Do your work for the whole feature, as your definition says.";
-        if !extra(run, ctx, &l, &pl, &lib, s, &format!("{}@once-end", s.agent), last_phase, None, what)? {
+        if !extra(
+            run,
+            ctx,
+            &l,
+            &pl,
+            &lib,
+            s,
+            &format!("{}@once-end", s.agent),
+            last_phase,
+            None,
+            what,
+        )? {
             return Ok(());
         }
     }
@@ -350,20 +383,37 @@ fn maker_gated(
             .filter(|g| {
                 g.baseline
                     && !run.state.gate_runs.iter().any(|r| {
-                        r.kind == GateKind::Baseline && r.result.gate == g.name && r.result.commit == c
+                        r.kind == GateKind::Baseline
+                            && r.result.gate == g.name
+                            && r.result.commit == c
                     })
             })
             .collect();
         if missing.is_empty() {
             return Ok(true);
         }
-        machine::run_gates(run, ctx, GateKind::Baseline, Some(part.to_string()), c, missing)?;
+        machine::run_gates(
+            run,
+            ctx,
+            GateKind::Baseline,
+            Some(part.to_string()),
+            c,
+            missing,
+        )?;
         return Ok(false);
     }
     match gated(run, ctx, part, &c)? {
         None => Ok(false),
         Some(failed) if !failed.is_empty() => {
-            repair_or_ask(run, part, None, phase, pl.caps.task_repairs, &builder_of(pl), failed)?;
+            repair_or_ask(
+                run,
+                part,
+                None,
+                phase,
+                pl.caps.task_repairs,
+                &builder_of(pl),
+                failed,
+            )?;
             Ok(false)
         }
         Some(_) => Ok(true),
@@ -386,9 +436,8 @@ pub fn paused_by_engineer(run: &Run) -> bool {
 /// The engineer's notes for the next step (FR-019) that this step, about to start, receives:
 /// each note goes to the first step that starts after it, for its agent or for any, once.
 fn notes_for(run: &Run, n: u32, def: &str) -> Vec<String> {
-    let for_def = |target: &Option<String>, d: Option<&str>| {
-        target.as_deref().is_none_or(|t| Some(t) == d)
-    };
+    let for_def =
+        |target: &Option<String>, d: Option<&str>| target.as_deref().is_none_or(|t| Some(t) == d);
     run.state
         .steering
         .iter()
@@ -467,7 +516,11 @@ fn extra(
         .cloned()
         .ok_or_else(|| format!("there is no agent named {:?}", s.agent))?;
     let checker = def.kind == Kind::Checker;
-    let kind = if checker { StepKind::Review } else { StepKind::Make };
+    let kind = if checker {
+        StepKind::Review
+    } else {
+        StepKind::Make
+    };
     // A maker at the start (a test-writer) writes what must fail until the builder is done:
     // its work is gated with the tasks, not on its own (contracts/pipeline.md, test-first).
     let gate = s.at() == At::End;
@@ -514,7 +567,15 @@ fn extra(
                 match &r.verified {
                     None => return Ok(false),
                     Some((false, reasons)) => {
-                        repair_or_ask(run, part, None, phase, pl.caps.task_repairs, &builder, reasons.clone())?;
+                        repair_or_ask(
+                            run,
+                            part,
+                            None,
+                            phase,
+                            pl.caps.task_repairs,
+                            &builder,
+                            reasons.clone(),
+                        )?;
                         return Ok(false);
                     }
                     // A maker's work, repaired, is gated; a checker looks again.
@@ -590,7 +651,9 @@ fn extra(
                     .state
                     .steps
                     .values()
-                    .filter(|x| x.kind == kind && x.queued_seq > since.max(fresh) && !machine::cut_short(x))
+                    .filter(|x| {
+                        x.kind == kind && x.queued_seq > since.max(fresh) && !machine::cut_short(x)
+                    })
                     .filter(of_part)
                     .count();
                 if tries < CHECK_TRIES {
@@ -620,7 +683,15 @@ fn extra(
                 })?;
                 return Ok(false);
             }
-            repair_or_ask(run, part, None, phase, pl.caps.task_repairs, &builder, reasons)?;
+            repair_or_ask(
+                run,
+                part,
+                None,
+                phase,
+                pl.caps.task_repairs,
+                &builder,
+                reasons,
+            )?;
             Ok(false)
         }
     }
@@ -739,7 +810,9 @@ fn repairs_of(run: &Run, part: &str) -> u32 {
         .values()
         .filter(|s| s.kind == StepKind::Repair && s.part.as_deref() == Some(part))
         .filter(|s| {
-            !machine::cut_short(s) && !s.reason.starts_with(RELOCK) && !s.reason.starts_with(OVERRULE)
+            !machine::cut_short(s)
+                && !s.reason.starts_with(RELOCK)
+                && !s.reason.starts_with(OVERRULE)
         })
         .filter(|s| {
             s.queued_seq
@@ -794,7 +867,10 @@ fn take_lock(run: &mut Run, l: &LoopState, wt: &std::path::Path) -> Result<(), S
     let msg = format!("lock {} of {}", l.lock, l.feature);
     if let Err(e) = git::merge_theirs(wt, &l.lock_commit) {
         return run.append(Event::NeedsEngineer {
-            why: format!("Fallow could not take lock {} into the build branch: {e}", l.lock),
+            why: format!(
+                "Fallow could not take lock {} into the build branch: {e}",
+                l.lock
+            ),
             options: vec!["retry".into(), "stop".into()],
         });
     }
@@ -809,7 +885,11 @@ fn take_lock(run: &mut Run, l: &LoopState, wt: &std::path::Path) -> Result<(), S
         }
     }
     std::fs::write(&file, &text).map_err(|e| format!("{}: {e}", file.display()))?;
-    git::commit_merge(wt, &format!("{msg}, the accepted tasks still ticked"), &[rel.as_str()])?;
+    git::commit_merge(
+        wt,
+        &format!("{msg}, the accepted tasks still ticked"),
+        &[rel.as_str()],
+    )?;
     run.append(Event::Note {
         text: format!("lock {} was taken into the build branch", l.lock),
     })
@@ -1027,16 +1107,18 @@ fn phase(
             .steps
             .values()
             .rev()
-            .find(|s| s.kind == StepKind::Repair && s.part.as_deref() == Some(part.as_str()) && s.queued_seq > q.seq)
+            .find(|s| {
+                s.kind == StepKind::Repair
+                    && s.part.as_deref() == Some(part.as_str())
+                    && s.queued_seq > q.seq
+            })
             .cloned();
         match repair {
             // The phase has not started: its builder takes the answer in with its first task,
             // and the repair runs in its session once there is one (Phase 6 review).
-            None if !run
-                .state
-                .steps
-                .values()
-                .any(|s| s.phase == Some(n) && s.kind == StepKind::Build && s.session.is_some()) =>
+            None if !run.state.steps.values().any(|s| {
+                s.phase == Some(n) && s.kind == StepKind::Build && s.session.is_some()
+            }) =>
             {
                 continue;
             }
@@ -1088,7 +1170,15 @@ fn phase(
                 None => return Ok(()),
                 Some((false, reasons)) => {
                     let reasons = reasons.clone();
-                    return repair_or_ask(run, &part, None, n, pl.caps.task_repairs, &builder, reasons);
+                    return repair_or_ask(
+                        run,
+                        &part,
+                        None,
+                        n,
+                        pl.caps.task_repairs,
+                        &builder,
+                        reasons,
+                    );
                 }
                 Some((true, _)) => {
                     if let Some(c) = r.verified_commit.clone() {
@@ -1096,7 +1186,15 @@ fn phase(
                             match gated(run, ctx, &part, &c)? {
                                 None => return Ok(()),
                                 Some(f) if !f.is_empty() => {
-                                    return repair_or_ask(run, &part, None, n, pl.caps.task_repairs, &builder, f);
+                                    return repair_or_ask(
+                                        run,
+                                        &part,
+                                        None,
+                                        n,
+                                        pl.caps.task_repairs,
+                                        &builder,
+                                        f,
+                                    );
                                 }
                                 Some(_) => {}
                             }
@@ -1287,7 +1385,11 @@ fn phase(
             .steps
             .values()
             .rev()
-            .find(|s| s.kind == StepKind::Repair && s.part.as_deref() == Some(part.as_str()) && s.queued_seq > fresh)
+            .find(|s| {
+                s.kind == StepKind::Repair
+                    && s.part.as_deref() == Some(part.as_str())
+                    && s.queued_seq > fresh
+            })
             .cloned();
         match repair.as_ref().map(|r| &r.verified) {
             Some(None) => return Ok(()),
@@ -1519,7 +1621,10 @@ fn checkpoint(
                     run.state
                         .steps
                         .values()
-                        .filter(|x| x.kind == StepKind::Build && x.phase.is_some_and(|n| phases.contains(&n)))
+                        .filter(|x| {
+                            x.kind == StepKind::Build
+                                && x.phase.is_some_and(|n| phases.contains(&n))
+                        })
                         .min_by_key(|x| x.n)
                         .and_then(|x| x.base.clone())
                 })
@@ -1663,7 +1768,10 @@ fn checkpoint(
                         &loop_cx(l, &may, &[]),
                         story,
                         &c.agent,
-                        &format!("Check user story {story} (\"{}\") of the feature.", st.title),
+                        &format!(
+                            "Check user story {story} (\"{}\") of the feature.",
+                            st.title
+                        ),
                         &head,
                     )
                 };
@@ -1777,7 +1885,8 @@ fn finish(run: &mut Run, pl: &Pipeline) -> Result<(), String> {
         .filter(|g| g.kind == GateKind::Part)
         .map(|g| g.result.commit.clone())
         .collect();
-    let history = git::commits_between(&run.state.repo, &lp(run)?.lock_commit, &head).unwrap_or_default();
+    let history =
+        git::commits_between(&run.state.repo, &lp(run)?.lock_commit, &head).unwrap_or_default();
     if let Some(g) = history.iter().find(|c| gated.contains(*c)) {
         let l = lp(run)?;
         let handovers = format!("specs/{}/handover/", l.feature);
@@ -1831,8 +1940,12 @@ fn take_answers(run: &Run, l: &LoopState) -> Result<(), String> {
     git::worktree_add(&repo, &wt, Some(&l.build_branch), &l.lock_commit)?;
     if let Some(a) = super::questions::latest_answer(l) {
         if !git::is_ancestor(&repo, &a, &git::head(&wt)?) {
-            git::merge_into(&wt, &a, &format!("Fallow: the answers to the {} loop's questions", l.feature))
-                .map_err(|e| format!("cannot take in the committed answers: {}", e.join(", ")))?;
+            git::merge_into(
+                &wt,
+                &a,
+                &format!("Fallow: the answers to the {} loop's questions", l.feature),
+            )
+            .map_err(|e| format!("cannot take in the committed answers: {}", e.join(", ")))?;
         }
     }
     Ok(())
@@ -1857,13 +1970,17 @@ fn start(run: &mut Run, ctx: &Ctx, n: u32) -> Result<(), String> {
             let commit = git::head(&build_wt(run))?;
             // One folder per checker and part, so a checker asked again resumes its session in
             // the folder it ran in.
-            let name: String = format!(
-                "check-{}-{defname}",
-                step.part.as_deref().unwrap_or("loop")
-            )
-            .chars()
-            .map(|c| if c.is_ascii_alphanumeric() || c == '-' { c } else { '-' })
-            .collect();
+            let name: String =
+                format!("check-{}-{defname}", step.part.as_deref().unwrap_or("loop"))
+                    .chars()
+                    .map(|c| {
+                        if c.is_ascii_alphanumeric() || c == '-' {
+                            c
+                        } else {
+                            '-'
+                        }
+                    })
+                    .collect();
             let wt = run.worktrees().join(name);
             let _ = git::worktree_remove(&repo, &wt);
             git::worktree_add(&repo, &wt, None, &commit)?;
@@ -1909,7 +2026,9 @@ fn start(run: &mut Run, ctx: &Ctx, n: u32) -> Result<(), String> {
             let mut text = machine::instruction_of(run, n);
             let notes = notes_for(run, n, &defname);
             for note in &notes {
-                text.push_str(&format!("\n\nA note from the engineer for this step:\n{note}"));
+                text.push_str(&format!(
+                    "\n\nA note from the engineer for this step:\n{note}"
+                ));
             }
             // The step's instruction file says exactly what the agent was given.
             if !notes.is_empty() {
@@ -1974,7 +2093,8 @@ fn start(run: &mut Run, ctx: &Ctx, n: u32) -> Result<(), String> {
             let tx2 = tx.clone();
             let started = std::time::Instant::now();
             let mut on = |e: agent::Event| {
-                let Some(mut a) = agent::activity_of(&e, started.elapsed().as_millis() as u64) else {
+                let Some(mut a) = agent::activity_of(&e, started.elapsed().as_millis() as u64)
+                else {
                     return;
                 };
                 a.at = super::time::unix_ms();
@@ -2021,7 +2141,8 @@ pub fn process(run: &mut Run, ctx: &Ctx, n: u32) -> Result<(), String> {
     // Its question went to the engineer: whatever it returned, the step ends blocked on it and
     // resumes in its session with the answer (FR-021), whether it was a builder, a checker or
     // a handover, and whether it stopped or carried on.
-    let interrupted = matches!(&step.end, Some(StepEnd::Failed { why }) if why.starts_with(INTERRUPTED));
+    let interrupted =
+        matches!(&step.end, Some(StepEnd::Failed { why }) if why.starts_with(INTERRUPTED));
     if let Some(q) = super::questions::relayed_of(&l, n).filter(|_| !interrupted) {
         let mut reasons = vec![format!("{BLOCKED}{} ({})", q.text, q.id)];
         if step.kind != StepKind::Review {
@@ -2053,7 +2174,12 @@ pub fn process(run: &mut Run, ctx: &Ctx, n: u32) -> Result<(), String> {
         }
         // A checker that did not finish gave no verdict: it is asked again, not repaired.
         if step.kind == StepKind::Review {
-            return verified(run, false, vec![format!("{INCOMPLETE}the check did not finish: {why}")], None);
+            return verified(
+                run,
+                false,
+                vec![format!("{INCOMPLETE}the check did not finish: {why}")],
+                None,
+            );
         }
         let mut reasons = vec![why.clone()];
         reasons.extend(tidied);
@@ -2078,8 +2204,12 @@ pub fn answered(run: &mut Run, last: &Step, text: &str) -> Result<(), String> {
         .filter(|s| !run.state.lost_sessions.contains(s));
     let what = last.part.as_deref().unwrap_or("the task");
     let go_on = match last.kind {
-        StepKind::Review => "Continue your check with it and return your verdict, every criterion with what you ran and what it gave.",
-        _ => "Continue the same work in your worktree and return your result; Fallow commits your changes when the step ends.",
+        StepKind::Review => {
+            "Continue your check with it and return your verdict, every criterion with what you ran and what it gave."
+        }
+        _ => {
+            "Continue the same work in your worktree and return your result; Fallow commits your changes when the step ends."
+        }
     };
     let instruction = match &session {
         Some(_) => format!(
@@ -2479,11 +2609,7 @@ fn check_done(run: &mut Run, ctx: &Ctx, step: &Step, value: &Value) -> Result<()
         let _ = git::worktree_remove(&run.state.repo, wt);
     }
     let mut reasons = failed;
-    reasons.extend(
-        missing
-            .into_iter()
-            .map(|m| format!("{INCOMPLETE}{m}")),
-    );
+    reasons.extend(missing.into_iter().map(|m| format!("{INCOMPLETE}{m}")));
     run.append(Event::Verified {
         n,
         accepted: approved,

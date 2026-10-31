@@ -62,9 +62,23 @@ fn restart(e: fallow::service::ToolEngine, root: &Path) -> fallow::service::Tool
 /// The interrupted step and its resumption in the same session.
 fn resumed_in_session(v: &Value, kind: &str, part: &str) {
     let s = steps_of(v, kind, part);
-    assert_eq!(s.len(), 2, "{kind} {part}: the interrupted step and its resumption");
-    assert!(s[0]["end"]["why"].as_str().unwrap_or("").starts_with("interrupted"), "{}", s[0]);
-    assert_eq!(s[1]["resume"], s[0]["session"], "{kind} {part} resumed in its session");
+    assert_eq!(
+        s.len(),
+        2,
+        "{kind} {part}: the interrupted step and its resumption"
+    );
+    assert!(
+        s[0]["end"]["why"]
+            .as_str()
+            .unwrap_or("")
+            .starts_with("interrupted"),
+        "{}",
+        s[0]
+    );
+    assert_eq!(
+        s[1]["resume"], s[0]["session"],
+        "{kind} {part} resumed in its session"
+    );
 }
 
 #[test]
@@ -77,14 +91,25 @@ fn a_loop_survives_stops_at_every_kind_of_step_and_at_ready() {
         task_step("T002", &[("calc/__init__.py", CALC_INIT)], ""),
         task_step(
             "T003",
-            &[("tests/__init__.py", ""), ("tests/test_add.py", TEST_ADD), ("tests/test_slow.py", TEST_SLOW)],
+            &[
+                ("tests/__init__.py", ""),
+                ("tests/test_add.py", TEST_ADD),
+                ("tests/test_slow.py", TEST_SLOW),
+            ],
             "",
         ),
         handover_step(2, SLOW),
         handover_step(2, AGAIN),
         check_step("US1", true, SLOW),
         check_step("US1", true, AGAIN),
-        task_step("T004", &[("calc/__init__.py", CALC_INIT_SUB), ("tests/test_sub.py", TEST_SUB)], ""),
+        task_step(
+            "T004",
+            &[
+                ("calc/__init__.py", CALC_INIT_SUB),
+                ("tests/test_sub.py", TEST_SUB),
+            ],
+            "",
+        ),
         handover_step(3, ""),
         check_step("US2", true, ""),
     ]
@@ -96,7 +121,10 @@ fn a_loop_survives_stops_at_every_kind_of_step_and_at_ready() {
     let e = restart(e, &root);
     // Mid-gates: T003's gate run is under way.
     wait_for(&e.tx, id, "T003's gates", |v| {
-        v["busy"] == "gates" && steps_of(v, "build", "T003").iter().any(|s| !s["end"].is_null())
+        v["busy"] == "gates"
+            && steps_of(v, "build", "T003")
+                .iter()
+                .any(|s| !s["end"].is_null())
     });
     let e = restart(e, &root);
     // Mid-handover.
@@ -109,7 +137,10 @@ fn a_loop_survives_stops_at_every_kind_of_step_and_at_ready() {
     // At ready.
     let e = restart(e, &root);
     let after = wait_for(&e.tx, id, "ready again", |v| v["stage"] == "ready");
-    assert_eq!(after["seq"], v["seq"], "nothing ran again after the restart at ready");
+    assert_eq!(
+        after["seq"], v["seq"],
+        "nothing ran again after the restart at ready"
+    );
 
     let v = after;
     resumed_in_session(&v, "build", "T001");
@@ -121,7 +152,10 @@ fn a_loop_survives_stops_at_every_kind_of_step_and_at_ready() {
     }
     let gates = v["gate_runs"].as_array().unwrap();
     for t in ["T001", "T002", "T003", "T004"] {
-        let runs: Vec<&Value> = gates.iter().filter(|g| g["kind"] == "part" && g["part"] == t).collect();
+        let runs: Vec<&Value> = gates
+            .iter()
+            .filter(|g| g["kind"] == "part" && g["part"] == t)
+            .collect();
         assert_eq!(runs.len(), 1, "one gate run for {t}");
     }
     assert_eq!(gates.iter().filter(|g| g["kind"] == "baseline").count(), 1);

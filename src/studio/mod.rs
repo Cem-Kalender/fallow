@@ -964,7 +964,11 @@ impl Studio {
 
     /// 007: the lead of a locked feature, for an agent's question during its loop (research
     /// S-10): the spec session to fork, the feature's worktree, and the approved commands.
-    pub fn lead_of(&self, project: &str, feature: &str) -> Result<crate::run::questions::Lead, String> {
+    pub fn lead_of(
+        &self,
+        project: &str,
+        feature: &str,
+    ) -> Result<crate::run::questions::Lead, String> {
         let (p, f, wd) = self.feature_ctx(project, feature)?;
         if wd == p.path {
             return Err("the feature has no worktree of its own".into());

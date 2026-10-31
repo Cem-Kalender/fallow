@@ -5,8 +5,8 @@
 mod common;
 
 use common::*;
-use fallow::run::engine::Request;
 use fallow::config::Autonomy;
+use fallow::run::engine::Request;
 use fallow::run::events::{Event, Limits, Logged, Mode, SteeringKind};
 use fallow::run::state::RunState;
 use fallow::run::time::rfc3339;
@@ -21,7 +21,12 @@ fn started(v: &Value, kind: &str, part: &str) -> usize {
         .count()
 }
 
-fn limits(tx: &std::sync::mpsc::Sender<fallow::run::engine::Msg>, id: u64, usd: Option<f64>, once: bool) {
+fn limits(
+    tx: &std::sync::mpsc::Sender<fallow::run::engine::Msg>,
+    id: u64,
+    usd: Option<f64>,
+    once: bool,
+) {
     ask(
         tx,
         Request::Limits {
@@ -43,10 +48,21 @@ fn the_suggested_budget_pauses_the_loop_and_the_engineer_lets_it_go_on() {
         task_step("T001", &[("calc/__init__.py", "")], cost),
         handover_step(1, cost),
         task_step("T002", &[("calc/__init__.py", CALC_INIT)], cost),
-        task_step("T003", &[("tests/__init__.py", ""), ("tests/test_add.py", TEST_ADD)], cost),
+        task_step(
+            "T003",
+            &[("tests/__init__.py", ""), ("tests/test_add.py", TEST_ADD)],
+            cost,
+        ),
         handover_step(2, cost),
         check_step("US1", true, cost),
-        task_step("T004", &[("calc/__init__.py", CALC_INIT_SUB), ("tests/test_sub.py", TEST_SUB)], cost),
+        task_step(
+            "T004",
+            &[
+                ("calc/__init__.py", CALC_INIT_SUB),
+                ("tests/test_sub.py", TEST_SUB),
+            ],
+            cost,
+        ),
         handover_step(3, cost),
         check_step("US2", true, cost),
     ]
@@ -59,11 +75,27 @@ fn the_suggested_budget_pauses_the_loop_and_the_engineer_lets_it_go_on() {
     assert_eq!(v["feature_loop"]["budget_minutes"], 40);
     assert_eq!(v["limits"]["usd"], 1.0);
     // Three steps at $0.40 went over $1.00: the pause comes before the fourth.
-    assert!(v["limit_reached"].as_str().unwrap().starts_with("cost"), "{}", v["limit_reached"]);
-    let options: Vec<&str> = v["needs"]["options"].as_array().unwrap().iter().map(|o| o.as_str().unwrap()).collect();
-    assert!(options.contains(&"continue for one step") && options.contains(&"raise the limit"), "{options:?}");
+    assert!(
+        v["limit_reached"].as_str().unwrap().starts_with("cost"),
+        "{}",
+        v["limit_reached"]
+    );
+    let options: Vec<&str> = v["needs"]["options"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|o| o.as_str().unwrap())
+        .collect();
+    assert!(
+        options.contains(&"continue for one step") && options.contains(&"raise the limit"),
+        "{options:?}"
+    );
     assert_eq!(started(&v, "build", "T002"), 1);
-    assert_eq!(started(&v, "build", "T003"), 0, "no step starts past the limit");
+    assert_eq!(
+        started(&v, "build", "T003"),
+        0,
+        "no step starts past the limit"
+    );
 
     // Continue for one step: T003 runs, then the loop pauses again.
     limits(tx, id, None, true);
@@ -145,7 +177,10 @@ fn time_waiting_for_the_engineer_or_paused_does_not_count() {
     ));
     let s = RunState::fold(1, &events).unwrap();
     assert_eq!(s.minutes_used(t0 + 4800), 20);
-    assert!(s.limit_hit(t0 + 4800).is_none(), "an hour of waiting is not an hour of work");
+    assert!(
+        s.limit_hit(t0 + 4800).is_none(),
+        "an hour of waiting is not an hour of work"
+    );
     // A pause with its question counts once, not twice.
     events.push(ev(5, 4800, stage(Stage::Paused)));
     events.push(ev(

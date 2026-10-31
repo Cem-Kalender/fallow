@@ -13,10 +13,14 @@ use fallow::run::engine::{Msg, Reply, Request};
 fn a_wait_answers_at_once_when_behind_and_with_the_next_change_otherwise() {
     let root = scratch("wait");
     // The loop's first task works for 1.5 s after its first line.
-    let steps = calc_loop_ok().replacen("part = \"T001\"
-", "part = \"T001\"
+    let steps = calc_loop_ok().replacen(
+        "part = \"T001\"
+",
+        "part = \"T001\"
 sleep_ms = 1500
-", 1);
+",
+        1,
+    );
     let (e, _repo, id) = locked_calc(&root, &steps, None);
     let tx = e.tx.clone();
     let wait = |after: u64| {

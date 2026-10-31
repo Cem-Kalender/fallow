@@ -8,7 +8,9 @@ use std::path::{Path, PathBuf};
 use serde_json::{Value, json};
 
 use super::Studio;
-use crate::defs::{self, AgentDef, DEFAULT_AGENTS, DEFAULT_PIPELINES, Library, Source, agent, pipeline};
+use crate::defs::{
+    self, AgentDef, DEFAULT_AGENTS, DEFAULT_PIPELINES, Library, Source, agent, pipeline,
+};
 
 /// Where a definition is saved: the engineer's folder, or a project's.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -101,15 +103,20 @@ impl Studio {
             .agents
             .values()
             .map(|a| {
-                let file = self.file_of(path.as_deref(), a.source, "agents", &format!("{}.md", a.name));
+                let file = self.file_of(
+                    path.as_deref(),
+                    a.source,
+                    "agents",
+                    &format!("{}.md", a.name),
+                );
                 let text = std::fs::read_to_string(&file)
                     .ok()
                     .or_else(|| shipped(DEFAULT_AGENTS, &a.name).map(str::to_string))
                     .unwrap_or_default();
-                let update = self
-                    .config
-                    .as_ref()
-                    .and_then(|c| std::fs::read_to_string(c.join("agents").join(format!("{}.md.new", a.name))).ok());
+                let update = self.config.as_ref().and_then(|c| {
+                    std::fs::read_to_string(c.join("agents").join(format!("{}.md.new", a.name)))
+                        .ok()
+                });
                 let used_by: Vec<&str> = lib
                     .pipelines
                     .values()
@@ -137,7 +144,12 @@ impl Studio {
             .pipelines
             .values()
             .map(|p| {
-                let file = self.file_of(path.as_deref(), p.source, "pipelines", &format!("{}.toml", p.name));
+                let file = self.file_of(
+                    path.as_deref(),
+                    p.source,
+                    "pipelines",
+                    &format!("{}.toml", p.name),
+                );
                 let text = std::fs::read_to_string(&file)
                     .ok()
                     .or_else(|| shipped(DEFAULT_PIPELINES, &p.name).map(str::to_string))
@@ -149,7 +161,9 @@ impl Studio {
                 v
             })
             .collect();
-        let chosen = project.and_then(|p| self.store.get(p)).map(|p| p.pipeline.clone());
+        let chosen = project
+            .and_then(|p| self.store.get(p))
+            .map(|p| p.pipeline.clone());
         Ok(json!({ "pipelines": pipelines, "problems": lib.problems, "project_pipeline": chosen }))
     }
 
@@ -177,7 +191,10 @@ impl Studio {
             // A project's own definition wins over the engineer's: a change to theirs does not
             // reach it.
             let decides = match scope {
-                Scope::User => lib.agents.get(name).is_none_or(|a| a.source != Source::Project),
+                Scope::User => lib
+                    .agents
+                    .get(name)
+                    .is_none_or(|a| a.source != Source::Project),
                 Scope::Project(_) => true,
             };
             if !decides {
@@ -195,24 +212,34 @@ impl Studio {
                 }
             }
             let kinds = |n: &str| lib.agents.get(n).map(|a| a.kind);
-            for pl in lib.pipelines.values().filter(|pl| pl.steps.iter().any(|st| st.agent == name)) {
+            for pl in lib
+                .pipelines
+                .values()
+                .filter(|pl| pl.steps.iter().any(|st| st.agent == name))
+            {
                 let file = format!("{}.toml", pl.name);
                 // A pipeline that would no longer parse, or no longer verify what it builds
                 // (FR-015): either is a change the engineer makes in the pipeline, knowingly.
                 match pipeline::parse(&file, &pl.name, &pl.to_toml(), pl.source, &kinds) {
                     Err(_) => broken.push(format!("the pipeline {}", pl.name)),
-                    Ok(after) if pl.verifying && !after.verifying => {
-                        broken.push(format!("the pipeline {} (it would no longer verify)", pl.name))
-                    }
+                    Ok(after) if pl.verifying && !after.verifying => broken.push(format!(
+                        "the pipeline {} (it would no longer verify)",
+                        pl.name
+                    )),
                     Ok(_) => {}
                 }
             }
             for (repo, toml) in live {
-                if root.as_deref() != Some(repo.as_path()) || !toml.contains(&format!("\"{name}\"")) {
+                if root.as_deref() != Some(repo.as_path()) || !toml.contains(&format!("\"{name}\""))
+                {
                     continue;
                 }
-                let n = toml::from_str::<pipeline::Raw>(toml).map(|r| r.name).unwrap_or_default();
-                if pipeline::parse("the loop's pipeline", &n, toml, Source::Default, &kinds).is_err() {
+                let n = toml::from_str::<pipeline::Raw>(toml)
+                    .map(|r| r.name)
+                    .unwrap_or_default();
+                if pipeline::parse("the loop's pipeline", &n, toml, Source::Default, &kinds)
+                    .is_err()
+                {
                     broken.push(format!("a loop still going on {n}"));
                 }
             }
@@ -222,7 +249,10 @@ impl Studio {
         if broken.is_empty() {
             Ok(())
         } else {
-            Err(format!("{name} is used by {}: that would stop working", broken.join(", ")))
+            Err(format!(
+                "{name} is used by {}: that would stop working",
+                broken.join(", ")
+            ))
         }
     }
 
@@ -242,8 +272,12 @@ impl Studio {
             Scope::User => Source::User,
             Scope::Project(_) => Source::Project,
         };
-        let d = agent::parse(&file, name, text, source, defs::RUNTIMES)
-            .map_err(|ps| ps.iter().map(|p| p.to_string()).collect::<Vec<_>>().join("\n"))?;
+        let d = agent::parse(&file, name, text, source, defs::RUNTIMES).map_err(|ps| {
+            ps.iter()
+                .map(|p| p.to_string())
+                .collect::<Vec<_>>()
+                .join("\n")
+        })?;
         self.would_break(scope, name, Some(&d), live)
             .map_err(|e| format!("{file}: {e}"))?;
         std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
@@ -271,13 +305,23 @@ impl Studio {
             return Err(format!("there is no definition {}", path.display()));
         }
         let shipped_def = reset
-            .map(|t| agent::parse(&format!("{name}.md"), name, t, Source::Default, defs::RUNTIMES))
+            .map(|t| {
+                agent::parse(
+                    &format!("{name}.md"),
+                    name,
+                    t,
+                    Source::Default,
+                    defs::RUNTIMES,
+                )
+            })
             .transpose()
             .map_err(|_| format!("the shipped {name}.md does not parse"))?;
         self.would_break(scope, name, shipped_def.as_ref(), live)
             .map_err(|e| format!("{e}: take it out of them first"))?;
         match reset {
-            Some(text) => std::fs::write(&path, text).map_err(|e| format!("{}: {e}", path.display()))?,
+            Some(text) => {
+                std::fs::write(&path, text).map_err(|e| format!("{}: {e}", path.display()))?
+            }
             None => std::fs::remove_file(&path).map_err(|e| format!("{}: {e}", path.display()))?,
         }
         Ok(json!({ "reset": reset.is_some() }))
@@ -312,14 +356,18 @@ impl Studio {
         std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
         let path = dir.join(&file);
         std::fs::write(&path, text).map_err(|e| format!("{}: {e}", path.display()))?;
-        Ok(json!({ "saved": path.display().to_string(), "verifying": p.verifying, "missing": p.missing }))
+        Ok(
+            json!({ "saved": path.display().to_string(), "verifying": p.verifying, "missing": p.missing }),
+        )
     }
 
     /// `DELETE /api/pipelines/<name>`: as for agents; a pipeline a project or a feature still
     /// chooses stays, unless another source still gives it.
     pub fn delete_pipeline(&mut self, name: &str, scope: &Scope) -> Result<Value, String> {
         check_name(name)?;
-        let path = self.scope_dir(scope, "pipelines")?.join(format!("{name}.toml"));
+        let path = self
+            .scope_dir(scope, "pipelines")?
+            .join(format!("{name}.toml"));
         let reset = match scope {
             Scope::User => shipped(DEFAULT_PIPELINES, name),
             Scope::Project(_) => None,
@@ -345,14 +393,22 @@ impl Studio {
                         continue;
                     }
                 }
-                let chooses = p.pipeline == name || p.features.iter().any(|f| f.pipeline.as_deref() == Some(name) && (f.run.is_none() || f.unlocked));
+                let chooses = p.pipeline == name
+                    || p.features.iter().any(|f| {
+                        f.pipeline.as_deref() == Some(name) && (f.run.is_none() || f.unlocked)
+                    });
                 if chooses && !user_has(&p.path) {
-                    return Err(format!("the project {} uses it: choose another pipeline for it first", p.name));
+                    return Err(format!(
+                        "the project {} uses it: choose another pipeline for it first",
+                        p.name
+                    ));
                 }
             }
         }
         match reset {
-            Some(text) => std::fs::write(&path, text).map_err(|e| format!("{}: {e}", path.display()))?,
+            Some(text) => {
+                std::fs::write(&path, text).map_err(|e| format!("{}: {e}", path.display()))?
+            }
             None => std::fs::remove_file(&path).map_err(|e| format!("{}: {e}", path.display()))?,
         }
         Ok(json!({ "reset": reset.is_some() }))

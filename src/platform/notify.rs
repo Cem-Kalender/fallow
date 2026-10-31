@@ -338,14 +338,27 @@ mod tray {
                 return;
             }
             AppendMenuW(m, MF_STRING, ID_OPEN, open_.as_ptr());
-            AppendMenuW(m, MF_STRING | if on { MF_CHECKED } else { 0 }, ID_NOTIFY, notify.as_ptr());
+            AppendMenuW(
+                m,
+                MF_STRING | if on { MF_CHECKED } else { 0 },
+                ID_NOTIFY,
+                notify.as_ptr(),
+            );
             AppendMenuW(m, MF_SEPARATOR, 0, std::ptr::null());
             AppendMenuW(m, MF_STRING, ID_STOP, stop.as_ptr());
             let mut p = POINT { x: 0, y: 0 };
             GetCursorPos(&mut p);
             // The menu closes when the engineer clicks elsewhere only if the window is in front.
             SetForegroundWindow(hwnd);
-            let c = TrackPopupMenu(m, TPM_RETURNCMD | TPM_RIGHTBUTTON, p.x, p.y, 0, hwnd, std::ptr::null());
+            let c = TrackPopupMenu(
+                m,
+                TPM_RETURNCMD | TPM_RIGHTBUTTON,
+                p.x,
+                p.y,
+                0,
+                hwnd,
+                std::ptr::null(),
+            );
             // So that the next click on the icon opens the menu again (as the docs ask).
             PostMessageW(hwnd, WM_NULL, 0, 0);
             DestroyMenu(m);

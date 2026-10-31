@@ -353,8 +353,10 @@ fn main() -> ExitCode {
         );
     }
     if let Some(t) = &step.think {
-        emit(json!({"type": "assistant", "session_id": session, "message": {"content": [
-            {"type": "thinking", "thinking": t, "signature": "x"}]}}));
+        emit(
+            json!({"type": "assistant", "session_id": session, "message": {"content": [
+            {"type": "thinking", "thinking": t, "signature": "x"}]}}),
+        );
     }
     for r in &step.run {
         let id = tool_id();

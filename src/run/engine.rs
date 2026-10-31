@@ -99,33 +99,62 @@ pub enum Request {
         budget_minutes: Option<u64>,
     },
     /// 007: a loop's screen, its feed, and one task's story (US3).
-    Loop { id: u64 },
+    Loop {
+        id: u64,
+    },
     LoopActivity {
         id: u64,
         filter: super::activity::Filter,
     },
-    Task { id: u64, task: String },
+    Task {
+        id: u64,
+        task: String,
+    },
     /// 007: the engineer's pause, "go on", and note for the next step (FR-019).
-    Pause { id: u64 },
-    GoOn { id: u64 },
+    Pause {
+        id: u64,
+    },
+    GoOn {
+        id: u64,
+    },
     Note {
         id: u64,
         text: String,
         agent: Option<String>,
     },
     /// 007: unlocks a locked feature; its loop halts after the current step (FR-009).
-    Unlock { project: String, feature: String },
+    Unlock {
+        project: String,
+        feature: String,
+    },
     /// 007: the stories a new lock would reopen, from the working copy (research S-17).
-    RelockPreview { project: String, feature: String },
+    RelockPreview {
+        project: String,
+        feature: String,
+    },
     /// 007: the engineer answers a question relayed to them, or overrules the lead's answer
     /// (FR-021, FR-022).
-    QuestionAnswer { id: u64, q: String, answer: String },
-    Overrule { id: u64, q: String, answer: String },
+    QuestionAnswer {
+        id: u64,
+        q: String,
+        answer: String,
+    },
+    Overrule {
+        id: u64,
+        q: String,
+        answer: String,
+    },
     /// 007: the engineer confirms a decision of the lead (FR-020a).
-    QuestionConfirm { id: u64, q: String },
+    QuestionConfirm {
+        id: u64,
+        q: String,
+    },
     /// 007: what Fallow keeps on disk, and deleting a loop's or conversation's data (FR-003b).
     Data,
-    DeleteData { kind: String, id: String },
+    DeleteData {
+        kind: String,
+        id: String,
+    },
 }
 
 #[derive(Debug)]
@@ -355,7 +384,7 @@ impl Engine {
                         log,
                         state,
                         busy: None,
-                                    stop: Arc::new(AtomicBool::new(false)),
+                        stop: Arc::new(AtomicBool::new(false)),
                         waiters: Vec::new(),
                         activity: 0,
                         group: None,
@@ -434,7 +463,9 @@ impl Engine {
                 Msg::LeadAnswer { run, q, outcome } => {
                     let lead = self.lead_of(run).ok();
                     if let Some(r) = self.runs.get_mut(&run) {
-                        if let Err(e) = super::questions::lead_done(r, lead.as_ref(), &q, Ok(outcome)) {
+                        if let Err(e) =
+                            super::questions::lead_done(r, lead.as_ref(), &q, Ok(outcome))
+                        {
                             self.console.push(format!("run {run}: {e}"));
                         }
                     }
@@ -533,7 +564,12 @@ impl Engine {
                 })
                 .collect();
             let worktrees = id.map_or(0, |p| size(&self.studio.data.join("worktrees").join(p)));
-            let sum: u64 = loops.iter().chain(&convs).filter_map(|v| v["bytes"].as_u64()).sum::<u64>() + worktrees;
+            let sum: u64 = loops
+                .iter()
+                .chain(&convs)
+                .filter_map(|v| v["bytes"].as_u64())
+                .sum::<u64>()
+                + worktrees;
             total += sum;
             json!({ "id": id, "name": name, "loops": loops, "conversations": convs, "worktrees": worktrees, "bytes": sum })
         };
@@ -554,7 +590,10 @@ impl Engine {
         match kind {
             "loop" => {
                 let n: u64 = id.parse().map_err(|_| format!("no loop {id}"))?;
-                let r = self.runs.get(&n).ok_or_else(|| format!("there is no loop {n}"))?;
+                let r = self
+                    .runs
+                    .get(&n)
+                    .ok_or_else(|| format!("there is no loop {n}"))?;
                 if !r.state.stage.is_final() {
                     return Err("the loop is still running: stop it first".into());
                 }
@@ -572,7 +611,8 @@ impl Engine {
                     }
                 }
                 self.studio.store.save()?;
-                self.bus.publish(json!({ "type": "loop_progress", "run": n }));
+                self.bus
+                    .publish(json!({ "type": "loop_progress", "run": n }));
                 Ok(json!({ "deleted": dir }))
             }
             "conv" => {
@@ -582,7 +622,10 @@ impl Engine {
                     .get(id)
                     .ok_or_else(|| format!("there is no conversation {id}"))?;
                 if c.state.busy {
-                    return Err("the lead is answering in this conversation: wait for its turn to end".into());
+                    return Err(
+                        "the lead is answering in this conversation: wait for its turn to end"
+                            .into(),
+                    );
                 }
                 // The spec session of a feature not merged yet is what the lead answers the
                 // loop's questions from (research S-10).
@@ -594,10 +637,14 @@ impl Engine {
                         .and_then(|p| p.features.iter().find(|x| x.name() == f))
                         .is_some_and(|x| {
                             !(x.ended.is_some()
-                                || x.run.and_then(|r| self.runs.get(&r)).is_some_and(|r| r.state.merged.is_some()))
+                                || x.run
+                                    .and_then(|r| self.runs.get(&r))
+                                    .is_some_and(|r| r.state.merged.is_some()))
                         });
                     if open {
-                        return Err(format!("this is the spec session of {f}, which is not merged yet: the lead answers its loop's questions from it"));
+                        return Err(format!(
+                            "this is the spec session of {f}, which is not merged yet: the lead answers its loop's questions from it"
+                        ));
                     }
                 }
                 let dir = c.dir.clone();
@@ -609,7 +656,8 @@ impl Engine {
                         let _ = git::worktree_remove(&p.path, &wt);
                     }
                     if wt.exists() {
-                        std::fs::remove_dir_all(&wt).map_err(|e| format!("{}: {e}", wt.display()))?;
+                        std::fs::remove_dir_all(&wt)
+                            .map_err(|e| format!("{}: {e}", wt.display()))?;
                     }
                 }
                 crate::project::data::remove(&dir, None)?;
@@ -618,12 +666,17 @@ impl Engine {
                     if p.conversation.as_deref() == Some(id) {
                         p.conversation = None;
                     }
-                    for f in p.features.iter_mut().filter(|f| f.conversation.as_deref() == Some(id)) {
+                    for f in p
+                        .features
+                        .iter_mut()
+                        .filter(|f| f.conversation.as_deref() == Some(id))
+                    {
                         f.conversation = None;
                     }
                 }
                 self.studio.store.save()?;
-                self.bus.publish(json!({ "type": "project", "project": project }));
+                self.bus
+                    .publish(json!({ "type": "project", "project": project }));
                 Ok(json!({ "deleted": dir }))
             }
             _ => Err("kind: loop or conv".into()),
@@ -750,7 +803,11 @@ impl Engine {
         }
         let Some(r) = f.run.and_then(|id| self.runs.get(&id)) else {
             // The loop's data was deleted (FR-003b).
-            return if f.ended.as_deref() == Some("merged") { "merged" } else { "locked" };
+            return if f.ended.as_deref() == Some("merged") {
+                "merged"
+            } else {
+                "locked"
+            };
         };
         if r.state.merged.is_some() {
             return "merged";
@@ -1010,7 +1067,12 @@ impl Engine {
         self.runs
             .values()
             .filter(|r| !r.state.stage.is_final())
-            .filter_map(|r| r.state.feature_loop.as_ref().map(|l| (r.state.repo.clone(), l.pipeline.clone())))
+            .filter_map(|r| {
+                r.state
+                    .feature_loop
+                    .as_ref()
+                    .map(|l| (r.state.repo.clone(), l.pipeline.clone()))
+            })
             .collect()
     }
 
@@ -1043,7 +1105,10 @@ impl Engine {
             return Err("the feature is not locked".into());
         }
         let id = f.run.ok_or("the feature has no loop")?;
-        let r = self.runs.get_mut(&id).ok_or("the feature's loop is missing")?;
+        let r = self
+            .runs
+            .get_mut(&id)
+            .ok_or("the feature's loop is missing")?;
         if r.state.stage.is_final() {
             return Err("the loop has ended: changes go in a new feature".into());
         }
@@ -1075,13 +1140,20 @@ impl Engine {
     /// (research S-17).
     fn relock(&mut self, project: &str, feature: &str, id: u64) -> Result<Value, String> {
         let (_, f, _) = self.studio.feature_ctx(project, feature)?;
-        let old = f.locks.last().cloned().ok_or("the feature was never locked")?;
-        let prep = self.studio.lock_prepare(project, feature).map_err(|problems| {
-            format!(
-                "the feature cannot be locked yet:\n- {}",
-                problems.join("\n- ")
-            )
-        })?;
+        let old = f
+            .locks
+            .last()
+            .cloned()
+            .ok_or("the feature was never locked")?;
+        let prep = self
+            .studio
+            .lock_prepare(project, feature)
+            .map_err(|problems| {
+                format!(
+                    "the feature cannot be locked yet:\n- {}",
+                    problems.join("\n- ")
+                )
+            })?;
         let docs = super::relock::docs(
             &prep.project.path,
             &prep.feature.dir,
@@ -1089,7 +1161,10 @@ impl Engine {
             super::relock::Side::Commit(&prep.commit),
         )?;
         let a = super::relock::affected(&docs);
-        let r = self.runs.get_mut(&id).ok_or("the feature's loop is missing")?;
+        let r = self
+            .runs
+            .get_mut(&id)
+            .ok_or("the feature's loop is missing")?;
         r.append(Event::Relocked {
             lock: prep.lock,
             commit: prep.commit.clone(),
@@ -1102,7 +1177,10 @@ impl Engine {
         if r.state.stage == Stage::Ready {
             r.append(Event::Stage {
                 to: Stage::Building,
-                why: format!("lock {}: the affected stories are built and checked again", prep.lock),
+                why: format!(
+                    "lock {}: the affected stories are built and checked again",
+                    prep.lock
+                ),
             })?;
         }
         let rec = crate::project::LockRec {
@@ -1435,9 +1513,7 @@ impl Engine {
                 self.bus.publish(json!({ "type": "studio" }));
                 out
             }
-            Request::RelockPreview { project, feature } => {
-                self.relock_preview(&project, &feature)
-            }
+            Request::RelockPreview { project, feature } => self.relock_preview(&project, &feature),
             Request::Answer { id, text } => {
                 // A question relayed to the engineer is answered as such: committed first.
                 let waiting = self
@@ -1453,7 +1529,9 @@ impl Engine {
                         .map(|()| json!({})),
                 }
             }
-            Request::QuestionAnswer { id, q, answer } => self.question_answer(id, &q, &answer, false),
+            Request::QuestionAnswer { id, q, answer } => {
+                self.question_answer(id, &q, &answer, false)
+            }
             Request::Overrule { id, q, answer } => self.question_answer(id, &q, &answer, true),
             Request::QuestionConfirm { id, q } => {
                 run_mut(self, id).and_then(|r| super::questions::confirm(r, &q))
@@ -1557,7 +1635,13 @@ impl Engine {
         self.studio.lead_of(&l.project, &l.feature)
     }
 
-    fn question_answer(&mut self, id: u64, q: &str, answer: &str, overrule: bool) -> Result<Value, String> {
+    fn question_answer(
+        &mut self,
+        id: u64,
+        q: &str,
+        answer: &str,
+        overrule: bool,
+    ) -> Result<Value, String> {
         let lead = self.lead_of(id)?;
         let r = run_mut(self, id)?;
         let out = if overrule {

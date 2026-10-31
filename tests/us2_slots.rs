@@ -21,12 +21,13 @@ fn started(v: &Value, kind: &str, part: &str) -> bool {
 #[test]
 fn a_chat_turn_goes_first_and_the_loop_waits_for_a_slot() {
     let root = scratch("slots");
-    std::fs::write(root.join("settings.extra.toml"), "[defaults]\nmax_parallel = 1\n").unwrap();
-    let mut steps = calc_loop_ok().replacen(
-        "part = \"T001\"\n",
-        "part = \"T001\"\nsleep_ms = 4000\n",
-        1,
-    );
+    std::fs::write(
+        root.join("settings.extra.toml"),
+        "[defaults]\nmax_parallel = 1\n",
+    )
+    .unwrap();
+    let mut steps =
+        calc_loop_ok().replacen("part = \"T001\"\n", "part = \"T001\"\nsleep_ms = 4000\n", 1);
     steps.push_str(
         "[[step]]\nkind = \"lead_turn\"\nwhen = \"project conversation\"\nsleep_ms = 9000\noutput = { reply = \"Thought it over.\", step = \"none\" }\n\n",
     );
@@ -50,7 +51,9 @@ fn a_chat_turn_goes_first_and_the_loop_waits_for_a_slot() {
 
     // T001 ends; the handover waits while the chat turn runs.
     let v = wait_for(tx, id, "waiting for a slot", |v| {
-        v["waiting"].as_str().is_some_and(|w| w.starts_with("waiting for a slot"))
+        v["waiting"]
+            .as_str()
+            .is_some_and(|w| w.starts_with("waiting for a slot"))
     });
     assert!(!started(&v, "handover", "phase-1"));
     let end = Instant::now() + Duration::from_secs(3);
@@ -82,9 +85,15 @@ fn a_step_waits_for_a_free_slot_and_for_memory_room() {
     assert!(s.take().is_ok());
     assert!(s.take().is_ok());
     let why = s.take().unwrap_err();
-    assert!(why.starts_with("waiting for a slot") && why.contains("most agents"), "{why}");
+    assert!(
+        why.starts_with("waiting for a slot") && why.contains("most agents"),
+        "{why}"
+    );
     // A free slot but too little memory: it waits for room.
     s.set(4, STEP_MB - 1);
     let why = s.take().unwrap_err();
-    assert!(why.starts_with("waiting for a slot") && why.contains("memory"), "{why}");
+    assert!(
+        why.starts_with("waiting for a slot") && why.contains("memory"),
+        "{why}"
+    );
 }

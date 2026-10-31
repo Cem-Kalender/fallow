@@ -33,14 +33,17 @@ fn ms_of(at: &str) -> u64 {
 
 /// The tool calls of a step, each with its result, in order.
 fn step_lines(run: &Run, s: &Step) -> Vec<Value> {
-    let text = std::fs::read_to_string(run.steps_dir().join(format!("{}.jsonl", s.n)))
-        .unwrap_or_default();
+    let text =
+        std::fs::read_to_string(run.steps_dir().join(format!("{}.jsonl", s.n))).unwrap_or_default();
     let lines: Vec<Activity> = text
         .lines()
         .filter_map(|l| serde_json::from_str(l).ok())
         .collect();
     let start = s.started.as_deref().map_or(0, ms_of);
-    let agent = s.def.clone().unwrap_or_else(|| s.agent.clone().unwrap_or_default());
+    let agent = s
+        .def
+        .clone()
+        .unwrap_or_else(|| s.agent.clone().unwrap_or_default());
     let task = s.task.clone().or_else(|| s.part.clone());
     let results: BTreeMap<&str, &Activity> = lines
         .iter()
@@ -70,7 +73,11 @@ fn step_lines(run: &Run, s: &Step) -> Vec<Value> {
                 "error" => "failed",
                 _ => "ok",
             });
-            let out_text = if r.detail.is_empty() { &r.text } else { &r.detail };
+            let out_text = if r.detail.is_empty() {
+                &r.text
+            } else {
+                &r.detail
+            };
             if !out_text.is_empty() {
                 e["output"] = json!(out_text);
             }
@@ -87,18 +94,22 @@ fn step_lines(run: &Run, s: &Step) -> Vec<Value> {
 /// steering.
 fn fallow_lines(run: &Run, last_line: &BTreeMap<u32, u64>) -> Vec<Value> {
     let mut out = Vec::new();
-    let check = |at: u64, task: Option<String>, text: String, result: Option<&str>, detail: String| {
-        let mut e = json!({ "at": at, "agent": "fallow", "task": task, "kind": "check", "text": text });
-        if let Some(r) = result {
-            e["result"] = json!(r);
-        }
-        if !detail.is_empty() {
-            e["detail"] = json!(detail);
-        }
-        e
-    };
+    let check =
+        |at: u64, task: Option<String>, text: String, result: Option<&str>, detail: String| {
+            let mut e =
+                json!({ "at": at, "agent": "fallow", "task": task, "kind": "check", "text": text });
+            if let Some(r) = result {
+                e["result"] = json!(r);
+            }
+            if !detail.is_empty() {
+                e["detail"] = json!(detail);
+            }
+            e
+        };
     for s in run.state.steps.values() {
-        let Some((ok, reasons)) = &s.verified else { continue };
+        let Some((ok, reasons)) = &s.verified else {
+            continue;
+        };
         // After the step's own last line: the step's end is only known to the second.
         let at = s
             .finished
@@ -106,7 +117,11 @@ fn fallow_lines(run: &Run, last_line: &BTreeMap<u32, u64>) -> Vec<Value> {
             .map_or(0, ms_of)
             .max(last_line.get(&s.n).copied().unwrap_or(0))
             + 1;
-        let what = s.task.clone().or_else(|| s.part.clone()).unwrap_or_default();
+        let what = s
+            .task
+            .clone()
+            .or_else(|| s.part.clone())
+            .unwrap_or_default();
         let label = s.kind.label();
         let task = s.task.clone().or_else(|| s.part.clone());
         let first = reasons.first().map(String::as_str).unwrap_or("");
@@ -116,33 +131,59 @@ fn fallow_lines(run: &Run, last_line: &BTreeMap<u32, u64>) -> Vec<Value> {
             out.push(e);
             continue;
         }
-        if first.starts_with(super::machine::INTERRUPTED) || first.starts_with(super::machine::SESSION_LOST) {
-            out.push(check(at, task, format!("{label} {what} was cut short: {first}"), None, String::new()));
+        if first.starts_with(super::machine::INTERRUPTED)
+            || first.starts_with(super::machine::SESSION_LOST)
+        {
+            out.push(check(
+                at,
+                task,
+                format!("{label} {what} was cut short: {first}"),
+                None,
+                String::new(),
+            ));
             continue;
         }
         let text = match (ok, s.kind) {
-            (true, StepKind::Review) => format!("{} approved {what}", s.def.as_deref().unwrap_or("the checker")),
+            (true, StepKind::Review) => format!(
+                "{} approved {what}",
+                s.def.as_deref().unwrap_or("the checker")
+            ),
             (true, _) => match &s.verified_commit {
                 Some(c) => format!("{what} accepted: committed {}", &c[..c.len().min(7)]),
                 None => format!("{what} accepted"),
             },
             (false, _) => format!("{label} {what} not accepted: {}", reasons.join("; ")),
         };
-        out.push(check(at, task, text, Some(if *ok { "ok" } else { "failed" }), String::new()));
+        out.push(check(
+            at,
+            task,
+            text,
+            Some(if *ok { "ok" } else { "failed" }),
+            String::new(),
+        ));
     }
     for g in &run.state.gate_runs {
         let at = ms_of(&g.at);
         let failing: Vec<&String> = g.result.failing.iter().collect();
         let (text, result) = match g.kind {
             GateKind::Baseline => (
-                format!("baseline {} on the lock: {}", g.result.gate, g.result.outcome.label()),
+                format!(
+                    "baseline {} on the lock: {}",
+                    g.result.gate,
+                    g.result.outcome.label()
+                ),
                 None,
             ),
             _ => {
                 let ok = feature::gate_ok(run, g);
                 let class = g
                     .class
-                    .map(|c| serde_json::to_value(c).ok().and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default())
+                    .map(|c| {
+                        serde_json::to_value(c)
+                            .ok()
+                            .and_then(|v| v.as_str().map(str::to_string))
+                            .unwrap_or_default()
+                    })
                     .unwrap_or_default();
                 (
                     format!(
@@ -150,13 +191,21 @@ fn fallow_lines(run: &Run, last_line: &BTreeMap<u32, u64>) -> Vec<Value> {
                         g.part.as_deref().unwrap_or("the build"),
                         g.result.gate,
                         g.result.outcome.label(),
-                        if ok { String::new() } else { format!(" ({class} against the baseline)") }
+                        if ok {
+                            String::new()
+                        } else {
+                            format!(" ({class} against the baseline)")
+                        }
                     ),
                     Some(if ok { "ok" } else { "failed" }),
                 )
             }
         };
-        let detail = failing.iter().map(|f| f.as_str()).collect::<Vec<_>>().join("\n");
+        let detail = failing
+            .iter()
+            .map(|f| f.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
         out.push(check(at, g.part.clone(), text, result, detail));
     }
     // Every answer, with who gave it and its commit (FR-023).
@@ -168,12 +217,17 @@ fn fallow_lines(run: &Run, last_line: &BTreeMap<u32, u64>) -> Vec<Value> {
                 let answer = h.answer.as_deref().unwrap_or("");
                 let (agent, text, result) = match (h.state, h.by.as_deref()) {
                     (QuestionState::WithLead, _) => continue,
-                    (QuestionState::Answered, Some("lead")) => {
-                        ("lead", format!("lead answered {}: {answer}", q.id), Some("ok"))
-                    }
+                    (QuestionState::Answered, Some("lead")) => (
+                        "lead",
+                        format!("lead answered {}: {answer}", q.id),
+                        Some("ok"),
+                    ),
                     (QuestionState::Decided, _) => (
                         "lead",
-                        format!("decided by the lead ({}): {answer}. Confirm it or overrule it.", q.id),
+                        format!(
+                            "decided by the lead ({}): {answer}. Confirm it or overrule it.",
+                            q.id
+                        ),
                         Some("ok"),
                     ),
                     (QuestionState::WaitingEngineer, _) => (
@@ -183,7 +237,11 @@ fn fallow_lines(run: &Run, last_line: &BTreeMap<u32, u64>) -> Vec<Value> {
                                 "relayed to you ({}): {}{} The lead recommends: {r}",
                                 q.id,
                                 q.text,
-                                if q.text.trim_end().ends_with(['?', '.', '!']) { "" } else { "." }
+                                if q.text.trim_end().ends_with(['?', '.', '!']) {
+                                    ""
+                                } else {
+                                    "."
+                                }
                             ),
                             None => format!("relayed to you ({}): {}", q.id, q.text),
                         },
@@ -191,11 +249,19 @@ fn fallow_lines(run: &Run, last_line: &BTreeMap<u32, u64>) -> Vec<Value> {
                     ),
                     (QuestionState::Answered, _) => {
                         by_engineer.push(answer);
-                        ("you", format!("You answered {}: {answer}", q.id), Some("ok"))
+                        (
+                            "you",
+                            format!("You answered {}: {answer}", q.id),
+                            Some("ok"),
+                        )
                     }
                     (QuestionState::Overruled, _) => {
                         by_engineer.push(answer);
-                        ("you", format!("You overruled the lead on {}: {answer}", q.id), Some("ok"))
+                        (
+                            "you",
+                            format!("You overruled the lead on {}: {answer}", q.id),
+                            Some("ok"),
+                        )
                     }
                     (QuestionState::Confirmed, _) => (
                         "you",
@@ -227,17 +293,32 @@ fn fallow_lines(run: &Run, last_line: &BTreeMap<u32, u64>) -> Vec<Value> {
     for st in &run.state.steering {
         if st.kind == SteeringKind::Answer
             && (by_engineer.contains(&st.detail.as_deref().unwrap_or("").trim())
-                || st.detail.as_deref().is_some_and(|d| d.starts_with("confirmed the lead's decision")))
+                || st
+                    .detail
+                    .as_deref()
+                    .is_some_and(|d| d.starts_with("confirmed the lead's decision")))
         {
             continue; // shown with its question
         }
         let (kind, text) = match st.kind {
-            SteeringKind::Answer => ("answer", format!("You answered: {}", st.detail.as_deref().unwrap_or(""))),
-            SteeringKind::Note => ("note", format!("Your note: {}", st.detail.as_deref().unwrap_or(""))),
+            SteeringKind::Answer => (
+                "answer",
+                format!("You answered: {}", st.detail.as_deref().unwrap_or("")),
+            ),
+            SteeringKind::Note => (
+                "note",
+                format!("Your note: {}", st.detail.as_deref().unwrap_or("")),
+            ),
             SteeringKind::Pause => ("steer", "You paused the loop".into()),
             SteeringKind::Resume => ("steer", "You let the loop go on".into()),
             SteeringKind::Stop => ("steer", "You stopped the loop".into()),
-            SteeringKind::SetLimits => ("steer", format!("You changed the limits: {}", st.detail.as_deref().unwrap_or(""))),
+            SteeringKind::SetLimits => (
+                "steer",
+                format!(
+                    "You changed the limits: {}",
+                    st.detail.as_deref().unwrap_or("")
+                ),
+            ),
             SteeringKind::Merge => ("steer", "You merged the feature".into()),
             SteeringKind::Unlock => ("steer", "You unlocked the feature".into()),
             _ => continue,
@@ -289,7 +370,10 @@ pub fn task(run: &Run, id: &str) -> Result<Value, String> {
         .feature_loop
         .as_ref()
         .ok_or("not a feature's loop")?;
-    let status = l.tasks.get(id).ok_or_else(|| format!("there is no task {id}"))?;
+    let status = l
+        .tasks
+        .get(id)
+        .ok_or_else(|| format!("there is no task {id}"))?;
     let text = l
         .phases
         .iter()
@@ -310,11 +394,12 @@ pub fn task(run: &Run, id: &str) -> Result<Value, String> {
             })
         })
         .collect();
-    let lines: Vec<Value> = feed(run)
-        .into_iter()
-        .filter(|e| e["task"] == id)
+    let lines: Vec<Value> = feed(run).into_iter().filter(|e| e["task"] == id).collect();
+    let commands: Vec<Value> = lines
+        .iter()
+        .filter(|e| e["kind"] == "run")
+        .cloned()
         .collect();
-    let commands: Vec<Value> = lines.iter().filter(|e| e["kind"] == "run").cloned().collect();
     // All of the task's work: from where its first step started to its accepted commit (a
     // repair's commit holds only the repair).
     let first_base = run
@@ -443,7 +528,9 @@ pub fn view(run: &Run, ctx: &Ctx) -> Result<Value, String> {
             }),
         );
     }
-    let answerer = pl.as_ref().and_then(|pl| feature::scenario_checker(pl, &lib));
+    let answerer = pl
+        .as_ref()
+        .and_then(|pl| feature::scenario_checker(pl, &lib));
     let spec = feature::doc_at(run, &l.lock_commit, "spec.md")
         .and_then(|t| crate::speckit::spec::read("spec.md", &t).ok())
         .unwrap_or_default();
@@ -519,7 +606,11 @@ pub fn view(run: &Run, ctx: &Ctx) -> Result<Value, String> {
         })
         .collect();
     let task_total: usize = l.tasks.len();
-    let task_done = l.tasks.values().filter(|t| t.state == TaskState::Accepted).count();
+    let task_done = l
+        .tasks
+        .values()
+        .filter(|t| t.state == TaskState::Accepted)
+        .count();
     let repairs = s
         .steps
         .values()
@@ -559,7 +650,10 @@ pub fn view(run: &Run, ctx: &Ctx) -> Result<Value, String> {
         .collect();
     let stage = match (&s.stage, &l.outcome) {
         (Stage::Ready, Some((false, _))) => "done_unverified".to_string(),
-        (st, _) => serde_json::to_value(st).ok().and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default(),
+        (st, _) => serde_json::to_value(st)
+            .ok()
+            .and_then(|v| v.as_str().map(str::to_string))
+            .unwrap_or_default(),
     };
     Ok(json!({
         "id": s.id, "project": l.project, "feature": l.feature, "lock": l.lock,

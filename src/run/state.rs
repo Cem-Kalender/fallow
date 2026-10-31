@@ -809,7 +809,8 @@ impl RunState {
                 if let Some(f) = self.feature_loop.as_mut() {
                     f.unlocked = false;
                     f.lock = *lock;
-                    f.prev_lock_commit = Some(std::mem::replace(&mut f.lock_commit, commit.clone()));
+                    f.prev_lock_commit =
+                        Some(std::mem::replace(&mut f.lock_commit, commit.clone()));
                     f.affected = affected.clone();
                     f.outcome = None;
                     f.relocked_seq = l.seq;

@@ -47,7 +47,8 @@ pub fn remove(dir: &Path, repo: Option<&Path>) -> Result<(), String> {
         }
     }
     if dir.exists() {
-        std::fs::remove_dir_all(dir).map_err(|e| format!("cannot remove {}: {e}", dir.display()))?;
+        std::fs::remove_dir_all(dir)
+            .map_err(|e| format!("cannot remove {}: {e}", dir.display()))?;
     }
     Ok(())
 }

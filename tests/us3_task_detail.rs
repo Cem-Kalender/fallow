@@ -17,14 +17,28 @@ fn a_tasks_story_is_one_request_away_even_after_a_restart() {
     );
     let (e, _repo, id) = locked_calc(&root, &steps, None);
     wait_for(&e.tx, id, "ready to merge", |v| v["stage"] == "ready");
-    let before = ask(&e.tx, Request::Task { id, task: "T003".into() }).unwrap();
+    let before = ask(
+        &e.tx,
+        Request::Task {
+            id,
+            task: "T003".into(),
+        },
+    )
+    .unwrap();
 
     // Fallow starts again: the same story.
     e.tx.send(Msg::Shutdown).unwrap();
     let fallow::service::ToolEngine { handle, .. } = e;
     handle.join().unwrap();
     let e = start_studio(&root, &root.join("scenario.toml"), None);
-    let d = ask(&e.tx, Request::Task { id, task: "T003".into() }).unwrap();
+    let d = ask(
+        &e.tx,
+        Request::Task {
+            id,
+            task: "T003".into(),
+        },
+    )
+    .unwrap();
     assert_eq!(d, before, "a reopened page gets the whole history");
 
     assert_eq!(d["state"], "accepted");
@@ -35,8 +49,14 @@ fn a_tasks_story_is_one_request_away_even_after_a_restart() {
     let commit = d["commit"].as_str().unwrap();
     assert_eq!(steps[0]["commit"], commit);
     let diff = d["diff"].as_str().unwrap();
-    assert!(diff.contains("tests/test_add.py") && diff.contains("+class Add"), "{diff}");
-    assert!(diff.contains("- [X] T003") || diff.contains("+- [X] T003"), "the tick is in the task's commit: {diff}");
+    assert!(
+        diff.contains("tests/test_add.py") && diff.contains("+class Add"),
+        "{diff}"
+    );
+    assert!(
+        diff.contains("- [X] T003") || diff.contains("+- [X] T003"),
+        "the tick is in the task's commit: {diff}"
+    );
     let cmds = d["commands"].as_array().unwrap();
     assert_eq!(cmds.len(), 1);
     assert_eq!(cmds[0]["text"], "python -m unittest");
@@ -46,7 +66,16 @@ fn a_tasks_story_is_one_request_away_even_after_a_restart() {
     assert_eq!(gates[0]["result"]["commit"], commit);
     assert_eq!(gates[0]["class"], "pass");
     // A task that does not exist is refused.
-    assert!(ask(&e.tx, Request::Task { id, task: "T999".into() }).is_err());
+    assert!(
+        ask(
+            &e.tx,
+            Request::Task {
+                id,
+                task: "T999".into()
+            }
+        )
+        .is_err()
+    );
     drop(e);
     let _ = std::fs::remove_dir_all(&root);
 }

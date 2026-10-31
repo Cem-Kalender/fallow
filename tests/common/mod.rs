@@ -125,7 +125,12 @@ pub fn start_studio(
     scenario: &Path,
     approval_wait: Option<Duration>,
 ) -> fallow::service::ToolEngine {
-    start_studio_notify(root, scenario, approval_wait, std::sync::Arc::new(fallow::platform::notify::Off))
+    start_studio_notify(
+        root,
+        scenario,
+        approval_wait,
+        std::sync::Arc::new(fallow::platform::notify::Off),
+    )
 }
 
 /// `start_studio` whose desktop notifications go to `notify`.

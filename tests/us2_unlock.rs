@@ -27,14 +27,29 @@ fn a_new_lock_reopens_only_the_affected_story() {
         task_step("T001", &[("calc/__init__.py", "")], ""),
         handover_step(1, ""),
         task_step("T002", &[("calc/__init__.py", CALC_INIT)], ""),
-        task_step("T003", &[("tests/__init__.py", ""), ("tests/test_add.py", TEST_ADD)], ""),
+        task_step(
+            "T003",
+            &[("tests/__init__.py", ""), ("tests/test_add.py", TEST_ADD)],
+            "",
+        ),
         handover_step(2, ""),
         check_step("US1", true, ""),
         // Unlocked while T004 runs.
-        task_step("T004", &[("calc/__init__.py", CALC_INIT_SUB), ("tests/test_sub.py", TEST_SUB)], "sleep_ms = 6000"),
+        task_step(
+            "T004",
+            &[
+                ("calc/__init__.py", CALC_INIT_SUB),
+                ("tests/test_sub.py", TEST_SUB),
+            ],
+            "sleep_ms = 6000",
+        ),
         // After the new lock: US1 is brought in line, in a fresh session, and checked again.
-        task_step("US1", &[("calc/__init__.py", &format!("{CALC_INIT_SUB}# ints only\n"))], "when = \"lock 2\"")
-            .replacen("kind = \"build\"", "kind = \"repair\"", 1),
+        task_step(
+            "US1",
+            &[("calc/__init__.py", &format!("{CALC_INIT_SUB}# ints only\n"))],
+            "when = \"lock 2\"",
+        )
+        .replacen("kind = \"build\"", "kind = \"repair\"", 1),
         check_step("US1", true, ""),
         handover_step(3, ""),
         check_step("US2", true, ""),
@@ -43,7 +58,9 @@ fn a_new_lock_reopens_only_the_affected_story() {
     let (e, repo, id) = locked_calc(&root, &steps, None);
     let tx = &e.tx;
     let v = wait_for(tx, id, "T004 running", |v| {
-        steps_of(v, "build", "T004").iter().any(|s| !s["started"].is_null())
+        steps_of(v, "build", "T004")
+            .iter()
+            .any(|s| !s["started"].is_null())
     });
     let project = v["feature_loop"]["project"].as_str().unwrap().to_string();
     let feature = "001-calc".to_string();
@@ -59,7 +76,9 @@ fn a_new_lock_reopens_only_the_affected_story() {
     .unwrap();
     assert_eq!(u["loop"], id);
     let v = wait_for(tx, id, "T004's end", |v| {
-        steps_of(v, "build", "T004").iter().all(|s| !s["end"].is_null())
+        steps_of(v, "build", "T004")
+            .iter()
+            .all(|s| !s["end"].is_null())
     });
     let seq = v["seq"].clone();
     std::thread::sleep(Duration::from_secs(3));
@@ -87,7 +106,10 @@ fn a_new_lock_reopens_only_the_affected_story() {
         },
     )
     .unwrap();
-    let text = doc["text"].as_str().unwrap().replace("the result is 5.", "the result is the int 5.");
+    let text = doc["text"]
+        .as_str()
+        .unwrap()
+        .replace("the result is 5.", "the result is the int 5.");
     sreq(
         tx,
         Req::PutDoc {
@@ -108,7 +130,10 @@ fn a_new_lock_reopens_only_the_affected_story() {
     )
     .unwrap();
     assert_eq!(p["affected"], serde_json::json!(["US1"]), "{p}");
-    assert!(p["why"][0].as_str().unwrap().contains("section of spec.md"), "{p}");
+    assert!(
+        p["why"][0].as_str().unwrap().contains("section of spec.md"),
+        "{p}"
+    );
 
     // The new lock.
     let l = ask(
@@ -137,10 +162,16 @@ fn a_new_lock_reopens_only_the_affected_story() {
     assert_eq!(repairs.len(), 1);
     assert!(repairs[0]["resume"].is_null(), "a fresh session");
     let prompt = std::fs::read_to_string(
-        root.join("data/runs").join(id.to_string()).join("steps").join(format!("{}.prompt", repairs[0]["n"])),
+        root.join("data/runs")
+            .join(id.to_string())
+            .join("steps")
+            .join(format!("{}.prompt", repairs[0]["n"])),
     )
     .unwrap();
-    assert!(prompt.contains("the int 5"), "the change goes to the builder: {prompt}");
+    assert!(
+        prompt.contains("the int 5"),
+        "the change goes to the builder: {prompt}"
+    );
     assert_eq!(steps_of(&v, "review", "US1").len(), 2, "US1 reviewed again");
     // US2 and the tasks: not repeated.
     assert_eq!(steps_of(&v, "review", "US2").len(), 1);
@@ -148,13 +179,24 @@ fn a_new_lock_reopens_only_the_affected_story() {
         assert_eq!(steps_of(&v, "build", t).len(), 1, "{t} built once");
     }
     // A new baseline, on the new lock commit.
-    let baselines: Vec<&Value> = v["gate_runs"].as_array().unwrap().iter().filter(|g| g["kind"] == "baseline").collect();
+    let baselines: Vec<&Value> = v["gate_runs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|g| g["kind"] == "baseline")
+        .collect();
     assert_eq!(baselines.len(), 2);
     assert_eq!(baselines[1]["result"]["commit"], new_lock.as_str());
     // The build branch has the new lock's spec, and every task still ticked.
-    let spec = git(&repo, &["show", "fallow/001-calc/build:specs/001-calc/spec.md"]);
+    let spec = git(
+        &repo,
+        &["show", "fallow/001-calc/build:specs/001-calc/spec.md"],
+    );
     assert!(spec.contains("the int 5"));
-    let tasks = git(&repo, &["show", "fallow/001-calc/build:specs/001-calc/tasks.md"]);
+    let tasks = git(
+        &repo,
+        &["show", "fallow/001-calc/build:specs/001-calc/tasks.md"],
+    );
     for t in ["T001", "T002", "T003", "T004"] {
         assert!(tasks.contains(&format!("- [X] {t}")), "{t} ticked: {tasks}");
     }
