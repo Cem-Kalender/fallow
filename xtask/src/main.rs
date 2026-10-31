@@ -1,13 +1,13 @@
 //! Benchmarks and verification tasks for Fallow. Run with `cargo xtask <task>`.
 //!
-//! The constitution VIII benchmarks and the retargeted egress test arrive with 006's polish phase
-//! (tasks T074, T075); the terminal app's tasks were removed with it.
+//! `bench` measures the constitution VIII budgets on Fallow's own process (007 T083).
 
+mod bench;
 mod spec_kit;
 
 use std::process::ExitCode;
 
-const TASKS: &[&str] = &["spec-kit"];
+const TASKS: &[&str] = &["bench", "spec-kit"];
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -19,6 +19,7 @@ fn main() -> ExitCode {
             );
             return ExitCode::from(2);
         }
+        Some("bench") => bench::run(&args[1..]),
         Some("spec-kit") => spec_kit::run(&args[1..]),
         Some(t) => {
             eprintln!("xtask: unknown task {t:?}\ntasks: {}", TASKS.join(", "));

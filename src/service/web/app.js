@@ -37,8 +37,8 @@ const Fallow = (() => {
   };
 
   // ---- Talking to the service ------------------------------------------------------------
-  async function api(method, path, body) {
-    const opts = { method, headers: {} };
+  async function api(method, path, body, signal) {
+    const opts = { method, headers: {}, signal };
     if (body !== undefined) {
       opts.headers["Content-Type"] = "application/json";
       opts.body = JSON.stringify(body);
@@ -56,24 +56,28 @@ const Fallow = (() => {
   const post = (p, b) => api("POST", p, b ?? {});
 
   // Long polling (research S-4): `onChange(value)` after each answer, until `stop()`.
+  // Stopping aborts the request waiting: the browser has few connections per host, and a
+  // request left waiting by a screen that is gone would hold one until it times out.
   function watch(scope, onChange) {
     let stopped = false;
     let after = 0;
+    const abort = new AbortController();
     (async () => {
       while (!stopped) {
         try {
-          const v = await get(`/api/events?scope=${encodeURIComponent(scope)}&after=${after}`);
+          const v = await api("GET", `/api/events?scope=${encodeURIComponent(scope)}&after=${after}`, undefined, abort.signal);
           if (stopped) break;
           // Always continue from the service's number, even when it is lower (a reset): the
           // service answers at once whenever the page's number differs from its own.
           if (typeof v.seq === "number") after = v.seq;
           if (!v.timeout) onChange(v);
         } catch (_) {
+          if (stopped) break;
           await new Promise((r) => setTimeout(r, 2000));
         }
       }
     })();
-    return { stop() { stopped = true; } };
+    return { stop() { stopped = true; abort.abort(); } };
   }
 
   // ---- The confirmation dialog (constitution II) --------------------------------------
@@ -136,7 +140,11 @@ const Fallow = (() => {
       else a.removeAttribute("aria-current");
     });
     if (current && current.leave) current.leave();
-    const app = document.getElementById("app");
+    // A fresh container for each screen: an answer the screen left behind still awaits writes
+    // into the old one, detached, never over the new screen.
+    const old = document.getElementById("app");
+    const app = old.cloneNode(false);
+    old.replaceWith(app);
     const screen = screens[r.screen];
     if (!screen) {
       app.innerHTML = h`<div class="page empty">This screen is not built yet.</div>`.s;

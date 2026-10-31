@@ -18,7 +18,11 @@
 │   ├── events.jsonl
 │   ├── steps\<n>.jsonl, steps\<n>.prompt
 │   └── wt\                          # worktrees
-└── worktrees\<project>\<feature>\   # NEW: the spec sessions' and project conversations' worktrees
+├── worktrees\<project>\<feature>\   # NEW: the spec sessions' and project conversations' worktrees
+├── records\v1\loop-<id>.json        # NEW: a loop's run record, written once when it ends (S-20):
+│                                    #   numbers, identifiers and fixed values only
+├── notified.json                    # NEW: the "Needs you" items already notified (S-14)
+└── notifications-off                # NEW: present while the tray menu's switch is off
 
 <project>\
 ├── .specify\, .claude\skills\speckit-*   # installed on add, only where missing (S-15)

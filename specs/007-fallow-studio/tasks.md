@@ -397,19 +397,41 @@ Notes on Phase 9 as built:
 
 ## Phase 10: Polish & cross-cutting concerns
 
-- [ ] T080 Run records for loops in `src/measure/record.rs` (research S-20): restore 005/006's record format and field rules from git history; write a record when a loop ends, with its pipeline's steps, tasks, repairs, review rounds, questions by outcome, interventions, time, cost and outcome.
-- [ ] T081 [P] The record marker test in `tests/record_marker.rs`: marker text planted in a loop's task, documents, agent output and answers never appears in its record (constitution V).
-- [ ] T082 Update `.github/workflows/ci.yml` so the CI gates run: false claims and unverified results; reserved questions relayed; writes only where allowed (project install, discarded lead edits); loopback and egress; resume; the record marker test.
-- [ ] T083 [P] Benchmarks in `xtask/src/bench.rs`: dashboard ready within 500 ms; idle memory, and memory with 4 concurrent fake steps across two loops (constitution VIII).
-- [ ] T084 [P] Accessibility on the five screens:
+- [X] T080 Run records for loops in `src/measure/record.rs` (research S-20): restore 005/006's record format and field rules from git history; write a record when a loop ends, with its pipeline's steps, tasks, repairs, review rounds, questions by outcome, interventions, time, cost and outcome.
+- [X] T081 [P] The record marker test in `tests/record_marker.rs`: marker text planted in a loop's task, documents, agent output and answers never appears in its record (constitution V).
+- [X] T082 Update `.github/workflows/ci.yml` so the CI gates run: false claims and unverified results; reserved questions relayed; writes only where allowed (project install, discarded lead edits); loopback and egress; resume; the record marker test.
+- [X] T083 [P] Benchmarks in `xtask/src/bench.rs`: dashboard ready within 500 ms; idle memory, and memory with 4 concurrent fake steps across two loops (constitution VIII).
+- [X] T084 [P] Accessibility on the five screens:
   - every control reachable by keyboard;
   - a visible focus ring;
   - `aria-label` on icon buttons;
   - text contrast of at least 4.5:1 (FR-032).
 - [ ] T085 The visual check (SC-007, SC-008): each screen next to its mockup at 1440 px and 390 px, with screenshots in `specs/007-fallow-studio/visual-check/`. The engineer approves.
 - [ ] T086 Run quickstart Q1–Q5 with Sonnet in the sandbox (reset it first), and record the runs, their costs, the time from adding the folder to the lead's first reply (SC-001), and the problems found in this file.
-- [ ] T087 [P] Documentation: `README.md`; mark 006's superseded user stories in `specs/006-headless-orchestrator/tasks.md`; update the contracts with anything that changed during the build.
+- [X] T087 [P] Documentation: `README.md`; mark 006's superseded user stories in `specs/006-headless-orchestrator/tasks.md`; update the contracts with anything that changed during the build.
 - [ ] T088 A fresh-context review of the whole change, then fix its findings.
+
+Notes on Phase 10 as built:
+- T080: `src/measure/record.rs` writes `records/v1/loop-<id>.json` once, when a loop ends, from
+  its state alone: the pipeline's steps, caps, level, agents by runtime and model, phases, tasks,
+  repairs, review rounds, questions by outcome, interventions, locks, commits, time, cost and the
+  outcome. Names the engineer chose become `custom`; `check()` refuses anything but fixed values,
+  identifiers and numbers.
+- T082: the 007 gates run as named steps in CI. 006's egress check is not restored: it needed an
+  administrator's capture of the DNS log on Windows. Fallow's code has no client socket and no
+  HTTP client crate; its one listener is the loopback page (`tiny_http`). Loopback, secret, Host and Origin are `service_http`.
+- T083: `cargo xtask bench`. A loop runs one step at a time, and checkers marked `parallel_with`
+  still run one after the other (T053's note), so the 4 concurrent steps come from four loops.
+  On the debug build: page ready 160 ms (p95), idle 10 MB, running 15 MB.
+- T084: every action is a button or a link; the focus ring is never removed; no icon-only button
+  lacks a label. Every text colour pair is at least 4.5:1 except the document's line numbers
+  (#A3A29B, 2.6:1), now the faint ink.
+- T085 (open): the screenshots are in `visual-check/`, with what knowingly differs. The
+  engineer's approval is pending. Taking them found two page bugs, now fixed: a screen left
+  behind could write over the next one, and a stopped long poll kept its connection, so a
+  screen opening after four others could wait for one.
+- T086 (open): needs real agents (`claude`, Sonnet) in the sandbox and costs money; left for the
+  engineer to run or to approve.
 
 ---
 

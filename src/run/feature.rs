@@ -1962,6 +1962,10 @@ fn start(run: &mut Run, ctx: &Ctx, n: u32) -> Result<(), String> {
         .agent(&defname)
         .cloned()
         .ok_or_else(|| format!("there is no agent named {defname:?}"))?;
+    // The definition's runtime (FR-029): one that is not there stops the loop here, naming it,
+    // before anything is prepared for the step.
+    let runtime = agent::registry::runtime(&def.runtime, &ctx.settings)
+        .map_err(|e| format!("{} cannot run: {e}", def.name))?;
     // Answers committed to the feature branch since reach the build at this boundary, also
     // before a check, so a checker sees them (research S-9, S-10).
     take_answers(run, &l)?;
@@ -2007,9 +2011,6 @@ fn start(run: &mut Run, ctx: &Ctx, n: u32) -> Result<(), String> {
         Some(s) if !run.state.lost_sessions.contains(s) => Session::Resume(s.clone()),
         _ => Session::New(crate::platform::random::uuid_v4().map_err(|e| e.to_string())?),
     };
-    // The definition's runtime (FR-029): one that is not there stops the loop here, naming it.
-    let runtime = agent::registry::runtime(&def.runtime, &ctx.settings)
-        .map_err(|e| format!("{} cannot run: {e}", def.name))?;
     let remaining = (run.state.limits.usd - run.state.cost_usd).max(0.01);
     let budget = def.limits.usd.map_or(remaining, |u| u.min(remaining));
     let minutes = def.limits.minutes.unwrap_or(run.state.limits.step_minutes);

@@ -237,10 +237,18 @@ impl Studio {
                 let n = toml::from_str::<pipeline::Raw>(toml)
                     .map(|r| r.name)
                     .unwrap_or_default();
-                if pipeline::parse("the loop's pipeline", &n, toml, Source::Default, &kinds)
-                    .is_err()
-                {
-                    broken.push(format!("a loop still going on {n}"));
+                // Nor may a loop still going stop verifying (FR-015).
+                let now_lib = self.library(root.as_deref());
+                let now_kinds = |a: &str| now_lib.agents.get(a).map(|d| d.kind);
+                let before =
+                    pipeline::parse("the loop's pipeline", &n, toml, Source::Default, &now_kinds);
+                match pipeline::parse("the loop's pipeline", &n, toml, Source::Default, &kinds) {
+                    Err(_) => broken.push(format!("a loop still going on {n}")),
+                    Ok(after) if before.is_ok_and(|b| b.verifying) && !after.verifying => broken
+                        .push(format!(
+                            "a loop still going on {n} (it would no longer verify)"
+                        )),
+                    Ok(_) => {}
                 }
             }
         }

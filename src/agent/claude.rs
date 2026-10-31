@@ -29,6 +29,31 @@ impl Claude {
     }
 }
 
+/// Runs `cmd` for its output, killing it after 4 s (a `--version` that hangs on an update
+/// prompt must not hold Fallow).
+fn probe(cmd: &mut std::process::Command) -> Option<std::process::Output> {
+    let mut child = cmd
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .ok()?;
+    let end = std::time::Instant::now() + std::time::Duration::from_secs(4);
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => return child.wait_with_output().ok(),
+            Ok(None) if std::time::Instant::now() < end => {
+                std::thread::sleep(std::time::Duration::from_millis(20))
+            }
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+        }
+    }
+}
+
 impl Runtime for Claude {
     fn name(&self) -> &str {
         "claude"
@@ -41,20 +66,19 @@ impl Runtime for Claude {
                 version: None,
             };
         };
-        let version = crate::platform::command(program)
-            .args(&self.agent.args)
-            .arg("--version")
-            .output()
-            .ok()
-            .filter(|o| o.status.success())
-            .map(|o| {
-                String::from_utf8_lossy(&o.stdout)
-                    .lines()
-                    .next()
-                    .unwrap_or_default()
-                    .trim()
-                    .to_string()
-            });
+        let version = probe(
+            crate::platform::command(program)
+                .args(&self.agent.args)
+                .arg("--version"),
+        )
+        .map(|o| {
+            String::from_utf8_lossy(&o.stdout)
+                .lines()
+                .next()
+                .unwrap_or_default()
+                .trim()
+                .to_string()
+        });
         Availability {
             installed: true,
             version,

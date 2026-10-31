@@ -1,231 +1,81 @@
 # Fallow
 
-Fallow is a terminal workspace for developers who run several LLM coding agents at once. It
-opens on your projects and the agent sessions running in them. Each session is a full terminal
-for an agent CLI (Claude Code, Codex, Gemini CLI, Aider or a shell), in its own git worktree by
-default. Next to them, a live panel shows every LLM process on the machine with its memory, CPU,
-status and working directory. A file editor is one key away. Agents can also coordinate through
-Fallow: a shared board, events to wait for, a task queue, and messages into each other's sessions,
-always within limits you approve. Fallow itself stays small enough to leave the RAM to the agents.
+Fallow is a local dashboard for spec-driven development with coding agents. You work out each
+feature with a lead agent, following [Spec Kit](https://github.com/github/spec-kit): constitution,
+specify, clarify, plan, tasks, analyze. When the documents are clear you lock them. A loop then
+builds the whole locked `tasks.md`, task by task, and Fallow checks the work itself: it commits
+each task, runs your gates against a baseline, and has a reviewer check every acceptance scenario
+by running something. You merge once, for the whole feature.
 
-**Status: pre-release.** It builds from source and passes its CI gates on Linux, macOS and
-Windows; there are no release binaries yet. The specifications, plans and research are in
-[`specs/`](specs/), and the project's principles are in
-[`.specify/memory/constitution.md`](.specify/memory/constitution.md).
+**Status: pre-release.** It builds from source on Windows, its release target, and passes its CI
+gates there; there are no release binaries yet. The specifications, plans and research are in
+[`specs/`](specs/) (this version is [`specs/007-fallow-studio/`](specs/007-fallow-studio/)), and
+the project's principles are in [`.specify/memory/constitution.md`](.specify/memory/constitution.md).
 
-## Budgets
+## What it does
 
-Enforced by CI benchmarks on all three platforms:
-- under 50 MB of memory when idle, under 150 MB with a large project open and 4 agent sessions
-  each holding a full scrollback (agents themselves not counted);
-- first screen in under 100 ms, with 50 remembered projects;
-- a key typed into a session is on screen in under 50 ms (p95), and under 100 ms while seven
-  other sessions print as fast as they can;
-- no root or administrator rights needed;
-- no data leaves the machine, except optional DNS lookups of known LLM provider hostnames.
-  Session output and scrollback stay in memory and are never written anywhere;
-- a message one agent posts is readable by another in under 1 s (p95), and on your screen in
-  under 1 s; Fallow never opens a listening network socket.
+- **Projects.** Add any local folder, git repository or not. Fallow installs Spec Kit's agent
+  skills where they are missing and lists the project's features (`specs/NNN-*`) with their stage:
+  spec session, locked, building, ready to merge, merged.
+- **Spec sessions.** A chat with the lead next to `spec.md`, `plan.md`, `tasks.md` and the
+  constitution, which update live and which you can edit yourself; the lead sees your edits on its
+  next turn. Clarify questions come as choices with a recommendation, open `[NEEDS CLARIFICATION]`
+  markers are highlighted, and "Lock & start the loop" opens once tasks and analyze are done.
+- **The loop.** One builder works through the locked tasks, phase by phase, in one session per
+  phase. After each task Fallow commits it and runs the gates against the baseline; at each user
+  story's checkpoint a reviewer answers every criterion with what it ran. Failures go back to the
+  builder for a repair, capped, then to you. A result a pipeline left unverified (for example
+  without gates) ends as "Done, not verified by Fallow", never as ready to merge.
+- **Watching and steering.** The loop page shows the pipeline and its current stage, the task tree,
+  one card per agent, one activity feed (what each agent says, reads, edits and runs, with
+  output), Fallow's own checks, time and cost against the budget. You can pause, stop, leave a
+  note for the next step and change limits.
+- **Questions through the lead.** Agents ask through Fallow's `ask` tool. When the spec or the
+  spec session settles it, the lead answers, Fallow commits the answer to the spec, and the agent
+  goes on; you can overrule it. Otherwise the lead relays the question to you with options and a
+  recommendation, and only the affected story waits.
+- **The dashboard.** A "Needs you" inbox (questions, features ready to merge, stopped loops), the
+  running loops with their phase progress, and desktop notifications from Fallow's tray icon,
+  which name the project, the feature and what is needed, and never code or output.
+- **Agents and pipelines.** Agents are markdown files with frontmatter in `~/.fallow/agents/`,
+  overridden per project in `.fallow/agents/`: makers change files, checkers only run and verify.
+  Pipelines are built from fixed steps in the pipeline designer; Standard, Test first and Solo
+  ship with Fallow, and the lead can propose one, which is used only once you save it.
+- **Runtimes.** Every agent step goes through one runtime interface. Claude Code (`claude -p`) is
+  the first; a scripted `fake` runtime drives the tests.
 
 ## Getting started
 
+Fallow needs `git`, and `claude` signed in for real agents.
+
 ```sh
-cargo build --release
-target/release/fallow [PATH]      # PATH is added to the project list and selected
+cargo build
+target/debug/fallow            # starts the service if needed and opens the dashboard
+target/debug/fallow status     # lists the loops
+target/debug/fallow stop       # stops the service; loops resume at the next start
 ```
 
-| Key | What it does |
-|---|---|
-| `Ctrl-O` or `a` | Add a project (folder). The list is remembered. |
-| `n` | Start an agent session in the selected project. Git projects get a new worktree (`fallow/<agent>-<n>`) by default. |
-| `Enter` | Focus the selected session. Every key now goes to the agent. |
-| `Ctrl-]` | Leave the session (keys go to Fallow again). Press it twice to send `Ctrl-]` to the agent. |
-| `Ctrl-N` / `Ctrl-B` | Next / previous session |
-| `Ctrl-T` | All sessions of all projects |
-| `Ctrl-E` | Switch between the agent workspace and the editor view of the selected project |
-| `f` | Show only the selected project's LLM processes |
-| `?` / `F1`, `Ctrl-P` | Help with every key, and the command palette |
-| `Ctrl-Q` | Quit. Running sessions are listed and stopped; agents never outlive Fallow. |
+The dashboard is served on `127.0.0.1` only, with a secret per launch; `fallow` opens it signed
+in. Fallow's settings are in its config folder (`settings.toml`), its data (loops, conversations,
+worktrees, run records) in its data folder, readable by you only. The dashboard's "What Fallow
+keeps on disk" shows how large each part is and deletes what you no longer need.
 
-Sessions that need you (the agent rang the bell, sent a notification, or went quiet) are
-marked, and the project list counts them. The built-in Claude Code and Codex profiles turn on
-their bell notifications for that run only, with command-line flags; Fallow never edits an
-agent's settings files.
+## Budgets
 
-## Agent orchestration
+Measured by `cargo xtask bench` in CI (constitution VIII), on Fallow's own process:
+- the page answers within 500 ms of Fallow starting (p95 of 30 launches);
+- under 60 MB of memory when idle, and under 200 MB with 4 agent steps running at once.
 
-Agents in Fallow sessions get coordination tools through the Model Context Protocol. Fallow
-connects Claude Code, Codex CLI and Gemini CLI to them for each run, with the agents' own
-command-line options; it never edits their settings files. The tools let an agent:
+Fallow makes no network requests of its own; the traffic of a loop is the agents' own traffic
+to their providers.
 
-- post on a board of its project, or on one shared by all projects, and read it;
-- signal a named event ("pr-123-merged") and wait for one;
-- ask Fallow to type a message into another agent's session;
-- queue tasks for a session, or for the next free session of a profile in a project, to start
-  when given events have been signalled;
-- ask Fallow to start another session, with a first task.
+## Development
 
-**You stay in control.**
-- Nothing is typed into a session, and no session starts, unless you approve it in the
-  orchestration view (`o`), or a standing permission covers it.
-- You grant a permission for one source, one target and chosen actions. It lasts at most 8 hours
-  and is revoked with `Delete`, or all at once with `Shift-X`.
-- Every delivered text starts with a label naming the agent that sent it, set by Fallow.
-- No tool and no permission can stop, pause or kill a session.
-- Board, events, tasks, permissions and the activity log live in memory only and are gone when
-  Fallow quits.
+```sh
+cargo fmt --all --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace          # agents are the scripted fake agent: no network, no cost
+cargo xtask bench               # the budgets above
+```
 
-The agents connect through Fallow's own binary (`fallow mcp-bridge`), over a Unix socket in
-Fallow's cache directory, or a named pipe on Windows. Only the current user can reach either, and
-only processes of the session they name are accepted, each only as itself.
-
-Configuration lives in the platform config directory (`fallow --print-config-paths`):
-`settings.toml` (including `[sessions]` and `[orchestration]`), `profiles.toml` for your own
-agent profiles (`orchestration = "claude"` connects a profile of your own to the tools), and
-`projects.toml`, the remembered project list, which Fallow writes. The palette's "Reload
-configuration" reads `profiles.toml` again.
-
-## Coordination mode and squads
-
-For a time-limited burst (at most 8 hours), a project's agents can work together without asking
-you at every step. Start it with the palette's "Coordinate this project…" from a session, by
-accepting the offer when a project's first session starts, or with
-`fallow --coordinate 4h [PATH]`. The session it starts from is the **lead**; you choose how long
-it lasts and how many sessions agents may start. The hint bar counts down, and `Shift-X` ends it
-at once.
-
-- **Squads.** A squad declares roles, gates and merge conditions in `.fallow/squad.toml` in the
-  project, versioned with your code (Fallow only reads it). Without the file, a built-in squad is
-  used: a lead, up to three builders and up to two reviewers that may run commands but not edit. Roles for all projects
-  can live in `roles.toml` in Fallow's config directory. The palette's "Create squad file" writes a commented
-  starting point with the test command guessed from the project, and never commits it.
-- **Roles.** Fallow fixes each session's role at its start and stamps it on everything the
-  others receive. A role decides which of Fallow's tools the session sees and which events it may
-  signal (only reviewers approve a review; no role signals a gate). A role's level (`read-only`,
-  `edit`, `edit-run`) becomes the agent's own permission flags: Claude Code
-  `--permission-mode dontAsk` with edits disallowed, `acceptEdits`, or `acceptEdits` with Bash;
-  Codex `--sandbox read-only|workspace-write`; Gemini `--approval-mode plan|auto_edit`. The
-  agent enforces those, not Fallow; for read-only roles Fallow checks the outcome, and a
-  reviewer whose worktree changes stops counting. Flags that make an agent skip its own checks
-  need your confirmation.
-- **Briefings.** Each session gets its role's briefing when it connects and from `whoami`: its
-  tools, the rules, the squad, how to report work. With Spec Kit in the project (`.specify/`),
-  the briefing describes its pipeline; without it, Fallow can have the lead run Spec Kit's
-  official installer after you agree (Fallow itself downloads and writes nothing).
-- **Gates.** A gate is a command (your build and tests) that Fallow runs itself as a session,
-  once on the starting commit (the baseline) and again on the lead's commit when the builders'
-  work is done. Only Fallow signals a gate's result; a final run that fails only where the
-  baseline already failed is told apart from a regression.
-- **Evidence and repair.** A done report names the commit, the commands run and the files
-  changed; Fallow checks the commit is on the session's branch. A failed gate or a review asking
-  for changes goes back to the session that built the part, up to `repair_cap` rounds, then to
-  you. When every session has waited too long, you are told who waits for what.
-- **Publishing.** No agent merges. With a remote, the lead opens a draft pull request once every
-  merge condition holds, and you merge it. Without one, the Squad tab says "ready to merge" and
-  `m` merges exactly the gated commit into the target branch after you confirm.
-
-### One loop by default, delegation where it pays
-
-Following Anthropic's published lessons on multi-agent systems, the lead **builds the work itself**
-by default, in one loop, and a reviewer that did not write it checks it. It delegates only where a
-split pays, and records each decision in a work manifest, `.fallow/work.toml`, that it commits:
-
-- `build = "builder"`: one fresh builder from the committed plan;
-- `build = "features"`: independent features, a builder each;
-- `build = "parts"`: parallel parts, only with files each part owns (code and its tests, never
-  only tests), no overlap, and a committed contract for each boundary.
-
-Fallow refuses a builder for work the manifest does not delegate, or that is not prepared, and the
-Squad tab shows every decision and its reason. Builders ask the lead with **signals**; the lead
-answers by committing the decision to the plan, the manifest or a contract, and a builder's done
-report is refused until it contains the changes to its part's criteria and contracts. Edits
-outside a part are reported to the lead. Every piece of work has acceptance criteria before it is
-built; a reviewer's approval counts only when it answers each one, including a case that must fail.
-The lead is told only what needs its decision; a new lead continues from the repository and
-`squad_status`. Sessions start only within a memory budget (`orchestration.memory_budget_mb`).
-Squad files written for the earlier workflow (merge on `done:<role>`) keep it.
-
-### Measuring: plain, solo and squad runs
-
-To see whether orchestration pays for your work, keep a **task set** outside your projects
-(`taskset.toml`: tasks with a starting commit, a fixed description, a time limit and **hidden
-tests**). "Register a task set…" and "Start a run…" or "Start a series…" in the palette run a task:
-
-- **plain**: one session with your skills and no Fallow tools;
-- **solo**: the lead builds alone, with Fallow's gates and a reviewer;
-- **squad**: the lead decides how to delegate.
-
-Each run works in its own copy of the project (only its history up to the start), so runs never
-see each other and your repository is only read. Every editing session runs at the same level and
-never asks you anything; Fallow types the description and ends the run when nothing worked for a
-while. You confirm closing its sessions, the hidden tests run on what the run left, and the result
-is recorded. The Runs tab compares runs by task and mode: pass rate, time, your interventions and
-cost (as Claude Code reports it on its status line). Any component can be switched off for a run
-(`off=reviewer,gates,…`) to see whether it matters.
-
-"Hidden" means the tests are kept out of the run's copy, worktrees, prompts and briefings until
-its sessions are closed; agents run as you, so one could read them on purpose. Run records hold
-numbers, fingerprints and fixed outcomes only (no names, paths or text), in Fallow's cache folder,
-until you delete them (constitution Principle VII).
-
-Risks: during a burst, agents act on each other's output without your review, and a prompt
-injection in one session can reach the others. That is why bursts are time-limited, scoped to one
-project, revocable at once, and gated by evidence Fallow checks itself. Agents' claims about their
-work are not verified beyond those checks. Each session runs its own agent and uses its own plan
-or API usage.
-
-## Known gaps
-
-- **No kitty keyboard protocol inside sessions.** Agents fall back to their legacy keys: in
-  Claude Code, `Shift-Enter` does not insert a newline; use `Ctrl-J` or `\` then `Enter`.
-- **No reflow on resize.** When a pane changes size, the agent is told the new size and redraws;
-  text already in the scrollback keeps its old line breaks.
-- **Windows: npm-installed agents.** npm installs agents as `.cmd` shims. Fallow runs the program
-  a shim points to (`node` with its script, or the agent's `.exe`) instead of going through
-  `cmd.exe`. A shim it cannot read is refused with the reason; point a profile in
-  `profiles.toml` at the real executable instead.
-- **Gemini CLI and Aider** have no per-run notification flag. Fallow uses Gemini CLI's window
-  titles, the terminal bell, and "quiet for 5 s" to mark them as needing attention.
-- **WSL2:** processes inside WSL2 are not visible to the Windows build.
-- **Orchestration: Aider** has no tool support, so its sessions run without orchestration.
-  **Gemini CLI** is not connected when an administrator's system settings file exists, because
-  Fallow's per-run settings file would replace it.
-- **Coordination: Gemini CLI** has no flags Fallow can map to the `edit-run` level, and
-  **Codex CLI** has no "ask before every command" mode; such a role needs flags in the squad
-  (`[role.flags]`), or the agent cannot take it.
-- **Coordination: read-only roles** depend on the agent CLI honoring its flags; Fallow checks the
-  worktree afterwards rather than preventing edits.
-- **Orchestration: waking an idle agent** needs a delivery you approve (or a permission).
-  Claude Code's "channels", which could wake it without typing, are a research preview behind a
-  confirmation screen at every launch, so Fallow does not use them yet.
-
-## Platform support
-
-| Platform | Status |
-|---|---|
-| Linux | Builds; CI gates pass |
-| Windows | Builds; CI gates pass |
-| macOS | Builds; CI gates pass. **Beta** until hardware verification passes (below) |
-
-**macOS hardware verification (open)**: macOS releases are labeled "beta" until they have been
-verified on a physical Apple Silicon Mac (M1 or later; not a GitHub-hosted runner, not an Intel
-Mac). The checks are:
-- memory figures vs Activity Monitor with a running local model;
-- the command-line read on macOS not retaining environment data;
-- the canary privacy test;
-- a manual run-through in Terminal.app and iTerm2, including agent sessions.
-
-Details are in [plan.md, Release blockers](specs/001-llm-aware-tui-editor/plan.md#release-blockers).
-
-## License
-
-Licensed under either of:
-
-- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
-- MIT license ([LICENSE-MIT](LICENSE-MIT))
-
-at your option.
-
-Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion in
-this project by you, as defined in the Apache-2.0 license, shall be dual licensed as above,
-without any additional terms or conditions.
+Licensed under MIT or Apache-2.0, at your option.

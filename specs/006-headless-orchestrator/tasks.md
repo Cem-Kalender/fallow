@@ -21,6 +21,20 @@ tests use the fake agent (research R-15).
 
 **Organization**: by user story (spec.md US1 to US7). Work stays on branch `001-llm-aware-tui-editor`.
 
+**Superseded by 007 (2026-10-31).** [`specs/007-fallow-studio/`](../007-fallow-studio/) replaces
+006's single-task `fallow run` flow (007 FR-033) and keeps its loop engine as the core of each
+loop. The open tasks below are not built in 006:
+- **US2** (decisions during a step), **US3** (see what the agents are doing) and **US4** (steer the
+  run): superseded by 007's US4 (questions through the lead), US3 (the loop screen) and its
+  steering (FR-019).
+- **US5** (parallel parts): superseded by 007's loop over a locked `tasks.md`, phase by phase.
+  Several loops run at once (007 FR-004); checkers marked `parallel_with` still run one after the
+  other.
+- **US6** (publishing: push and pull requests): kept for later; out of 007's scope.
+- **US7** (measuring on the engineer's own tasks): kept for later. 007 writes the run records
+  (research S-20); comparing them on a task set with hidden tests is a later feature.
+- **Polish**: 007's Phase 10 carries the CI gates, the benchmarks and the record marker test.
+
 ## Format: `[ID] [P?] [Story] Description`
 
 - **[P]**: can run in parallel (different files, no dependency on an unfinished task)

@@ -524,6 +524,7 @@ impl Engine {
             }
             self.publish_changes();
             self.notify_changes();
+            self.record_ended();
             self.console.append(&mut self.studio.console);
             for line in self.console.drain(..) {
                 eprintln!("{line}");
@@ -709,6 +710,26 @@ impl Engine {
             .collect();
         items.sort_by(|a, b| b["at"].as_str().cmp(&a["at"].as_str()));
         items
+    }
+
+    /// Writes the record of each loop that has ended, once (research S-20). A record that
+    /// cannot be written is said on the console; the loop is not affected.
+    fn record_ended(&mut self) {
+        for (id, r) in &self.runs {
+            if !r.state.stage.is_final() || r.state.feature_loop.is_none() {
+                continue;
+            }
+            if crate::measure::record::path(&self.data, *id).exists() {
+                continue;
+            }
+            let lib = crate::defs::Library::load(self.ctx.config.as_deref(), Some(&r.state.repo));
+            let runtime_of = |def: &str| lib.agent(def).map(|d| d.runtime.clone());
+            if let Some(rec) = crate::measure::record::LoopRecord::of(&r.state, &runtime_of) {
+                if let Err(e) = crate::measure::record::write(&self.data, *id, &rec) {
+                    self.console.push(format!("loop {id}: no run record: {e}"));
+                }
+            }
+        }
     }
 
     /// New "Needs you" items raise a notification each, unless the project turned them off.

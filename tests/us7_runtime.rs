@@ -45,26 +45,30 @@ fn trace(v: &Value) -> Vec<(String, String, bool)> {
 fn loop_on(name: &str, runtime: Option<&str>) -> (Value, Value) {
     let root = scratch(name);
     let scenario = root.join("scenario.toml");
-    if runtime == Some("fake") {
+    let repo = repo(&root);
+    if let Some(rt) = runtime {
+        // The fake runtime plays a script of its own: the loop's steps are only there, so a
+        // step that ran on the Claude profile instead would find nothing to play.
         let exe = env!("CARGO_BIN_EXE_fallow-fake-agent");
+        let own = root.join("fake.toml");
+        std::fs::write(&own, calc_loop_ok()).unwrap();
         std::fs::write(
             root.join("settings.extra.toml"),
             format!(
                 "[agents.fake]\ncommand = {exe:?}\nargs = [\"--scenario\", {:?}]\n",
-                scenario.display().to_string()
+                own.display().to_string()
             ),
         )
         .unwrap();
-    }
-    let repo = repo(&root);
-    if let Some(rt) = runtime {
         on_runtime(&repo, &["builder", "reviewer"], rt, "fake-1");
+        std::fs::write(&scenario, lead_writes_calc()).unwrap();
+    } else {
+        std::fs::write(
+            &scenario,
+            format!("{}{}", lead_writes_calc(), calc_loop_ok()),
+        )
+        .unwrap();
     }
-    std::fs::write(
-        &scenario,
-        format!("{}{}", lead_writes_calc(), calc_loop_ok()),
-    )
-    .unwrap();
     let e = start_studio(&root, &scenario, None);
     let id = lock_calc_in(&e.tx, &repo, None, Some((5.0, 60)), None);
     let v = wait_for(&e.tx, id, "ready to merge", |v| {
@@ -130,6 +134,12 @@ fn a_runtime_that_is_not_there_stops_the_loop_naming_it() {
         !v["needs_engineer"].is_null()
     });
     let why = v["needs_engineer"].to_string();
+    // Asked once: the loop waits, and starts nothing more.
+    let n = v["steps"].as_object().unwrap().len();
+    std::thread::sleep(std::time::Duration::from_secs(2));
+    let later = ask(tx, Request::Get { id }).unwrap();
+    assert_eq!(later["steps"].as_object().unwrap().len(), n);
+    assert_eq!(later["needs_engineer"], v["needs_engineer"]);
     assert!(
         why.contains("reviewer") && why.contains("\\\"fake\\\""),
         "{why}"

@@ -42,7 +42,7 @@ impl Runtime for Fake {
 
     fn available(&self) -> Availability {
         Availability {
-            installed: std::path::Path::new(&self.inner.agent.command).exists(),
+            installed: crate::platform::find_program(&self.inner.agent.command).is_some(),
             version: Some("fake".into()),
         }
     }

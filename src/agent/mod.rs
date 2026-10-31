@@ -289,18 +289,14 @@ pub mod registry {
         }
     }
 
-    /// Whether `name` can be used, without starting it (cheap: the program is looked up).
-    pub fn installed(name: &str, settings: &Settings) -> bool {
-        profile(name, settings).is_some_and(|(c, _)| crate::platform::find_program(&c).is_some())
-    }
-
     /// The runtime called `name`, ready to start calls; refused, naming it, when Fallow does
-    /// not know it, it is not configured, or its program is not installed.
+    /// not know it, it is not configured, or its program is not installed. The implementation
+    /// is chosen by the runtime's name; a profile's `adapter` is not consulted.
     pub fn runtime(name: &str, settings: &Settings) -> Result<Box<dyn Runtime>, String> {
         let Some((command, args)) = profile(name, settings) else {
             return Err(match name {
                 "fake" => {
-                    "the runtime \"fake\" is not configured: add [agents.fake] to the settings"
+                    "the runtime \"fake\" is not configured: add [agents.fake] to the settings and start Fallow again"
                         .to_string()
                 }
                 _ => format!(
@@ -327,49 +323,60 @@ pub mod registry {
     }
 
     type Listed = Vec<(String, Availability, &'static [&'static str])>;
-    /// The last list, for the profiles it was made from.
-    static CACHE: std::sync::Mutex<Option<(String, std::time::Instant, Listed)>> =
-        std::sync::Mutex::new(None);
+    /// The versions last probed, for the profiles they were probed with, and when; and whether
+    /// a probe is under way.
+    type Versions = (String, std::time::Instant, Vec<(String, Option<String>)>);
+    static VERSIONS: std::sync::Mutex<Option<Versions>> = std::sync::Mutex::new(None);
+    static PROBING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
     /// `GET /api/runtimes`: each runtime, whether it is installed, its version and its models.
-    /// A version is asked of the program on a thread of its own, for at most a few seconds, and
-    /// kept for a minute: the engine never waits on a slow or hanging program.
+    /// It answers at once: whether a runtime is installed is a lookup of its program, and its
+    /// version comes from a probe on a thread of its own (each program is killed after a few
+    /// seconds), started when the versions are missing or a minute old. Until the probe is
+    /// back, the version is not known.
     pub fn list(settings: &Settings) -> Listed {
         let key = format!("{:?}", settings.agents);
-        if let Ok(c) = CACHE.lock() {
-            if let Some((_, _, l)) = c
-                .as_ref()
-                .filter(|(k, at, _)| *k == key && at.elapsed() < std::time::Duration::from_secs(60))
-            {
-                return l.clone();
-            }
-        }
-        let l: Listed = crate::defs::RUNTIMES
+        let known = VERSIONS.lock().ok().and_then(|v| {
+            v.as_ref()
+                .filter(|(k, _, _)| *k == key)
+                .map(|(_, at, l)| (*at, l.clone()))
+        });
+        let stale = known
+            .as_ref()
+            .is_none_or(|(at, _)| at.elapsed() > std::time::Duration::from_secs(60));
+        let found: Vec<(String, Option<Box<dyn Runtime>>)> = crate::defs::RUNTIMES
             .iter()
-            .map(|name| {
-                let a = match runtime(name, settings) {
-                    Ok(r) => {
-                        let (tx, rx) = std::sync::mpsc::channel();
-                        std::thread::spawn(move || {
-                            let _ = tx.send(r.available());
-                        });
-                        rx.recv_timeout(std::time::Duration::from_secs(5))
-                            .unwrap_or(Availability {
-                                installed: true,
-                                version: None,
-                            })
-                    }
-                    Err(_) => Availability {
-                        installed: false,
-                        version: None,
+            .map(|name| (name.to_string(), runtime(name, settings).ok()))
+            .collect();
+        let list = found
+            .iter()
+            .map(|(name, r)| {
+                let version = known
+                    .as_ref()
+                    .and_then(|(_, l)| l.iter().find(|(n, _)| n == name))
+                    .and_then(|(_, v)| v.clone());
+                (
+                    name.clone(),
+                    Availability {
+                        installed: r.is_some(),
+                        version: version.filter(|_| r.is_some()),
                     },
-                };
-                (name.to_string(), a, models(name))
+                    models(name),
+                )
             })
             .collect();
-        if let Ok(mut c) = CACHE.lock() {
-            *c = Some((key, std::time::Instant::now(), l.clone()));
+        if stale && !PROBING.swap(true, std::sync::atomic::Ordering::AcqRel) {
+            std::thread::spawn(move || {
+                let versions = found
+                    .into_iter()
+                    .map(|(name, r)| (name, r.and_then(|r| r.available().version)))
+                    .collect();
+                if let Ok(mut v) = VERSIONS.lock() {
+                    *v = Some((key, std::time::Instant::now(), versions));
+                }
+                PROBING.store(false, std::sync::atomic::Ordering::Release);
+            });
         }
-        l
+        list
     }
 }

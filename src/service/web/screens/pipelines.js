@@ -420,9 +420,12 @@
         // The draft as checked: in TOML mode the check replaced it.
         const cur = s.draft;
         const where = document.getElementById("pl-scope").value;
+        // Only a file of this name where it is saved is replaced; saving to the project over the
+        // engineer's or a default makes an override, which replaces nothing.
         const other = s.pipelines.find((p) => p.name === cur.name);
-        const same = other && cur.saved && cur.source === (where === "project" ? "project" : other.source);
-        if (other && !same) {
+        const target = where === "project" ? "project" : "user";
+        const replaces = other && other.source === target && !(cur.saved && cur.source === target);
+        if (replaces) {
           const ok = await confirm({ title: `Replace the pipeline ${cur.name}?`, text: "A pipeline of this name is already there; saving replaces it where you save.", items: [other.file], ok: "Replace" });
           if (!ok) return;
         }
@@ -476,7 +479,10 @@
         if (k === "agent" || k === "when" || k === "at") {
           const at = (x) => `${x.when}/${x.when === "task" ? "" : x.at || "end"}`;
           for (const o of d.steps) {
-            o.parallel_with = (o.parallel_with || []).filter((p) => d.steps.some((x) => x !== o && x.agent === p && at(x) === at(o)));
+            const checker = (a) => kindOf(a) === "checker";
+            o.parallel_with = checker(o.agent)
+              ? (o.parallel_with || []).filter((p) => checker(p) && d.steps.some((x) => x !== o && x.agent === p && at(x) === at(o)))
+              : [];
           }
         }
         return changed();

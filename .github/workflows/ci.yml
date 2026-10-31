@@ -1,6 +1,6 @@
-# CI for Fallow (006 tasks T008): format, lint, dependency policy, build and tests on Windows,
-# the release target of 006 (clarified 2026-10-29). The constitution VIII benchmarks and the
-# egress test join this workflow with 006's polish phase (T074, T075).
+# CI for Fallow (006 tasks T008, 007 T082): format, lint, dependency policy, build, the gates
+# 007 names, the tests and the constitution VIII benchmarks, on Windows, the release target of
+# 006 (clarified 2026-10-29).
 name: ci
 
 on:
@@ -54,5 +54,27 @@ jobs:
       - name: Build
         run: cargo build --locked
 
+      # The gates of 007 (tasks T082), each named so a failure says which promise broke.
+      - name: "Gate: false claims and unverified results"
+        run: cargo test --locked --test us2_false_claims --test us2_pipeline_steps
+
+      - name: "Gate: reserved questions are relayed to the engineer"
+        run: cargo test --locked --test us4_ask
+
+      - name: "Gate: writes only where allowed (project install, discarded lead edits)"
+        run: cargo test --locked --test us1_projects --test us1_conversation
+
+      - name: "Gate: the page on the loopback only, to the engineer only"
+        run: cargo test --locked --test service_http
+
+      - name: "Gate: loops resume after a restart"
+        run: cargo test --locked --test us2_resume
+
+      - name: "Gate: run records hold no text (marker test)"
+        run: cargo test --locked --test record_marker
+
       - name: Tests (agents are the scripted fake agent; no network, no cost)
         run: cargo test --workspace --locked
+
+      - name: "Benchmarks: page ready, idle and running memory (constitution VIII)"
+        run: cargo xtask bench
