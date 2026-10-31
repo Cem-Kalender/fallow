@@ -5,6 +5,7 @@
 mod common;
 
 use common::*;
+use fallow::run::engine::Request;
 use serde_json::Value;
 
 const PIPELINE: &str = r#"name = "with-docs"
@@ -166,6 +167,58 @@ fn test_first_tests_fail_first_and_the_tasks_are_judged_against_them() {
         !tw["result"]["failing"].as_array().unwrap().is_empty(),
         "{tw}"
     );
+    drop(e);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// T086: a question asked at a phase's start (by the test-writer) has every task of its phase
+/// built on its answer: overruling it reopens them.
+#[test]
+fn overruling_a_test_writers_answer_reopens_its_phases_tasks() {
+    let root = scratch("test-first-overrule");
+    let asking = writes_tests(
+        2,
+        &[("tests/__init__.py", ""), ("tests/test_add.py", TEST_ADD)],
+    )
+    .replacen(
+        "part = \"test-writer@phase-2-start\"\n",
+        "part = \"test-writer@phase-2-start\"\nask = \"Floats too?\"\n",
+        1,
+    );
+    let lead = "[[step]]\nkind = \"lead_answer\"\npart = \"q1\"\noutput = { outcome = \"answer\", answer = \"No: ints only\", basis = \"spec.md US1 scenario 2\", reserved = false, changes_criterion = false, touches_interface = false, adds_dependency = false }\n\n";
+    let steps = [
+        task_step("T001", &[("calc/__init__.py", "")], ""),
+        handover_step(1, ""),
+        asking,
+        lead.to_string(),
+        task_step("T002", &[("calc/__init__.py", CALC_INIT)], ""),
+        task_step("T003", &[("tests/test_more.py", "")], ""),
+        handover_step(2, ""),
+        check_step("US1", true, ""),
+        writes_tests(3, &[("tests/test_sub.py", TEST_SUB)]),
+        task_step("T004", &[("calc/__init__.py", CALC_INIT_SUB)], ""),
+        handover_step(3, ""),
+        check_step("US2", true, ""),
+    ]
+    .concat();
+    let (e, _repo, id) = locked_calc(&root, &steps, Some("test-first"));
+    let tx = &e.tx;
+    let v = wait_for(tx, id, "ready to merge", |v| v["stage"] == "ready");
+    assert_eq!(
+        v["feature_loop"]["questions"]["q1"]["by"], "lead",
+        "{}",
+        v["feature_loop"]["questions"]
+    );
+    let o = ask(
+        tx,
+        Request::Overrule {
+            id,
+            q: "q1".into(),
+            answer: "Accept floats too".into(),
+        },
+    )
+    .unwrap();
+    assert_eq!(o["reopened"], serde_json::json!(["T002", "T003"]), "{o}");
     drop(e);
     let _ = std::fs::remove_dir_all(&root);
 }

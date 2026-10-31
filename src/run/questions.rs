@@ -919,33 +919,33 @@ pub fn overrule(run: &mut Run, lead: &Lead, q: &str, answer: &str) -> Result<Val
     Ok(json!({ "commit": commit, "reopened": reopened }))
 }
 
-/// The tasks built on an answer: from the task that asked on, in its phase and the later phases
-/// of the same story, that were accepted.
+/// The tasks built on an answer: the accepted tasks of the asking step's phase, and of the later
+/// phases of the same story, with a step at or after the question's (the asking task itself
+/// included). T086: a question asked at a phase's start (the test-writer's) had all of its
+/// phase's tasks built on it, and none was found.
 fn built_on(run: &Run, l: &LoopState, q: &QuestionEntry) -> Vec<String> {
     let phase = run.state.steps.get(&q.step).and_then(|s| s.phase);
     let mut out = Vec::new();
-    let mut from_here = false;
     for p in &l.phases {
         let same_story = q.affects.is_some()
             && (p.spec.story == q.affects || p.spec.tasks.iter().any(|t| t.story == q.affects));
-        if Some(p.spec.n) != phase && !(from_here && same_story) {
+        let later = phase.is_some_and(|n| p.spec.n > n);
+        if Some(p.spec.n) != phase && !(later && same_story) {
             continue;
         }
         for t in &p.spec.tasks {
-            if Some(t.id.as_str()) == q.task.as_deref() {
-                from_here = true;
-            }
             let accepted = l
                 .tasks
                 .get(&t.id)
                 .is_some_and(|s| s.state == TaskState::Accepted);
-            if from_here && accepted {
+            let after = run
+                .state
+                .steps
+                .values()
+                .any(|s| s.part.as_deref() == Some(t.id.as_str()) && s.n >= q.step);
+            if accepted && after {
                 out.push(t.id.clone());
             }
-        }
-        if Some(p.spec.n) == phase {
-            // The question came from a step that was not a task (a handover, a checker).
-            from_here = true;
         }
     }
     out

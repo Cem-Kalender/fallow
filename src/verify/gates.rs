@@ -229,8 +229,8 @@ fn auto_patterns() -> &'static [Regex] {
         [
             // cargo test
             r"^test (\S+) \.\.\. FAILED",
-            // pytest short summary
-            r"^FAILED (\S+)",
+            // pytest short summary; never unittest's own summary, `FAILED (failures=3)` (T086)
+            r"^FAILED ([^\s(]\S*)",
             // unittest
             r"^(?:FAIL|ERROR): (\S+ \([^)]+\))",
             // Go
@@ -377,10 +377,16 @@ mod tests {
 
     #[test]
     fn unittest_failures_are_named() {
-        let out = "FAIL: test_x (tests.test_cart.Cart)\nERROR: test_y (tests.test_cart.Cart)\nRan 4 tests\n";
+        let out = "FAIL: test_x (tests.test_cart.Cart)\nERROR: test_y (tests.test_cart.Cart)\nRan 4 tests\n\nFAILED (failures=1, errors=1)\n";
         let f = failing_names(out, &Failures::Auto);
         assert!(f.contains("test_x (tests.test_cart.Cart)"));
         assert!(f.contains("test_y (tests.test_cart.Cart)"));
+        // The summary names no test (T086: it differed between runs and counted as new).
+        assert_eq!(f.len(), 2, "{f:?}");
+        assert!(
+            failing_names("FAILED tests/test_a.py::test_b - assert 1", &Failures::Auto)
+                .contains("tests/test_a.py::test_b")
+        );
         assert!(!no_tests(out));
         assert!(no_tests("\nRan 0 tests in 0.000s\n\nNO TESTS RAN\n"));
     }

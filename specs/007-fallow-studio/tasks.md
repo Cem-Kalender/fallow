@@ -467,6 +467,17 @@ Notes on Phase 10 as built:
     of their cards, a Solo loop promised a reviewer and offered Pause when done; "today" left out
     the lead's turns; the default budget per task is now $0.50 (FR-016a), measured at $0.32 to
     $0.75.
+  - A second run, for what the first did not reach ($4.00: "Bulk discount", the engineer's
+    documents, the lead's analyze $0.28, Test first at Free, loop $3.18): in a chat in Ask mode,
+    a command outside the approved list (`python -m shop list`) waited for "Allow once" on the
+    page and then ran ($0.24; the gates run without asking, by design). The test-writer asked
+    how a half cent rounds; the lead answered from the session ("lead answered", committed); the
+    engineer overruled it after T001, and Fallow repaired US1 to the new rule and reviewed it
+    again. The discount line's wording, left open with "ask", was relayed rather than decided
+    at Free, so a decision to confirm was not seen. Two more problems, fixed with tests: the
+    pytest pattern took unittest's summary, `FAILED (failures=3)`, for a failing test, so after
+    the test-writer's commit every task looked newly failing and was repaired needlessly (6
+    repairs); an overrule of a question asked at a phase's start reported no task reopened.
   - Noted, not changed: three tries of a check that cannot start are used up in seconds; the lead
     kept believing Spec Kit was missing after its first turn; a document edited after analyze
     does not ask for analyze again; the interrupted step's cost is not known; the engineer wants
