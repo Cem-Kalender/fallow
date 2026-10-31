@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pipelines (008 mockup)</title><link rel="stylesheet" href="mockup.css">
+<style>
+  .n rect { fill: #fff; stroke: #E3E2DC; } .n.fixed rect { fill: #FAFAF7; stroke-dasharray: 4 3; }
+  .n .k { font: 700 10px Inter, sans-serif; letter-spacing: .06em; fill: #5E5D58; }
+  .n .t { font: 600 14px Inter, sans-serif; fill: #1C1C1A; } .n .s { font: 12px Inter, sans-serif; fill: #5E5D58; }
+  .n.sel rect { stroke: #2F52C9; stroke-width: 2; }
+  .g { fill: rgba(238,241,251,.45); stroke: #BFCBF0; stroke-dasharray: 5 4; } .g.cp { fill: rgba(230,243,234,.45); stroke: #BFDCC9; }
+  .gl { font: 700 10px Inter, sans-serif; letter-spacing: .06em; fill: #2F52C9; } .gl.cp { fill: #226640; }
+  .e { stroke: #9C9B94; stroke-width: 1.6; fill: none; } .r { stroke: #B4470F; stroke-width: 1.4; fill: none; stroke-dasharray: 5 4; }
+  .nx { stroke: #2F52C9; stroke-width: 1.2; fill: none; stroke-dasharray: 2 4; }
+  .lab { font: 11px Inter, sans-serif; fill: #B4470F; } .labb { font: 11px Inter, sans-serif; fill: #2F52C9; }
+  .plus circle { fill: #fff; stroke: #D4D3CC; } .plus text { font: 600 14px Inter, sans-serif; fill: #5E5D58; }
+</style></head>
+<body>
+<header class="top">
+  <span class="logo"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke-width="2"><path d="M4 20c4-1 6-5 8-9s4-7 8-7"/><path d="M4 14c3 0 5-2 6-4"/><path d="M12 20c3-1 5-3 6-6"/></svg>Fallow</span>
+  <nav class="nav"><a>Dashboard</a><a>Spec sessions</a><a>Loops</a><a class="on">Pipelines</a><a>Agents</a></nav>
+</header>
+<main class="page">
+  <div class="row"><span class="small muted">Project</span><span class="pill grey">FallowSandbox</span></div>
+  <div class="cols3">
+    <aside><div class="row"><h2 class="th" style="margin:0">Pipelines</h2><span style="flex:1"></span><button class="btn btn2">+ New</button></div>
+      <div class="small muted" style="margin:8px 0">FallowSandbox uses <b>standard + security</b></div>
+      <div class="item"><b>solo</b> <span class="pill orange">not verifying</span><div class="d">missing: no review at checkpoints</div></div>
+      <div class="item"><b>standard</b> <span class="pill green">verifying</span><div class="d">builder, gates after each task, review per story</div></div>
+      <div class="item sel"><b>standard + security</b> <span class="pill green">verifying</span><div class="d">this project's pipeline</div></div>
+      <div class="item"><b>test-first</b> <span class="pill green">verifying</span><div class="d">acceptance tests first, by the test-writer</div></div>
+    </aside>
+    <section style="display:flex;flex-direction:column;gap:12px;min-width:0">
+      <div class="row"><b style="font-size:20px">standard + security</b><span class="pill green">verifying</span><span style="flex:1"></span>
+        <span class="small muted" title="All my projects: ~/.fallow/pipelines · This project only: .fallow/pipelines">Save for</span>
+        <select class="btn btn2"><option>this project only</option><option>all my projects</option></select>
+        <button class="btn">Save</button><button class="btn btn2">Ask the lead</button><button class="btn btn2">Edit as TOML</button></div>
+      <div class="graph"><svg viewBox="0 0 1360 430" preserveAspectRatio="xMidYMid meet" role="group" aria-label="Pipeline standard + security">
+        <defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0L10,5L0,10z" fill="#9C9B94"/></marker>
+          <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0L10,5L0,10z" fill="#B4470F"/></marker></defs>
+        <rect class="g" x="388" y="70" width="372" height="300" rx="14"/><text class="gl" x="402" y="90">FOR EACH PHASE IN tasks.md</text>
+        <rect class="g cp" x="790" y="40" width="226" height="350" rx="14"/><text class="gl cp" x="804" y="60">AT EACH STORY'S CHECKPOINT</text>
+        <path class="e" d="M178 205 H206" marker-end="url(#a)"/><path class="e" d="M358 205 H408" marker-end="url(#a)"/><path class="e" d="M560 205 H590" marker-end="url(#a)"/>
+        <path class="e" d="M742 205 C 790 205, 790 127, 826 127" marker-end="url(#a)"/><path class="e" d="M742 205 C 790 205, 790 290, 826 290" marker-end="url(#a)"/>
+        <path class="e" d="M978 127 C 1020 127, 1015 205, 1050 205" marker-end="url(#a)"/><path class="e" d="M978 290 C 1020 290, 1015 205, 1050 205" marker-end="url(#a)"/>
+        <path class="e" d="M1192 205 H1220" marker-end="url(#a)"/>
+        <path class="nx" d="M700 168 C 700 120, 470 120, 470 168" marker-end="url(#a)"/><text class="labb" x="550" y="114">next task</text>
+        <path class="r" d="M667 242 C 667 300, 485 300, 485 244" marker-end="url(#ar)"/><text class="lab" x="500" y="318">fails → repair, same session · ≤ 3 per task</text>
+        <path class="r" d="M903 330 C 903 405, 470 405, 470 244" marker-end="url(#ar)"/><text class="lab" x="560" y="415">a finding → repair of the story · ≤ 3 rounds, then you</text>
+        <g class="n fixed"><rect x="28" y="170" width="150" height="70" rx="10"/><rect x="28" y="170" width="4" height="70" fill="#B4470F"/><text class="k" x="42" y="190">ALWAYS</text><text class="t" x="42" y="209">Spec session</text><text class="s" x="42" y="227">lead + you</text></g>
+        <g class="n fixed"><rect x="208" y="170" width="150" height="70" rx="10"/><rect x="208" y="170" width="4" height="70" fill="#B4470F"/><text class="k" x="222" y="190">ALWAYS</text><text class="t" x="222" y="209">Lock</text><text class="s" x="222" y="227">you</text></g>
+        <g class="n"><rect x="410" y="170" width="150" height="70" rx="10"/><rect x="410" y="170" width="4" height="70" fill="#2F52C9"/><text class="k" x="424" y="190">EACH TASK</text><text class="t" x="424" y="209">builder</text><text class="s" x="424" y="227">one session per phase</text></g>
+        <g class="n"><rect x="592" y="170" width="150" height="70" rx="10"/><rect x="592" y="170" width="4" height="70" fill="#5E5D58"/><text class="k" x="606" y="190">EACH TASK</text><text class="t" x="606" y="209">Gates</text><text class="s" x="606" y="227">Fallow · vs the baseline</text></g>
+        <g class="n"><rect x="828" y="92" width="150" height="70" rx="10"/><rect x="828" y="92" width="4" height="70" fill="#226640"/><text class="k" x="842" y="112">CHECKPOINT</text><text class="t" x="842" y="131">reviewer</text><text class="s" x="842" y="149">every USn/k, by running it</text></g>
+        <g class="n sel"><rect x="828" y="250" width="150" height="80" rx="10"/><rect x="828" y="250" width="4" height="80" fill="#226640"/><text class="k" x="842" y="270">CHECKPOINT · src/** ONLY</text><text class="t" x="842" y="289">security-reviewer</text><text class="s" x="842" y="307">alongside the reviewer</text></g>
+        <g class="n"><rect x="1052" y="170" width="140" height="70" rx="10"/><rect x="1052" y="170" width="4" height="70" fill="#2F52C9"/><text class="k" x="1066" y="190">ONCE, AT THE END</text><text class="t" x="1066" y="209">docs-writer</text><text class="s" x="1066" y="227">README, quickstart</text></g>
+        <g class="n fixed"><rect x="1222" y="170" width="120" height="70" rx="10"/><rect x="1222" y="170" width="4" height="70" fill="#B4470F"/><text class="k" x="1236" y="190">ONCE</text><text class="t" x="1236" y="209">Merge</text><text class="s" x="1236" y="227">you</text></g>
+        <g class="plus"><circle cx="384" cy="205" r="10"/><text x="379" y="210">+</text></g><g class="plus"><circle cx="575" cy="205" r="10"/><text x="570" y="210">+</text></g><g class="plus"><circle cx="1031" cy="205" r="10"/><text x="1026" y="210">+</text></g>
+      </svg></div>
+      <div class="row small muted"><span>■ <span style="color:var(--accent)">maker</span></span><span>■ <span style="color:var(--ok)">checker</span></span><span>■ Fallow</span><span>■ <span style="color:var(--needs)">you</span></span><span>dashed red: what happens on a failure</span></div>
+      <div class="under">
+      <div class="card"><div class="small muted">SELECTED STEP</div><div class="row" style="margin:4px 0 10px"><b>security-reviewer</b><span class="pill grey">checker</span><span style="flex:1"></span><button class="btn btn2">Remove step</button></div>
+        <div class="fields" style="grid-template-columns:repeat(2,minmax(0,1fr))"><div class="field"><span>Runs</span>at each story's checkpoint, at its end</div><div class="field"><span>Only when these paths changed</span>src/**</div><div class="field"><span>Alongside</span>reviewer</div><div class="field"><span>On failure</span>a repair by the builder</div></div></div>
+
+      <div class="card"><div class="small muted">AGENT OF THE SELECTED STEP</div><div class="row" style="margin-top:4px"><b>security-reviewer</b><span class="pill grey">checker</span></div>
+        <div class="small muted" style="margin:6px 0">Reads a story's changes for injection, secrets and auth gaps, and proves each finding by running it</div>
+        <div class="mono">claude · sonnet</div><div style="margin-top:10px"><span class="link">Edit this agent in Agents →</span></div></div>
+      <div class="card small"><b>What this pipeline guarantees</b><div class="muted" style="margin-top:6px">Every task gated against the baseline; every story's criteria checked by running them; a security check when src/** changed. A result can be "Ready to merge".</div></div>
+      </div>
+    </section>
+  </div>
+</main>
+</body></html>

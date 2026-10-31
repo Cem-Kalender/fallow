@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agents (008 mockup)</title><link rel="stylesheet" href="mockup.css"></head>
+<body>
+<header class="top">
+  <span class="logo"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke-width="2"><path d="M4 20c4-1 6-5 8-9s4-7 8-7"/><path d="M4 14c3 0 5-2 6-4"/><path d="M12 20c3-1 5-3 6-6"/></svg>Fallow</span>
+  <nav class="nav"><a>Dashboard</a><a>Spec sessions</a><a>Loops</a><a>Pipelines</a><a class="on">Agents</a></nav>
+</header>
+<main class="page">
+  <div class="row"><span class="small muted">Project</span><span class="pill grey">FallowSandbox</span></div>
+  <div class="cols2">
+    <aside><div class="row"><h2 class="th" style="margin:0">Agents</h2><span style="flex:1"></span><button class="btn btn2">+ New agent</button></div>
+      <div class="group-title">Lead</div>
+      <div class="item"><b>lead</b> <span class="pill grey">yours</span><div class="d">Works out features with you following Spec Kit; answers agents' questions</div><div class="d mono">claude · sonnet · in no pipeline</div></div>
+      <div class="group-title">Makers: change files</div>
+      <div class="item"><b>builder</b> <span class="pill grey">default</span><div class="d">Implements a phase task by task, in its own worktree</div><div class="d mono">claude · sonnet · in 3 pipelines</div></div>
+      <div class="item"><b>test-writer</b> <span class="pill grey">default</span><div class="d">Writes a story's acceptance tests before its tasks</div><div class="d mono">claude · sonnet · in 1 pipeline</div></div>
+      <div class="item"><b>docs-writer</b> <span class="pill grey">default</span><div class="d">Updates the README and quickstart at the end</div><div class="d mono">claude · sonnet · in 1 pipeline</div></div>
+      <div class="group-title">Checkers: only run and verify</div>
+      <div class="item sel"><b>reviewer</b> <span class="pill grey">this project</span><div class="d">Checks every acceptance scenario by running something</div><div class="d mono">claude · opus · in 3 pipelines</div></div>
+      <div class="item"><b>security-reviewer</b> <span class="pill grey">yours</span><div class="d">Proves each security finding by running it</div><div class="d mono">claude · sonnet · in 1 pipeline</div></div>
+    </aside>
+    <section class="card">
+      <div class="row"><h1 style="margin:0;font-size:24px">reviewer</h1><span class="pill grey">checker</span><span class="pill grey">this project's copy</span><span style="flex:1"></span>
+        <span class="small muted" title="All my projects: ~/.fallow/agents · This project only: .fallow/agents">Save for</span><select class="btn btn2"><option>this project only</option><option>all my projects</option></select>
+        <button class="btn">Save</button><button class="btn btn2">Reset to the default</button></div>
+      <div class="small muted" style="margin-top:6px">Checks every acceptance scenario of a user story by running something; never edits</div>
+      <div class="small" style="margin:8px 0 14px">Used in: <span class="link">standard</span> · <span class="link">standard + security</span> · <span class="link">test-first</span></div>
+      <div class="fields">
+        <div class="field"><span>Runtime</span>claude ▾</div><div class="field"><span>Model</span>opus ▾</div>
+        <div class="field"><span>Kind</span>checker ▾</div><div class="field"><span>Returns</span>verdict ▾</div></div>
+      <div class="field" style="margin-top:10px"><span>May run</span><span class="pill grey">gates</span> <span class="pill grey">plan.commands</span> <span class="link">+ add</span></div>
+      <div class="row" style="margin:14px 0 6px"><b>Instructions</b><span style="flex:1"></span><span class="link">Edit as text</span></div>
+      <div class="text">You review one user story of a locked feature, at the commit checked out in your worktree, as a black box. You never change files: a reviewer whose worktree changes stops counting.
+
+For every acceptance scenario of the story (`USn/k`), run something that checks it: the program with the right input, or a test that exercises it. Report exactly what you ran and what happened. Reading the code is not a check. For each scenario marked `(must fail)`, show the case that must be refused and that it was.
+
+Run one command per call, without chaining. If a command is refused, use one you may run.</div>
+      <div class="small muted" style="margin-top:10px">What Fallow adds around every agent: its own worktree · only the commands listed · a fixed result shape · Fallow commits and checks the work · limits on time, turns and cost</div>
+    </section>
+  </div>
+</main>
+</body></html>
