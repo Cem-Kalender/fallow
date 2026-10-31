@@ -116,6 +116,17 @@ fn definitions_and_pipelines_are_created_edited_and_deleted() {
     assert_eq!(l["verifying"], false);
     assert_eq!(l["missing"], json!(["no gates after each task"]));
     assert!(pipeline(&pipelines(tx, None), "lean").is_null(), "a project's own");
+    // The engineer's change that would break a project's own pipeline is refused, and so is
+    // one under the pipelines Fallow ships.
+    let shipped_reviewer = fallow::defs::DEFAULT_AGENTS.iter().find(|(n, _)| *n == "reviewer").unwrap().1;
+    let lead = shipped_reviewer.replace("kind: checker", "kind: lead").replace("returns: verdict", "returns: reply");
+    let why = sreq(tx, Req::PutAgent { name: "reviewer".into(), scope: user(), text: lead }).unwrap_err();
+    assert!(why.contains("the pipeline lean,") && why.contains("the pipeline standard,"), "{why}");
+    // A change that keeps a pipeline working but stops it verifying is refused too.
+    let maker = shipped_reviewer.replace("kind: checker", "kind: maker").replace("returns: verdict", "returns: work");
+    let why = sreq(tx, Req::PutAgent { name: "reviewer".into(), scope: user(), text: maker }).unwrap_err();
+    assert!(why.contains("standard (it would no longer verify)"), "{why}");
+    assert_eq!(agent(&agents(tx, Some(&p)), "reviewer")["kind"], "checker", "nothing was written");
 
     // The project's pipeline must exist.
     let why = sreq(tx, Req::PatchProject { id: p.clone(), patch: json!({ "pipeline": "nope" }) }).unwrap_err();

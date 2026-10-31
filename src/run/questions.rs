@@ -17,7 +17,7 @@ use serde_json::{Value, json};
 use super::engine::{Busy, Ctx, Msg, Reply, Run};
 use super::events::*;
 use super::state::{LoopState, QuestionEntry};
-use crate::agent::{self, Call, Runtime, Session, prompts, rights};
+use crate::agent::{self, Call, Session, prompts, rights};
 use crate::platform::job::Group;
 use crate::speckit;
 use crate::verify::git;
@@ -296,12 +296,8 @@ fn start_lead(
 ) -> Result<(), String> {
     let lib = crate::defs::Library::load(ctx.config.as_deref(), Some(&run.state.repo));
     let def = lib.agent("lead").cloned().ok_or("there is no lead definition")?;
-    let runtime_def = ctx
-        .settings
-        .agents
-        .get(&def.runtime)
-        .cloned()
-        .ok_or_else(|| format!("the lead's runtime {:?} is not configured", def.runtime))?;
+    let runtime = agent::registry::runtime(&def.runtime, &ctx.settings)
+        .map_err(|e| format!("the lead cannot answer: {e}"))?;
     let at = git::head(&lead.workdir)?;
     let spec_text = git::show(&run.state.repo, &at, &format!("specs/{}/spec.md", l.feature))
         .ok()
@@ -355,7 +351,6 @@ fn start_lead(
     let tx = ctx.tx.clone();
     let id = run.id();
     let qid = q.id.clone();
-    let runtime = agent::claude::Claude::new(runtime_def.command, runtime_def.args);
     std::thread::Builder::new()
         .name(format!("lead-{id}-{qid}"))
         .spawn(move || {

@@ -19,7 +19,7 @@ use super::engine::{Busy, Ctx, Done, Msg, Run};
 use super::events::*;
 use super::machine::{self, BLOCKED, INTERRUPTED, SESSION_LOST};
 use super::state::{LoopState, PhaseStatus, Step};
-use crate::agent::{self, Call, Runtime, Session, prompts, rights};
+use crate::agent::{self, Call, Session, prompts, rights};
 use crate::config::GateDef;
 use crate::defs::pipeline::{self, At, OnFail, Pipeline, When};
 use crate::defs::{Kind, Library};
@@ -1524,8 +1524,11 @@ fn checkpoint(
                         .and_then(|x| x.base.clone())
                 })
                 .unwrap_or_else(|| l.lock_commit.clone());
-            let changed = git::files_between(&run.state.repo, &from, &head).unwrap_or_default();
-            paths_match(&s.paths, &changed)
+            // When the changes cannot be read, the checker runs: never skipped unchecked.
+            match git::files_between(&run.state.repo, &from, &head) {
+                Ok(changed) => paths_match(&s.paths, &changed),
+                Err(_) => true,
+            }
         })
         .cloned()
         .collect();
@@ -1887,12 +1890,9 @@ fn start(run: &mut Run, ctx: &Ctx, n: u32) -> Result<(), String> {
         Some(s) if !run.state.lost_sessions.contains(s) => Session::Resume(s.clone()),
         _ => Session::New(crate::platform::random::uuid_v4().map_err(|e| e.to_string())?),
     };
-    let runtime_def = ctx
-        .settings
-        .agents
-        .get(&def.runtime)
-        .cloned()
-        .ok_or_else(|| format!("{}'s runtime {:?} is not configured", def.name, def.runtime))?;
+    // The definition's runtime (FR-029): one that is not there stops the loop here, naming it.
+    let runtime = agent::registry::runtime(&def.runtime, &ctx.settings)
+        .map_err(|e| format!("{} cannot run: {e}", def.name))?;
     let remaining = (run.state.limits.usd - run.state.cost_usd).max(0.01);
     let budget = def.limits.usd.map_or(remaining, |u| u.min(remaining));
     let minutes = def.limits.minutes.unwrap_or(run.state.limits.step_minutes);
@@ -1963,7 +1963,6 @@ fn start(run: &mut Run, ctx: &Ctx, n: u32) -> Result<(), String> {
     let tx = ctx.tx.clone();
     let activity_path = run.steps_dir().join(format!("{n}.jsonl"));
     let id = run.id();
-    let runtime = agent::claude::Claude::new(runtime_def.command, runtime_def.args);
     std::thread::Builder::new()
         .name(format!("step-{id}-{n}"))
         .spawn(move || {

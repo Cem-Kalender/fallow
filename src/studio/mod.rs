@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 use serde_json::{Value, json};
 
 use crate::agent::rights::{self, Mode};
-use crate::agent::{self, Call, Runtime, Session, prompts};
+use crate::agent::{self, Call, Session, prompts};
 use crate::conversation::events::{ApprovalAnswer, DocEdit, Event as CEvent, Kind, State};
 use crate::defs::Library;
 use crate::platform::job::Group;
@@ -572,12 +572,8 @@ impl Studio {
             .agent("lead")
             .cloned()
             .ok_or("there is no lead agent definition")?;
-        let runtime_def = ctx
-            .settings
-            .agents
-            .get(&def.runtime)
-            .cloned()
-            .ok_or_else(|| format!("the lead's runtime {:?} is not configured", def.runtime))?;
+        let runtime = agent::registry::runtime(&def.runtime, &ctx.settings)
+            .map_err(|e| format!("the lead cannot answer: {e}"))?;
         // The project's approved commands, with its gates (FR-007a).
         let mut approved = p.approved_commands.clone();
         let squad_text = std::fs::read_to_string(workdir.join(crate::config::squad::SQUAD_FILE))
@@ -696,7 +692,6 @@ impl Studio {
         let stop = Arc::clone(&c.stop);
         let tx = ctx.tx.clone();
         let id = conv.to_string();
-        let runtime = agent::claude::Claude::new(runtime_def.command, runtime_def.args);
         let turn_file = c.turns_dir().join(format!("{n}.jsonl"));
         let _ = std::fs::create_dir_all(c.turns_dir());
         std::thread::Builder::new()

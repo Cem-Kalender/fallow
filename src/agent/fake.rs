@@ -25,6 +25,16 @@ impl Fake {
     }
 }
 
+impl Fake {
+    /// The runtime of an `[agents.fake]` profile: the program and its leading arguments (the
+    /// scenario).
+    pub fn from_profile(command: impl Into<String>, args: Vec<String>) -> Fake {
+        Fake {
+            inner: Claude::new(command, args),
+        }
+    }
+}
+
 impl Runtime for Fake {
     fn name(&self) -> &str {
         "fake"

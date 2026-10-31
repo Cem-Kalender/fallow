@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use serde_json::{Value, json};
 
 use super::Studio;
-use crate::defs::{self, DEFAULT_AGENTS, DEFAULT_PIPELINES, Library, Source, agent, pipeline};
+use crate::defs::{self, AgentDef, DEFAULT_AGENTS, DEFAULT_PIPELINES, Library, Source, agent, pipeline};
 
 /// Where a definition is saved: the engineer's folder, or a project's.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -153,9 +153,88 @@ impl Studio {
         Ok(json!({ "pipelines": pipelines, "problems": lib.problems, "project_pipeline": chosen }))
     }
 
+    /// The pipelines that would stop working if the definition of `name` in `scope` became
+    /// `change` (`None`: gone): in force for every project the scope reaches, and those the
+    /// loops still going recorded (`live`: their repository and pipeline TOML). Worked out in
+    /// memory; nothing is written.
+    fn would_break(
+        &self,
+        scope: &Scope,
+        name: &str,
+        change: Option<&AgentDef>,
+        live: &[(PathBuf, String)],
+    ) -> Result<(), String> {
+        let roots: Vec<Option<PathBuf>> = match scope {
+            Scope::User => std::iter::once(None)
+                .chain(self.store.projects.iter().map(|p| Some(p.path.clone())))
+                .collect(),
+            Scope::Project(p) => vec![Some(self.project(p)?.path.clone())],
+        };
+        let user = self.library(None);
+        let mut broken: Vec<String> = Vec::new();
+        for root in &roots {
+            let mut lib = self.library(root.as_deref());
+            // A project's own definition wins over the engineer's: a change to theirs does not
+            // reach it.
+            let decides = match scope {
+                Scope::User => lib.agents.get(name).is_none_or(|a| a.source != Source::Project),
+                Scope::Project(_) => true,
+            };
+            if !decides {
+                continue;
+            }
+            match change {
+                Some(d) => {
+                    lib.agents.insert(name.to_string(), d.clone());
+                }
+                None => {
+                    lib.agents.remove(name);
+                    if let (Scope::Project(_), Some(u)) = (scope, user.agents.get(name)) {
+                        lib.agents.insert(name.to_string(), u.clone());
+                    }
+                }
+            }
+            let kinds = |n: &str| lib.agents.get(n).map(|a| a.kind);
+            for pl in lib.pipelines.values().filter(|pl| pl.steps.iter().any(|st| st.agent == name)) {
+                let file = format!("{}.toml", pl.name);
+                // A pipeline that would no longer parse, or no longer verify what it builds
+                // (FR-015): either is a change the engineer makes in the pipeline, knowingly.
+                match pipeline::parse(&file, &pl.name, &pl.to_toml(), pl.source, &kinds) {
+                    Err(_) => broken.push(format!("the pipeline {}", pl.name)),
+                    Ok(after) if pl.verifying && !after.verifying => {
+                        broken.push(format!("the pipeline {} (it would no longer verify)", pl.name))
+                    }
+                    Ok(_) => {}
+                }
+            }
+            for (repo, toml) in live {
+                if root.as_deref() != Some(repo.as_path()) || !toml.contains(&format!("\"{name}\"")) {
+                    continue;
+                }
+                let n = toml::from_str::<pipeline::Raw>(toml).map(|r| r.name).unwrap_or_default();
+                if pipeline::parse("the loop's pipeline", &n, toml, Source::Default, &kinds).is_err() {
+                    broken.push(format!("a loop still going on {n}"));
+                }
+            }
+        }
+        broken.sort();
+        broken.dedup();
+        if broken.is_empty() {
+            Ok(())
+        } else {
+            Err(format!("{name} is used by {}: that would stop working", broken.join(", ")))
+        }
+    }
+
     /// `PUT /api/agents/<name>`: checked as Fallow reads it; refused with the problems at their
-    /// lines, one per line, when it does not pass.
-    pub fn put_agent(&mut self, name: &str, scope: &Scope, text: &str) -> Result<Value, String> {
+    /// lines, one per line, when it does not pass, or when a pipeline would stop working.
+    pub fn put_agent(
+        &mut self,
+        name: &str,
+        scope: &Scope,
+        text: &str,
+        live: &[(PathBuf, String)],
+    ) -> Result<Value, String> {
         check_name(name)?;
         let dir = self.scope_dir(scope, "agents")?;
         let file = format!("{name}.md");
@@ -165,13 +244,8 @@ impl Studio {
         };
         let d = agent::parse(&file, name, text, source, defs::RUNTIMES)
             .map_err(|ps| ps.iter().map(|p| p.to_string()).collect::<Vec<_>>().join("\n"))?;
-        // A kind that changes under a pipeline that uses the agent would break that pipeline.
-        let mut lib = self.library_for(scope)?;
-        lib.agents.insert(name.to_string(), d);
-        let broken = pipelines_broken_by(&lib, name);
-        if !broken.is_empty() {
-            return Err(format!("{file}: the pipelines {} would no longer work:\n{}", names(&broken), broken.iter().flat_map(|(_, ps)| ps.clone()).collect::<Vec<_>>().join("\n")));
-        }
+        self.would_break(scope, name, Some(&d), live)
+            .map_err(|e| format!("{file}: {e}"))?;
         std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
         let path = dir.join(&file);
         std::fs::write(&path, text).map_err(|e| format!("{}: {e}", path.display()))?;
@@ -179,8 +253,14 @@ impl Studio {
     }
 
     /// `DELETE /api/agents/<name>`: the engineer's or a project's own file. A default the
-    /// engineer edited is reset to what Fallow ships; an agent a pipeline still needs stays.
-    pub fn delete_agent(&mut self, name: &str, scope: &Scope) -> Result<Value, String> {
+    /// engineer edited is reset to what Fallow ships; an agent a pipeline or a loop still
+    /// needs stays.
+    pub fn delete_agent(
+        &mut self,
+        name: &str,
+        scope: &Scope,
+        live: &[(PathBuf, String)],
+    ) -> Result<Value, String> {
         check_name(name)?;
         let path = self.scope_dir(scope, "agents")?.join(format!("{name}.md"));
         let reset = match scope {
@@ -190,54 +270,16 @@ impl Studio {
         if reset.is_none() && !path.is_file() {
             return Err(format!("there is no definition {}", path.display()));
         }
-        // The pipelines in force that use it, for every project the file reaches.
-        let roots: Vec<Option<PathBuf>> = match scope {
-            Scope::User => std::iter::once(None)
-                .chain(self.store.projects.iter().map(|p| Some(p.path.clone())))
-                .collect(),
-            Scope::Project(p) => vec![Some(self.project(p)?.path.clone())],
-        };
-        // (where, pipeline): a pipeline lost in any one place counts.
-        let using = |studio: &Studio| -> Vec<(usize, String)> {
-            roots
-                .iter()
-                .enumerate()
-                .flat_map(|(i, r)| {
-                    studio
-                        .library(r.as_deref())
-                        .pipelines
-                        .into_values()
-                        .filter(|pl| pl.steps.iter().any(|s| s.agent == name))
-                        .map(move |pl| (i, pl.name))
-                })
-                .collect()
-        };
-        let before = using(self);
-        // Set the file aside, see what still works, and put it back if a pipeline breaks.
-        let aside = path.with_extension("md.deleting");
-        if path.is_file() {
-            std::fs::rename(&path, &aside).map_err(|e| format!("{}: {e}", path.display()))?;
+        let shipped_def = reset
+            .map(|t| agent::parse(&format!("{name}.md"), name, t, Source::Default, defs::RUNTIMES))
+            .transpose()
+            .map_err(|_| format!("the shipped {name}.md does not parse"))?;
+        self.would_break(scope, name, shipped_def.as_ref(), live)
+            .map_err(|e| format!("{e}: take it out of them first"))?;
+        match reset {
+            Some(text) => std::fs::write(&path, text).map_err(|e| format!("{}: {e}", path.display()))?,
+            None => std::fs::remove_file(&path).map_err(|e| format!("{}: {e}", path.display()))?,
         }
-        if let Some(text) = reset {
-            std::fs::write(&path, text).map_err(|e| format!("{}: {e}", path.display()))?;
-        }
-        let after = using(self);
-        let mut broken: Vec<&str> = before
-            .iter()
-            .filter(|b| !after.contains(b))
-            .map(|(_, n)| n.as_str())
-            .collect();
-        broken.sort();
-        broken.dedup();
-        if !broken.is_empty() {
-            let _ = std::fs::remove_file(&path);
-            let _ = std::fs::rename(&aside, &path);
-            return Err(format!(
-                "{name} is used by the pipelines {}: take it out of them first",
-                broken.join(", ")
-            ));
-        }
-        let _ = std::fs::remove_file(&aside);
         Ok(json!({ "reset": reset.is_some() }))
     }
 
@@ -289,7 +331,11 @@ impl Studio {
             let user_has = |p: &Path| {
                 // Without this file, is there another `name` for the project?
                 match scope {
-                    Scope::User => p.join(".fallow/pipelines").join(format!("{name}.toml")).is_file(),
+                    Scope::User => self
+                        .library(Some(p))
+                        .pipelines
+                        .get(name)
+                        .is_some_and(|x| x.source == Source::Project),
                     Scope::Project(_) => self.library(None).pipelines.contains_key(name),
                 }
             };
@@ -299,7 +345,7 @@ impl Studio {
                         continue;
                     }
                 }
-                let chooses = p.pipeline == name || p.features.iter().any(|f| f.pipeline.as_deref() == Some(name) && f.run.is_none());
+                let chooses = p.pipeline == name || p.features.iter().any(|f| f.pipeline.as_deref() == Some(name) && (f.run.is_none() || f.unlocked));
                 if chooses && !user_has(&p.path) {
                     return Err(format!("the project {} uses it: choose another pipeline for it first", p.name));
                 }
@@ -311,22 +357,4 @@ impl Studio {
         }
         Ok(json!({ "reset": reset.is_some() }))
     }
-}
-
-/// The pipelines in `lib` that use `agent` and would not pass with it as `lib` has it.
-fn pipelines_broken_by(lib: &Library, agent: &str) -> Vec<(String, Vec<String>)> {
-    let kinds = |n: &str| lib.agents.get(n).map(|a| a.kind);
-    lib.pipelines
-        .values()
-        .filter(|p| p.steps.iter().any(|s| s.agent == agent))
-        .filter_map(|p| {
-            pipeline::parse(&format!("{}.toml", p.name), &p.name, &p.to_toml(), p.source, &kinds)
-                .err()
-                .map(|e| (p.name.clone(), e))
-        })
-        .collect()
-}
-
-fn names(list: &[(String, Vec<String>)]) -> String {
-    list.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>().join(", ")
 }

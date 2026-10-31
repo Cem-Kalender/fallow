@@ -47,8 +47,6 @@ fn sizes_per_project_and_deleting_what_is_no_longer_needed() {
     assert!(ask(tx, Request::Get { id }).is_err(), "the loop is gone");
     let wts = git(&repo, &["worktree", "list"]);
     assert!(!wts.contains(&format!("runs/{id}/")) && !wts.contains(&format!("runs\\{id}\\")), "its worktrees are gone from git too: {wts}");
-    let wts = git(&repo, &["worktree", "list"]);
-    assert!(!wts.contains(&format!("runs{}{id}", std::path::MAIN_SEPARATOR)) && !wts.contains(&format!("runs/{id}")), "its worktrees are gone from git too: {wts}");
 
     // The spec session of a feature not merged is what the lead answers from: refused. The
     // project conversation can go.
@@ -58,8 +56,6 @@ fn sizes_per_project_and_deleting_what_is_no_longer_needed() {
     assert!(why.contains("not merged"), "{why}");
     ask(tx, Request::DeleteData { kind: "conv".into(), id: project.clone() }).unwrap();
     assert!(!root.join("data/conversations").join(&project).exists());
-    let wts = git(&repo, &["worktree", "list"]);
-    assert!(!wts.contains("_project"), "the conversation's worktree went with it: {wts}");
     let wts = git(&repo, &["worktree", "list"]);
     assert!(!wts.contains("_project"), "the conversation's worktree went with it: {wts}");
     let d = ask(tx, Request::Data).unwrap();

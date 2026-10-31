@@ -385,8 +385,13 @@ Notes on Phase 8 as built:
 
 **Independent Test**: the full loop runs once with Claude and once with the `fake` runtime declared in the definitions, and behaves the same (spec, US7).
 
-- [ ] T078 [P] [US7] `tests/us7_runtime.rs`: a loop whose definitions name `runtime: fake` runs end to end through the registry; a runtime that is not installed fails the step, naming it, and the loop asks the engineer.
-- [ ] T079 [US7] The runtime registry in `src/agent/mod.rs`: availability, `GET /api/runtimes`, the definition's runtime and model used per step, and both shown on the agent cards.
+- [X] T078 [P] [US7] `tests/us7_runtime.rs`: a loop whose definitions name `runtime: fake` runs end to end through the registry; a runtime that is not installed fails the step, naming it, and the loop asks the engineer.
+- [X] T079 [US7] The runtime registry in `src/agent/mod.rs`: availability, `GET /api/runtimes`, the definition's runtime and model used per step, and both shown on the agent cards.
+
+Notes on Phase 9 as built:
+- `agent::registry` builds the runtime a definition names from the settings' profiles: `claude` from `[agents.claude]` or the `claude` program on the PATH, `fake` only from `[agents.fake]`. Steps, the lead's answers in a loop and the lead's turns in chats all start through it.
+- A runtime that is unknown, not configured or not installed is refused when its step would start: the loop asks the engineer, naming the agent and the runtime ("reviewer cannot run: the runtime \"fake\" is not configured…").
+- The pipeline designer's agent library shows each agent's runtime and model, and says when the runtime is not installed.
 
 ---
 

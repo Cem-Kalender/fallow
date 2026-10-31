@@ -980,11 +980,13 @@ impl Engine {
             Req::Agents { project } => self.studio.agents_view(project.as_deref()),
             Req::PutAgent { name, scope, text } => {
                 let scope = crate::studio::defs::Scope::parse(&scope)?;
-                self.studio.put_agent(&name, &scope, &text)
+                let live = self.live_pipelines();
+                self.studio.put_agent(&name, &scope, &text, &live)
             }
             Req::DeleteAgent { name, scope } => {
                 let scope = crate::studio::defs::Scope::parse(&scope)?;
-                self.studio.delete_agent(&name, &scope)
+                let live = self.live_pipelines();
+                self.studio.delete_agent(&name, &scope, &live)
             }
             Req::Pipelines { project } => self.studio.pipelines_view(project.as_deref()),
             Req::CheckPipeline { project, toml } => {
@@ -1002,35 +1004,27 @@ impl Engine {
         }
     }
 
+    /// The pipelines the loops still going recorded, with their repository: a definition
+    /// change must not break them (their next step reads the agents again).
+    fn live_pipelines(&self) -> Vec<(std::path::PathBuf, String)> {
+        self.runs
+            .values()
+            .filter(|r| !r.state.stage.is_final())
+            .filter_map(|r| r.state.feature_loop.as_ref().map(|l| (r.state.repo.clone(), l.pipeline.clone())))
+            .collect()
+    }
+
     /// `GET /api/runtimes`: the runtimes Fallow knows, whether each is installed, its version,
     /// and the models a definition may name.
     fn runtimes(&self) -> Value {
-        use crate::agent::Runtime;
-        let profile = |name: &str| self.ctx.settings.agents.get(name);
-        let list: Vec<Value> = crate::defs::RUNTIMES
-            .iter()
-            .map(|name| {
-                let (a, models): (crate::agent::Availability, &[&str]) = match *name {
-                    "claude" => {
-                        let (cmd, args) = profile("claude")
-                            .map(|p| (p.command.clone(), p.args.clone()))
-                            .unwrap_or_else(|| ("claude".into(), Vec::new()));
-                        (crate::agent::claude::Claude::new(cmd, args).available(), &["opus", "sonnet", "haiku"])
-                    }
-                    _ => (
-                        crate::agent::Availability {
-                            installed: profile(name).is_some_and(|p| {
-                                crate::platform::find_program(&p.command).is_some()
-                            }),
-                            version: None,
-                        },
-                        &[],
-                    ),
-                };
-                json!({ "name": name, "installed": a.installed, "version": a.version, "models": models })
-            })
-            .collect();
-        Value::Array(list)
+        Value::Array(
+            crate::agent::registry::list(&self.ctx.settings)
+                .into_iter()
+                .map(|(name, a, models)| {
+                    json!({ "name": name, "installed": a.installed, "version": a.version, "models": models })
+                })
+                .collect(),
+        )
     }
 
     /// The loop of an unlocked feature that a new lock goes on with.

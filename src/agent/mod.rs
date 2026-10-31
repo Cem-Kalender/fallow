@@ -263,3 +263,98 @@ pub trait Runtime: Send + Sync {
     /// call's rights refuses the call: it never runs with fewer restrictions.
     fn start(&self, call: &Call, sink: &mut dyn FnMut(Event), stop: &AtomicBool) -> Outcome;
 }
+
+/// The runtime registry (007 US7, FR-029, contracts/runtime.md): the runtime an agent
+/// definition names, built from the settings' agent profiles. Everything above it starts calls
+/// through `Runtime` and never knows which provider runs them.
+pub mod registry {
+    use super::{Availability, Runtime};
+    use crate::config::Settings;
+
+    /// The models a definition may name, per runtime, as the page offers them.
+    pub fn models(name: &str) -> &'static [&'static str] {
+        match name {
+            "claude" => &["opus", "sonnet", "haiku"],
+            _ => &[],
+        }
+    }
+
+    /// The program and leading arguments of `name`: its profile in the settings, or for
+    /// `claude` the `claude` program on the PATH.
+    fn profile(name: &str, settings: &Settings) -> Option<(String, Vec<String>)> {
+        match settings.agents.get(name) {
+            Some(p) => Some((p.command.clone(), p.args.clone())),
+            None if name == "claude" => Some(("claude".into(), Vec::new())),
+            None => None,
+        }
+    }
+
+    /// Whether `name` can be used, without starting it (cheap: the program is looked up).
+    pub fn installed(name: &str, settings: &Settings) -> bool {
+        profile(name, settings).is_some_and(|(c, _)| crate::platform::find_program(&c).is_some())
+    }
+
+    /// The runtime called `name`, ready to start calls; refused, naming it, when Fallow does
+    /// not know it, it is not configured, or its program is not installed.
+    pub fn runtime(name: &str, settings: &Settings) -> Result<Box<dyn Runtime>, String> {
+        let Some((command, args)) = profile(name, settings) else {
+            return Err(match name {
+                "fake" => "the runtime \"fake\" is not configured: add [agents.fake] to the settings".to_string(),
+                _ => format!("Fallow knows no runtime {name:?} (it knows {})", crate::defs::RUNTIMES.join(", ")),
+            });
+        };
+        if crate::platform::find_program(&command).is_none() {
+            return Err(format!("the runtime {name:?} is not installed: {command} was not found"));
+        }
+        Ok(match name {
+            "claude" => Box::new(super::claude::Claude::new(command, args)),
+            "fake" => Box::new(super::fake::Fake::from_profile(command, args)),
+            _ => return Err(format!("Fallow knows no runtime {name:?} (it knows {})", crate::defs::RUNTIMES.join(", "))),
+        })
+    }
+
+    type Listed = Vec<(String, Availability, &'static [&'static str])>;
+    /// The last list, for the profiles it was made from.
+    static CACHE: std::sync::Mutex<Option<(String, std::time::Instant, Listed)>> = std::sync::Mutex::new(None);
+
+    /// `GET /api/runtimes`: each runtime, whether it is installed, its version and its models.
+    /// A version is asked of the program on a thread of its own, for at most a few seconds, and
+    /// kept for a minute: the engine never waits on a slow or hanging program.
+    pub fn list(settings: &Settings) -> Listed {
+        let key = format!("{:?}", settings.agents);
+        if let Ok(c) = CACHE.lock() {
+            if let Some((_, _, l)) = c
+                .as_ref()
+                .filter(|(k, at, _)| *k == key && at.elapsed() < std::time::Duration::from_secs(60))
+            {
+                return l.clone();
+            }
+        }
+        let l: Listed = crate::defs::RUNTIMES
+            .iter()
+            .map(|name| {
+                let a = match runtime(name, settings) {
+                    Ok(r) => {
+                        let (tx, rx) = std::sync::mpsc::channel();
+                        std::thread::spawn(move || {
+                            let _ = tx.send(r.available());
+                        });
+                        rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap_or(Availability {
+                            installed: true,
+                            version: None,
+                        })
+                    }
+                    Err(_) => Availability {
+                        installed: false,
+                        version: None,
+                    },
+                };
+                (name.to_string(), a, models(name))
+            })
+            .collect();
+        if let Ok(mut c) = CACHE.lock() {
+            *c = Some((key, std::time::Instant::now(), l.clone()));
+        }
+        l
+    }
+}

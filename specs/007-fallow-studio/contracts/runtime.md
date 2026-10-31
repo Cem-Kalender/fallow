@@ -64,3 +64,7 @@ Outcome { result: Option<Value>, failure: Option<String>, cost_usd: Option<f64>,
 |---|---|
 | `claude` | `claude -p`, with stream-json output, `--json-schema`, `--resume`, `--fork-session`, `--include-partial-messages`, `--allowedTools`, `--disallowedTools`, `--permission-mode dontAsk` or `default`, `--permission-prompt-tool`, `--mcp-config`, `--max-budget-usd` and `--model` |
 | `fake` | `fallow-fake-agent`, which plays TOML scenarios. Used by the tests (006 R-15), and by US7's independent test of the interface |
+
+## The registry
+
+`agent::registry::runtime(name, settings)` gives the runtime a definition names. Its program comes from the settings' `[agents.<name>]` profile; `claude` falls back to the `claude` program on the PATH. A runtime Fallow does not know, one without a profile, or one whose program is not found is refused with a message that names it; the step does not start and the loop asks the engineer. `GET /api/runtimes` lists every runtime with `installed`, `version` (the first line of its `--version`) and the models a definition may name.

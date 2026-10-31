@@ -52,7 +52,9 @@
     try {
       const v = await post("/api/pipelines/check", { toml: s.rawMode ? s.raw : toToml(d), project: s.project || null });
       if (s.rawMode) {
-        s.draft = draftOf(v, { source: d.source, saved: false, proposed: d.proposed });
+        // The same pipeline edited as text is still the saved one; another name is a new one.
+        const same = d.saved && v.name === d.name;
+        s.draft = draftOf(v, { source: same ? d.source : null, saved: same, proposed: d.proposed });
         s.rawMode = false;
       }
       s.draft.verifying = v.verifying;
@@ -69,6 +71,9 @@
     return h`<span class="av ${c}" aria-hidden="true">${name.charAt(0).toUpperCase()}</span>`;
   }
 
+  // A runtime the definitions name that cannot run here (GET /api/runtimes).
+  const runtimeMissing = (name) => s.runtimes.some((r) => r.name === name && !r.installed);
+
   const SOURCE = { default: ["grey", "default"], user: ["blue", "yours"], project: ["purple", "this project"] };
 
   function library() {
@@ -77,7 +82,7 @@
       <div class="mono tiny muted mb-4">~/.fallow/agents/*.md · project overrides in .fallow/agents/</div>
       ${s.agents.map((a) => {
         const [c, label] = SOURCE[a.source] || ["grey", a.source];
-        return h`<button class="agent-btn${a.name === s.agent ? " sel" : ""}${a.source === "default" ? "" : " dashed"}" data-act="agent" data-name="${a.name}" aria-pressed="${a.name === s.agent ? "true" : "false"}">${avatar(a.name)}<span class="min0"><b>${a.name}</b> <span class="pill ${c}">${label}</span> <span class="pill grey">${a.kind}</span><span class="agent-desc">${a.description}</span></span></button>`;
+        return h`<button class="agent-btn${a.name === s.agent ? " sel" : ""}${a.source === "default" ? "" : " dashed"}" data-act="agent" data-name="${a.name}" aria-pressed="${a.name === s.agent ? "true" : "false"}">${avatar(a.name)}<span class="min0"><b>${a.name}</b> <span class="pill ${c}">${label}</span> <span class="pill grey">${a.kind}</span><span class="agent-desc">${a.description}</span><span class="agent-desc mono">${a.runtime}${a.model ? ` · ${a.model}` : ""}${runtimeMissing(a.runtime) ? h` <span class="error">· not installed</span>` : ""}</span></span></button>`;
       })}
       ${s.problems.length ? h`<div class="card pad-12"><div class="b small">Files Fallow could not use</div><ul class="problems">${s.problems.map((p) => h`<li class="mono">${p}</li>`)}</ul></div>` : ""}
     </aside>`;
@@ -237,6 +242,8 @@
     const focus = document.activeElement && document.activeElement.id;
     const keepDef = document.getElementById("def-text");
     if (keepDef) s.defText = keepDef.value;
+    const keepRaw = document.getElementById("pl-raw");
+    if (keepRaw && s.rawMode) s.raw = keepRaw.value;
     app.innerHTML = h`<div class="page pl-page">
       <div class="row wrap gap-8 mb-12"><label for="pl-project" class="small muted">Project</label>
         <select id="pl-project" data-change="project">${opt("", "None: yours only", s.project || "")}${s.projects.map((p) => opt(p.id, p.name, s.project || ""))}</select>
@@ -256,7 +263,8 @@
 
   // ---- Loading --------------------------------------------------------------------------
   async function load() {
-    const [ag, pl, dash] = await Promise.all([get(`/api/agents${q(s.project)}`), get(`/api/pipelines${q(s.project)}`), get("/api/dashboard")]);
+    const [ag, pl, dash, rt] = await Promise.all([get(`/api/agents${q(s.project)}`), get(`/api/pipelines${q(s.project)}`), get("/api/dashboard"), get("/api/runtimes")]);
+    s.runtimes = rt;
     s.agents = ag.agents;
     s.problems = [...ag.problems, ...pl.problems];
     s.pipelines = pl.pipelines;
@@ -283,7 +291,7 @@
   }
 
   async function enter(app, r) {
-    s = { app, project: r.project || null, agents: [], pipelines: [], projects: [], problems: [], open: null,
+    s = { app, project: r.project || null, agents: [], pipelines: [], runtimes: [], projects: [], problems: [], open: null,
       agent: "builder", newAgent: null, defText: "", defProblems: [], scope: "user", rawMode: false, raw: "", dirty: false };
     try {
       await load();
@@ -390,7 +398,11 @@
         return changed();
       }
       case "raw":
-        if (s.rawMode) { await check(); return render(); }
+        if (s.rawMode) {
+          s.raw = document.getElementById("pl-raw").value;
+          await check();
+          return render();
+        }
         s.raw = toToml(d);
         s.rawMode = true;
         return render();
@@ -405,12 +417,20 @@
           await check();
           if (s.rawMode) return render();
         }
+        // The draft as checked: in TOML mode the check replaced it.
+        const cur = s.draft;
         const where = document.getElementById("pl-scope").value;
+        const other = s.pipelines.find((p) => p.name === cur.name);
+        const same = other && cur.saved && cur.source === (where === "project" ? "project" : other.source);
+        if (other && !same) {
+          const ok = await confirm({ title: `Replace the pipeline ${cur.name}?`, text: "A pipeline of this name is already there; saving replaces it where you save.", items: [other.file], ok: "Replace" });
+          if (!ok) return;
+        }
         try {
-          await api("PUT", `/api/pipelines/${encodeURIComponent(d.name)}?scope=${encodeURIComponent(scopeOf(where))}`, { toml: toToml(d) });
+          await api("PUT", `/api/pipelines/${encodeURIComponent(cur.name)}?scope=${encodeURIComponent(scopeOf(where))}`, { toml: toToml(cur) });
           await load();
-          pickPipeline(d.name);
-          alertLine(`The pipeline ${d.name} is saved.`);
+          pickPipeline(cur.name);
+          alertLine(`The pipeline ${cur.name} is saved.`);
         } catch (e) {
           s.draft.problems = e.message.split("\n").filter(Boolean);
         }
@@ -424,6 +444,7 @@
         return render();
       case "delete-pipeline": {
         const pl = s.pipelines.find((p) => p.name === d.name);
+        if (!pl) return;
         const reset = pl.source === "user" && pl.shipped;
         const scope = pl.source === "project" ? `project:${s.project}` : "user";
         const ok = await confirm({ title: reset ? `Reset ${pl.name} to the default?` : `Delete the pipeline ${pl.name}?`, text: reset ? "Your changes to it are replaced by the pipeline Fallow ships." : "Its file is deleted. Loops already running keep the copy they recorded.", items: [pl.file], ok: reset ? "Reset" : "Delete" });
@@ -444,7 +465,7 @@
         location.hash = el.value ? `#/pipelines/${encodeURIComponent(el.value)}` : "#/pipelines";
         return;
       case "based": if (el.value) { pickPipeline(el.value); s.draft.name = `${el.value}-copy`; s.draft.saved = false; s.dirty = true; } return render();
-      case "name": d.name = el.value.trim(); s.dirty = true; return render();
+      case "name": d.name = el.value.trim(); d.saved = false; d.source = null; s.dirty = true; return render();
       case "cap": d.caps[el.dataset.k] = Math.max(1, parseInt(el.value, 10) || 1); return changed();
       case "step-field": {
         const st = stepAt(el);
@@ -452,6 +473,12 @@
         if (k === "paths") st.paths = el.value.split(",").map((x) => x.trim()).filter(Boolean);
         else st[k] = el.value;
         if (k === "when" && st.when === "task") delete st.at;
+        if (k === "agent" || k === "when" || k === "at") {
+          const at = (x) => `${x.when}/${x.when === "task" ? "" : x.at || "end"}`;
+          for (const o of d.steps) {
+            o.parallel_with = (o.parallel_with || []).filter((p) => d.steps.some((x) => x !== o && x.agent === p && at(x) === at(o)));
+          }
+        }
         return changed();
       }
       default:
