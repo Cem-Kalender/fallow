@@ -93,6 +93,46 @@ pub fn find_program(program: &str) -> Option<std::path::PathBuf> {
     None
 }
 
+/// The program to start for `program`: as [`find_program`] finds it, except that npm's batch
+/// shim (`claude.cmd`) is replaced by the `.exe` it starts, when it names one that exists. A
+/// batch file runs through `cmd.exe`, which cannot take an argument holding a line break (Rust
+/// refuses to start it), and an agent's instructions are such arguments.
+pub fn program_to_run(program: &str) -> Option<std::path::PathBuf> {
+    let found = find_program(program)?;
+    let ext = found
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(str::to_ascii_lowercase);
+    if !matches!(ext.as_deref(), Some("cmd" | "bat")) {
+        return Some(found);
+    }
+    let shim = std::fs::read_to_string(&found).unwrap_or_default();
+    let dir = found.parent()?;
+    Some(
+        shim_target(&shim)
+            .map(|t| dir.join(t))
+            .filter(|t| t.is_file())
+            .unwrap_or(found),
+    )
+}
+
+/// The `.exe` an npm batch shim starts, relative to the shim's folder: the quoted path after
+/// `%dp0%\` (or `%~dp0\`) that ends in `.exe`.
+pub fn shim_target(shim: &str) -> Option<String> {
+    for line in shim.lines() {
+        for start in ["\"%dp0%\\", "\"%~dp0\\"] {
+            if let Some(i) = line.find(start) {
+                let rest = &line[i + start.len()..];
+                let target = &rest[..rest.find('"')?];
+                if target.to_ascii_lowercase().ends_with(".exe") && !target.contains('%') {
+                    return Some(target.to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
 /// Opens `url` in the engineer's default browser.
 pub fn open_browser(url: &str) -> Result<(), String> {
     imp::open_browser(url)
@@ -185,5 +225,34 @@ mod imp {
             .spawn()
             .map(|_| ())
             .map_err(|e| format!("could not open the browser: {e}"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::shim_target;
+
+    #[test]
+    fn npm_shims_name_the_exe_they_start() {
+        let npm = concat!(
+            "@ECHO off\r\nGOTO start\r\n:find_dp0\r\nSET dp0=%~dp0\r\nEXIT /b\r\n:start\r\n",
+            "SETLOCAL\r\nCALL :find_dp0\r\n",
+            r#""%dp0%\node_modules\@anthropic-ai\claude-code\bin\claude.exe"   %*"#,
+            "\r\n"
+        );
+        assert_eq!(
+            shim_target(npm).as_deref(),
+            Some(r"node_modules\@anthropic-ai\claude-code\bin\claude.exe")
+        );
+        assert_eq!(
+            shim_target(r#"@"%~dp0\tool.exe" %*"#).as_deref(),
+            Some("tool.exe")
+        );
+        // A shim that starts node with a script, or anything else, is kept as it is.
+        assert_eq!(
+            shim_target(r#""%_prog%" "%dp0%\node_modules\x\cli.js" %*"#),
+            None
+        );
+        assert_eq!(shim_target("echo hello"), None);
     }
 }

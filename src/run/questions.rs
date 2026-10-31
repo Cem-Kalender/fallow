@@ -592,8 +592,11 @@ fn relay(
         .flatten()
         .find(|o| o["recommended"] == true)
         .and_then(|o| o["label"].as_str().map(str::to_string));
-    // What the lead would have said is its recommendation.
+    // What the lead would have said, when it answered or decided and Fallow relays all the same,
+    // is its recommendation. When the lead relays, its `answer` is its reasoning, never a
+    // choice (T086: it showed as an option).
     if let Some(a) = v
+        .filter(|v| v["outcome"] != "relay")
         .and_then(|v| v["answer"].as_str())
         .filter(|a| !a.trim().is_empty())
     {

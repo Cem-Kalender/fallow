@@ -245,3 +245,75 @@ output = { reply = "I saw your edit.", step = "clarify" }
     drop(e);
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// T086 (found with real agents): Spec Kit installed into a project but not committed is not in
+/// a worktree; the lead gets its skills and templates there all the same, and they are never
+/// committed nor named as thrown away.
+#[test]
+fn spec_kit_not_committed_is_laid_into_the_leads_worktree_and_never_committed() {
+    let root = scratch("conv-kit");
+    let repo = repo(&root);
+    let scenario = root.join("scenario.toml");
+    std::fs::write(
+        &scenario,
+        r##"
+[[step]]
+kind = "lead_turn"
+files = [{ path = "specs/001-cart/spec.md", text = "# Cart\n" }, { path = "notes.txt", text = "scratch\n" }]
+output = { reply = "I wrote the first spec.", step = "specify" }
+
+[[step]]
+kind = "lead_turn"
+output = { reply = "Still here.", step = "none" }
+"##,
+    )
+    .unwrap();
+    let e = start_studio(&root, &scenario, None);
+    let tx = &e.tx;
+    let added = sreq(tx, Req::AddProject { path: repo.clone() }).unwrap();
+    let project = added["project"].as_str().unwrap().to_string();
+    assert!(repo.join(".specify/templates/spec-template.md").exists());
+    let f = sreq(
+        tx,
+        Req::NewFeature {
+            project,
+            title: "Cart".into(),
+        },
+    )
+    .unwrap();
+    let sc = f["conversation"].as_str().unwrap().to_string();
+    for (n, text) in [(1, "A cart for the shop."), (2, "Anything else?")] {
+        sreq(
+            tx,
+            Req::Say {
+                conv: sc.clone(),
+                text: text.into(),
+            },
+        )
+        .unwrap();
+        let v = turn_ended(tx, &sc, n);
+        let t = &v["turns"][n - 1];
+        let wd = std::path::PathBuf::from(v["workdir"].as_str().unwrap());
+        for kit in [
+            ".claude/skills/speckit-specify/SKILL.md",
+            ".specify/templates/spec-template.md",
+            ".specify/scripts/bash/common.sh",
+        ] {
+            assert!(wd.join(kit).exists(), "turn {n}: {kit} in the worktree");
+        }
+        if n == 1 {
+            assert_eq!(t["discarded"], serde_json::json!(["notes.txt"]), "{t}");
+        }
+    }
+    assert_eq!(
+        git(&repo, &["show", "--name-only", "--format=", "001-cart"]),
+        "specs/001-cart/spec.md",
+        "only the spec is committed"
+    );
+    assert!(
+        !git(&repo, &["ls-tree", "-r", "--name-only", "001-cart"]).contains(".claude/skills"),
+        "the scaffolding never is"
+    );
+    drop(e);
+    let _ = std::fs::remove_dir_all(&root);
+}

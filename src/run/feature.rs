@@ -1539,7 +1539,7 @@ fn stories_of(p: &PhaseStatus) -> Vec<String> {
 }
 
 /// The stories whose last task (or story phase) is phase `n`: their checkpoint is there.
-fn stories_ending_at(l: &LoopState, n: u32) -> Vec<String> {
+pub(crate) fn stories_ending_at(l: &LoopState, n: u32) -> Vec<String> {
     let mut stories: Vec<String> = Vec::new();
     for p in &l.phases {
         if let Some(s) = &p.spec.story {
@@ -2163,6 +2163,14 @@ pub fn process(run: &mut Run, ctx: &Ctx, n: u32) -> Result<(), String> {
                 vec![format!("{INTERRUPTED}resumed after Fallow started again")],
                 None,
             );
+        }
+        // A session that never started (the agent could not be started, T086) or that the
+        // runtime no longer has: the next step starts a new one.
+        let never_started = why.starts_with("cannot start");
+        if never_started && step.resume.is_none() {
+            if let Some(s) = step.session.clone() {
+                run.append(Event::SessionLost { session: s })?;
+            }
         }
         if step.resume.is_some()
             && machine::activity_lines(run, n) == 0

@@ -1181,14 +1181,39 @@ impl Engine {
         Ok(json!({ "unlocked": true, "loop": id }))
     }
 
+    /// The documents a new lock is compared with: the last lock, with the answers the loop
+    /// committed to the feature branch since (T086: comparing with the lock alone counted the
+    /// loop's own Clarifications as the engineer's change, and reopened every story).
+    fn relock_base(&self, project: &str, feature: &str, repo: &Path, lock: &str) -> String {
+        let answers: Vec<String> = self
+            .live_loop(project, feature)
+            .and_then(|id| self.runs.get(&id))
+            .and_then(|r| r.state.feature_loop.as_ref())
+            .map(|l| {
+                l.questions
+                    .values()
+                    .filter_map(|q| q.commit.clone())
+                    .collect()
+            })
+            .unwrap_or_default();
+        let mut base = lock.to_string();
+        for c in answers {
+            if c != base && git::is_ancestor(repo, &base, &c) {
+                base = c;
+            }
+        }
+        base
+    }
+
     /// What a new lock would reopen, from the documents as they are now (research S-17).
     fn relock_preview(&self, project: &str, feature: &str) -> Result<Value, String> {
         let (p, f, wd) = self.studio.feature_ctx(project, feature)?;
         let old = f.locks.last().ok_or("the feature was never locked")?;
+        let base = self.relock_base(project, feature, &p.path, &old.commit);
         let docs = super::relock::docs(
             &p.path,
             &f.dir,
-            &old.commit,
+            &base,
             super::relock::Side::WorkingCopy(&wd),
         )?;
         let a = super::relock::affected(&docs);
@@ -1213,10 +1238,11 @@ impl Engine {
                     problems.join("\n- ")
                 )
             })?;
+        let base = self.relock_base(project, feature, &prep.project.path, &old.commit);
         let docs = super::relock::docs(
             &prep.project.path,
             &prep.feature.dir,
-            &old.commit,
+            &base,
             super::relock::Side::Commit(&prep.commit),
         )?;
         let a = super::relock::affected(&docs);

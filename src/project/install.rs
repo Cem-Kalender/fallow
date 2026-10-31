@@ -118,6 +118,48 @@ pub fn install(project: &Path) -> Result<Report, String> {
     Ok(r)
 }
 
+/// The constitution is the project's own document, written by the lead: never laid down as a
+/// scaffold, so that a template is not committed as if it were the project's.
+const CONSTITUTION: &str = ".specify/memory/constitution.md";
+
+/// Lays Spec Kit's files, except the constitution, into a lead's worktree where they are missing
+/// (a project whose Spec Kit is installed but not committed has none there). They are Fallow's
+/// scaffolding: [`is_scaffold`] keeps them out of the lead's changes, so they are never
+/// committed.
+pub fn scaffold(dir: &Path) -> Result<(), String> {
+    if version_in(dir).is_some_and(|v| v != VERSION) {
+        return Ok(());
+    }
+    for (path, text) in FILES {
+        let to = dir.join(target(path));
+        if target(path) == CONSTITUTION || to.exists() {
+            continue;
+        }
+        if let Some(d) = to.parent() {
+            std::fs::create_dir_all(d).map_err(|e| format!("{}: {e}", d.display()))?;
+        }
+        std::fs::write(&to, text).map_err(|e| format!("{}: {e}", to.display()))?;
+    }
+    Ok(())
+}
+
+/// What Fallow ships for `path` (a path in a project), if it ships that file.
+pub fn shipped(path: &str) -> Option<&'static str> {
+    let path = path.replace('\\', "/");
+    FILES
+        .iter()
+        .find(|(p, _)| target(p) == path)
+        .map(|(_, t)| *t)
+}
+
+/// Whether a changed path in a lead's worktree is a scaffold file of [`scaffold`].
+pub fn is_scaffold(path: &str) -> bool {
+    let path = path.replace('\\', "/");
+    FILES
+        .iter()
+        .any(|(p, _)| target(p) == path && path != CONSTITUTION)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

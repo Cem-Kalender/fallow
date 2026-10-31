@@ -77,6 +77,23 @@ fn a_locked_feature_runs_task_by_task_to_one_merge() {
         );
     }
     // The second phase's first instruction pointed at the first handover.
+    // The page shows each story's checkpoint after its last phase only, where the engine
+    // reviews it (T086).
+    let view = ask(tx, Request::Loop { id }).unwrap();
+    let cps: Vec<Value> = view["phases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| p["checkpoints"].clone())
+        .collect();
+    assert_eq!(
+        cps,
+        vec![
+            serde_json::json!([]),
+            serde_json::json!(["US1"]),
+            serde_json::json!(["US2"])
+        ]
+    );
     let t2 = st.iter().find(|s| s["task"] == "T002").unwrap();
     let prompt = std::fs::read_to_string(
         root.join("data/runs")

@@ -60,7 +60,7 @@ impl Runtime for Claude {
     }
 
     fn available(&self) -> Availability {
-        let Some(program) = crate::platform::find_program(&self.agent.command) else {
+        let Some(program) = crate::platform::program_to_run(&self.agent.command) else {
             return Availability {
                 installed: false,
                 version: None,
@@ -433,7 +433,7 @@ pub fn run(agent: &Agent, c: &Call, sink: &mut dyn FnMut(Event), stop: &AtomicBo
         denials: Vec::new(),
         duration: started.elapsed(),
     };
-    let program = crate::platform::find_program(&agent.command)
+    let program = crate::platform::program_to_run(&agent.command)
         .map(|p| p.display().to_string())
         .unwrap_or_else(|| agent.command.clone());
     let mut cmd = Command::new(&program);
@@ -469,9 +469,10 @@ pub fn run(agent: &Agent, c: &Call, sink: &mut dyn FnMut(Event), stop: &AtomicBo
     }
     let stderr = child.stderr.take();
     let err_tail = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+    let mut err_reader = None;
     if let Some(e) = stderr {
         let tail = std::sync::Arc::clone(&err_tail);
-        std::thread::spawn(move || {
+        err_reader = Some(std::thread::spawn(move || {
             for line in std::io::BufReader::new(e).lines().map_while(Result::ok) {
                 if let Ok(mut t) = tail.lock() {
                     t.push_str(&line);
@@ -485,7 +486,7 @@ pub fn run(agent: &Agent, c: &Call, sink: &mut dyn FnMut(Event), stop: &AtomicBo
                     }
                 }
             }
-        });
+        }));
     }
     let (tx, rx) = std::sync::mpsc::channel::<Value>();
     if let Some(out) = child.stdout.take() {
@@ -547,7 +548,31 @@ pub fn run(agent: &Agent, c: &Call, sink: &mut dyn FnMut(Event), stop: &AtomicBo
     }
     match last {
         Some(v) => {
-            let (result, failure, cost_usd, session, denials) = result_of(&v);
+            let (result, mut failure, cost_usd, session, denials) = result_of(&v);
+            // An error with no message says why on stderr only, for example "No conversation
+            // found with session ID" for a session that never started (T086).
+            if failure
+                .as_deref()
+                .is_some_and(|f| f.ends_with("no message"))
+            {
+                if let Some(r) = err_reader.take() {
+                    // A grandchild may hold the pipe open: wait briefly, never for long.
+                    let until = Instant::now() + std::time::Duration::from_millis(500);
+                    while !r.is_finished() && Instant::now() < until {
+                        std::thread::sleep(std::time::Duration::from_millis(20));
+                    }
+                }
+                let tail = err_tail
+                    .lock()
+                    .map(|t| t.trim().to_string())
+                    .unwrap_or_default();
+                if let Some(line) = tail.lines().rev().find(|l| !l.trim().is_empty()) {
+                    failure = Some(format!(
+                        "the agent ended with an error: {}",
+                        clip(line.trim(), 300)
+                    ));
+                }
+            }
             Outcome {
                 result,
                 failure,

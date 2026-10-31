@@ -311,15 +311,21 @@ fn main() -> ExitCode {
                 .is_none_or(|w| instruction.contains(w.as_str()))
     });
     let Some((n, step)) = pick else {
-        emit(
-            json!({"type": "result", "subtype": "error", "is_error": true, "session_id": session,
-            "total_cost_usd": 0.0, "result": if resumed && !fork {
-                // What Claude Code says for a session it does not know.
-                format!("No conversation found with session ID: {session}")
-            } else {
-                format!("no scripted step for {kind} {part:?}")
-            }, "permission_denials": []}),
-        );
+        if resumed && !fork {
+            // What Claude Code 2.1 does for a session it does not know: an error result with no
+            // message, the reason on stderr only (T086).
+            eprintln!("No conversation found with session ID: {session}");
+            emit(
+                json!({"type": "result", "subtype": "error_during_execution", "is_error": true,
+                "session_id": session, "total_cost_usd": 0.0, "permission_denials": []}),
+            );
+        } else {
+            emit(
+                json!({"type": "result", "subtype": "error", "is_error": true, "session_id": session,
+                "total_cost_usd": 0.0, "result": format!("no scripted step for {kind} {part:?}"),
+                "permission_denials": []}),
+            );
+        }
         return ExitCode::SUCCESS;
     };
     used.push(n);

@@ -158,3 +158,50 @@ fn a_run_copy_holds_only_the_history_up_to_its_start() {
     assert_eq!(refs_before, refs_after, "the project is only read");
     let _ = std::fs::remove_dir_all(r.parent().unwrap());
 }
+
+/// T086 (found with real agents): Spec Kit installed into the engineer's folder, never committed,
+/// left its template constitution there untracked; a feature bringing its own constitution could
+/// not merge. Fallow's unchanged copy is set aside; the engineer's own file never is.
+#[test]
+fn a_merge_replaces_fallows_unchanged_spec_kit_copy_but_never_the_engineers_file() {
+    let r = repo("kit-merge");
+    let constitution = ".specify/memory/constitution.md";
+    let template = fallow::project::install::shipped(constitution).unwrap();
+    let feature = |name: &str| {
+        run(&r, &["checkout", "-q", "-b", name]);
+        std::fs::create_dir_all(r.join(".specify/memory")).unwrap();
+        std::fs::write(r.join(constitution), "# Our constitution\n").unwrap();
+        run(&r, &["add", "."]);
+        run(&r, &["commit", "-q", "-m", "constitution"]);
+        let c = git::head(&r).unwrap();
+        run(&r, &["checkout", "-q", "main"]);
+        std::fs::remove_dir_all(r.join(".specify")).ok();
+        c
+    };
+    let scratch = r.parent().unwrap().join("scratch");
+
+    // The engineer's own untracked constitution: the merge is refused and the file stays.
+    let c1 = feature("f1");
+    std::fs::create_dir_all(r.join(".specify/memory")).unwrap();
+    std::fs::write(r.join(constitution), "mine\n").unwrap();
+    let e = fallow::publish::local::merge(&r, "main", &c1, &scratch).unwrap_err();
+    assert!(e.contains("constitution.md"), "{e}");
+    assert!(
+        !e.contains("did not go through"),
+        "the caller says that: {e}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(r.join(constitution)).unwrap(),
+        "mine\n"
+    );
+
+    // Fallow's unchanged copy: the feature's version takes its place.
+    std::fs::write(r.join(constitution), template).unwrap();
+    fallow::publish::local::merge(&r, "main", &c1, &scratch).unwrap();
+    assert_eq!(
+        std::fs::read_to_string(r.join(constitution))
+            .unwrap()
+            .replace('\r', ""),
+        "# Our constitution\n"
+    );
+}

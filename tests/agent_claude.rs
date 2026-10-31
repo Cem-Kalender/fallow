@@ -132,3 +132,22 @@ fn a_crash_an_error_and_a_time_out_are_failed_steps() {
     assert!(o.result.is_none() && o.failure.is_some());
     let _ = std::fs::remove_dir_all(&d);
 }
+
+/// T086: Claude Code 2.1 ends a resume of an unknown session with an error result that has no
+/// message, the reason on stderr only; Fallow reads it there, so the lost session is known.
+#[test]
+fn a_session_the_runtime_does_not_know_is_named_from_stderr() {
+    let (d, rt) = setup(
+        "lost",
+        "[[step]]\nkind = \"review\"\noutput = { answers = [] }\n",
+    );
+    let mut c = call(&d, Duration::from_secs(30));
+    c.session = Session::Resume("never-started".into());
+    let (o, _) = run(&rt, &c);
+    let why = o.failure.unwrap();
+    assert!(
+        why.contains("No conversation found with session ID: never-started"),
+        "{why}"
+    );
+    let _ = std::fs::remove_dir_all(&d);
+}

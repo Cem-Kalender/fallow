@@ -37,6 +37,24 @@ pub fn has_remote(dir: &Path) -> bool {
     git(dir, &["remote"]).is_ok_and(|s| !s.trim().is_empty())
 }
 
+/// The files `to` has that `from` does not (`diff --diff-filter=A from to`).
+pub fn added_files(dir: &Path, from: &str, to: &str) -> Result<Vec<String>, String> {
+    Ok(git(
+        dir,
+        &[
+            "diff",
+            "--name-only",
+            "--no-renames",
+            "--diff-filter=A",
+            from,
+            to,
+        ],
+    )?
+    .lines()
+    .map(str::to_string)
+    .collect())
+}
+
 /// Changes to tracked files only: untracked files never block a merge.
 pub fn tracked_changes(dir: &Path) -> Result<Vec<String>, String> {
     Ok(

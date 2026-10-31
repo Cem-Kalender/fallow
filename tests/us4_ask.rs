@@ -100,7 +100,14 @@ fn the_lead_answers_what_the_spec_settles_and_relays_the_rest() {
             &[("tests/__init__.py", "")],
             "blocked",
         ),
-        lead_answer("q2", "relay", "", "none", ""),
+        // A real lead explains its relay in `answer` (T086): reasoning, not an option.
+        lead_answer(
+            "q2",
+            "relay",
+            "Nothing settles it; I recommend refusing.",
+            "none",
+            "",
+        ),
         // Resumed in its session with the engineer's answer.
         task_step(
             "T003",
@@ -150,6 +157,11 @@ fn the_lead_answers_what_the_spec_settles_and_relays_the_rest() {
             .unwrap()
             .iter()
             .any(|o| o == "add them")
+    );
+    assert_eq!(
+        q2["options"],
+        serde_json::json!(["refuse them", "add them"]),
+        "the lead's reasoning is no option: {q2}"
     );
     assert!(
         v["needs"]["why"].as_str().unwrap().contains(BIG),
@@ -263,6 +275,44 @@ fn the_lead_answers_what_the_spec_settles_and_relays_the_rest() {
             .any(|e| e["kind"] == "ask" && e["text"] == FLOATS),
         "the agent's question"
     );
+
+    // T086: unlocked, with only User Story 2 changed. The answers the loop committed to the
+    // Clarifications are no change of the engineer's: only US2 is affected.
+    let project = v["feature_loop"]["project"].as_str().unwrap().to_string();
+    let feature = "001-calc".to_string();
+    ask(
+        tx,
+        Request::Unlock {
+            project: project.clone(),
+            feature: feature.clone(),
+        },
+    )
+    .unwrap();
+    let path = "specs/001-calc/spec.md".to_string();
+    let doc = sreq(
+        tx,
+        fallow::studio::Req::Doc {
+            project: project.clone(),
+            feature: feature.clone(),
+            path: path.clone(),
+        },
+    )
+    .unwrap();
+    let text = doc["text"].as_str().unwrap();
+    assert!(text.contains("Refuse them"), "the session has the answers");
+    sreq(
+        tx,
+        fallow::studio::Req::PutDoc {
+            project: project.clone(),
+            feature: feature.clone(),
+            path,
+            text: text.replace("the result is 2.", "the result is the int 2."),
+            version: doc["version"].as_str().unwrap().to_string(),
+        },
+    )
+    .unwrap();
+    let p = ask(tx, Request::RelockPreview { project, feature }).unwrap();
+    assert_eq!(p["affected"], serde_json::json!(["US2"]), "{p}");
     drop(e);
     let _ = std::fs::remove_dir_all(&root);
 }

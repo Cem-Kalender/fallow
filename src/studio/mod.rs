@@ -558,6 +558,11 @@ impl Studio {
                 Kind::Spec => {}
             }
         }
+        if git_project && workdir != p.path {
+            // Spec Kit, installed into the engineer's folder but not committed, is not in a
+            // worktree: the lead gets its skills and templates there too, never committed.
+            project::install::scaffold(&workdir)?;
+        }
         if let Some(f) = &feature {
             // Spec Kit's skills find the feature through this file (research S-8).
             let fj = workdir.join(".specify").join("feature.json");
@@ -797,7 +802,10 @@ impl Studio {
             };
             for path in all {
                 let path = path.trim_matches('"').to_string();
-                if path == ".specify/feature.json" || path == ".specify/" {
+                if path == ".specify/feature.json"
+                    || path == ".specify/"
+                    || project::install::is_scaffold(&path)
+                {
                     continue;
                 }
                 if kind == Kind::Spec && is_spec(&path) {
@@ -821,6 +829,7 @@ impl Studio {
                 if let Some(k) = keep {
                     let _ = std::fs::write(workdir.join(".specify/feature.json"), k);
                 }
+                let _ = project::install::scaffold(&workdir);
             }
         } else if let Some(r) = &result {
             changed = r["documents_changed"]

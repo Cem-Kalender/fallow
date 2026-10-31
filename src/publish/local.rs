@@ -23,14 +23,41 @@ pub fn merge(repo: &Path, target: &str, commit: &str, scratch: &Path) -> Result<
                 repo.display()
             ));
         }
-        return git::merge_into(repo, commit, &msg)
-            .map_err(|e| format!("the merge did not go through: {}", e.join(", ")));
+        let aside = set_aside_installed(repo, commit);
+        let r = git::merge_into(repo, commit, &msg).map_err(|e| e.join(", "));
+        if r.is_err() {
+            for (path, text) in aside {
+                if !path.exists() {
+                    let _ = std::fs::write(&path, text);
+                }
+            }
+        }
+        return r;
     }
     let _ = git::worktree_remove(repo, scratch);
     git::worktree_add(repo, scratch, Some(target), target)
         .map_err(|e| format!("cannot check out {target} for the merge: {e}"))?;
-    let r = git::merge_into(scratch, commit, &msg)
-        .map_err(|e| format!("the merge did not go through: {}", e.join(", ")));
+    let r = git::merge_into(scratch, commit, &msg).map_err(|e| e.join(", "));
     let _ = git::worktree_remove(repo, scratch);
     r
+}
+
+/// Removes, from the engineer's checkout, the untracked files the merge brings that are Fallow's
+/// own unchanged Spec Kit copies (installed when the project was added, never committed): git
+/// would otherwise refuse to overwrite them, though the feature's version (its constitution) is
+/// the one meant to be there (T086). Returns them, to be put back if the merge fails.
+fn set_aside_installed(repo: &Path, commit: &str) -> Vec<(std::path::PathBuf, &'static str)> {
+    let mut aside = Vec::new();
+    for path in git::added_files(repo, "HEAD", commit).unwrap_or_default() {
+        let Some(text) = crate::project::install::shipped(&path) else {
+            continue;
+        };
+        let file = repo.join(&path);
+        if std::fs::read(&file).ok().as_deref() == Some(text.as_bytes())
+            && std::fs::remove_file(&file).is_ok()
+        {
+            aside.push((file, text));
+        }
+    }
+    aside
 }

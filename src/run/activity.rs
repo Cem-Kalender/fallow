@@ -600,9 +600,12 @@ pub fn view(run: &Run, ctx: &Ctx) -> Result<Value, String> {
                 })
                 .collect();
             let done = tasks.iter().filter(|t| t["state"] == "accepted").count();
+            // The stories reviewed after this phase: those whose last task is in it (T086: a
+            // story spread over two phases is reviewed once, after the second).
+            let checkpoints = feature::stories_ending_at(l, p.spec.n);
             json!({ "n": p.spec.n, "label": p.spec.label, "title": p.spec.title, "story": p.spec.story,
                     "state": p.state, "done": done, "tasks": tasks,
-                    "checkpoint": l.phases.iter().any(|_| true) && p.spec.story.is_some() })
+                    "checkpoint": !checkpoints.is_empty(), "checkpoints": checkpoints })
         })
         .collect();
     let task_total: usize = l.tasks.len();

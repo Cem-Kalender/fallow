@@ -118,7 +118,7 @@
         if (t.state === "current") return h`<button class="task current${sel}" data-act="task" data-task="${t.id}"><span class="now-dot">●</span><span><span class="mono tiny">${t.id}</span> ${t.text}${t.repairs ? h`<span class="sub">repair ${t.repairs}</span>` : ""}</span></button>`;
         return h`<button class="task pending${sel}" data-act="task" data-task="${t.id}"><span>○</span><span><span class="mono tiny">${t.id}</span> ${t.text}</span></button>`;
       });
-      if (p.story) tasks.push(h`<div class="task pending ital"><span>◇</span><span>checkpoint: review ${p.story}</span></div>`);
+      for (const s of p.checkpoints || []) tasks.push(h`<div class="task pending ital"><span>◇</span><span>checkpoint: review ${s}</span></div>`);
       return h`${head}<div class="subtasks">${tasks}</div>`;
     });
     return h`<aside class="card pad-14 tree" aria-label="Tasks">
@@ -306,7 +306,7 @@
       ${stories}
       ${questions.length ? h`<div class="card pad-14"><h2 class="th mb-8">Questions <span class="tiny muted">· ${v.level || "normal"}</span></h2>${questions}</div>` : ""}
       <div class="card pad-14"><h2 class="th mb-8">Commits on ${v.build_branch}</h2>
-        ${commits.length ? commits.slice(0, 6).map((c) => h`<div class="kv"><span class="mono tiny">${short(c.commit)}</span><span class="small">${c.task} ${c.text}</span></div>`) : h`<div class="small muted">None yet.</div>`}
+        ${commits.length ? commits.slice(0, 6).map((c) => h`<div class="kv commit-row"><span class="mono tiny">${short(c.commit)}</span><span class="small" title="${`${c.task} ${c.text}`}">${c.task} ${c.text}</span></div>`) : h`<div class="small muted">None yet.</div>`}
         ${commits.length > 6 ? h`<div class="kv"><span class="muted">+ ${commits.length - 6} earlier</span><span></span></div>` : ""}</div>
       <div class="card pad-14"><h2 class="th mb-8">Your steering</h2>
         <div class="small body-ink lh">${steering.length ? steering : "Nothing yet."}</div>
