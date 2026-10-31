@@ -2,6 +2,7 @@
 //! research S-5, S-7, verified 2026-10-30).
 
 use std::io::{BufRead, Write};
+use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
@@ -380,6 +381,45 @@ pub fn events(v: &Value) -> Vec<Event> {
     out
 }
 
+/// A tool call's path as the agent's own folder sees it: `shop/cart.py`, not the worktree's
+/// absolute path (T086: the page listed both, and counted them twice).
+fn relative(e: Event, cwd: &Path) -> Event {
+    // Only a file's path: a command's text is shown as the agent ran it.
+    let Event::ToolCall {
+        id,
+        kind: kind @ (ToolKind::Read | ToolKind::Edit | ToolKind::Write),
+        summary,
+        detail,
+    } = e
+    else {
+        return e;
+    };
+    let norm = |s: &str| s.replace('\\', "/");
+    let base = norm(&cwd.display().to_string());
+    let base = base.trim_end_matches('/');
+    let s = norm(&summary);
+    // Windows paths ignore case; elsewhere they do not.
+    let same = |a: &str, b: &str| {
+        if cfg!(windows) {
+            a.eq_ignore_ascii_case(b)
+        } else {
+            a == b
+        }
+    };
+    let summary = match s.get(..base.len()) {
+        Some(head) if !base.is_empty() && same(head, base) && s[base.len()..].starts_with('/') => {
+            s[base.len() + 1..].to_string()
+        }
+        _ => summary,
+    };
+    Event::ToolCall {
+        id,
+        kind,
+        summary,
+        detail,
+    }
+}
+
 /// The final `result` event: the structured result, why there is none, the cost, the session
 /// and the refused commands.
 pub type Final = (
@@ -422,9 +462,16 @@ pub fn result_of(v: &Value) -> Final {
     (structured, failure, cost, session, denials)
 }
 
+/// How often, and how long apart, a program that cannot be started is tried again.
+const START_TRIES: u32 = 3;
+#[cfg(not(test))]
+const START_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
+#[cfg(test)]
+const START_WAIT: std::time::Duration = std::time::Duration::from_millis(50);
+
 /// Runs a call to its end or its time limit.
 pub fn run(agent: &Agent, c: &Call, sink: &mut dyn FnMut(Event), stop: &AtomicBool) -> Outcome {
-    let started = Instant::now();
+    let mut started = Instant::now();
     let fail = |why: String, started: Instant| Outcome {
         result: None,
         failure: Some(why),
@@ -433,22 +480,6 @@ pub fn run(agent: &Agent, c: &Call, sink: &mut dyn FnMut(Event), stop: &AtomicBo
         denials: Vec::new(),
         duration: started.elapsed(),
     };
-    let program = crate::platform::program_to_run(&agent.command)
-        .map(|p| p.display().to_string())
-        .unwrap_or_else(|| agent.command.clone());
-    let mut cmd = Command::new(&program);
-    cmd.args(&agent.args)
-        .args(args(c))
-        .current_dir(&c.cwd)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        // CREATE_NO_WINDOW: no console window for the service's children.
-        cmd.creation_flags(0x0800_0000);
-    }
     let group = match &c.group {
         Some(g) => std::sync::Arc::clone(g),
         None => match crate::platform::job::Group::new() {
@@ -456,10 +487,47 @@ pub fn run(agent: &Agent, c: &Call, sink: &mut dyn FnMut(Event), stop: &AtomicBo
             Err(e) => return fail(format!("cannot create a process group: {e}"), started),
         },
     };
-    let mut child = match cmd.spawn() {
-        Ok(ch) => ch,
-        Err(e) => return fail(format!("cannot start {}: {e}", agent.command), started),
+    // The agent's program can be missing for a moment while it updates itself (T086: three
+    // checks were used up in seconds): it is looked up and started again, a few times, before
+    // the step fails.
+    let mut tries = 0;
+    let mut child = loop {
+        let program = crate::platform::program_to_run(&agent.command)
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| agent.command.clone());
+        let mut cmd = Command::new(&program);
+        cmd.args(&agent.args)
+            .args(args(c))
+            .current_dir(&c.cwd)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            // CREATE_NO_WINDOW: no console window for the service's children.
+            cmd.creation_flags(0x0800_0000);
+        }
+        match cmd.spawn() {
+            Ok(ch) => break ch,
+            // Only a program not found (its folder there): any other error will not go away.
+            Err(e)
+                if e.kind() == std::io::ErrorKind::NotFound
+                    && c.cwd.is_dir()
+                    && tries < START_TRIES
+                    && !stop.load(Ordering::Relaxed) =>
+            {
+                tries += 1;
+                let until = Instant::now() + START_WAIT;
+                while Instant::now() < until && !stop.load(Ordering::Relaxed) {
+                    std::thread::sleep(std::time::Duration::from_millis(100).min(START_WAIT));
+                }
+            }
+            Err(e) => return fail(format!("cannot start {}: {e}", agent.command), started),
+        }
     };
+    // The step's time limit counts from the agent's start, not from the waits before it.
+    started = Instant::now();
     let _ = group.adopt(child.id());
     if let Some(mut stdin) = child.stdin.take() {
         let text = c.instruction.clone();
@@ -510,7 +578,7 @@ pub fn run(agent: &Agent, c: &Call, sink: &mut dyn FnMut(Event), stop: &AtomicBo
                     session_seen = v["session_id"].as_str().map(str::to_string);
                 }
                 for e in events(&v) {
-                    sink(e);
+                    sink(relative(e, &c.cwd));
                 }
                 if v["type"].as_str() == Some("result") {
                     last = Some(v);
@@ -612,6 +680,89 @@ mod tests {
     use super::*;
     use crate::agent::rights::{self, Mode};
     use serde_json::json;
+
+    #[test]
+    fn a_program_not_found_is_tried_again_before_the_step_fails() {
+        let agent = Agent {
+            command: "fallow-no-such-agent-program".into(),
+            args: Vec::new(),
+        };
+        let c = Call {
+            instruction: "x".into(),
+            schema: None,
+            rights: rights::lead(Mode::ReadOnly, Vec::new()),
+            mcp_config: None,
+            session: Session::New("s".into()),
+            model: None,
+            budget_usd: None,
+            cwd: std::env::temp_dir(),
+            time_limit: std::time::Duration::from_secs(5),
+            system: None,
+            partial: false,
+            group: None,
+        };
+        let t = Instant::now();
+        let o = run(&agent, &c, &mut |_| {}, &AtomicBool::new(false));
+        assert!(o.failure.unwrap().starts_with("cannot start"));
+        assert!(t.elapsed() >= START_WAIT * START_TRIES, "tried again");
+        // Stopped: no waiting.
+        let t = Instant::now();
+        let _ = run(&agent, &c, &mut |_| {}, &AtomicBool::new(true));
+        assert!(t.elapsed() < START_WAIT, "a stop ends the waiting");
+    }
+
+    #[test]
+    fn paths_in_the_agents_folder_are_shown_relative_to_it() {
+        let read = |p: &str| Event::ToolCall {
+            id: "t".into(),
+            kind: ToolKind::Read,
+            summary: p.into(),
+            detail: String::new(),
+        };
+        let wd = Path::new(r"C:\Users\x\AppData\Local\fallow\runs\1\wt\build");
+        let summary = |e: Event| match e {
+            Event::ToolCall { summary, .. } => summary,
+            _ => unreachable!(),
+        };
+        assert_eq!(
+            summary(relative(
+                read(r"C:\Users\x\AppData\Local\fallow\runs\1\wt\build\shop\cart.py"),
+                wd
+            )),
+            "shop/cart.py"
+        );
+        if cfg!(windows) {
+            assert_eq!(
+                summary(relative(
+                    read("c:/users/x/appdata/local/fallow/runs/1/wt/build/README.md"),
+                    wd
+                )),
+                "README.md",
+                "case and slashes do not matter on Windows"
+            );
+        }
+        // A command is shown as the agent ran it, backslashes and all.
+        let run = r#"C:\Users\x\AppData\Local\fallow\runs\1\wt\build\.venv\python.exe -c "print('a\nb')""#;
+        let e = relative(
+            Event::ToolCall {
+                id: "r".into(),
+                kind: ToolKind::Run,
+                summary: run.into(),
+                detail: String::new(),
+            },
+            wd,
+        );
+        assert_eq!(summary(e), run);
+        // Outside it, or a sibling folder sharing its prefix: kept as given.
+        assert_eq!(
+            summary(relative(
+                read(r"C:\Users\x\AppData\Local\fallow\runs\1\wt\build2\a.py"),
+                wd
+            )),
+            r"C:\Users\x\AppData\Local\fallow\runs\1\wt\build2\a.py"
+        );
+        assert_eq!(summary(relative(read("shop/x.py"), wd)), "shop/x.py");
+    }
     use std::time::Duration;
 
     fn call() -> Call {

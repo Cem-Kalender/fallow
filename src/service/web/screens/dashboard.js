@@ -23,7 +23,7 @@
     if (p.kind === "git") pills.push(h`<span class="pill blue">git</span>`);
     else if (p.kind === "folder") pills.push(h`<span class="pill grey">folder, no git</span>`);
     else pills.push(h`<span class="pill orange">missing</span>`);
-    if (p.spec_kit) pills.push(h`<span class="pill green">Spec Kit</span>`);
+    if (p.spec_kit) pills.push(h`<span class="pill green">Spec Kit ${p.spec_kit}</span>`);
     if (p.features) pills.push(h`<span class="pill grey">${p.features} feature${p.features === 1 ? "" : "s"}</span>`);
     return h`<a href="#/p/${encodeURIComponent(p.id)}" class="card pad-14 project-card">
       <div class="b">${p.name}</div>

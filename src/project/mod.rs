@@ -19,6 +19,12 @@ pub struct Budget {
     pub minutes: u64,
 }
 
+/// The default per task before T086.
+const OLD_DEFAULT: Budget = Budget {
+    usd: 0.25,
+    minutes: 10,
+};
+
 impl Default for Budget {
     fn default() -> Budget {
         Budget {
@@ -102,6 +108,9 @@ pub struct Project {
     pub approved_commands: Vec<String>,
     #[serde(default)]
     pub budget_per_task: Budget,
+    /// 1 once `budget_per_task` moved off the old default (T086); new projects start at 1.
+    #[serde(default)]
+    pub budget_version: u32,
     #[serde(default = "yes")]
     pub notifications: bool,
     /// The project conversation (FR-034).
@@ -226,12 +235,26 @@ impl Store {
     /// Loads `dir/projects.json`, or starts empty.
     pub fn load(dir: &Path) -> Result<Store, String> {
         let file = dir.join("projects.json");
-        let projects = match std::fs::read_to_string(&file) {
+        let mut projects: Vec<Project> = match std::fs::read_to_string(&file) {
             Ok(t) => serde_json::from_str(&t).map_err(|e| format!("{}: {e}", file.display()))?,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
             Err(e) => return Err(format!("{}: {e}", file.display())),
         };
-        Ok(Store { file, projects })
+        // A project saved with the old default ($0.25 and 10 minutes per task, too low with real
+        // agents: T086) takes the new one, once; an amount the engineer set is kept.
+        let mut moved = false;
+        for p in projects.iter_mut().filter(|p| p.budget_version == 0) {
+            if p.budget_per_task == OLD_DEFAULT {
+                p.budget_per_task = Budget::default();
+            }
+            p.budget_version = 1;
+            moved = true;
+        }
+        let store = Store { file, projects };
+        if moved {
+            store.save()?;
+        }
+        Ok(store)
     }
 
     /// Writes the file whole, through a temporary file and a rename.
@@ -293,6 +316,7 @@ impl Store {
             level: Level::Normal,
             approved_commands: Vec::new(),
             budget_per_task: Budget::default(),
+            budget_version: 1,
             notifications: true,
             conversation: None,
             features: Vec::new(),
@@ -329,5 +353,39 @@ mod tests {
             "discount-codes-before-tax"
         );
         assert_eq!(slug("  "), "");
+    }
+
+    #[test]
+    fn a_project_on_the_old_default_budget_takes_the_new_one() {
+        let dir = std::env::temp_dir().join(format!("fallow-store-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("old")).unwrap();
+        std::fs::create_dir_all(dir.join("mine")).unwrap();
+        let mut s = Store::load(&dir).unwrap();
+        s.add(&dir.join("old"), "2026-10-30T00:00:00Z").unwrap();
+        s.add(&dir.join("mine"), "2026-10-30T00:00:00Z").unwrap();
+        s.projects[0].budget_per_task = OLD_DEFAULT;
+        s.projects[0].budget_version = 0;
+        s.projects[1].budget_version = 0;
+        s.projects[1].budget_per_task = Budget {
+            usd: 0.25,
+            minutes: 20,
+        };
+        s.save().unwrap();
+        let s = Store::load(&dir).unwrap();
+        assert_eq!(s.projects[0].budget_per_task, Budget::default());
+        assert_eq!(
+            s.projects[1].budget_per_task.minutes, 20,
+            "the engineer's own"
+        );
+        // Once moved, the old amount set again on purpose stays.
+        let mut s = s;
+        s.projects[0].budget_per_task = OLD_DEFAULT;
+        s.save().unwrap();
+        assert_eq!(
+            Store::load(&dir).unwrap().projects[0].budget_per_task,
+            OLD_DEFAULT
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

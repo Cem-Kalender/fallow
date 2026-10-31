@@ -224,7 +224,7 @@
       <div class="row between"><h2 class="th">${name}.md</h2><span class="tiny muted">used by ${used} pipeline${used === 1 ? "" : "s"}</span></div>
       ${a && a.update ? h`<div class="notice small">An update of this default is beside your copy, in <span class="mono">${name}.md.new</span>. <button class="btn btn2 xs" data-act="show-update">${s.showUpdate ? "Hide it" : "Show it"}</button>${s.showUpdate ? h`<pre class="term">${a.update}</pre>` : ""}</div>` : ""}
       <label for="def-text" class="sr">${name}.md</label>
-      <textarea id="def-text" class="card def-text" spellcheck="false" rows="22">${s.defText}</textarea>
+      <textarea id="def-text" class="card def-text" spellcheck="false" rows="22" data-for="${name}">${s.defText}</textarea>
       ${lines.length ? h`<ul class="problems" role="alert">${lines.map((l) => h`<li>${l.line ? h`<button class="linkish" data-act="goto-line" data-line="${l.line}">line ${l.line}</button>: ` : ""}${l.text}</li>`)}</ul>` : ""}
       <div class="row wrap gap-8">
         <label for="def-scope" class="sr">Save to</label>
@@ -240,8 +240,10 @@
   function render() {
     const app = s.app;
     const focus = document.activeElement && document.activeElement.id;
+    // Unsaved edits survive a redraw, but only for the agent still shown: a click on another
+    // agent loads its text, which the old editor's must not overwrite.
     const keepDef = document.getElementById("def-text");
-    if (keepDef) s.defText = keepDef.value;
+    if (keepDef && keepDef.dataset.for === (s.agent || s.newAgent || "")) s.defText = keepDef.value;
     const keepRaw = document.getElementById("pl-raw");
     if (keepRaw && s.rawMode) s.raw = keepRaw.value;
     app.innerHTML = h`<div class="page pl-page">

@@ -25,7 +25,7 @@ fn the_lock_names_every_problem_then_commits_and_creates_the_loop() {
     std::fs::write(
         &scenario,
         format!(
-            "[[step]]\nkind = \"lead_turn\"\nfiles = [{{ path = \"specs/001-cart/spec.md\", text = {} }}, {{ path = \"specs/001-cart/plan.md\", text = {} }}, {{ path = \"specs/001-cart/tasks.md\", text = {} }}]\noutput = {{ reply = \"Spec, plan and tasks.\", step = \"tasks\" }}\n\n[[step]]\nkind = \"lead_turn\"\noutput = {{ reply = \"Analyzed.\", step = \"analyze\", findings = [{{ severity = \"CRITICAL\", text = \"tasks miss the stock rule\" }}, {{ severity = \"LOW\", text = \"wording\" }}] }}\n",
+            "[[step]]\nkind = \"lead_turn\"\nfiles = [{{ path = \"specs/001-cart/spec.md\", text = {} }}, {{ path = \"specs/001-cart/plan.md\", text = {} }}, {{ path = \"specs/001-cart/tasks.md\", text = {} }}]\noutput = {{ reply = \"Spec, plan and tasks.\", step = \"tasks\" }}\n\n[[step]]\nkind = \"lead_turn\"\noutput = {{ reply = \"Analyzed.\", step = \"analyze\", findings = [{{ severity = \"CRITICAL\", text = \"tasks miss the stock rule\" }}, {{ severity = \"LOW\", text = \"wording\" }}] }}\n\n[[step]]\nkind = \"lead_turn\"\noutput = {{ reply = \"Analyzed again.\", step = \"analyze\", findings = [{{ severity = \"CRITICAL\", text = \"tasks miss the stock rule\" }}, {{ severity = \"LOW\", text = \"wording\" }}] }}\n",
             lit(SPEC_BAD),
             lit(PLAN),
             lit(TASKS_BAD)
@@ -138,6 +138,18 @@ fn the_lock_names_every_problem_then_commits_and_creates_the_loop() {
     };
     put("specs/001-cart/spec.md", SPEC_GOOD);
     put("specs/001-cart/tasks.md", TASKS_GOOD);
+    // T086: the documents changed after analyze, so analyze runs again before the lock.
+    let err = lock(tx).unwrap_err();
+    assert!(err.contains("analyze step has not run"), "{err}");
+    sreq(
+        tx,
+        Req::Say {
+            conv: conv.clone(),
+            text: "Analyze again.".into(),
+        },
+    )
+    .unwrap();
+    turn_ended(tx, &conv, 3);
     let err = lock(tx).unwrap_err();
     assert!(
         err.contains("CRITICAL problem: tasks miss the stock rule"),
@@ -353,6 +365,84 @@ fn a_plain_folder_gets_git_and_its_features_their_branches() {
     )
     .unwrap();
     assert_eq!(d["text"].as_str().unwrap().trim_end(), "# Plots");
+    drop(e);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// T086: a lead turn that changes a document after analyze (here a clarify) means analyze must
+/// run again: the lock is refused, and the stepper is back at analyze for the lead's next turn.
+#[test]
+fn a_document_changed_after_analyze_sends_the_session_back_to_analyze() {
+    let root = scratch("lock-reanalyze");
+    let repo = repo(&root);
+    let scenario = root.join("scenario.toml");
+    let lit = |s: &str| format!("'''\n{s}'''");
+    std::fs::write(
+        &scenario,
+        format!(
+            "[[step]]\nkind = \"lead_turn\"\nfiles = [{{ path = \"specs/001-cart/spec.md\", text = {} }}, {{ path = \"specs/001-cart/plan.md\", text = {} }}, {{ path = \"specs/001-cart/tasks.md\", text = {} }}]\noutput = {{ reply = \"Written.\", step = \"tasks\" }}\n\n[[step]]\nkind = \"lead_turn\"\noutput = {{ reply = \"Analyzed.\", step = \"analyze\", findings = [] }}\n\n[[step]]\nkind = \"lead_turn\"\nfiles = [{{ path = \"specs/001-cart/spec.md\", text = {} }}]\noutput = {{ reply = \"Clarified.\", step = \"clarify\" }}\n",
+            lit(SPEC_GOOD),
+            lit(PLAN),
+            lit(TASKS_GOOD),
+            lit(&format!("{SPEC_GOOD}\n## Clarifications\n\n- Q: x? → A: y.\n"))
+        ),
+    )
+    .unwrap();
+    let e = start_studio(&root, &scenario, None);
+    let tx = &e.tx;
+    let project = sreq(tx, Req::AddProject { path: repo.clone() }).unwrap()["project"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    git(&repo, &["add", "."]);
+    git(&repo, &["commit", "-q", "-m", "spec kit"]);
+    let f = sreq(
+        tx,
+        Req::NewFeature {
+            project: project.clone(),
+            title: "Cart".into(),
+        },
+    )
+    .unwrap();
+    let conv = f["conversation"].as_str().unwrap().to_string();
+    let view = || {
+        sreq(
+            tx,
+            Req::Feature {
+                project: project.clone(),
+                feature: "001-cart".into(),
+            },
+        )
+        .unwrap()
+    };
+    for (n, text) in [
+        (1, "Write it all."),
+        (2, "Analyze."),
+        (3, "One more thing."),
+    ] {
+        sreq(
+            tx,
+            Req::Say {
+                conv: conv.clone(),
+                text: text.into(),
+            },
+        )
+        .unwrap();
+        turn_ended(tx, &conv, n);
+        if n == 2 {
+            assert_eq!(view()["lock_check"]["ok"], true, "{}", view()["lock_check"]);
+        }
+    }
+    let v = view();
+    assert_eq!(v["analyzed"], false, "{v}");
+    assert_eq!(v["step"], "analyze", "the lead's next turn runs analyze");
+    assert!(
+        v["lock_check"]["problems"]
+            .to_string()
+            .contains("analyze step has not run"),
+        "{}",
+        v["lock_check"]
+    );
     drop(e);
     let _ = std::fs::remove_dir_all(&root);
 }

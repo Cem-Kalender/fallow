@@ -406,7 +406,7 @@ Notes on Phase 9 as built:
   - a visible focus ring;
   - `aria-label` on icon buttons;
   - text contrast of at least 4.5:1 (FR-032).
-- [ ] T085 The visual check (SC-007, SC-008): each screen next to its mockup at 1440 px and 390 px, with screenshots in `specs/007-fallow-studio/visual-check/`. The engineer approves.
+- [X] T085 (superseded by 008) The visual check (SC-007, SC-008): each screen next to its mockup at 1440 px and 390 px, with screenshots in `specs/007-fallow-studio/visual-check/`. The engineer approves.
 - [X] T086 Run quickstart Q1–Q5 with Sonnet in the sandbox (reset it first), and record the runs, their costs, the time from adding the folder to the lead's first reply (SC-001), and the problems found in this file.
 - [X] T087 [P] Documentation: `README.md`; mark 006's superseded user stories in `specs/006-headless-orchestrator/tasks.md`; update the contracts with anything that changed during the build.
 - [X] T088 A fresh-context review of the whole change, then fix its findings.
@@ -426,8 +426,10 @@ Notes on Phase 10 as built:
 - T084: every action is a button or a link; the focus ring is never removed; no icon-only button
   lacks a label. Every text colour pair is at least 4.5:1 except the document's line numbers
   (#A3A29B, 2.6:1), now the faint ink.
-- T085 (open): the screenshots are in `visual-check/`, with what knowingly differs. The
-  engineer's approval is pending. Taking them found two page bugs, now fixed: a screen left
+- T085 (superseded): the screenshots are in `visual-check/`, with what knowingly differs. On
+  2026-11-01 the engineer decided that 008 (`specs/008-studio-redesign/`) replaces the look of the
+  loop page and of Pipelines and Agents, with its own mockup and visual check; 007's visual check
+  is superseded by it rather than approved. Taking them found two page bugs, now fixed: a screen left
   behind could write over the next one, and a stopped long poll kept its connection, so a
   screen opening after four others could wait for one.
 - T086, run on 2026-10-31 with `claude` 2.1.316, every agent on Sonnet (the lead and the

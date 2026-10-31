@@ -390,3 +390,33 @@ pub fn lock_calc_in(
     .unwrap();
     l["loop"].as_u64().unwrap()
 }
+
+/// A lead turn that runs analyze again, with no finding: for a scenario whose documents change
+/// after the first analyze (an unlock), which must be analyzed again before the lock (T086).
+#[allow(dead_code)]
+pub const LEAD_ANALYZES_AGAIN: &str = "[[step]]\nkind = \"lead_turn\"\nwhen = \"Analyze again\"\noutput = { reply = \"Analyzed again.\", step = \"analyze\", findings = [] }\n\n";
+
+/// Runs analyze again in the feature's spec session (the scenario holds
+/// `LEAD_ANALYZES_AGAIN`), and waits for the turn's end.
+#[allow(dead_code)]
+pub fn analyze_again(tx: &Sender<Msg>, project: &str, feature: &str) {
+    let f = sreq(
+        tx,
+        Req::Feature {
+            project: project.into(),
+            feature: feature.into(),
+        },
+    )
+    .unwrap();
+    let conv = f["conversation"]["id"].as_str().unwrap().to_string();
+    let n = f["conversation"]["turns"].as_array().map_or(0, |t| t.len()) + 1;
+    sreq(
+        tx,
+        Req::Say {
+            conv: conv.clone(),
+            text: "Analyze again.".into(),
+        },
+    )
+    .unwrap();
+    turn_ended(tx, &conv, n);
+}

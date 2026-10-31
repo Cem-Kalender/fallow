@@ -53,6 +53,7 @@ fn a_new_lock_reopens_only_the_affected_story() {
         check_step("US1", true, ""),
         handover_step(3, ""),
         check_step("US2", true, ""),
+        LEAD_ANALYZES_AGAIN.to_string(),
     ]
     .concat();
     let (e, repo, id) = locked_calc(&root, &steps, None);
@@ -135,7 +136,8 @@ fn a_new_lock_reopens_only_the_affected_story() {
         "{p}"
     );
 
-    // The new lock.
+    // The documents changed: analyze runs again, then the new lock.
+    analyze_again(tx, &project, &feature);
     let l = ask(
         tx,
         Request::Lock {
@@ -219,6 +221,7 @@ fn a_new_lock_while_paused_at_ready_is_built_and_checked_before_any_merge() {
         )
         .replacen("kind = \"build\"", "kind = \"repair\"", 1),
         check_step("US1", true, ""),
+        LEAD_ANALYZES_AGAIN.to_string(),
     ]
     .concat();
     let (e, repo, id) = locked_calc(&root, &steps, None);
@@ -262,6 +265,7 @@ fn a_new_lock_while_paused_at_ready_is_built_and_checked_before_any_merge() {
         },
     )
     .unwrap();
+    analyze_again(tx, &project, &feature);
     ask(
         tx,
         Request::Lock {

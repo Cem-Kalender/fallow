@@ -874,6 +874,13 @@ impl Studio {
             }
             self.store.save()?;
         }
+        // A document changed in a turn that was not analyze: analyze must run again before the
+        // lock (T086: edits after analyze were locked unchecked).
+        if let Some(f) = feature_name.as_deref() {
+            if !changed.is_empty() && step_ran.as_deref() != Some("analyze") {
+                self.analyze_again(&project_id, f)?;
+            }
+        }
         let c = self.conv_mut(conv)?;
         c.append(CEvent::TurnFinished {
             n,
@@ -1029,7 +1036,35 @@ impl Studio {
             return Err(format!("{path} is not one of the feature's documents"));
         }
         let text = std::fs::read_to_string(wd.join(path)).unwrap_or_default();
-        Ok(json!({ "path": path, "text": text, "version": version_of(&text) }))
+        // Who changed it last (contracts/web-api.md): the engineer, whose edit waits for the
+        // lead's next turn, or the lead, whose last turn changed it.
+        let conv = f.conversation.as_ref().and_then(|c| self.convs.get(c));
+        let last_edit_by = conv.and_then(|c| {
+            if c.state.pending_edits.iter().any(|e| e.path == path) {
+                return Some("you");
+            }
+            // The latest turn that touched it: the lead's if the lead reported the change, or if
+            // Fallow committed it without an edit of the engineer's; the engineer's otherwise.
+            c.state.turns.iter().rev().find_map(|t| {
+                let mine = t.edits.iter().any(|e| e.path == path);
+                let committed = t.documents_changed.iter().any(|d| d == path);
+                let reported = t.result.as_ref().is_some_and(|r| {
+                    r["documents_changed"]
+                        .as_array()
+                        .is_some_and(|a| a.iter().any(|d| d == path))
+                });
+                if reported || (committed && !mine) {
+                    Some("lead")
+                } else if mine {
+                    Some("you")
+                } else {
+                    None
+                }
+            })
+        });
+        Ok(
+            json!({ "path": path, "text": text, "version": version_of(&text), "last_edit_by": last_edit_by }),
+        )
     }
 
     /// The engineer's edit (FR-007): refused while the lead's turn runs, or when the document
@@ -1081,7 +1116,37 @@ impl Studio {
             version: u64::from_str_radix(&v[..8], 16).unwrap_or(0),
             diff: d,
         })?;
+        // Analyze judged the documents before this edit: it runs again before the lock (T086).
+        if old != text {
+            self.analyze_again(project, feature)?;
+        }
         Ok(json!({ "version": v }))
+    }
+
+    /// The documents changed after analyze judged them: analyze must run again before the lock,
+    /// and the stepper goes back to it, so that the lead's next turn runs it (T086).
+    fn analyze_again(&mut self, project: &str, feature: &str) -> Result<(), String> {
+        let Some(feat) = self
+            .project_mut(project)?
+            .feature_mut(feature)
+            .filter(|f| f.analyzed)
+        else {
+            return Ok(());
+        };
+        feat.analyzed = false;
+        let at = |s: &str| STEPS.iter().position(|x| *x == s).unwrap_or(0);
+        let moved = at(&feat.step) > at("analyze");
+        if moved {
+            feat.step = "analyze".into();
+        }
+        let conv = feat.conversation.clone();
+        self.store.save()?;
+        if let Some(c) = conv.filter(|_| moved).and_then(|c| self.convs.get_mut(&c)) {
+            c.append(CEvent::StepSet {
+                step: "analyze".into(),
+            })?;
+        }
+        Ok(())
     }
 
     /// Moves the stepper (FR-006): the lead's next turn runs that step.

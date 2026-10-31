@@ -77,10 +77,11 @@ mod tray {
     use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
     use std::sync::{Arc, Mutex, OnceLock};
     use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM};
+    use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
     use windows_sys::Win32::UI::Shell::{
-        NIF_ICON, NIF_INFO, NIF_MESSAGE, NIF_SHOWTIP, NIF_TIP, NIIF_INFO, NIM_ADD, NIM_DELETE,
-        NIM_MODIFY, NIM_SETVERSION, NIN_BALLOONUSERCLICK, NOTIFYICON_VERSION_4, NOTIFYICONDATAW,
-        Shell_NotifyIconW,
+        NIF_ICON, NIF_INFO, NIF_MESSAGE, NIF_SHOWTIP, NIF_TIP, NIIF_LARGE_ICON, NIIF_USER, NIM_ADD,
+        NIM_DELETE, NIM_MODIFY, NIM_SETVERSION, NIN_BALLOONUSERCLICK, NOTIFYICON_VERSION_4,
+        NOTIFYICONDATAW, Shell_NotifyIconW,
     };
     use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
@@ -110,6 +111,43 @@ mod tray {
     /// The message Explorer broadcasts when the taskbar comes back: the icon is added again.
     static TASKBAR_CREATED: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
+    /// Fallow's icon from its own resources (`assets/icon/fallow.res`, linked by `build.rs`), at
+    /// the system's small size for the tray or its large size for a balloon, or Windows' default
+    /// icon if it is missing. Each size is loaded once, at its
+    /// own size (a shared load would hand every size the first one loaded), and kept for the life
+    /// of the process.
+    ///
+    /// # Safety
+    /// Plain Win32 calls.
+    unsafe fn icon(large: bool) -> HICON {
+        static SMALL: OnceLock<isize> = OnceLock::new();
+        static LARGE: OnceLock<isize> = OnceLock::new();
+        let cell = if large { &LARGE } else { &SMALL };
+        *cell.get_or_init(|| {
+            // SAFETY: the module of this process; resource 1 is the icon group.
+            unsafe {
+                let size = if large {
+                    GetSystemMetrics(SM_CXICON).max(32)
+                } else {
+                    GetSystemMetrics(SM_CXSMICON)
+                };
+                let h = LoadImageW(
+                    GetModuleHandleW(std::ptr::null()),
+                    std::ptr::without_provenance::<u16>(1), // MAKEINTRESOURCE(1)
+                    IMAGE_ICON,
+                    size,
+                    size,
+                    LR_DEFAULTCOLOR,
+                );
+                if h.is_null() {
+                    LoadIconW(std::ptr::null_mut(), IDI_APPLICATION) as isize
+                } else {
+                    h as isize
+                }
+            }
+        }) as HICON
+    }
+
     /// Adds the icon to the notification area.
     ///
     /// # Safety
@@ -120,7 +158,7 @@ mod tray {
         d.uCallbackMessage = CALLBACK;
         // SAFETY: plain Win32 calls; `d` lives for them.
         unsafe {
-            d.hIcon = LoadIconW(std::ptr::null_mut(), IDI_APPLICATION);
+            d.hIcon = icon(false);
             copy_into(&mut d.szTip, "Fallow");
             if Shell_NotifyIconW(NIM_ADD, &d) == 0 {
                 return false;
@@ -277,7 +315,10 @@ mod tray {
                 if let Some(n) = next {
                     let mut d = data(hwnd);
                     d.uFlags = NIF_INFO;
-                    d.dwInfoFlags = NIIF_INFO;
+                    // Fallow's logo in the notification, not Windows' information sign.
+                    d.dwInfoFlags = NIIF_USER | NIIF_LARGE_ICON;
+                    // SAFETY: plain Win32 calls.
+                    d.hBalloonIcon = unsafe { icon(true) };
                     copy_into(&mut d.szInfoTitle, &n.title);
                     copy_into(&mut d.szInfo, &n.body);
                     if let Ok(mut last) = s.last.lock() {

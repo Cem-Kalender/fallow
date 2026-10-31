@@ -1761,6 +1761,8 @@ pub fn summary(r: &Run) -> Value {
         "id": s.id,
         "repo": s.repo,
         "task": s.task,
+        "feature": s.feature_loop.as_ref().map(|l| l.feature.clone()),
+        "project": s.feature_loop.as_ref().map(|l| l.project.clone()),
         "stage": s.stage,
         "needs_engineer": needs(r),
         "cost_usd": s.cost_usd,

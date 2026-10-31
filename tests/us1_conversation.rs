@@ -157,6 +157,7 @@ output = { reply = "I saw your edit.", step = "clarify" }
         },
     )
     .unwrap();
+    assert_eq!(d["last_edit_by"], "lead", "the lead wrote it: {d}");
     let version = d["version"].as_str().unwrap().to_string();
     sreq(
         tx,
@@ -180,6 +181,17 @@ output = { reply = "I saw your edit.", step = "clarify" }
         },
     );
     assert!(stale.unwrap_err().contains("changed since you opened it"));
+    // T086: the document says who changed it last.
+    let d = sreq(
+        tx,
+        Req::Doc {
+            project: project.clone(),
+            feature: "001-cart".into(),
+            path: "specs/001-cart/spec.md".into(),
+        },
+    )
+    .unwrap();
+    assert_eq!(d["last_edit_by"], "you", "{d}");
     let outside = sreq(
         tx,
         Req::Doc {
@@ -241,6 +253,21 @@ output = { reply = "I saw your edit.", step = "clarify" }
     assert!(v["turns"][1]["failure"].is_null());
     // The edit was committed with the turn.
     assert!(git(&repo, &["show", "001-cart:specs/001-cart/spec.md"]).contains("Only whole items."));
+    // Committed with the lead's turn, it is still the engineer's edit; plan.md, which no turn
+    // touched since, has nobody.
+    let doc = |path: &str| {
+        sreq(
+            tx,
+            Req::Doc {
+                project: project.clone(),
+                feature: "001-cart".into(),
+                path: path.into(),
+            },
+        )
+        .unwrap()
+    };
+    assert_eq!(doc("specs/001-cart/spec.md")["last_edit_by"], "you");
+    assert!(doc("specs/001-cart/plan.md")["last_edit_by"].is_null());
 
     drop(e);
     let _ = std::fs::remove_dir_all(&root);

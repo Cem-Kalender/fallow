@@ -107,19 +107,19 @@ fn main() -> ExitCode {
             Ok(v) => {
                 let runs = v["value"].as_array().cloned().unwrap_or_default();
                 if runs.is_empty() {
-                    println!("No runs.");
+                    println!("No loops.");
                 }
                 for r in runs {
+                    // A loop names its project and feature; 006's runs, their task.
+                    let (kind, what) = match (r["project"].as_str(), r["feature"].as_str()) {
+                        (Some(p), Some(f)) => ("loop", format!("{p} {f}")),
+                        _ => ("run", r["task"].as_str().unwrap_or_default().to_string()),
+                    };
                     println!(
-                        "#{:<4} {:<16} {:<40} {}",
+                        "{kind:<4} {:<4} {:<16} {:<40} {}",
                         r["id"],
                         r["stage"].as_str().unwrap_or_default(),
-                        r["task"]
-                            .as_str()
-                            .unwrap_or_default()
-                            .chars()
-                            .take(40)
-                            .collect::<String>(),
+                        what.chars().take(40).collect::<String>(),
                         r["needs_engineer"].as_str().unwrap_or_default()
                     );
                 }
