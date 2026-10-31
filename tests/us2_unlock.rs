@@ -206,3 +206,93 @@ fn a_new_lock_reopens_only_the_affected_story() {
     drop(e);
     let _ = std::fs::remove_dir_all(&root);
 }
+
+#[test]
+fn a_new_lock_while_paused_at_ready_is_built_and_checked_before_any_merge() {
+    let root = scratch("unlock-paused");
+    let steps = [
+        calc_loop_ok(),
+        task_step(
+            "US1",
+            &[("calc/__init__.py", &format!("{CALC_INIT_SUB}# ints only\n"))],
+            "when = \"lock 2\"",
+        )
+        .replacen("kind = \"build\"", "kind = \"repair\"", 1),
+        check_step("US1", true, ""),
+    ]
+    .concat();
+    let (e, repo, id) = locked_calc(&root, &steps, None);
+    let tx = &e.tx;
+    let v = wait_for(tx, id, "ready to merge", |v| v["stage"] == "ready");
+    let project = v["feature_loop"]["project"].as_str().unwrap().to_string();
+    let feature = "001-calc".to_string();
+    // Paused at ready, unlocked, changed and locked again.
+    ask(tx, Request::Pause { id }).unwrap();
+    wait_for(tx, id, "paused", |v| v["stage"] == "paused");
+    ask(
+        tx,
+        Request::Unlock {
+            project: project.clone(),
+            feature: feature.clone(),
+        },
+    )
+    .unwrap();
+    let path = "specs/001-calc/spec.md".to_string();
+    let doc = sreq(
+        tx,
+        Req::Doc {
+            project: project.clone(),
+            feature: feature.clone(),
+            path: path.clone(),
+        },
+    )
+    .unwrap();
+    let text = doc["text"]
+        .as_str()
+        .unwrap()
+        .replace("the result is 5.", "the result is the int 5.");
+    sreq(
+        tx,
+        Req::PutDoc {
+            project: project.clone(),
+            feature: feature.clone(),
+            path,
+            text,
+            version: doc["version"].as_str().unwrap().to_string(),
+        },
+    )
+    .unwrap();
+    ask(
+        tx,
+        Request::Lock {
+            project,
+            feature,
+            pipeline: None,
+            level: None,
+            budget_usd: None,
+            budget_minutes: None,
+        },
+    )
+    .unwrap();
+    // Nothing merges what the new lock has not been built and checked against.
+    let why = ask(tx, Request::Merge { id }).unwrap_err();
+    assert!(
+        why.contains("not ready") || why.contains("not finished"),
+        "{why}"
+    );
+    ask(tx, Request::GoOn { id }).unwrap();
+    let v = wait_for(tx, id, "ready again, judged", |v| {
+        v["stage"] == "ready" && v["feature_loop"]["outcome"][0] == true
+    });
+    assert_eq!(
+        steps_of(&v, "repair", "US1").len(),
+        1,
+        "the change was built"
+    );
+    assert_eq!(steps_of(&v, "review", "US1").len(), 2, "and checked again");
+    ask(tx, Request::Merge { id }).unwrap();
+    wait_for(tx, id, "merged", |v| v["stage"] == "done");
+    assert!(git(&repo, &["show", "main:calc/__init__.py"]).contains("# ints only"));
+    drop(e);
+    let _ = std::fs::remove_dir_all(&root);
+}

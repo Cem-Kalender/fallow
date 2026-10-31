@@ -95,18 +95,18 @@ pub struct LoopRecord {
     pub outcome: String,
 }
 
-/// A model id as the agent reported it, kept only when it looks like a provider's: a custom
-/// alias could carry the engineer's words.
+/// A model id as the agent reported it, kept only when it has the form of a provider's: the
+/// Claude aliases, or a family, a version number and fixed words after it. A custom alias, or
+/// words after a family's name, could carry the engineer's words.
 pub fn model_id(s: &str) -> Option<String> {
-    const FAMILIES: &[&str] = &[
-        "claude-", "gpt-", "o1", "o3", "o4", "gemini-", "codex-", "opus", "sonnet", "haiku",
-    ];
-    let ok = !s.is_empty()
-        && s.len() <= 64
-        && s.chars().all(|c| {
-            c.is_ascii_alphanumeric() || matches!(c, '-' | '.' | '_' | ':' | '@' | '[' | ']')
-        });
-    (ok && FAMILIES.iter().any(|f| s.starts_with(f))).then(|| s.to_string())
+    static FORM: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let form = FORM.get_or_init(|| {
+        regex::Regex::new(
+            r"^(?:opus|sonnet|haiku|claude-(?:(?:opus|sonnet|haiku)-)?[0-9][0-9.\-]*(?:-(?:opus|sonnet|haiku))?(?:-[0-9]{8})?(?:\[1m\])?|gpt-[0-9][0-9.]*(?:-(?:mini|nano|turbo|codex))?|o[134](?:-(?:mini|pro))?|gemini-[0-9][0-9.]*-(?:pro|flash|flash-lite))$",
+        )
+        .expect("a valid pattern")
+    });
+    (s.len() <= 64 && form.is_match(s)).then(|| s.to_string())
 }
 
 fn known(list: &[&str], s: &str) -> String {
@@ -239,11 +239,17 @@ impl LoopRecord {
             .into(),
             agents,
             phases: l.phases.len() as u32,
-            tasks: l.tasks.len() as u32,
+            // The tasks of the lock in force: one a new lock dropped no longer counts.
+            tasks: l.phases.iter().map(|p| p.spec.tasks.len()).sum::<usize>() as u32,
             tasks_accepted: l
-                .tasks
-                .values()
-                .filter(|t| t.state == crate::run::events::TaskState::Accepted)
+                .phases
+                .iter()
+                .flat_map(|p| &p.spec.tasks)
+                .filter(|t| {
+                    l.tasks
+                        .get(&t.id)
+                        .is_some_and(|x| x.state == crate::run::events::TaskState::Accepted)
+                })
                 .count() as u32,
             repairs: live(StepKind::Repair),
             review_rounds: live(StepKind::Review),
@@ -406,5 +412,26 @@ mod tests {
             Some("claude-sonnet-4-5".into())
         );
         assert_eq!(model_id("fake-1"), None, "not a provider's id");
+        for ok in [
+            "sonnet",
+            "claude-opus-4-1-20250805",
+            "claude-sonnet-4-5",
+            "claude-3-5-haiku-20241022",
+            "gpt-5",
+            "o3",
+            "o4-mini",
+            "gemini-2.5-pro",
+        ] {
+            assert_eq!(model_id(ok).as_deref(), Some(ok), "{ok}");
+        }
+        for bad in [
+            "o3acme-merger",
+            "claude-projectfalcon",
+            "sonnet-for-acme",
+            "gpt-acme",
+            "claude-4-acme",
+        ] {
+            assert_eq!(model_id(bad), None, "{bad}");
+        }
     }
 }

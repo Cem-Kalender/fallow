@@ -45,6 +45,18 @@ fn a_record_holds_no_text_of_the_loop() {
     // The project and the pipeline carry the marker in their names too.
     let repo = repo_named(&root, &format!("shop-{MARKER}"));
     std::fs::create_dir_all(repo.join(".fallow/pipelines")).unwrap();
+    // The builder runs on a model alias the engineer chose, with the marker in it.
+    std::fs::create_dir_all(repo.join(".fallow/agents")).unwrap();
+    let builder = fallow::defs::DEFAULT_AGENTS
+        .iter()
+        .find(|(n, _)| *n == "builder")
+        .unwrap()
+        .1;
+    std::fs::write(
+        repo.join(".fallow/agents/builder.md"),
+        builder.replace("model: sonnet", &format!("model: sonnet-{MARKER}")),
+    )
+    .unwrap();
     let name = format!("std-{MARKER}");
     std::fs::write(
         repo.join(".fallow/pipelines").join(format!("{name}.toml")),
@@ -114,7 +126,16 @@ fn a_record_holds_no_text_of_the_loop() {
             .iter()
             .any(|s| s["agent"] == "fallow:gates")
     );
-    // Written once: the record of an ended loop does not change.
+    // Written once: the record of an ended loop does not change, whatever comes after.
+    let _ = ask(
+        tx,
+        Request::Note {
+            id,
+            text: "after the end".into(),
+            agent: None,
+        },
+    );
+    std::thread::sleep(std::time::Duration::from_secs(2));
     let again = std::fs::read_to_string(&record).unwrap();
     assert_eq!(again, text);
     drop(e);

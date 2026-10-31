@@ -33,7 +33,7 @@ the project's principles are in [`.specify/memory/constitution.md`](.specify/mem
 - **Questions through the lead.** Agents ask through Fallow's `ask` tool. When the spec or the
   spec session settles it, the lead answers, Fallow commits the answer to the spec, and the agent
   goes on; you can overrule it. Otherwise the lead relays the question to you with options and a
-  recommendation, and only the affected story waits.
+  recommendation, and the loop waits for your answer.
 - **The dashboard.** A "Needs you" inbox (questions, features ready to merge, stopped loops), the
   running loops with their phase progress, and desktop notifications from Fallow's tray icon,
   which name the project, the feature and what is needed, and never code or output.

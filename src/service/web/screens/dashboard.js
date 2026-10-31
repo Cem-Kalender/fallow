@@ -105,8 +105,9 @@
     const step = f.stage === "spec_session" ? STEP[f.step] || f.step
       : f.stage === "merged" ? (f.minutes !== undefined && f.minutes !== null ? `${f.minutes} min · ${money(f.cost_usd || 0)}` : "Merged")
       : f.stage === "ready_to_merge" || f.stage === "done_unverified" ? "Locked · done"
+      : f.stage === "stopped" ? "Locked · stopped"
       : loop ? "Locked · implement" : "Locked";
-    const verb = { spec_session: "Continue", locked: "Open", building: "Watch", ready_to_merge: "Review", done_unverified: "Review", merged: "History" }[f.stage] || "Open";
+    const verb = { spec_session: "Continue", locked: "Open", building: "Watch", ready_to_merge: "Review", done_unverified: "Review", stopped: "Open", merged: "History" }[f.stage] || "Open";
     return h`<tr><td class="b">${f.name}</td><td class="muted">${f.project_name}</td><td>${stagePill(f.stage, true)}</td><td class="body-ink">${step}</td><td class="right"><a href="${href}">${verb}</a></td></tr>`;
   }
 
@@ -217,6 +218,7 @@
       <div class="row between base wrap gap-8"><h1 class="section-title m0">What Fallow keeps on disk</h1><a href="#/">Back to the dashboard</a></div>
       <div class="small muted">Everything is in <span class="mono">${d.folder}</span>, readable by you only: ${bytes(d.bytes)} in all. Your project folders are not counted and never touched here.</div>
       ${(d.projects || []).length ? (d.projects || []).map(section) : h`<div class="card empty">Nothing yet.</div>`}
+      ${d.records && d.records.count ? h`<div class="card pad-16 row between wrap gap-8"><span><b>Run records</b> <span class="small muted">${d.records.count} ended loop${d.records.count === 1 ? "" : "s"}: numbers, identifiers and fixed values only, in <span class="mono">records</span></span></span><span class="small muted">${bytes(d.records.bytes)}</span></div>` : ""}
     </div>`.s;
   }
 

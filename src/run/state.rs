@@ -813,6 +813,11 @@ impl RunState {
                         Some(std::mem::replace(&mut f.lock_commit, commit.clone()));
                     f.affected = affected.clone();
                     f.outcome = None;
+                    // Paused when it was ready: going on builds the change, never back to a
+                    // ready stage without an outcome (constitution I).
+                    if self.stage == Stage::Paused && self.paused_from == Some(Stage::Ready) {
+                        self.paused_from = Some(Stage::Building);
+                    }
                     f.relocked_seq = l.seq;
                     if !phases.is_empty() {
                         // The new lock's tasks: a phase keeps where it was when it is the same

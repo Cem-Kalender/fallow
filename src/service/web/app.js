@@ -424,7 +424,12 @@ const Fallow = (() => {
     ready_to_merge: h`<span class="pill green">${long ? "Ready to merge" : "ready"}</span>`,
     done_unverified: h`<span class="pill orange">${long ? "Done, not verified" : "not verified"}</span>`,
     merged: h`<span class="pill grey">${long ? "Merged" : "merged"}</span>`,
+    stopped: h`<span class="pill orange">${long ? "Stopped" : "stopped"}</span>`,
   })[stage] || h`<span class="pill grey">${stage}</span>`;
+
+  // Whether `app`, the container a screen was given, is still the page's: after the engineer
+  // moved on, a screen's late answer must not start anything (each screen gets a fresh one).
+  const here = (app) => document.getElementById("app") === app;
 
   // Re-renders `render()` on every change in `scope`, until the screen is left.
   function live(scope, render) {
@@ -432,7 +437,7 @@ const Fallow = (() => {
     return () => w.stop();
   }
 
-  return { esc, h, raw, md, LOGO, icon, api, get, post, watch, live, confirm, register, route, show, start, money,
+  return { esc, h, raw, md, LOGO, icon, api, get, post, watch, live, here, confirm, register, route, show, start, money,
     MODE_LABEL, messages, composer, syncComposer, chatAct, sendSay, alertLine, atEnd, stagePill, filesRead,
     get headerWatch() { return headerWatch; } };
 

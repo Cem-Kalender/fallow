@@ -18,7 +18,7 @@
   }
 
   function featureLink(p, f) {
-    const loop = f.stage === "building" || f.stage === "ready_to_merge" || f.stage === "done_unverified" || f.stage === "merged";
+    const loop = f.stage === "building" || f.stage === "ready_to_merge" || f.stage === "done_unverified" || f.stage === "merged" || f.stage === "stopped";
     const href = `#/p/${encodeURIComponent(p.id)}/f/${encodeURIComponent(f.name)}${loop ? "/loop" : ""}`;
     const n = f.name.split("-")[0];
     return h`<a class="feat" href="${href}"><span><span class="mono tiny muted">${n}</span> ${f.title}</span>${stagePill(f.stage)}</a>`;
@@ -134,6 +134,7 @@
     enter(app, r) {
       current = { app, id: r.project };
       load(app, r.project).then(() => {
+        if (!Fallow.here(app)) return;
         if (stop) stop();
         const conv = state && state.conversation && state.conversation.id;
         if (conv) stop = live(`conv:${conv}`, () => load(app, r.project));

@@ -112,7 +112,7 @@
     else if (st.when === "phase") parts.push(st.at === "start" ? "at the start of each phase" : "at the end of each phase");
     else parts.push(WHEN[st.when]);
     if ((st.paths || []).length) parts.push(`only when ${st.paths.join(" or ")} changed`);
-    if ((st.parallel_with || []).length) parts.push("in parallel");
+    if ((st.parallel_with || []).length) parts.push(`with ${st.parallel_with.join(", ")} (one after the other for now)`);
     if (st.when !== "task") parts.push(st.on_fail === "repair" ? "on failure: a repair" : "on failure: you");
     return parts.join(" · ");
   }

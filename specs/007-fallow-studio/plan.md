@@ -168,3 +168,14 @@ The order of the work follows the user stories:
 ## Complexity Tracking
 
 No violation needs justifying, provided the amendment in constitution-proposal.md is approved. The amendment, not an exception, is how 007's writes into projects and its lead's answers fit the constitution.
+
+Found by the whole-change review (T088, 2026-10-31), recorded here as known gaps rather than
+hidden:
+- **Egress (V).** 006's capture of Fallow's own traffic (it needed an administrator to read the
+  DNS log on Windows) is not restored. In its place, CI checks the source for client sockets,
+  pushes and the GitHub CLI (`tests/no_egress_no_push.rs`), and the dependency policy bans HTTP
+  client crates. This proves less than a capture, which can come back with a later feature.
+- **Take over a part (II).** 006's "take over" has no route for loops: 007's steering is pause,
+  stop, a note, limits and unlock (FR-019). The engineer works on a feature by unlocking it.
+- **`parallel_with`.** Checkers marked to run together run one after the other, because a loop
+  runs one step at a time. Several loops do run at once, within the cap (FR-004).

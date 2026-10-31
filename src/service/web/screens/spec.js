@@ -183,6 +183,7 @@
       }
       route = r;
       load(app).then(() => {
+        if (!Fallow.here(app)) return;
         if (stop) stop();
         const conv = state && state.conversation && state.conversation.id;
         if (conv) {

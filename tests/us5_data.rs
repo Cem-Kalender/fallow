@@ -58,12 +58,22 @@ fn sizes_per_project_and_deleting_what_is_no_longer_needed() {
     )
     .unwrap_err();
     assert!(why.contains("still running"), "{why}");
+    // Nor can its project go while it builds.
+    let why = sreq(tx, fallow::studio::Req::RemoveProject { id: "repo".into() }).unwrap_err();
+    assert!(why.contains("still going"), "{why}");
     ask(tx, Request::Stop { id, reason: None }).unwrap();
     wait_for(tx, id, "stopped", |v| {
         v["stage"] == "stopped" && v["busy"] == ""
     });
     let dir = root.join("data/runs").join(id.to_string());
     assert!(dir.exists());
+    // The feature says it stopped, not that it builds.
+    let p = sreq(tx, fallow::studio::Req::Project { id: "repo".into() }).unwrap();
+    assert_eq!(
+        p["feature_list"][0]["stage"], "stopped",
+        "{}",
+        p["feature_list"]
+    );
     ask(
         tx,
         Request::DeleteData {

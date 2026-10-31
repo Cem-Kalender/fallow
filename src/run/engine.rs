@@ -338,6 +338,8 @@ pub struct Engine {
     published: BTreeMap<u64, (u64, Option<String>)>,
     /// 007: "Needs you" items become notifications (FR-003a).
     notifier: crate::service::notify::Notifier,
+    /// The ended loops whose record was written or tried: each is tried once per start.
+    recorded: std::collections::BTreeSet<u64>,
 }
 
 pub fn runs_dir(data: &Path) -> PathBuf {
@@ -358,6 +360,7 @@ impl Engine {
         );
         let mut e = Engine {
             notifier,
+            recorded: std::collections::BTreeSet::new(),
             data,
             runs: BTreeMap::new(),
             ctx,
@@ -582,7 +585,11 @@ impl Engine {
         if other["loops"].as_array().is_some_and(|a| !a.is_empty()) {
             projects.push(other);
         }
-        json!({ "projects": projects, "bytes": total, "folder": self.data })
+        // The run records (numbers only): shown, and kept until the engineer deletes them.
+        let records = crate::measure::record::list(&self.data).len();
+        let rbytes = crate::project::data::size(&crate::measure::record::dir(&self.data));
+        json!({ "projects": projects, "bytes": total + rbytes, "folder": self.data,
+                "records": { "count": records, "bytes": rbytes } })
     }
 
     /// Deletes a loop's or a conversation's data, after the page's confirmation naming it
@@ -597,6 +604,12 @@ impl Engine {
                     .ok_or_else(|| format!("there is no loop {n}"))?;
                 if !r.state.stage.is_final() {
                     return Err("the loop is still running: stop it first".into());
+                }
+                // Stopped, its last step may still be ending, with its files open.
+                if r.busy.is_some() {
+                    return Err(
+                        "the loop's last step is still ending: try again in a moment".into(),
+                    );
                 }
                 let merged = r.state.merged.is_some();
                 let repo = r.state.repo.clone();
@@ -716,7 +729,10 @@ impl Engine {
     /// cannot be written is said on the console; the loop is not affected.
     fn record_ended(&mut self) {
         for (id, r) in &self.runs {
-            if !r.state.stage.is_final() || r.state.feature_loop.is_none() {
+            if !r.state.stage.is_final()
+                || r.state.feature_loop.is_none()
+                || !self.recorded.insert(*id)
+            {
                 continue;
             }
             if crate::measure::record::path(&self.data, *id).exists() {
@@ -832,6 +848,10 @@ impl Engine {
         };
         if r.state.merged.is_some() {
             return "merged";
+        }
+        // Stopped by the engineer: whatever it had reached, it is not building nor mergeable.
+        if r.state.stage == Stage::Stopped {
+            return "stopped";
         }
         match r
             .state
@@ -1002,7 +1022,25 @@ impl Engine {
         use crate::studio::Req;
         match req {
             Req::AddProject { path } => self.studio.add_project(&path),
-            Req::RemoveProject { id } => self.studio.remove_project(&id),
+            Req::RemoveProject { id } => {
+                // Its loops still going would lose their spec sessions and vanish from the data
+                // view while they build: they are stopped, or merged, first.
+                let going: Vec<String> = self
+                    .runs
+                    .values()
+                    .filter(|r| !r.state.stage.is_final())
+                    .filter_map(|r| r.state.feature_loop.as_ref())
+                    .filter(|l| l.project == id)
+                    .map(|l| l.feature.clone())
+                    .collect();
+                if !going.is_empty() {
+                    return Err(format!(
+                        "the loops of {} are still going: stop or merge them first",
+                        going.join(", ")
+                    ));
+                }
+                self.studio.remove_project(&id)
+            }
             Req::PatchProject { id, patch } => self.studio.patch_project(&id, &patch),
             Req::SetCommands { id, commands } => self.studio.set_commands(&id, commands),
             Req::GitInit { id } => self.studio.git_init(&id),
@@ -1713,7 +1751,8 @@ pub fn needs(r: &Run) -> Option<String> {
                 "Done, not verified by Fallow ({}): review it before merging",
                 missing.join(", ")
             ),
-            _ => "Ready to merge".into(),
+            Some((true, _)) => "Ready to merge".into(),
+            None => return None,
         });
     }
     match s.stage {

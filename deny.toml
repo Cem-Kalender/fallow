@@ -37,6 +37,13 @@ deny = [
     { crate = "winit" },
     { crate = "gtk" },
     { crate = "webkit2gtk" },
+    # Fallow makes no network requests of its own (constitution V, 007 T088): no HTTP client.
+    { crate = "reqwest" },
+    { crate = "ureq" },
+    { crate = "hyper" },
+    { crate = "curl" },
+    { crate = "isahc" },
+    { crate = "attohttpc" },
     { crate = "netstat2" },
 ]
 

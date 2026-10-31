@@ -67,6 +67,9 @@ jobs:
       - name: "Gate: the page on the loopback only, to the engineer only"
         run: cargo test --locked --test service_http
 
+      - name: "Gate: no outgoing connection of Fallow's own, no push, no pull request"
+        run: cargo test --locked --test no_egress_no_push
+
       - name: "Gate: loops resume after a restart"
         run: cargo test --locked --test us2_resume
 

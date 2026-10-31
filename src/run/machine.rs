@@ -563,6 +563,15 @@ pub fn merge(run: &mut Run, tx: std::sync::mpsc::Sender<Msg>) -> Result<(), Stri
     if run.state.feature_loop.as_ref().is_some_and(|l| l.unlocked) {
         return Err("the feature is unlocked: lock it again before merging".into());
     }
+    // A loop merges only what it finished and judged (constitution I).
+    if run
+        .state
+        .feature_loop
+        .as_ref()
+        .is_some_and(|l| l.outcome.is_none())
+    {
+        return Err("the loop has not finished checking this result".into());
+    }
     if run.busy.is_some() {
         return Err("a merge is already running".into());
     }

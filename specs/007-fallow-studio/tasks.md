@@ -409,7 +409,7 @@ Notes on Phase 9 as built:
 - [ ] T085 The visual check (SC-007, SC-008): each screen next to its mockup at 1440 px and 390 px, with screenshots in `specs/007-fallow-studio/visual-check/`. The engineer approves.
 - [ ] T086 Run quickstart Q1–Q5 with Sonnet in the sandbox (reset it first), and record the runs, their costs, the time from adding the folder to the lead's first reply (SC-001), and the problems found in this file.
 - [X] T087 [P] Documentation: `README.md`; mark 006's superseded user stories in `specs/006-headless-orchestrator/tasks.md`; update the contracts with anything that changed during the build.
-- [ ] T088 A fresh-context review of the whole change, then fix its findings.
+- [X] T088 A fresh-context review of the whole change, then fix its findings.
 
 Notes on Phase 10 as built:
 - T080: `src/measure/record.rs` writes `records/v1/loop-<id>.json` once, when a loop ends, from
@@ -432,6 +432,24 @@ Notes on Phase 10 as built:
   screen opening after four others could wait for one.
 - T086 (open): needs real agents (`claude`, Sonnet) in the sandbox and costs money; left for the
   engineer to run or to approve.
+- T088: the review found one must-fix and seven should-fix findings, all fixed:
+  - a relock while paused at ready went back to ready without checking the change: it now
+    builds and checks it, a loop merges only a judged result, and an unjudged ready loop is
+    never "Ready to merge" (test in `us2_unlock.rs`);
+  - screens start their watchers only while still shown;
+  - a project whose loops are still going cannot be removed;
+  - a stopped loop's feature is "stopped";
+  - a loop's data waits for its last step to end before it can be deleted;
+  - an ended loop's record is tried once per start;
+  - two known gaps are recorded in plan.md's Complexity Tracking (egress capture,
+    `parallel_with`), with a source check in CI (`no_egress_no_push.rs`) and HTTP client crates
+    banned in deny.toml; take-over is recorded there too.
+  - The minor ones fixed: record model ids by form only; the marker test plants a model alias
+    and checks the record after a later event; counts use only the lock in force; the README on
+    waiting questions; the data view shows the run records.
+  - Left as they are: "page ready" counts any answer of the page (a refusal without the secret
+    is one); build worktrees stay registered until the loop's data is deleted, which the data
+    view shows.
 
 ---
 

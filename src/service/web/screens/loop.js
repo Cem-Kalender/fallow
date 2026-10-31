@@ -401,8 +401,11 @@
         app.innerHTML = h`<div class="page"><div class="card empty">This feature has no loop yet: lock it in its spec session. <a href="#/p/${encodeURIComponent(r.project)}/f/${encodeURIComponent(r.feature)}">Open the spec session</a></div></div>`.s;
         return;
       }
+      if (!Fallow.here(app)) return;
       state.id = f.run;
       await refresh(app);
+      if (!Fallow.here(app)) return;
+      if (stop) stop();
       stop = live(`loop:${state.id}`, () => refresh(app));
     } catch (e) {
       app.innerHTML = h`<div class="page"><div class="card empty">${e.message}</div></div>`.s;

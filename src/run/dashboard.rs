@@ -102,10 +102,16 @@ pub fn card(run: &Run, _ctx: &Ctx, project_name: &str) -> Option<Value> {
         })
         .collect();
     let total: usize = l.phases.iter().map(|p| p.spec.tasks.len()).sum();
+    // The tasks of the lock in force: one a new lock dropped no longer counts.
     let done = l
-        .tasks
-        .values()
-        .filter(|t| t.state == TaskState::Accepted)
+        .phases
+        .iter()
+        .flat_map(|p| &p.spec.tasks)
+        .filter(|t| {
+            l.tasks
+                .get(&t.id)
+                .is_some_and(|x| x.state == TaskState::Accepted)
+        })
         .count();
     let current = l.phases.iter().find(|p| p.state != PhaseState::Done);
     let task = current_task(l);
@@ -229,7 +235,7 @@ pub fn needs(run: &Run, project_name: &str) -> Vec<Value> {
         v["text"] = json!(q.text);
         out.push(v);
     }
-    if s.stage == Stage::Ready {
+    if s.stage == Stage::Ready && l.outcome.is_some() {
         let verified = l.outcome.as_ref().is_some_and(|o| o.0);
         let mut v = base(if verified { "ready" } else { "unverified" }, &s.stage_at);
         let tasks: usize = l.phases.iter().map(|p| p.spec.tasks.len()).sum();
