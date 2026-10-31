@@ -149,7 +149,23 @@ pub struct QuestionEntry {
     pub answer: Option<String>,
     pub commit: Option<String>,
     pub affects: Option<String>,
+    pub recommended: Option<String>,
+    pub reopened: Vec<String>,
+    /// The event number of its latest change, and of when it was asked.
     pub seq: u64,
+    pub asked_seq: u64,
+    /// Every change, oldest first, for the feed (FR-023).
+    pub history: Vec<QuestionChange>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct QuestionChange {
+    pub at: String,
+    pub seq: u64,
+    pub state: QuestionState,
+    pub by: Option<String>,
+    pub answer: Option<String>,
+    pub commit: Option<String>,
 }
 
 /// 007: the loop over a locked feature's `tasks.md`.
@@ -698,8 +714,27 @@ impl RunState {
                 answer,
                 commit,
                 affects,
+                recommended,
+                cost_usd,
+                reopened,
             } => {
+                self.cost_usd += cost_usd;
+                let step_phase = self.steps.get(step).and_then(|s| s.phase);
                 if let Some(f) = self.feature_loop.as_mut() {
+                    let asked_seq = f.questions.get(id).map_or(l.seq, |q| q.asked_seq);
+                    let mut history = f
+                        .questions
+                        .get(id)
+                        .map(|q| q.history.clone())
+                        .unwrap_or_default();
+                    history.push(QuestionChange {
+                        at: l.at.clone(),
+                        seq: l.seq,
+                        state: *state,
+                        by: by.clone(),
+                        answer: answer.clone(),
+                        commit: commit.clone(),
+                    });
                     f.questions.insert(
                         id.clone(),
                         QuestionEntry {
@@ -713,9 +748,37 @@ impl RunState {
                             answer: answer.clone(),
                             commit: commit.clone(),
                             affects: affects.clone(),
+                            recommended: recommended.clone(),
+                            reopened: reopened.clone(),
                             seq: l.seq,
+                            asked_seq,
+                            history,
                         },
                     );
+                    if *state == QuestionState::Overruled {
+                        // The work built on the old answer is done again: the phase that holds
+                        // the story's checkpoint (or the asking step's phase) is open again,
+                        // in its session, and the loop is no longer ready (research S-10).
+                        let of_story = |p: &PhaseStatus| {
+                            affects.as_ref().is_some_and(|a| {
+                                p.spec.story.as_ref() == Some(a)
+                                    || p.spec.tasks.iter().any(|t| t.story.as_ref() == Some(a))
+                            })
+                        };
+                        let target = f
+                            .phases
+                            .iter()
+                            .rev()
+                            .find(|p| of_story(p))
+                            .map(|p| p.spec.n)
+                            .or(step_phase);
+                        if let Some(p) = f.phases.iter_mut().find(|p| Some(p.spec.n) == target) {
+                            if p.state == PhaseState::Done {
+                                p.state = PhaseState::Building;
+                            }
+                        }
+                        f.outcome = None;
+                    }
                 }
             }
             Event::Unlocked => {

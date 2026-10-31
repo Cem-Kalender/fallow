@@ -77,6 +77,9 @@ pub enum ToolKind {
     Run,
     Search,
     Mcp,
+    /// 007: Fallow's `ask` and `progress` tools: the question, or the line for the feed.
+    Ask,
+    Progress,
     Other,
 }
 
@@ -89,6 +92,8 @@ impl ToolKind {
             ToolKind::Run => "run",
             ToolKind::Search => "search",
             ToolKind::Mcp => "tool",
+            ToolKind::Ask => "ask",
+            ToolKind::Progress => "progress",
             ToolKind::Other => "tool",
         }
     }

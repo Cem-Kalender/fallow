@@ -69,10 +69,13 @@ A checker other than the reviewer (for example the security reviewer) answers it
   "answer": "...",
   "basis": "spec.md FR-006 | the spec session, turn 14 | none",
   "options": [{"label": "...", "recommended": true}],
-  "reserved": false }
+  "reserved": false,
+  "changes_criterion": false }
 ```
 
 **Fallow's rules**:
 - `answer` needs a `basis` other than `none`;
 - `decided` is accepted only at the Free level;
-- whatever the lead says, the outcome becomes `relay` when the level is Strict, when `reserved` is true, or when the question would change an acceptance scenario (FR-020a).
+- whatever the lead says, the outcome becomes `relay` when the level is Strict, when `reserved` or `changes_criterion` is true or missing, or when the question or the answer names an item the spec reserves for the engineer: Fallow checks this itself, the lead's flags being claims (FR-020a);
+- a lead's call that fails or passes its limit (`lead_answer_sec` in `[defaults]`, 180 by default) relays the question;
+- when relayed, the lead's answer, if it gave one, is its recommendation.

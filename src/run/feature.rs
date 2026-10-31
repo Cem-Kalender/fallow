@@ -222,6 +222,38 @@ fn step(run: &mut Run, ctx: &Ctx) -> Result<(), String> {
     if requeue_cut_short(run)? {
         return Ok(());
     }
+    // A question that waits for the engineer holds the loop: its later work depends on it
+    // (FR-021). Other loops and conversations go on.
+    if let Some(q) = super::questions::waiting(&l).cloned() {
+        if run.state.needs.is_none() {
+            if let Some(t) = q.task.as_ref().filter(|t| l.tasks.contains_key(*t)) {
+                if l.tasks.get(t).is_some_and(|s| s.state != TaskState::Waiting) {
+                    run.append(Event::Task {
+                        id: t.clone(),
+                        state: TaskState::Waiting,
+                        commit: None,
+                        repairs: repairs_of(run, t),
+                    })?;
+                }
+            }
+            let who = run
+                .state
+                .steps
+                .get(&q.step)
+                .and_then(|s| s.def.clone())
+                .unwrap_or_else(|| "builder".into());
+            run.append(Event::NeedsEngineer {
+                why: format!(
+                    "The {who} of {} asks ({}): {}",
+                    q.task.as_deref().unwrap_or("the feature"),
+                    q.id,
+                    q.text
+                ),
+                options: vec!["answer".into(), "stop".into()],
+            })?;
+        }
+        return Ok(());
+    }
     if let Some(n) = machine::queued(run) {
         if let Some((w, u)) = machine::limit_hit(run) {
             return machine::pause_for_limit(run, w, u);
@@ -698,7 +730,9 @@ fn repairs_of(run: &Run, part: &str) -> u32 {
         .steps
         .values()
         .filter(|s| s.kind == StepKind::Repair && s.part.as_deref() == Some(part))
-        .filter(|s| !machine::cut_short(s) && !s.reason.starts_with(RELOCK))
+        .filter(|s| {
+            !machine::cut_short(s) && !s.reason.starts_with(RELOCK) && !s.reason.starts_with(OVERRULE)
+        })
         .filter(|s| {
             s.queued_seq
                 > run
@@ -742,6 +776,9 @@ fn last_go(run: &Run) -> u64 {
 
 /// The reason of the step that brings a reopened story in line with a new lock.
 const RELOCK: &str = "the new lock";
+
+/// The reason of the repair after the engineer overruled the lead (research S-10).
+const OVERRULE: &str = "the engineer overruled";
 
 /// Takes a new lock's documents into the build branch at a task boundary (research S-9, S-17),
 /// keeping the ticks of the tasks already accepted.
@@ -953,6 +990,103 @@ fn phase(
             session: None,
             handover: None,
         });
+    }
+    // An answer the engineer overruled: the work built on it is repaired in the phase's
+    // session, gated, and the story's checkpoint runs again (research S-10).
+    for q in super::questions::overruled(l) {
+        let part = match &q.affects {
+            Some(st) if stories_of(p).contains(st) => {
+                // The phase that holds the story's checkpoint: its last phase.
+                let last = l
+                    .phases
+                    .iter()
+                    .filter(|x| stories_of(x).contains(st))
+                    .map(|x| x.spec.n)
+                    .max();
+                if last != Some(n) {
+                    continue;
+                }
+                st.clone()
+            }
+            Some(_) => continue,
+            None if run.state.steps.get(&q.step).and_then(|s| s.phase) == Some(n) => {
+                format!("phase-{n}")
+            }
+            None => continue,
+        };
+        let repair = run
+            .state
+            .steps
+            .values()
+            .rev()
+            .find(|s| s.kind == StepKind::Repair && s.part.as_deref() == Some(part.as_str()) && s.queued_seq > q.seq)
+            .cloned();
+        match repair {
+            None => {
+                let old = q
+                    .history
+                    .iter()
+                    .rev()
+                    .find(|h| matches!(h.state, QuestionState::Answered | QuestionState::Decided))
+                    .and_then(|h| h.answer.clone())
+                    .unwrap_or_default();
+                let text = prompts::loop_overrule(
+                    &part,
+                    &q.text,
+                    &old,
+                    q.answer.as_deref().unwrap_or_default(),
+                    &q.reopened,
+                );
+                let session = phase_session(run, n);
+                let text = match &session {
+                    Some(_) => text,
+                    None => format!(
+                        "{}\n\n{text}",
+                        machine::instruction_of(
+                            run,
+                            run.state
+                                .steps
+                                .values()
+                                .rev()
+                                .find(|s| s.phase == Some(n) && s.kind == StepKind::Build)
+                                .map_or(0, |s| s.n)
+                        )
+                    ),
+                };
+                return queue(
+                    run,
+                    StepKind::Repair,
+                    Some(&part),
+                    None,
+                    Some(n),
+                    &builder,
+                    session,
+                    &format!("{OVERRULE} the lead's answer to {}", q.id),
+                    text,
+                )
+                .map(|_| ());
+            }
+            Some(r) => match &r.verified {
+                None => return Ok(()),
+                Some((false, reasons)) => {
+                    let reasons = reasons.clone();
+                    return repair_or_ask(run, &part, None, n, pl.caps.task_repairs, &builder, reasons);
+                }
+                Some((true, _)) => {
+                    if let Some(c) = r.verified_commit.clone() {
+                        if pl.steps.iter().any(|s| s.agent == pipeline::GATES) {
+                            match gated(run, ctx, &part, &c)? {
+                                None => return Ok(()),
+                                Some(f) if !f.is_empty() => {
+                                    return repair_or_ask(run, &part, None, n, pl.caps.task_repairs, &builder, f);
+                                }
+                                Some(_) => {}
+                            }
+                        }
+                    }
+                }
+            },
+        }
     }
     // A phase reopened by a new lock: its story's builder brings the work in line with the
     // change, in a fresh session, before anything else (research S-17).
@@ -1614,9 +1748,11 @@ fn finish(run: &mut Run, pl: &Pipeline) -> Result<(), String> {
             .into_iter()
             .filter(|f| !f.starts_with(&handovers) && *f != tasks)
             .filter(|f| {
+                let now = git::show(&run.state.repo, &head, f).ok();
                 !(is_protected(&l, f)
-                    && git::show(&run.state.repo, &head, f).ok()
-                        == git::show(&run.state.repo, &l.lock_commit, f).ok())
+                    && std::iter::once(l.lock_commit.clone())
+                        .chain(super::questions::answer_commits(&l))
+                        .any(|c| git::show(&run.state.repo, &c, f).ok() == now))
             })
             .collect();
         if !after.is_empty() {
@@ -1686,6 +1822,14 @@ fn start(run: &mut Run, ctx: &Ctx, n: u32) -> Result<(), String> {
         _ => {
             let wt = build_wt(run);
             git::worktree_add(&repo, &wt, Some(&l.build_branch), &l.lock_commit)?;
+            // Answers committed to the feature branch since reach the build at this task
+            // boundary (research S-9, S-10).
+            if let Some(a) = super::questions::latest_answer(&l) {
+                if !git::is_ancestor(&repo, &a, &git::head(&wt)?) {
+                    git::merge_into(&wt, &a, &format!("Fallow: the answers to the {} loop's questions", l.feature))
+                        .map_err(|e| format!("cannot take in the committed answers: {}", e.join(", ")))?;
+                }
+            }
             let base = git::head(&wt)?;
             (wt, base)
         }
@@ -1714,6 +1858,8 @@ fn start(run: &mut Run, ctx: &Ctx, n: u32) -> Result<(), String> {
             .map_err(|e| format!("cannot create a process group: {e}"))?,
     );
     run.group = Some(Arc::clone(&group));
+    let (tool, mcp) = super::questions::bridge(run, ctx, n, Arc::clone(&group))?;
+    run.tool = Some(tool);
     let call = Call {
         instruction: {
             let mut text = machine::instruction_of(run, n);
@@ -1729,7 +1875,7 @@ fn start(run: &mut Run, ctx: &Ctx, n: u32) -> Result<(), String> {
         },
         schema: agent::schemas::for_kind(step.kind),
         rights,
-        mcp_config: None,
+        mcp_config: Some(mcp),
         session: session.clone(),
         model: Some(def.model.clone()).filter(|m| !m.is_empty()),
         budget_usd: Some(budget),
@@ -2004,6 +2150,13 @@ fn work_done(run: &mut Run, step: &Step, value: &Value) -> Result<(), String> {
     match value["status"].as_str() {
         Some("blocked") => {
             let mut q = value["question"].as_str().unwrap_or("").to_string();
+            if let Some(w) = l
+                .questions
+                .values()
+                .find(|x| x.step == n && x.state == QuestionState::WaitingEngineer)
+            {
+                q = format!("{} ({})", w.text, w.id);
+            }
             if q.trim().is_empty() {
                 q = summary;
             }

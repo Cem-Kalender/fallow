@@ -245,6 +245,9 @@ fn a_loop_folds_its_phases_tasks_questions_and_outcome() {
             answer: None,
             commit: None,
             affects: Some("US1".into()),
+            recommended: Some("refuse".into()),
+            cost_usd: 0.02,
+            reopened: Vec::new(),
         },
         Event::Unlocked,
         Event::Relocked {

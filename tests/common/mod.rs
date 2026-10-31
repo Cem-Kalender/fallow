@@ -282,6 +282,26 @@ pub fn locked_calc_with(
     pipeline: Option<&str>,
     budget: Option<(f64, u64)>,
 ) -> (fallow::service::ToolEngine, PathBuf, u64) {
+    locked_calc_full(root, loop_steps, pipeline, budget, None)
+}
+
+/// `locked_calc` with the autonomy level set for the feature at the lock.
+#[allow(dead_code)]
+pub fn locked_calc_level(
+    root: &Path,
+    loop_steps: &str,
+    level: fallow::run::events::Level,
+) -> (fallow::service::ToolEngine, PathBuf, u64) {
+    locked_calc_full(root, loop_steps, None, Some((5.0, 60)), Some(level))
+}
+
+fn locked_calc_full(
+    root: &Path,
+    loop_steps: &str,
+    pipeline: Option<&str>,
+    budget: Option<(f64, u64)>,
+    level: Option<fallow::run::events::Level>,
+) -> (fallow::service::ToolEngine, PathBuf, u64) {
     let repo = repo(root);
     let scenario = root.join("scenario.toml");
     std::fs::write(&scenario, format!("{}{loop_steps}", lead_writes_calc())).unwrap();
@@ -327,7 +347,7 @@ pub fn locked_calc_with(
             project,
             feature: "001-calc".into(),
             pipeline: pipeline.map(str::to_string),
-            level: None,
+            level,
             budget_usd: budget.map(|b| b.0),
             budget_minutes: budget.map(|b| b.1),
         },

@@ -12,4 +12,6 @@ These tools are served to agents through `fallow mcp-bridge`, on 006's named pip
 - One open `ask` per step. A second one while the first waits is refused.
 - An `ask` while the loop is paused waits like any other question.
 - A step's token is accepted only while the step runs, and only from its process tree.
-- Answers are commits to `specs/NNN-name/spec.md`, in its `## Clarifications` section under `### Loop <date>`, written by Fallow as `- Q (Tnnn, <agent>): … → A (<lead|engineer>): …`.
+- Answers are commits to `specs/NNN-name/spec.md`, in its `## Clarifications` section under `### Loop <date>`, written by Fallow as `- Q (Tnnn, <agent>): … → A (<lead|engineer>): …`; an overruling as `→ A (engineer, overruling the lead): …`.
+- The commits are made on the feature branch, in the spec session's worktree. The build branch takes them in (a merge) when the next step starts in the build worktree.
+- A step whose question waits for the engineer may end `blocked` with the question's id, or carry on; either way the loop starts nothing new until the engineer answers.

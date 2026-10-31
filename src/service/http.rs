@@ -617,6 +617,16 @@ fn handle(mut req: tiny_http::Request, tx: &Sender<Msg>, port: u16, secret: &str
                     return json_reply(req, Reply::Err("this needs {\"confirm\": true}".into()));
                 }
                 ["merge"] => Request::Merge { id: i },
+                ["questions", q, "answer"] => Request::QuestionAnswer {
+                    id: i,
+                    q: percent_decode(q),
+                    answer: body["answer"].as_str().unwrap_or_default().to_string(),
+                },
+                ["questions", q, "overrule"] => Request::Overrule {
+                    id: i,
+                    q: percent_decode(q),
+                    answer: body["answer"].as_str().unwrap_or_default().to_string(),
+                },
                 ["retry"] => Request::Retry { id: i },
                 ["pause"] => Request::Pause { id: i },
                 ["resume"] => Request::GoOn { id: i },

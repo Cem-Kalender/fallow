@@ -159,7 +159,67 @@ fn fallow_lines(run: &Run, last_line: &BTreeMap<u32, u64>) -> Vec<Value> {
         let detail = failing.iter().map(|f| f.as_str()).collect::<Vec<_>>().join("\n");
         out.push(check(at, g.part.clone(), text, result, detail));
     }
+    // Every answer, with who gave it and its commit (FR-023).
+    let mut by_engineer: Vec<&str> = Vec::new();
+    if let Some(l) = run.state.feature_loop.as_ref() {
+        for q in l.questions.values() {
+            for h in &q.history {
+                let short = h.commit.as_deref().map(|c| &c[..c.len().min(7)]);
+                let answer = h.answer.as_deref().unwrap_or("");
+                let (agent, text, result) = match (h.state, h.by.as_deref()) {
+                    (QuestionState::WithLead, _) => continue,
+                    (QuestionState::Answered, Some("lead")) => {
+                        ("lead", format!("lead answered {}: {answer}", q.id), Some("ok"))
+                    }
+                    (QuestionState::Decided, _) => (
+                        "lead",
+                        format!("decided by the lead ({}): {answer}. Confirm it or overrule it.", q.id),
+                        Some("ok"),
+                    ),
+                    (QuestionState::WaitingEngineer, _) => (
+                        "lead",
+                        match &q.recommended {
+                            Some(r) => format!(
+                                "relayed to you ({}): {}{} The lead recommends: {r}",
+                                q.id,
+                                q.text,
+                                if q.text.trim_end().ends_with(['?', '.', '!']) { "" } else { "." }
+                            ),
+                            None => format!("relayed to you ({}): {}", q.id, q.text),
+                        },
+                        None,
+                    ),
+                    (QuestionState::Answered, _) => {
+                        by_engineer.push(answer);
+                        ("you", format!("You answered {}: {answer}", q.id), Some("ok"))
+                    }
+                    (QuestionState::Overruled, _) => {
+                        by_engineer.push(answer);
+                        ("you", format!("You overruled the lead on {}: {answer}", q.id), Some("ok"))
+                    }
+                };
+                // After the agent's lines of the same second.
+                let mut e = json!({
+                    "at": ms_of(&h.at) + 999, "agent": agent, "task": q.task, "kind": "answer",
+                    "text": text, "question": q.id,
+                });
+                if let Some(r) = result {
+                    e["result"] = json!(r);
+                }
+                if let Some(c) = short {
+                    e["commit"] = json!(c);
+                    e["detail"] = json!(format!("Committed {c} to spec.md's Clarifications"));
+                }
+                out.push(e);
+            }
+        }
+    }
     for st in &run.state.steering {
+        if st.kind == SteeringKind::Answer
+            && by_engineer.contains(&st.detail.as_deref().unwrap_or("").trim())
+        {
+            continue; // shown with its question
+        }
         let (kind, text) = match st.kind {
             SteeringKind::Answer => ("answer", format!("You answered: {}", st.detail.as_deref().unwrap_or(""))),
             SteeringKind::Note => ("note", format!("Your note: {}", st.detail.as_deref().unwrap_or(""))),
@@ -454,6 +514,23 @@ pub fn view(run: &Run, ctx: &Ctx) -> Result<Value, String> {
             "reviews": pl.steps.iter().any(|st| st.when == When::Checkpoint && st.at() == At::End),
         })
     });
+    let questions: Vec<Value> = l
+        .questions
+        .values()
+        .map(|q| {
+            let mut v = json!({
+                "id": q.id, "step": q.step, "task": q.task, "text": q.text, "options": q.options,
+                "state": q.state, "by": q.by, "answer": q.answer, "commit": q.commit,
+                "affects": q.affects, "recommended": q.recommended, "reopened": q.reopened,
+            });
+            v["agent"] = json!(s.steps.get(&q.step).and_then(|x| x.def.clone()));
+            v["overrulable"] = json!(
+                q.state == QuestionState::Decided
+                    || (q.state == QuestionState::Answered && q.by.as_deref() == Some("lead"))
+            );
+            v
+        })
+        .collect();
     let stage = match (&s.stage, &l.outcome) {
         (Stage::Ready, Some((false, _))) => "done_unverified".to_string(),
         (st, _) => serde_json::to_value(st).ok().and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default(),
@@ -470,5 +547,7 @@ pub fn view(run: &Run, ctx: &Ctx) -> Result<Value, String> {
         "repairs": repairs, "merged": s.merged, "integrated": s.integrated,
         "steering": s.steering, "stopped": s.stopped,
         "paused_by_engineer": feature::paused_by_engineer(run),
+        "questions": questions,
+        "level": l.level,
     }))
 }

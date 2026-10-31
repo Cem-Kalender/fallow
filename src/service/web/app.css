@@ -301,6 +301,7 @@ button.task.waiting { background: var(--needs-bg); }
 .ev .who.agent { color: var(--accent); }
 .ev .who.fallow { color: var(--ok); }
 .ev .who.me, .ev .who.ask { color: var(--needs); }
+.ev .who.lead { color: var(--spec); }
 .plus { color: var(--ok); font-weight: 600; }
 .minus { color: #B42318; font-weight: 600; }
 .ok-text { color: var(--ok); font-weight: 600; }
@@ -308,6 +309,9 @@ button.task.waiting { background: var(--needs-bg); }
 .must { color: var(--needs-ink); font-size: 12px; }
 .task-card summary { cursor: pointer; }
 .banner-text { flex: 1 1 420px; }
+.banner-foot { flex-basis: 100%; }
+.rec-pill { margin-left: 4px; font-size: 11px; padding: 1px 7px; }
+.qrow + .qrow { border-top: 1px solid var(--line); margin-top: 10px; padding-top: 10px; }
 @media (max-width: 640px) {
   .tree, .checks { max-width: none; }
 }

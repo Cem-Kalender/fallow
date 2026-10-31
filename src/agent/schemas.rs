@@ -192,3 +192,34 @@ pub fn reply() -> Value {
         }
     })
 }
+
+/// 007: the lead's answer to an agent's question during a loop (contracts/step-results.md,
+/// `answer`). Fallow, not the lead, has the last word on whether it is relayed.
+pub fn answer() -> Value {
+    json!({
+        "type": "object",
+        "required": ["outcome", "basis", "reserved", "changes_criterion"],
+        "properties": {
+            "outcome": { "type": "string", "enum": ["answer", "decided", "relay"] },
+            "answer": { "type": "string", "description": "The answer, for answer or decided" },
+            "basis": {
+                "type": "string",
+                "description": "Where the answer comes from: a document and its place (spec.md FR-006), the spec session's turn, or none"
+            },
+            "options": {
+                "type": "array",
+                "description": "For relay: the choices the engineer has, one recommended",
+                "items": {
+                    "type": "object",
+                    "required": ["label"],
+                    "properties": {
+                        "label": { "type": "string" },
+                        "recommended": { "type": "boolean" }
+                    }
+                }
+            },
+            "reserved": { "type": "boolean", "description": "The question touches an item the spec reserves for the engineer" },
+            "changes_criterion": { "type": "boolean", "description": "The answer would change an acceptance scenario" }
+        }
+    })
+}

@@ -117,6 +117,10 @@ pub enum Request {
     Unlock { project: String, feature: String },
     /// 007: the stories a new lock would reopen, from the working copy (research S-17).
     RelockPreview { project: String, feature: String },
+    /// 007: the engineer answers a question relayed to them, or overrules the lead's answer
+    /// (FR-021, FR-022).
+    QuestionAnswer { id: u64, q: String, answer: String },
+    Overrule { id: u64, q: String, answer: String },
 }
 
 #[derive(Debug)]
@@ -139,6 +143,12 @@ pub enum Msg {
     },
     /// 007: a turn of the lead reports.
     Studio(crate::studio::Note),
+    /// 007: the lead's call for an agent's question ended (research S-10).
+    LeadAnswer {
+        run: u64,
+        q: String,
+        outcome: agent::Outcome,
+    },
     Tick,
     Shutdown,
 }
@@ -167,6 +177,9 @@ pub struct Run {
     pub group: Option<Arc<crate::platform::job::Group>>,
     /// Why the next step has not started: no free slot, or not enough memory.
     pub waiting: Option<String>,
+    /// 007: the running step's MCP tools, and its `ask` waiting for the lead (research S-10).
+    pub tool: Option<super::questions::StepTool>,
+    pub asking: Option<super::questions::Asking>,
 }
 
 impl Run {
@@ -268,6 +281,8 @@ pub struct Ctx {
     pub pid: u32,
     /// 007: the engineer's configuration folder (`~/.fallow`), for definitions.
     pub config: Option<PathBuf>,
+    /// 007: the suffix of the pipe the step tools' bridge connects to (tests have their own).
+    pub endpoint: Option<String>,
 }
 
 pub struct Engine {
@@ -326,6 +341,8 @@ impl Engine {
                         activity: 0,
                         group: None,
                         waiting: None,
+                        tool: None,
+                        asking: None,
                     };
                     if !run.state.stage.is_final() {
                         if let Err(err) = super::machine::resume(&mut run) {
@@ -370,8 +387,27 @@ impl Engine {
                     self.events(&scope, after, reply);
                 }
                 Msg::Request(Request::ToolCall { token, name, args }, reply) => {
-                    self.studio.tool_call(&token, &name, args, reply);
-                    self.bus.publish(json!({ "type": "studio" }));
+                    match self.run_of_token(&token) {
+                        Some(id) => {
+                            let lead = self.lead_of(id);
+                            if let Some(r) = self.runs.get_mut(&id) {
+                                super::questions::call(r, &self.ctx, lead, &name, args, reply);
+                            }
+                        }
+                        None => {
+                            self.studio.tool_call(&token, &name, args, reply);
+                            self.bus.publish(json!({ "type": "studio" }));
+                        }
+                    }
+                }
+                Msg::LeadAnswer { run, q, outcome } => {
+                    let lead = self.lead_of(run).ok();
+                    if let Some(r) = self.runs.get_mut(&run) {
+                        if let Err(e) = super::questions::lead_done(r, lead.as_ref(), &q, Ok(outcome)) {
+                            self.console.push(format!("run {run}: {e}"));
+                        }
+                    }
+                    self.drive(run);
                 }
                 Msg::Studio(note) => {
                     let done = matches!(note, crate::studio::Note::TurnDone { .. });
@@ -388,6 +424,9 @@ impl Engine {
                     if let Some(r) = self.runs.get_mut(&run) {
                         r.busy = None;
                         r.group = None;
+                        // The step's tools end with it; a question it asked is still answered.
+                        r.tool = None;
+                        r.asking = None;
                         if let Err(e) = super::machine::on_done(r, &self.ctx, done) {
                             self.console.push(format!("run {run}: {e}"));
                         }
@@ -720,7 +759,10 @@ impl Engine {
                 feature,
                 finding,
             } => self.studio.dismiss(&project, &feature, finding),
-            Req::ToolOpen { token, pid } => self.studio.tool_open(&token, pid),
+            Req::ToolOpen { token, pid } => match self.run_of_token(&token) {
+                Some(id) => super::questions::open(&self.runs[&id], pid),
+                None => self.studio.tool_open(&token, pid),
+            },
         }
     }
 
@@ -921,6 +963,8 @@ impl Engine {
             activity: 0,
             group: None,
             waiting: None,
+            tool: None,
+            asking: None,
         };
         run.append(Event::LoopCreated {
             project: p.id.clone(),
@@ -1130,9 +1174,23 @@ impl Engine {
             Request::RelockPreview { project, feature } => {
                 self.relock_preview(&project, &feature)
             }
-            Request::Answer { id, text } => run_mut(self, id)
-                .and_then(|r| super::machine::answer(r, &text))
-                .map(|()| json!({})),
+            Request::Answer { id, text } => {
+                // A question relayed to the engineer is answered as such: committed first.
+                let waiting = self
+                    .runs
+                    .get(&id)
+                    .and_then(|r| r.state.feature_loop.as_ref())
+                    .and_then(super::questions::waiting)
+                    .map(|q| q.id.clone());
+                match waiting {
+                    Some(q) => self.question_answer(id, &q, &text, false),
+                    None => run_mut(self, id)
+                        .and_then(|r| super::machine::answer(r, &text))
+                        .map(|()| json!({})),
+                }
+            }
+            Request::QuestionAnswer { id, q, answer } => self.question_answer(id, &q, &answer, false),
+            Request::Overrule { id, q, answer } => self.question_answer(id, &q, &answer, true),
             Request::Limits {
                 id,
                 usd,
@@ -1208,6 +1266,38 @@ impl Engine {
         let id = stored.max(self.runs.keys().next_back().map_or(1, |m| m + 1));
         let _ = std::fs::write(&path, (id + 1).to_string());
         id
+    }
+}
+
+impl Engine {
+    /// The loop whose running step holds this tool token.
+    fn run_of_token(&self, token: &str) -> Option<u64> {
+        self.runs
+            .iter()
+            .find(|(_, r)| r.tool.as_ref().is_some_and(|t| t.token == token))
+            .map(|(id, _)| *id)
+    }
+
+    /// The lead of a loop's feature: its spec session, worktree and approved commands.
+    fn lead_of(&self, id: u64) -> Result<super::questions::Lead, String> {
+        let l = self
+            .runs
+            .get(&id)
+            .and_then(|r| r.state.feature_loop.as_ref())
+            .ok_or("not a feature loop")?;
+        self.studio.lead_of(&l.project, &l.feature)
+    }
+
+    fn question_answer(&mut self, id: u64, q: &str, answer: &str, overrule: bool) -> Result<Value, String> {
+        let lead = self.lead_of(id)?;
+        let r = run_mut(self, id)?;
+        let out = if overrule {
+            super::questions::overrule(r, &lead, q, answer)
+        } else {
+            super::questions::engineer_answer(r, &lead, q, answer)
+        };
+        self.drive(id);
+        out
     }
 }
 

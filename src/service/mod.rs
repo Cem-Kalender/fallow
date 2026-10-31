@@ -79,6 +79,7 @@ pub fn serve(
         exe,
         pid: std::process::id(),
         config: paths.dir.clone(),
+        endpoint: None,
     };
     // The pipe first: it is what makes this the only service.
     let secret = crate::platform::random::hex(32).map_err(|e| e.to_string())?;
@@ -316,6 +317,7 @@ pub fn engine_for_tests(
         exe: std::env::current_exe().unwrap_or_default(),
         pid: std::process::id(),
         config: None,
+        endpoint: None,
     };
     let engine = Engine::load(data, ctx)?;
     let h = std::thread::spawn(move || engine.serve(rx));
@@ -352,6 +354,7 @@ pub fn engine_with_tools(
         exe,
         pid: std::process::id(),
         config,
+        endpoint: Some(suffix.clone()),
     };
     let tx_pipe = tx.clone();
     let listener = pipe::listen(

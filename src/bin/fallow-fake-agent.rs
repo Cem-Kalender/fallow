@@ -23,6 +23,7 @@
 //! say = "a reply"                # an assistant message, streamed as deltas with
 //!                                # --include-partial-messages
 //! ask = "a question"             # calls Fallow's MCP `ask` tool; its answer replaces $ANSWER
+//! also_ask = "another question"  # a second `ask` right after; its answer replaces $ANSWER2
 //! run = [{ command = "python -m unittest", output = "OK", ok = true }]
 //!                                # commands it "ran" (scripted output), refused like Claude
 //!                                # Code when the rules do not allow them
@@ -72,6 +73,7 @@ struct Step {
     is_error: bool,
     say: Option<String>,
     ask: Option<String>,
+    also_ask: Option<String>,
     approve: Option<String>,
     #[serde(default)]
     run: Vec<Ran>,
@@ -376,12 +378,11 @@ fn main() -> ExitCode {
                 {"type": "tool_result", "tool_use_id": id, "is_error": !r.ok, "content": r.output}]}}));
         }
     }
-    let mut answer = String::new();
-    if let Some(q) = &step.ask {
+    let mut ask = |q: &str| -> String {
         let id = tool_id();
         emit(json!({"type": "assistant", "message": {"content": [
             {"type": "tool_use", "id": id, "name": "mcp__fallow__ask", "input": {"question": q}}]}}));
-        answer = match &mcp_config {
+        let answer = match &mcp_config {
             Some(c) => {
                 mcp_call(c, "ask", json!({"question": q})).unwrap_or_else(|e| format!("error: {e}"))
             }
@@ -389,7 +390,10 @@ fn main() -> ExitCode {
         };
         emit(json!({"type": "user", "message": {"content": [
             {"type": "tool_result", "tool_use_id": id, "content": answer}]}}));
-    }
+        answer
+    };
+    let answer = step.ask.as_deref().map(&mut ask).unwrap_or_default();
+    let answer2 = step.also_ask.as_deref().map(&mut ask).unwrap_or_default();
     let mut approved = String::new();
     let mut prompt_denials: Vec<Value> = Vec::new();
     if let Some(cmd) = &step.approve {
@@ -482,6 +486,7 @@ fn main() -> ExitCode {
                 &[
                     ("$HEAD", &head),
                     ("$SESSION", &session),
+                    ("$ANSWER2", &answer2),
                     ("$ANSWER", &answer),
                     ("$APPROVED", &approved),
                 ],

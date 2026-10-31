@@ -263,3 +263,58 @@ pub fn loop_make(cx: &LoopCx, part: &str, agent: &str, what: &str) -> String {
 
 /// The note a resumed step gets after Fallow stopped (research R-2).
 pub const LOOP_INTERRUPTED: &str = "You were interrupted because Fallow stopped. Check the state of your working copy, continue the same task, and return your result.";
+
+/// What the lead is given to answer an agent's question during a loop (research S-10).
+pub struct AskCx<'a> {
+    pub id: &'a str,
+    pub feature_dir: &'a str,
+    pub asked_by: &'a str,
+    pub task: Option<&'a str>,
+    pub question: &'a str,
+    pub options: &'a [String],
+    /// `strict`, `normal` or `free`.
+    pub level: &'a str,
+    pub reserved: &'a [String],
+}
+
+/// The lead's call for an agent's `ask` (header `Fallow step: lead_answer (part q1)`), forked
+/// from the spec session.
+pub fn loop_answer(a: &AskCx) -> String {
+    let mut s = header("lead_answer", Some(a.id));
+    s.push_str(&format!(
+        "The feature you worked out with the engineer is locked and being built. The {} working on {} asks:\n\n> {}\n",
+        a.asked_by,
+        a.task.unwrap_or("the feature"),
+        a.question
+    ));
+    if !a.options.is_empty() {
+        s.push_str(&format!("\nThe options it sees: {}.\n", a.options.join("; ")));
+    }
+    s.push_str(&format!(
+        "\nThe locked documents are in `{}`, with what you and the engineer said in this conversation. You change nothing: Fallow commits your answer to spec.md's Clarifications.\n\nThe autonomy level is {}:\n- strict: relay every question to the engineer, with your recommendation;\n- normal: answer only what the locked documents or the engineer's conversations settle; relay the rest;\n- free: also decide a small open question yourself (`decided`): one that touches no reserved item, no acceptance scenario, no public interface (commands, API, file or data formats) and no dependency.\n",
+        a.feature_dir, a.level
+    ));
+    if a.reserved.is_empty() {
+        s.push_str("\nThe spec reserves nothing for the engineer.\n");
+    } else {
+        s.push_str("\nReserved for the engineer (always relayed):\n");
+        for r in a.reserved {
+            s.push_str(&format!("- {r}\n"));
+        }
+    }
+    s.push_str("\nReturn `outcome` (answer, decided or relay), the `answer`, its `basis` (the document and place, or the conversation's turn; `none` when nothing settles it), `options` with one recommended when you relay, `reserved` and `changes_criterion`.");
+    s
+}
+
+/// A repair after the engineer overruled an answer the builder worked from (research S-10).
+pub fn loop_overrule(part: &str, question: &str, old: &str, new: &str, tasks: &[String]) -> String {
+    let mut s = header("repair", Some(part));
+    s.push_str(&format!(
+        "The engineer overruled an answer you worked from.\n\nThe question: {question}\nThe answer you had: {old}\nThe engineer's answer: {new}\n\nFallow committed it to spec.md's Clarifications."
+    ));
+    if !tasks.is_empty() {
+        s.push_str(&format!(" The work built on the old answer: {}.", tasks.join(", ")));
+    }
+    s.push_str("\n\nBring the code and tests in line with the engineer's answer, and run the tests. Fallow commits your changes when the step ends, runs the gates, and the story is checked again. Return the same result as for a task (`task` names what you repaired).");
+    s
+}

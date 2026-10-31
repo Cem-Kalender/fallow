@@ -289,7 +289,7 @@ Unless a task says otherwise, tests use the `fake` runtime (research S-13).
 
 ### Tests for User Story 4
 
-- [ ] T059 [P] [US4] `tests/us4_ask.rs`:
+- [X] T059 [P] [US4] `tests/us4_ask.rs`:
   - an answer needs a basis;
   - `decided` happens only at Free, and only for a small question as FR-020a defines it;
   - Strict always relays, and reserved items or a change to a criterion are always relayed (CI gate II);
@@ -302,12 +302,12 @@ Unless a task says otherwise, tests use the `fake` runtime (research S-13).
 
 ### Implementation for User Story 4
 
-- [ ] T060 [US4] Wire `ask` and `progress` to loop steps in `src/mcp/` and `src/run/questions.rs`: tokens per step, one open question, and the question's events.
-- [ ] T061 [US4] The lead's answer call in `src/run/questions.rs`: a fork of the spec session, the `answer` schema, and the rules of contracts/step-results.md, including the autonomy level and the reserved items.
-- [ ] T062 [US4] Commit answers in `src/run/questions.rs`: to the feature branch's `spec.md`, merged into the build branch at the next task boundary.
-- [ ] T063 [US4] Relay to the engineer: the step ends blocked, the loop waits (clarified 2026-10-30), the answer API, and the step resumes in its session.
-- [ ] T064 [US4] Overrule: the reversal commit, the tasks after the answer reopened as a repair, and the checkpoint run again.
-- [ ] T065 [US4] On the page, in `screens/loop.js` and the inbox: the question banner with options and the recommendation, answer and overrule buttons, and "lead answered" or "decided by the lead" entries with their commits in the feed.
+- [X] T060 [US4] Wire `ask` and `progress` to loop steps in `src/mcp/` and `src/run/questions.rs`: tokens per step, one open question, and the question's events.
+- [X] T061 [US4] The lead's answer call in `src/run/questions.rs`: a fork of the spec session, the `answer` schema, and the rules of contracts/step-results.md, including the autonomy level and the reserved items.
+- [X] T062 [US4] Commit answers in `src/run/questions.rs`: to the feature branch's `spec.md`, merged into the build branch at the next task boundary.
+- [X] T063 [US4] Relay to the engineer: the step ends blocked, the loop waits (clarified 2026-10-30), the answer API, and the step resumes in its session.
+- [X] T064 [US4] Overrule: the reversal commit, the tasks after the answer reopened as a repair, and the checkpoint run again.
+- [X] T065 [US4] On the page, in `screens/loop.js` and the inbox: the question banner with options and the recommendation, answer and overrule buttons, and "lead answered" or "decided by the lead" entries with their commits in the feed.
 
 **Checkpoint**: Q4 of quickstart.md works with real agents.
 

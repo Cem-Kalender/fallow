@@ -927,6 +927,25 @@ impl Studio {
         Ok((p, f, wd))
     }
 
+    /// 007: the lead of a locked feature, for an agent's question during its loop (research
+    /// S-10): the spec session to fork, the feature's worktree, and the approved commands.
+    pub fn lead_of(&self, project: &str, feature: &str) -> Result<crate::run::questions::Lead, String> {
+        let (p, f, wd) = self.feature_ctx(project, feature)?;
+        if wd == p.path {
+            return Err("the feature has no worktree of its own".into());
+        }
+        let session = f
+            .conversation
+            .as_ref()
+            .and_then(|c| self.convs.get(c))
+            .and_then(|c| c.state.session.clone());
+        Ok(crate::run::questions::Lead {
+            session,
+            workdir: wd,
+            approved: p.approved_commands.clone(),
+        })
+    }
+
     /// The documents of a feature the page shows and the engineer may edit.
     pub fn docs(f: &Feature) -> Vec<String> {
         let mut v: Vec<String> = [

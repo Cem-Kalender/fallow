@@ -67,6 +67,23 @@
   // ---- The question banner ------------------------------------------------------------------
   function banner(v) {
     const n = v.needs;
+    const q = (v.questions || []).find((x) => x.state === "waiting_engineer");
+    if (q) {
+      const opts = (q.options || []).slice();
+      if (q.recommended) opts.sort((a, b) => (b === q.recommended) - (a === q.recommended));
+      return h`<div class="card needs pad-16 row wrap top gap-16" role="region" aria-label="A question for you">
+        <div class="grow min0 banner-text">
+          <div class="row wrap gap-8"><span class="pill orange">${q.agent || "builder"} asks · ${q.task || q.id}</span><span class="tiny muted">the loop waits for your answer; other loops go on</span></div>
+          <div class="b mt-8 lh">${q.text}</div>
+          ${q.recommended ? h`<div class="small muted mt-6">The lead recommends: ${q.recommended}</div>` : ""}
+        </div>
+        <div class="row wrap gap-8">
+          ${opts.map((o, i) => h`<button class="btn${i ? " btn2" : ""}" data-act="qanswer" data-q="${q.id}" data-answer="${o}">${o}${o === q.recommended ? h` <span class="pill blue rec-pill">recommended</span>` : ""}</button>`)}
+          <button class="btn${opts.length ? " btn2" : ""}" data-act="qwrite" data-q="${q.id}">Write an answer…</button>
+        </div>
+        <div class="banner-foot tiny muted">Your answer is committed to spec.md (Clarifications) and the ${q.agent || "builder"} resumes in its session with that commit.</div>
+      </div>`;
+    }
     if (!n) {
       if (v.waiting) return h`<div class="notice">${v.waiting}</div>`;
       if (v.unlocked) return h`<div class="notice">The feature is unlocked: the loop waits for the new lock. <a href="#/p/${encodeURIComponent(v.project)}/f/${encodeURIComponent(v.feature)}">Open the spec session</a></div>`;
@@ -152,6 +169,7 @@
     if (e.agent === "fallow") return h`<span class="who fallow">Fallow</span>`;
     if (e.agent === "you") return h`<span class="who me">you</span>`;
     if (e.kind === "ask") return h`<span class="who ask">question</span>`;
+    if (e.agent === "lead") return h`<span class="who lead">lead</span>`;
     return h`<span class="who agent">${e.agent || "agent"}</span>`;
   }
 
@@ -184,7 +202,13 @@
         body = h`<div class="grow min0"><span>${e.text}</span> ${resultPill(e.result)}${e.detail ? h`<div class="term">${e.detail}</div>` : ""}</div>`;
         break;
       case "ask":
-        body = h`<span class="grow min0">${task}<b>${e.text}</b> <span class="tiny muted">The builder's session is kept and resumes with your answer.</span></span>`;
+        // The agent's `ask` call (with the tool's answer), or the step that ended blocked.
+        body = e.output
+          ? h`<span class="grow min0">${task}<b>${e.text}</b> <span class="tiny muted">asked through Fallow, which asks the lead</span></span>`
+          : h`<span class="grow min0">${task}<b>${e.text}</b> <span class="tiny muted">The builder's session is kept and resumes with your answer.</span></span>`;
+        break;
+      case "answer":
+        body = h`<span class="grow min0">${task}${e.text}${e.commit ? h` <span class="mono tiny muted">${e.commit}</span>` : ""}</span>`;
         break;
       default:
         body = h`<div class="grow min0">${task}<span>${e.text}</span> ${resultPill(e.result)}${e.output ? h`<div class="term">${e.output}</div>` : ""}</div>`;
@@ -257,11 +281,26 @@
       <h2 class="th mb-8">${s.id} acceptance</h2>
       ${s.criteria.map((c) => h`<div class="kv"><span>${plain(c.text)}${c.must_fail ? h` <span class="must">must fail</span>` : ""}</span>${({ passed: h`<span class="pill green">checked</span>`, failed: h`<span class="pill red">failed</span>` })[c.state] || h`<span class="pill grey">not yet</span>`}</div>`)}
       <div class="tiny muted mt-6">${s.reviewer ? `Checked by ${s.reviewer}, by running each one.` : "The reviewer confirms each one by running it at the checkpoint."}</div></div>`);
+    const STATE = {
+      with_lead: h`<span class="pill grey">with the lead</span>`,
+      waiting_engineer: h`<span class="pill orange">asks you</span>`,
+      overruled: h`<span class="pill grey">overruled</span>`,
+    };
+    const qpill = (q) => STATE[q.state] || (q.state === "decided" ? h`<span class="pill orange">decided by the lead</span>`
+      : q.by === "lead" ? h`<span class="pill green">lead answered</span>` : h`<span class="pill green">you answered</span>`);
+    const questions = (v.questions || []).map((q) => h`<div class="qrow">
+      <div class="kv"><span><span class="mono tiny">${q.id}</span> <span class="mono tiny muted">${q.task || ""}</span></span>${qpill(q)}</div>
+      <div class="small lh">${q.text}</div>
+      ${q.answer ? h`<div class="small lh body-ink">→ ${q.answer}${q.commit ? h` <span class="mono tiny muted">${short(q.commit)}</span>` : ""}</div>` : ""}
+      ${q.reopened && q.reopened.length ? h`<div class="tiny muted">Reopened ${q.reopened.join(", ")}</div>` : ""}
+      ${q.overrulable ? h`<div class="mt-6"><button class="btn btn2 sm" data-act="overrule" data-q="${q.id}">Overrule…</button></div>` : ""}
+    </div>`);
     const commits = v.checks.commits || [];
     const steering = (v.steering || []).slice(-6).map((s) => h`<div>${hhmm(Date.parse(s.at))} ${s.kind.replace(/_/g, " ")}${s.detail ? `: ${s.detail}` : ""}</div>`);
     return h`<aside class="col checks" aria-label="Checks">
       <div class="card pad-14"><h2 class="th mb-8">Gates vs baseline</h2>${gates}</div>
       ${stories}
+      ${questions.length ? h`<div class="card pad-14"><h2 class="th mb-8">Questions <span class="tiny muted">· ${v.level || "normal"}</span></h2>${questions}</div>` : ""}
       <div class="card pad-14"><h2 class="th mb-8">Commits on ${v.build_branch}</h2>
         ${commits.length ? commits.slice(0, 6).map((c) => h`<div class="kv"><span class="mono tiny">${short(c.commit)}</span><span class="small">${c.task} ${c.text}</span></div>`) : h`<div class="small muted">None yet.</div>`}
         ${commits.length > 6 ? h`<div class="kv"><span class="muted">+ ${commits.length - 6} earlier</span><span></span></div>` : ""}</div>
@@ -425,6 +464,26 @@
         const n = Number(usd);
         if (!(n > 0)) return alertLine("The limit must be a number above zero.");
         return run("limits", { usd: n });
+      }
+      case "qanswer":
+        return run(`questions/${encodeURIComponent(el.dataset.q)}/answer`, { answer: el.dataset.answer });
+      case "qwrite": {
+        const q = (state.view.questions || []).find((x) => x.id === el.dataset.q);
+        const text = await confirm({ title: `Answer ${q ? q.agent || "the builder" : "the builder"}`, text: q ? q.text : "", ok: "Send the answer", input: { label: "Your answer", value: "" } });
+        if (text) run(`questions/${encodeURIComponent(el.dataset.q)}/answer`, { answer: text });
+        return;
+      }
+      case "overrule": {
+        const q = (state.view.questions || []).find((x) => x.id === el.dataset.q);
+        if (!q) return;
+        const text = await confirm({
+          title: "Overrule the lead?",
+          text: `${q.text} The lead answered: ${q.answer}. Your answer is committed, the work built on the old one is repaired, and the story is checked again.`,
+          ok: "Overrule",
+          input: { label: "Your answer", value: "" },
+        });
+        if (text) run(`questions/${encodeURIComponent(q.id)}/overrule`, { answer: text });
+        return;
       }
       case "option": {
         const o = el.dataset.option;

@@ -50,6 +50,9 @@ pub struct Defaults {
     pub repair_cap: u32,
     pub max_parallel: u32,
     pub memory_budget_mb: u64,
+    /// 007: how long the lead may take to answer an agent's question before it is relayed to
+    /// the engineer (research S-10).
+    pub lead_answer_sec: u64,
 }
 
 impl Default for Defaults {
@@ -62,6 +65,7 @@ impl Default for Defaults {
             repair_cap: 2,
             max_parallel: 4,
             memory_budget_mb: 0,
+            lead_answer_sec: 180,
         }
     }
 }

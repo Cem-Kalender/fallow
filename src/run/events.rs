@@ -406,6 +406,15 @@ pub enum Event {
         answer: Option<String>,
         commit: Option<String>,
         affects: Option<String>,
+        /// The lead's recommendation, for a question relayed to the engineer.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        recommended: Option<String>,
+        /// What the lead's call cost; it counts against the loop's budget (research S-10).
+        #[serde(default, skip_serializing_if = "is_zero_f")]
+        cost_usd: f64,
+        /// Overruled: the tasks built on the old answer, reopened.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        reopened: Vec<String>,
     },
     Unlocked,
     Relocked {
@@ -475,6 +484,10 @@ pub enum PhaseState {
     Done,
     Reopened,
     Waiting,
+}
+
+fn is_zero_f(v: &f64) -> bool {
+    *v == 0.0
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

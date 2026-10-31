@@ -85,8 +85,9 @@ fn main() -> ExitCode {
                 .map(|a| a.to_string_lossy().into_owned());
             while let Some(a) = rest.next() {
                 match (a.as_str(), rest.next()) {
-                    ("--config-dir", Some(d)) => config_dir = Some(std::path::PathBuf::from(d)),
-                    ("--data-dir", Some(d)) => data_dir = Some(std::path::PathBuf::from(d)),
+                    // Absolute: git runs in other folders (worktrees under the data folder).
+                    ("--config-dir", Some(d)) => config_dir = Some(absolute(&d)),
+                    ("--data-dir", Some(d)) => data_dir = Some(absolute(&d)),
                     _ => return usage(format!("serve: unknown option {a}")),
                 }
             }
@@ -151,4 +152,8 @@ fn main() -> ExitCode {
         "bench" => fail("measured series arrive with 006 user story 7"),
         other => usage(format!("unknown command {other:?}")),
     }
+}
+
+fn absolute(d: &str) -> std::path::PathBuf {
+    std::path::absolute(d).unwrap_or_else(|_| std::path::PathBuf::from(d))
 }

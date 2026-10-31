@@ -255,6 +255,24 @@ fn tool_call(b: &Value) -> Event {
             input["pattern"].as_str().unwrap_or_default().to_string(),
             String::new(),
         ),
+        "mcp__fallow__ask" => (
+            ToolKind::Ask,
+            input["question"].as_str().unwrap_or_default().to_string(),
+            input["options"]
+                .as_array()
+                .map(|o| {
+                    o.iter()
+                        .filter_map(|x| x.as_str())
+                        .collect::<Vec<_>>()
+                        .join(" | ")
+                })
+                .unwrap_or_default(),
+        ),
+        "mcp__fallow__progress" => (
+            ToolKind::Progress,
+            input["text"].as_str().unwrap_or_default().to_string(),
+            String::new(),
+        ),
         n if n.starts_with("mcp__fallow__") => (
             ToolKind::Mcp,
             n.trim_start_matches("mcp__fallow__").to_string(),
