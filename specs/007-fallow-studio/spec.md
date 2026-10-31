@@ -289,7 +289,7 @@ Claude Code is the first runtime. Others (Codex, Gemini) can be added later with
 **Seeing the loop**
 
 - **FR-016a**: Every loop MUST have a cost budget and a time budget:
-  - **At the lock**, Fallow suggests both from the number of tasks, using per-task amounts set per project (by default $0.25 and 10 minutes per task). The engineer can change them before locking, and raise them later.
+  - **At the lock**, Fallow suggests both from the number of tasks, using per-task amounts set per project (by default $0.50 and 10 minutes per task; $0.25 proved too low with real agents, T086). The engineer can change them before locking, and raise them later.
   - **When either is reached**, the loop pauses at the end of the current step and asks the engineer, offering "continue for one step" and "raise the limit". Paused time and time spent waiting for the engineer do not count.
   - **The cost counts every agent of the loop**, including the lead's answers during the loop. The spec session and the project conversation are not counted.
 - **FR-017**: The loop page MUST show:

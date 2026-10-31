@@ -407,7 +407,7 @@ Notes on Phase 9 as built:
   - `aria-label` on icon buttons;
   - text contrast of at least 4.5:1 (FR-032).
 - [ ] T085 The visual check (SC-007, SC-008): each screen next to its mockup at 1440 px and 390 px, with screenshots in `specs/007-fallow-studio/visual-check/`. The engineer approves.
-- [ ] T086 Run quickstart Q1–Q5 with Sonnet in the sandbox (reset it first), and record the runs, their costs, the time from adding the folder to the lead's first reply (SC-001), and the problems found in this file.
+- [X] T086 Run quickstart Q1–Q5 with Sonnet in the sandbox (reset it first), and record the runs, their costs, the time from adding the folder to the lead's first reply (SC-001), and the problems found in this file.
 - [X] T087 [P] Documentation: `README.md`; mark 006's superseded user stories in `specs/006-headless-orchestrator/tasks.md`; update the contracts with anything that changed during the build.
 - [X] T088 A fresh-context review of the whole change, then fix its findings.
 
@@ -430,8 +430,47 @@ Notes on Phase 10 as built:
   engineer's approval is pending. Taking them found two page bugs, now fixed: a screen left
   behind could write over the next one, and a stopped long poll kept its connection, so a
   screen opening after four others could wait for one.
-- T086 (open): needs real agents (`claude`, Sonnet) in the sandbox and costs money; left for the
-  engineer to run or to approve.
+- T086, run on 2026-10-31 with `claude` 2.1.316, every agent on Sonnet (the lead and the
+  security reviewer through user definitions), in the sandbox reset to its seed with Spec Kit
+  removed in one commit (the old result kept as tag `006-quickstart-result`). Driven through
+  the page's API and headless Chrome. $9.99 in all:
+  - Q1: Spec Kit installed, only new files; the lead answered "how are prices handled?" in 16 s
+    for $0.14, naming the files it read; Shift+Tab cycled Ask, Run anything, Read only, Approved
+    commands, Ask. SC-001: adding the folder took 0.11 s and the lead's turn started at once, so
+    Fallow's own share is under a second.
+  - Q2: "Shopping cart with total": the lead proposed it ($0.15); its spec session went
+    constitution to analyze in 5 turns ($1.90); a clarify question came as choices with a
+    recommendation; the lead saw and kept the engineer's edit; Lock stayed disabled, naming what
+    was missing, until tasks and analyze; the lock opened the loop page.
+  - Q3: 14 tasks in 5 phases, 13 min, $4.49, no repair; a session per phase, a handover each, US1
+    to US3 reviewed once each with what the reviewer ran; one merge on `master` with every task
+    ticked. The suggested $3.50 ran out at 11 tasks and was raised to $6.
+  - Q4 ("VAT on the cart", written by the engineer, analyze by the lead, $0.30; loop $2.25):
+    the builder asked about the rounding the spec leaves to the session, and about the label the
+    spec reserves; both reached the inbox, the log of notifications and the loop page with
+    options and a recommendation; each answer was committed to Clarifications and the builder
+    resumed in its session. Not seen with real agents: a question the lead answers itself (the
+    rounding one was with the lead when Fallow was stopped for Q5, and a call cut short goes to
+    the engineer by design), hence no overrule either; both are covered by `us4_ask.rs`.
+  - Q5: stopped mid-task, the task resumed in its session after the restart; unlocked with only
+    US2 changed, the preview and the new lock named US2 alone, and only US2 was repaired, rebuilt
+    and reviewed; "Find ignores case" on Solo ($0.39 + $0.37) ended "Done, not verified by
+    Fallow: no review at checkpoints" (left unmerged for the engineer).
+  - Problems found, all fixed with tests (86b1563 and the commit after it): no lead turn could
+    start (npm's `claude.cmd` cannot take a multi-line argument; Fallow starts the `claude.exe`
+    behind it); Spec Kit installed but not committed was missing in the lead's worktrees, and its
+    template constitution blocked the merge; a review whose agent could not start (Claude Code
+    updating itself) kept resuming a session that never existed, and claude's "No conversation
+    found" is on stderr only; the relock preview counted the loop's own Clarifications as a change
+    and reopened every story; the lead's relay reasoning showed as an answer option; the page
+    showed a US1 checkpoint after a phase with none, commit messages and the question card ran out
+    of their cards, a Solo loop promised a reviewer and offered Pause when done; "today" left out
+    the lead's turns; the default budget per task is now $0.50 (FR-016a), measured at $0.32 to
+    $0.75.
+  - Noted, not changed: three tries of a check that cannot start are used up in seconds; the lead
+    kept believing Spec Kit was missing after its first turn; a document edited after analyze
+    does not ask for analyze again; the interrupted step's cost is not known; the engineer wants
+    the stories' acceptance cards out of the narrow side column (a later change).
 - T088: the review found one must-fix and seven should-fix findings, all fixed:
   - a relock while paused at ready went back to ready without checking the change: it now
     builds and checks it, a loop merges only a judged result, and an unjudged ready loop is

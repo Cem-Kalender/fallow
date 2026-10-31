@@ -14,7 +14,7 @@ Entities, their fields, their rules, and how they change state. Storage is descr
 | pipeline | pipeline name | Default `standard` |
 | autonomy | `strict` \| `normal` \| `free` | Default `normal` (FR-020a) |
 | approved_commands | list of command prefixes | Each passes 006's command check: one program and what it runs, no chaining, no git or shells |
-| budget_per_task | `{usd, minutes}` | Default `{0.25, 10}` (FR-016a) |
+| budget_per_task | `{usd, minutes}` | Default `{0.50, 10}` (FR-016a; raised from 0.25 after the real runs of T086) |
 | notifications | bool | Default on (FR-003a) |
 | conversation | conversation id | The project conversation (FR-034) |
 

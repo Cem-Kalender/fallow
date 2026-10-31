@@ -279,11 +279,14 @@
           ${x.baseline ? h`<div class="kv"><span>baseline (${short(x.baseline.commit)})</span><span class="muted">${x.baseline.outcome}${x.baseline.failing ? `, ${x.baseline.failing} failing` : ""}</span></div>` : ""}
           <div class="kv"><span>newly failing</span><span class="${x.newly_failing.length ? "bad-text" : "ok-text"}">${x.newly_failing.length ? x.newly_failing.join(", ") : "none"}</span></div>`)
       : h`<div class="small muted">${(v.pipeline && v.pipeline.steps.some((s) => s.agent === "fallow:gates")) ? "The gates run after the first task." : "This pipeline runs no gates: not verified by Fallow."}</div>`;
+    // Without a checker at the checkpoints nothing will check the criteria (T086: Solo said
+    // "not yet" and promised a reviewer).
+    const checked = !!(v.pipeline && v.pipeline.steps.some((s) => s.checker && s.when === "checkpoint"));
     const stories = (v.checks.stories || []).map((s) => h`<div class="card pad-14">
       <h2 class="th mb-8">${s.id} acceptance</h2>
-      ${s.criteria.map((c) => h`<div class="kv"><span>${plain(c.text)}${c.must_fail ? h` <span class="must">must fail</span>` : ""}</span>${({ passed: h`<span class="pill green">checked</span>`, failed: h`<span class="pill red">failed</span>` })[c.state] || h`<span class="pill grey">not yet</span>`}</div>`)}
+      ${s.criteria.map((c) => h`<div class="kv"><span>${plain(c.text)}${c.must_fail ? h` <span class="must">must fail</span>` : ""}</span>${({ passed: h`<span class="pill green">checked</span>`, failed: h`<span class="pill red">failed</span>` })[c.state] || (checked ? h`<span class="pill grey">not yet</span>` : h`<span class="pill grey">not checked</span>`)}</div>`)}
       ${(s.checkers || []).filter((c) => c.agent !== s.reviewer).map((c) => h`<div class="kv"><span>${c.agent}${c.reasons.length ? h`<span class="tiny muted d-block">${c.reasons.join("; ")}</span>` : ""}</span>${c.passed ? h`<span class="pill green">passed</span>` : h`<span class="pill red">failed</span>`}</div>`)}
-      <div class="tiny muted mt-6">${s.reviewer ? `Checked by ${s.reviewer}, by running each one.` : "The reviewer confirms each one by running it at the checkpoint."}</div></div>`);
+      <div class="tiny muted mt-6">${s.reviewer ? `Checked by ${s.reviewer}, by running each one.` : checked ? "The reviewer confirms each one by running it at the checkpoint." : "No checker in this pipeline: Fallow does not verify these."}</div></div>`);
     const STATE = {
       with_lead: h`<span class="pill grey">with the lead</span>`,
       waiting_engineer: h`<span class="pill orange">asks you</span>`,
@@ -332,7 +335,7 @@
           <span><b>${v.used.minutes}</b> of ${v.budget.minutes} min</span><span><b>${money(v.used.usd)}</b> of ${money(v.budget.usd)}</span>
           <span><b>${v.used.tasks}</b>/${v.used.of} tasks</span><span><b>${v.repairs}</b> repair${v.repairs === 1 ? "" : "s"}</span></div>
         ${merge ? h`<button class="btn" data-act="merge">${v.stage === "ready" ? "Merge" : "Merge anyway…"}</button>` : ""}
-        ${over ? "" : h`<button class="btn btn2" data-act="${paused ? "resume" : "pause"}">${paused ? "Go on" : "Pause"}</button><button class="btn btn2" data-act="stop">Stop</button>`}
+        ${over ? "" : h`${merge ? "" : h`<button class="btn btn2" data-act="${paused ? "resume" : "pause"}">${paused ? "Go on" : "Pause"}</button>`}<button class="btn btn2" data-act="stop">Stop</button>`}
       </div>
       ${v.stage === "done_unverified" ? h`<div class="notice">Done, not verified by Fallow: ${(v.outcome && v.outcome[1] || []).join(", ")}. Review the work yourself before merging.</div>` : ""}
       ${strip(v)}

@@ -22,7 +22,7 @@ pub struct Budget {
 impl Default for Budget {
     fn default() -> Budget {
         Budget {
-            usd: 0.25,
+            usd: 0.50,
             minutes: 10,
         }
     }

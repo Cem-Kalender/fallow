@@ -43,7 +43,7 @@ fn limits(
 #[test]
 fn the_suggested_budget_pauses_the_loop_and_the_engineer_lets_it_go_on() {
     let root = scratch("budget");
-    let cost = "cost = 0.4";
+    let cost = "cost = 0.8";
     let steps = [
         task_step("T001", &[("calc/__init__.py", "")], cost),
         handover_step(1, cost),
@@ -67,14 +67,14 @@ fn the_suggested_budget_pauses_the_loop_and_the_engineer_lets_it_go_on() {
         check_step("US2", true, cost),
     ]
     .concat();
-    // No budget given at the lock: the suggestion, 4 tasks at $0.25 and 10 minutes each.
+    // No budget given at the lock: the suggestion, 4 tasks at $0.50 and 10 minutes each.
     let (e, _repo, id) = locked_calc_with(&root, &steps, None, None);
     let tx = &e.tx;
     let v = wait_for(tx, id, "the pause", |v| v["stage"] == "paused");
-    assert_eq!(v["feature_loop"]["budget_usd"], 1.0);
+    assert_eq!(v["feature_loop"]["budget_usd"], 2.0);
     assert_eq!(v["feature_loop"]["budget_minutes"], 40);
-    assert_eq!(v["limits"]["usd"], 1.0);
-    // Three steps at $0.40 went over $1.00: the pause comes before the fourth.
+    assert_eq!(v["limits"]["usd"], 2.0);
+    // Three steps at $0.80 went over $2.00: the pause comes before the fourth.
     assert!(
         v["limit_reached"].as_str().unwrap().starts_with("cost"),
         "{}",
@@ -103,13 +103,13 @@ fn the_suggested_budget_pauses_the_loop_and_the_engineer_lets_it_go_on() {
         v["stage"] == "paused" && started(v, "build", "T003") == 1
     });
     assert_eq!(started(&v, "handover", "phase-2"), 0);
-    assert_eq!(v["limits"]["usd"], 1.0, "the limit itself is unchanged");
+    assert_eq!(v["limits"]["usd"], 2.0, "the limit itself is unchanged");
 
     // Raise the limit: the loop goes on to the end.
     limits(tx, id, Some(10.0), false);
     let v = wait_for(tx, id, "ready to merge", |v| v["stage"] == "ready");
     assert_eq!(v["feature_loop"]["outcome"][0], true);
-    assert!((v["cost_usd"].as_f64().unwrap() - 3.6).abs() < 1e-6);
+    assert!((v["cost_usd"].as_f64().unwrap() - 7.2).abs() < 1e-6);
     drop(e);
     let _ = std::fs::remove_dir_all(&root);
 }

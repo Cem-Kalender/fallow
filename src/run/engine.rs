@@ -1460,7 +1460,16 @@ impl Engine {
             .values()
             .filter(|r| r.state.created.starts_with(today))
             .map(|r| r.state.cost_usd)
-            .sum();
+            .sum::<f64>()
+            // The lead's turns of today count too (T086: the dashboard showed loops only).
+            + self
+                .studio
+                .convs
+                .values()
+                .flat_map(|c| c.state.turns.iter())
+                .filter(|t| t.started.starts_with(today))
+                .filter_map(|t| t.cost_usd)
+                .sum::<f64>();
         let projects: Vec<Value> = self
             .studio
             .store

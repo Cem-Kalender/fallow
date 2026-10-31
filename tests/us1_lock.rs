@@ -158,7 +158,7 @@ fn the_lock_names_every_problem_then_commits_and_creates_the_loop() {
     .unwrap();
 
     // The lock: the documents committed on the feature branch, the loop with its phases and the
-    // budget suggested from three tasks at $0.25 and 10 minutes each.
+    // budget suggested from three tasks at $0.50 and 10 minutes each.
     let fv = sreq(
         tx,
         Req::Feature {
@@ -181,7 +181,7 @@ fn the_lock_names_every_problem_then_commits_and_creates_the_loop() {
     assert_eq!(lp["feature"], "001-cart");
     assert_eq!(lp["phases"].as_array().unwrap().len(), 2);
     assert_eq!(lp["phases"][1]["spec"]["story"], "US1");
-    assert!((lp["budget_usd"].as_f64().unwrap() - 0.75).abs() < 1e-9);
+    assert!((lp["budget_usd"].as_f64().unwrap() - 1.5).abs() < 1e-9);
     assert_eq!(lp["budget_minutes"], 30);
     assert_eq!(lp["base_branch"], "main");
     assert_eq!(run["stage"], "building");
