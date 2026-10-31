@@ -1,2 +1,338 @@
 //! Desktop notifications (007 research S-14): on Windows, a notification-area icon on a hidden
-//! message-only window whose balloons open the item's page when clicked; elsewhere, nothing yet.
+//! window of its own, whose balloons open the item's page when clicked; elsewhere, nothing yet.
+//!
+//! What a notification says is decided by `service::notify`: the project, the feature and what
+//! is needed, never code or output (FR-003a). Nothing leaves the machine.
+
+use std::sync::Mutex;
+
+/// One notification: its two lines and the page it opens.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Notice {
+    pub title: String,
+    pub body: String,
+    pub url: String,
+}
+
+/// Where notifications go.
+pub trait Notify: Send + Sync {
+    fn show(&self, n: &Notice);
+}
+
+/// No notifications: tests, and platforms without them.
+pub struct Off;
+
+impl Notify for Off {
+    fn show(&self, _: &Notice) {}
+}
+
+/// Keeps what would have been shown (tests).
+#[derive(Default)]
+pub struct Recorder(pub Mutex<Vec<Notice>>);
+
+impl Notify for Recorder {
+    fn show(&self, n: &Notice) {
+        if let Ok(mut v) = self.0.lock() {
+            v.push(n.clone());
+        }
+    }
+}
+
+/// What the engineer chose in the icon's menu.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Choice {
+    Open,
+    /// Notifications on (true) or off (false).
+    Notifications(bool),
+    Stop,
+}
+
+#[cfg(windows)]
+pub use tray::Tray;
+
+/// No notification icon on this platform yet.
+#[cfg(not(windows))]
+pub struct Tray;
+
+#[cfg(not(windows))]
+impl Tray {
+    pub fn start(
+        _home: String,
+        _on: std::sync::Arc<std::sync::atomic::AtomicBool>,
+        _choose: Box<dyn Fn(Choice) + Send>,
+    ) -> Result<Tray, String> {
+        Err("notifications are not available on this platform yet".into())
+    }
+}
+
+#[cfg(not(windows))]
+impl Notify for Tray {
+    fn show(&self, _: &Notice) {}
+}
+
+#[cfg(windows)]
+mod tray {
+    use super::{Choice, Notice, Notify};
+    use std::collections::VecDeque;
+    use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
+    use std::sync::{Arc, Mutex, OnceLock};
+    use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM};
+    use windows_sys::Win32::UI::Shell::{
+        NIF_ICON, NIF_INFO, NIF_MESSAGE, NIF_SHOWTIP, NIF_TIP, NIIF_INFO, NIM_ADD, NIM_DELETE,
+        NIM_MODIFY, NIM_SETVERSION, NIN_BALLOONUSERCLICK, NOTIFYICON_VERSION_4, NOTIFYICONDATAW,
+        Shell_NotifyIconW,
+    };
+    use windows_sys::Win32::UI::WindowsAndMessaging::*;
+
+    const CALLBACK: u32 = WM_APP + 1;
+    const SHOW: u32 = WM_APP + 2;
+    const QUIT: u32 = WM_APP + 3;
+    const NIN_SELECT: u32 = 0x400;
+    const NIN_KEYSELECT: u32 = 0x401;
+    const ID_OPEN: usize = 1;
+    const ID_NOTIFY: usize = 2;
+    const ID_STOP: usize = 3;
+
+    /// What the icon's window shares with the rest of Fallow; one icon per process.
+    struct Shared {
+        home: String,
+        on: Arc<AtomicBool>,
+        choose: Mutex<Box<dyn Fn(Choice) + Send>>,
+        queue: Mutex<VecDeque<Notice>>,
+        /// The page the last balloon opens.
+        last: Mutex<Option<String>>,
+    }
+
+    static SHARED: OnceLock<Shared> = OnceLock::new();
+    static HWND_: AtomicIsize = AtomicIsize::new(0);
+
+    /// The notification icon, on a thread of its own with its message loop.
+    pub struct Tray;
+
+    fn wide(s: &str) -> Vec<u16> {
+        s.encode_utf16().chain(std::iter::once(0)).collect()
+    }
+
+    fn copy_into(dst: &mut [u16], s: &str) {
+        let w: Vec<u16> = s.encode_utf16().take(dst.len() - 1).collect();
+        dst[..w.len()].copy_from_slice(&w);
+        dst[w.len()] = 0;
+    }
+
+    fn data(hwnd: HWND) -> NOTIFYICONDATAW {
+        NOTIFYICONDATAW {
+            cbSize: std::mem::size_of::<NOTIFYICONDATAW>() as u32,
+            hWnd: hwnd,
+            uID: 1,
+            ..Default::default()
+        }
+    }
+
+    fn open(url: &str) {
+        let _ = crate::platform::open_browser(url);
+    }
+
+    impl Tray {
+        /// Adds the icon. `home` is the page "Open Fallow" opens; `on` is the notifications
+        /// switch the menu turns; `choose` gets the menu's choices.
+        pub fn start(
+            home: String,
+            on: Arc<AtomicBool>,
+            choose: Box<dyn Fn(Choice) + Send>,
+        ) -> Result<Tray, String> {
+            if SHARED
+                .set(Shared {
+                    home,
+                    on,
+                    choose: Mutex::new(choose),
+                    queue: Mutex::default(),
+                    last: Mutex::default(),
+                })
+                .is_err()
+            {
+                return Err("the notification icon is already there".into());
+            }
+            let (tx, rx) = std::sync::mpsc::channel::<Result<(), String>>();
+            std::thread::Builder::new()
+                .name("notify".into())
+                .spawn(move || run(tx))
+                .map_err(|e| format!("cannot start the notification icon: {e}"))?;
+            rx.recv()
+                .map_err(|_| "the notification icon did not start".to_string())??;
+            Ok(Tray)
+        }
+    }
+
+    impl Drop for Tray {
+        fn drop(&mut self) {
+            let h = HWND_.load(Ordering::Acquire);
+            if h != 0 {
+                // SAFETY: posting to a window handle; a stale one only fails.
+                unsafe { PostMessageW(h as HWND, QUIT, 0, 0) };
+            }
+        }
+    }
+
+    impl Notify for Tray {
+        fn show(&self, n: &Notice) {
+            let (Some(s), h) = (SHARED.get(), HWND_.load(Ordering::Acquire)) else {
+                return;
+            };
+            if h == 0 || !s.on.load(Ordering::Relaxed) {
+                return;
+            }
+            if let Ok(mut q) = s.queue.lock() {
+                q.push_back(n.clone());
+            }
+            // SAFETY: as in `drop`.
+            unsafe { PostMessageW(h as HWND, SHOW, 0, 0) };
+        }
+    }
+
+    fn run(started: std::sync::mpsc::Sender<Result<(), String>>) {
+        let class = wide("FallowNotify");
+        // SAFETY: plain Win32 calls with valid, live arguments; the window and the icon belong
+        // to this thread, which runs their message loop.
+        unsafe {
+            let wc = WNDCLASSEXW {
+                cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
+                lpfnWndProc: Some(proc_),
+                lpszClassName: class.as_ptr(),
+                ..std::mem::zeroed()
+            };
+            if RegisterClassExW(&wc) == 0 {
+                let _ = started.send(Err("cannot register the notification window".into()));
+                return;
+            }
+            // A hidden window, not shown: the icon's messages and its menu need one.
+            let hwnd = CreateWindowExW(
+                0,
+                class.as_ptr(),
+                class.as_ptr(),
+                0,
+                0,
+                0,
+                0,
+                0,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null(),
+            );
+            if hwnd.is_null() {
+                let _ = started.send(Err("cannot create the notification window".into()));
+                return;
+            }
+            let mut d = data(hwnd);
+            d.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP | NIF_SHOWTIP;
+            d.uCallbackMessage = CALLBACK;
+            d.hIcon = LoadIconW(std::ptr::null_mut(), IDI_APPLICATION);
+            copy_into(&mut d.szTip, "Fallow");
+            if Shell_NotifyIconW(NIM_ADD, &d) == 0 {
+                DestroyWindow(hwnd);
+                let _ = started.send(Err("cannot add the notification icon".into()));
+                return;
+            }
+            d.Anonymous.uVersion = NOTIFYICON_VERSION_4;
+            Shell_NotifyIconW(NIM_SETVERSION, &d);
+            HWND_.store(hwnd as isize, Ordering::Release);
+            let _ = started.send(Ok(()));
+            let mut msg: MSG = std::mem::zeroed();
+            while GetMessageW(&mut msg, std::ptr::null_mut(), 0, 0) > 0 {
+                TranslateMessage(&msg);
+                DispatchMessageW(&msg);
+            }
+            HWND_.store(0, Ordering::Release);
+        }
+    }
+
+    unsafe extern "system" fn proc_(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LRESULT {
+        let Some(s) = SHARED.get() else {
+            // SAFETY: the default handling of a message for this window.
+            return unsafe { DefWindowProcW(hwnd, msg, w, l) };
+        };
+        match msg {
+            SHOW => {
+                let next = s.queue.lock().ok().and_then(|mut q| q.pop_front());
+                if let Some(n) = next {
+                    let mut d = data(hwnd);
+                    d.uFlags = NIF_INFO;
+                    d.dwInfoFlags = NIIF_INFO;
+                    copy_into(&mut d.szInfoTitle, &n.title);
+                    copy_into(&mut d.szInfo, &n.body);
+                    if let Ok(mut last) = s.last.lock() {
+                        *last = Some(n.url.clone());
+                    }
+                    // SAFETY: `d` lives for the call.
+                    unsafe { Shell_NotifyIconW(NIM_MODIFY, &d) };
+                }
+                0
+            }
+            CALLBACK => {
+                // NOTIFYICON_VERSION_4: the event is in the low word of `l`.
+                match (l as u32) & 0xFFFF {
+                    NIN_BALLOONUSERCLICK => {
+                        let url = s.last.lock().ok().and_then(|l| l.clone());
+                        open(url.as_deref().unwrap_or(&s.home));
+                    }
+                    NIN_SELECT | NIN_KEYSELECT | WM_LBUTTONUP | WM_LBUTTONDBLCLK => open(&s.home),
+                    WM_CONTEXTMENU | WM_RBUTTONUP => menu(hwnd, s),
+                    _ => {}
+                }
+                0
+            }
+            QUIT => {
+                let d = data(hwnd);
+                // SAFETY: removing this window's own icon, then ending its loop.
+                unsafe {
+                    Shell_NotifyIconW(NIM_DELETE, &d);
+                    DestroyWindow(hwnd);
+                    PostQuitMessage(0);
+                }
+                0
+            }
+            // SAFETY: as above.
+            _ => unsafe { DefWindowProcW(hwnd, msg, w, l) },
+        }
+    }
+
+    fn menu(hwnd: HWND, s: &Shared) {
+        let on = s.on.load(Ordering::Relaxed);
+        let open_ = wide("Open Fallow");
+        let notify = wide("Notifications");
+        let stop = wide("Stop Fallow");
+        // SAFETY: a popup menu owned by this call, shown for this thread's window.
+        let chosen = unsafe {
+            let m = CreatePopupMenu();
+            if m.is_null() {
+                return;
+            }
+            AppendMenuW(m, MF_STRING, ID_OPEN, open_.as_ptr());
+            AppendMenuW(m, MF_STRING | if on { MF_CHECKED } else { 0 }, ID_NOTIFY, notify.as_ptr());
+            AppendMenuW(m, MF_SEPARATOR, 0, std::ptr::null());
+            AppendMenuW(m, MF_STRING, ID_STOP, stop.as_ptr());
+            let mut p = POINT { x: 0, y: 0 };
+            GetCursorPos(&mut p);
+            // The menu closes when the engineer clicks elsewhere only if the window is in front.
+            SetForegroundWindow(hwnd);
+            let c = TrackPopupMenu(m, TPM_RETURNCMD | TPM_RIGHTBUTTON, p.x, p.y, 0, hwnd, std::ptr::null());
+            DestroyMenu(m);
+            c as usize
+        };
+        let choice = match chosen {
+            ID_OPEN => Choice::Open,
+            ID_NOTIFY => {
+                s.on.store(!on, Ordering::Relaxed);
+                Choice::Notifications(!on)
+            }
+            ID_STOP => Choice::Stop,
+            _ => return,
+        };
+        if choice == Choice::Open {
+            open(&s.home);
+        }
+        if let Ok(f) = s.choose.lock() {
+            f(choice);
+        }
+    }
+}

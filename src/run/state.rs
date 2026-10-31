@@ -100,6 +100,8 @@ pub struct SteeringEntry {
 pub struct Need {
     pub why: String,
     pub options: Vec<String>,
+    /// When it started needing the engineer.
+    pub at: String,
 }
 
 /// One line of the planning conversation.
@@ -151,6 +153,8 @@ pub struct QuestionEntry {
     pub affects: Option<String>,
     pub recommended: Option<String>,
     pub reopened: Vec<String>,
+    /// Why it was relayed to the engineer.
+    pub why: Option<String>,
     /// The event number of its latest change, and of when it was asked.
     pub seq: u64,
     pub asked_seq: u64,
@@ -248,6 +252,8 @@ pub struct RunState {
     /// When the engineer was last asked something while the run was not paused: time waiting
     /// for the engineer does not count either (FR-016a).
     pub waiting_since: Option<String>,
+    /// When the stage last changed.
+    pub stage_at: String,
     /// The latest event number.
     pub seq: u64,
     /// 007: set when this run is a loop over a locked feature.
@@ -324,6 +330,7 @@ impl RunState {
             paused_since: None,
             paused_secs: 0,
             waiting_since: None,
+            stage_at: first.at.clone(),
             seq: first.seq,
             feature_loop: None,
         };
@@ -423,6 +430,7 @@ impl RunState {
                     self.building_started = Some(l.at.clone());
                 }
                 self.stage = *to;
+                self.stage_at = l.at.clone();
                 self.needs = None;
             }
             Event::StepQueued {
@@ -580,6 +588,7 @@ impl RunState {
                 self.needs = Some(Need {
                     why: why.clone(),
                     options: options.clone(),
+                    at: l.at.clone(),
                 })
             }
             Event::LimitReached { which, used } => {
@@ -717,11 +726,13 @@ impl RunState {
                 recommended,
                 cost_usd,
                 reopened,
+                why,
             } => {
                 self.cost_usd += cost_usd;
                 let step_phase = self.steps.get(step).and_then(|s| s.phase);
                 if let Some(f) = self.feature_loop.as_mut() {
                     let asked_seq = f.questions.get(id).map_or(l.seq, |q| q.asked_seq);
+                    let prev_why = f.questions.get(id).and_then(|q| q.why.clone());
                     let mut history = f
                         .questions
                         .get(id)
@@ -750,6 +761,7 @@ impl RunState {
                             affects: affects.clone(),
                             recommended: recommended.clone(),
                             reopened: reopened.clone(),
+                            why: why.clone().or(prev_why),
                             seq: l.seq,
                             asked_seq,
                             history,

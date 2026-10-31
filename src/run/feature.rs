@@ -219,6 +219,10 @@ fn step(run: &mut Run, ctx: &Ctx) -> Result<(), String> {
     if let Some(n) = machine::unprocessed(run) {
         return process(run, ctx, n);
     }
+    // The engineer's answers reach the steps that asked, before anything else runs.
+    if super::questions::deliver(run)? {
+        return Ok(());
+    }
     if requeue_cut_short(run)? {
         return Ok(());
     }
@@ -631,6 +635,10 @@ fn requeue_cut_short(run: &mut Run) -> Result<bool, String> {
     let Some(reason) = machine::first_reason(&last).map(str::to_string) else {
         return Ok(false);
     };
+    // A step whose question went to the engineer resumes with the answer, not before.
+    if lp(run).is_ok_and(|l| super::questions::relayed_of(&l, last.n).is_some()) {
+        return Ok(false);
+    }
     let def = last.def.clone().unwrap_or_else(|| "builder".into());
     if reason.starts_with(INTERRUPTED) {
         let session = last
@@ -1022,6 +1030,16 @@ fn phase(
             .find(|s| s.kind == StepKind::Repair && s.part.as_deref() == Some(part.as_str()) && s.queued_seq > q.seq)
             .cloned();
         match repair {
+            // The phase has not started: its builder takes the answer in with its first task,
+            // and the repair runs in its session once there is one (Phase 6 review).
+            None if !run
+                .state
+                .steps
+                .values()
+                .any(|s| s.phase == Some(n) && s.kind == StepKind::Build && s.session.is_some()) =>
+            {
+                continue;
+            }
             None => {
                 let old = q
                     .history
@@ -1728,6 +1746,8 @@ fn checkpoint(
 
 /// Every phase is done: the outcome (FR-015) and ready to merge.
 fn finish(run: &mut Run, pl: &Pipeline) -> Result<(), String> {
+    // An answer committed after the last step is in what is merged too.
+    take_answers(run, &lp(run)?)?;
     let head = git::head(&build_wt(run))?;
     // What is merged is the gated work: after the newest gated commit in the build's history,
     // only Fallow's handovers and ticks, and the locked documents as locked, may follow (FR-014).
@@ -1785,6 +1805,20 @@ fn finish(run: &mut Run, pl: &Pipeline) -> Result<(), String> {
     })
 }
 
+/// Merges the newest committed answer into the build branch, if it is not there yet.
+fn take_answers(run: &Run, l: &LoopState) -> Result<(), String> {
+    let repo = run.state.repo.clone();
+    let wt = build_wt(run);
+    git::worktree_add(&repo, &wt, Some(&l.build_branch), &l.lock_commit)?;
+    if let Some(a) = super::questions::latest_answer(l) {
+        if !git::is_ancestor(&repo, &a, &git::head(&wt)?) {
+            git::merge_into(&wt, &a, &format!("Fallow: the answers to the {} loop's questions", l.feature))
+                .map_err(|e| format!("cannot take in the committed answers: {}", e.join(", ")))?;
+        }
+    }
+    Ok(())
+}
+
 /// Starts a queued step of the loop.
 fn start(run: &mut Run, ctx: &Ctx, n: u32) -> Result<(), String> {
     let step = run.state.steps.get(&n).cloned().ok_or("no such step")?;
@@ -1796,6 +1830,9 @@ fn start(run: &mut Run, ctx: &Ctx, n: u32) -> Result<(), String> {
         .agent(&defname)
         .cloned()
         .ok_or_else(|| format!("there is no agent named {defname:?}"))?;
+    // Answers committed to the feature branch since reach the build at this boundary, also
+    // before a check, so a checker sees them (research S-9, S-10).
+    take_answers(run, &l)?;
     let (worktree, base) = match step.kind {
         StepKind::Review => {
             let commit = git::head(&build_wt(run))?;
@@ -1821,15 +1858,6 @@ fn start(run: &mut Run, ctx: &Ctx, n: u32) -> Result<(), String> {
         }
         _ => {
             let wt = build_wt(run);
-            git::worktree_add(&repo, &wt, Some(&l.build_branch), &l.lock_commit)?;
-            // Answers committed to the feature branch since reach the build at this task
-            // boundary (research S-9, S-10).
-            if let Some(a) = super::questions::latest_answer(&l) {
-                if !git::is_ancestor(&repo, &a, &git::head(&wt)?) {
-                    git::merge_into(&wt, &a, &format!("Fallow: the answers to the {} loop's questions", l.feature))
-                        .map_err(|e| format!("cannot take in the committed answers: {}", e.join(", ")))?;
-                }
-            }
             let base = git::head(&wt)?;
             (wt, base)
         }
@@ -1967,6 +1995,25 @@ pub fn process(run: &mut Run, ctx: &Ctx, n: u32) -> Result<(), String> {
             commit,
         })
     };
+    // The step's question is still with the lead: it is judged when the lead has answered.
+    let l = lp(run)?;
+    if l.questions
+        .values()
+        .any(|q| q.step == n && q.state == QuestionState::WithLead)
+    {
+        return Ok(());
+    }
+    // Its question went to the engineer: whatever it returned, the step ends blocked on it and
+    // resumes in its session with the answer (FR-021), whether it was a builder, a checker or
+    // a handover, and whether it stopped or carried on.
+    let interrupted = matches!(&step.end, Some(StepEnd::Failed { why }) if why.starts_with(INTERRUPTED));
+    if let Some(q) = super::questions::relayed_of(&l, n).filter(|_| !interrupted) {
+        let mut reasons = vec![format!("{BLOCKED}{} ({})", q.text, q.id)];
+        if step.kind != StepKind::Review {
+            reasons.extend(tidy(run, &l, &step)?);
+        }
+        return verified(run, false, reasons, None);
+    }
     if let Some(StepEnd::Failed { why }) = &step.end {
         // A crash, a time-out or a stop: what the agent committed or did to the locked
         // documents is dealt with all the same.
@@ -2015,9 +2062,13 @@ pub fn answered(run: &mut Run, last: &Step, text: &str) -> Result<(), String> {
         .clone()
         .filter(|s| !run.state.lost_sessions.contains(s));
     let what = last.part.as_deref().unwrap_or("the task");
+    let go_on = match last.kind {
+        StepKind::Review => "Continue your check with it and return your verdict, every criterion with what you ran and what it gave.",
+        _ => "Continue the same work in your worktree and return your result; Fallow commits your changes when the step ends.",
+    };
     let instruction = match &session {
         Some(_) => format!(
-            "Fallow step: {} (part {what})\n\nThe engineer answers your question:\n\n{text}\n\nContinue the same work in your worktree and return your result; Fallow commits your changes when the step ends.",
+            "Fallow step: {} (part {what})\n\nThe engineer answers your question:\n\n{text}\n\n{go_on}",
             last.kind.label()
         ),
         None => format!(

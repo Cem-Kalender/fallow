@@ -897,6 +897,7 @@ impl Studio {
             locks: Vec::new(),
             run: None,
             unlocked: false,
+            ended: None,
             analyzed: false,
             findings: Vec::new(),
         };

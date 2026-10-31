@@ -35,7 +35,12 @@ pub fn scratch(name: &str) -> PathBuf {
 
 /// A repository on `main` with a Python package and the squad file's gate.
 pub fn repo(root: &Path) -> PathBuf {
-    let r = root.join("repo");
+    repo_named(root, "repo")
+}
+
+/// `repo` in the folder `name` (a project is named after its folder).
+pub fn repo_named(root: &Path, name: &str) -> PathBuf {
+    let r = root.join(name);
     std::fs::create_dir_all(r.join(".fallow")).unwrap();
     git(&r, &["init", "-q", "-b", "main"]);
     git(&r, &["config", "user.email", "t@example.invalid"]);
@@ -120,6 +125,16 @@ pub fn start_studio(
     scenario: &Path,
     approval_wait: Option<Duration>,
 ) -> fallow::service::ToolEngine {
+    start_studio_notify(root, scenario, approval_wait, std::sync::Arc::new(fallow::platform::notify::Off))
+}
+
+/// `start_studio` whose desktop notifications go to `notify`.
+pub fn start_studio_notify(
+    root: &Path,
+    scenario: &Path,
+    approval_wait: Option<Duration>,
+    notify: std::sync::Arc<dyn fallow::platform::notify::Notify>,
+) -> fallow::service::ToolEngine {
     let config = root.join("config");
     std::fs::create_dir_all(&config).unwrap();
     // Settings a test adds, such as a smaller cap.
@@ -141,12 +156,13 @@ args = [\"--scenario\", {:?}]
         }
         Err(_) => studio_settings(scenario),
     };
-    fallow::service::engine_with_tools(
+    fallow::service::engine_with_notify(
         root.join("data"),
         settings,
         Some(config),
         PathBuf::from(env!("CARGO_BIN_EXE_fallow")),
         approval_wait,
+        notify,
     )
     .unwrap()
 }
@@ -306,7 +322,21 @@ fn locked_calc_full(
     let scenario = root.join("scenario.toml");
     std::fs::write(&scenario, format!("{}{loop_steps}", lead_writes_calc())).unwrap();
     let e = start_studio(root, &scenario, None);
-    let tx = &e.tx;
+    let id = lock_calc_in(&e.tx, &repo, pipeline, budget, level);
+    (e, repo, id)
+}
+
+/// Adds `repo` as a project, works out the Calc feature with the lead (two of the scenario's
+/// lead turns) and locks it; returns the loop's id.
+#[allow(dead_code)]
+pub fn lock_calc_in(
+    tx: &Sender<Msg>,
+    repo: &Path,
+    pipeline: Option<&str>,
+    budget: Option<(f64, u64)>,
+    level: Option<fallow::run::events::Level>,
+) -> u64 {
+    let repo = repo.to_path_buf();
     let project = sreq(tx, Req::AddProject { path: repo.clone() }).unwrap()["project"]
         .as_str()
         .unwrap()
@@ -353,5 +383,5 @@ fn locked_calc_full(
         },
     )
     .unwrap();
-    (e, repo, l["loop"].as_u64().unwrap())
+    l["loop"].as_u64().unwrap()
 }

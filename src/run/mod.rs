@@ -2,6 +2,7 @@
 //! (006 research R-2, data-model.md).
 
 pub mod activity;
+pub mod dashboard;
 pub mod engine;
 pub mod events;
 pub mod feature;

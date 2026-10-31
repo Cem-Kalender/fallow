@@ -198,7 +198,7 @@ pub fn reply() -> Value {
 pub fn answer() -> Value {
     json!({
         "type": "object",
-        "required": ["outcome", "basis", "reserved", "changes_criterion"],
+        "required": ["outcome", "basis", "reserved", "changes_criterion", "touches_interface", "adds_dependency"],
         "properties": {
             "outcome": { "type": "string", "enum": ["answer", "decided", "relay"] },
             "answer": { "type": "string", "description": "The answer, for answer or decided" },
@@ -219,7 +219,9 @@ pub fn answer() -> Value {
                 }
             },
             "reserved": { "type": "boolean", "description": "The question touches an item the spec reserves for the engineer" },
-            "changes_criterion": { "type": "boolean", "description": "The answer would change an acceptance scenario" }
+            "changes_criterion": { "type": "boolean", "description": "The answer would change an acceptance scenario" },
+            "touches_interface": { "type": "boolean", "description": "The answer touches a public interface (an API, a file format, a command's options)" },
+            "adds_dependency": { "type": "boolean", "description": "The answer adds a dependency" }
         }
     })
 }

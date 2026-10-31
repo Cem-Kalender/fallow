@@ -138,11 +138,13 @@ spec_session ──lock──▶ locked ──loop starts──▶ building ─�
 | loop, phase, task, step | ids | |
 | asked_by | agent name | |
 | text, options[] | | |
-| state | `with_lead` \| `answered` \| `decided` \| `waiting_engineer` \| `overruled` | |
+| state | `with_lead` \| `answered` \| `decided` \| `waiting_engineer` \| `overruled` \| `confirmed` | `confirmed`: a decision of the lead the engineer confirmed |
 | by | `lead` \| `engineer` | |
 | answer, recommendation? | | |
 | commit | sha | The commit of the answer to `spec.md`'s Clarifications |
 | affects | `USn` | The story the question is about. While it waits for the engineer, the loop waits (FR-021) |
+| reopened | task ids | Overruled: the tasks built on the old answer |
+| why | | Relayed: why it went to the engineer |
 
 **Transitions**:
 - `with_lead` → `answered` or `decided`, which the engineer can later move to `overruled`;

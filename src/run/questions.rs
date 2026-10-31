@@ -199,6 +199,7 @@ fn record(
     recommended: Option<String>,
     cost_usd: f64,
     reopened: Vec<String>,
+    why: Option<String>,
 ) -> Result<(), String> {
     run.append(Event::Question {
         id: q.id.clone(),
@@ -214,6 +215,7 @@ fn record(
         recommended,
         cost_usd,
         reopened,
+        why,
     })
 }
 
@@ -226,6 +228,9 @@ fn ask(
     reply: Sender<Reply>,
 ) -> Result<(), String> {
     let l = lp(run)?;
+    if run.state.stage.is_final() {
+        return Err("the loop is over".into());
+    }
     if open_of(&l, n).is_some() || run.asking.is_some() {
         return Err(ONE_OPEN.into());
     }
@@ -256,11 +261,12 @@ fn ask(
         affects: story_of(&l, step.phase, step.task.as_deref()),
         recommended: None,
         reopened: Vec::new(),
+        why: None,
         seq: 0,
         asked_seq: 0,
         history: Vec::new(),
     };
-    record(run, &entry, QuestionState::WithLead, None, None, None, options.clone(), None, 0.0, Vec::new())?;
+    record(run, &entry, QuestionState::WithLead, None, None, None, options.clone(), None, 0.0, Vec::new(), None)?;
     let stop = Arc::new(AtomicBool::new(false));
     run.asking = Some(Asking {
         q: id.clone(),
@@ -398,6 +404,14 @@ pub fn relay_reason(
             Some("the lead's answer has no basis in the documents or the conversations".into())
         }
         "answer" => None,
+        // Small, as FR-020a defines it: no public interface, no dependency (reserved items
+        // and acceptance scenarios are checked above). A missing flag counts as set.
+        "decided" if level == Level::Free && v["touches_interface"].as_bool() != Some(false) => {
+            Some("it touches a public interface, which the lead may not decide".into())
+        }
+        "decided" if level == Level::Free && v["adds_dependency"].as_bool() != Some(false) => {
+            Some("it adds a dependency, which the lead may not decide".into())
+        }
         "decided" if level == Level::Free => None,
         "decided" => Some("only the free level lets the lead decide an open question".into()),
         "relay" => Some("the lead relayed it".into()),
@@ -444,9 +458,13 @@ pub fn lead_done(
         .and_then(|t| speckit::spec::read("spec.md", &t).ok())
         .map(|s| s.all_reserved())
         .unwrap_or_default();
-    let why = match &value {
-        Ok(v) => relay_reason(l.level, v, &entry.text, &reserved),
-        Err(e) => Some(e.clone()),
+    let why = match (&value, lead) {
+        (Err(e), _) => Some(e.clone()),
+        _ if run.state.stage.is_final() => Some("the loop is over".into()),
+        // Answers are not committed while the documents are open again (research S-17).
+        _ if l.unlocked => Some("the feature is unlocked".into()),
+        (_, None) => Some("Fallow could not find the feature's spec session to commit to".into()),
+        (Ok(v), Some(_)) => relay_reason(l.level, v, &entry.text, &reserved),
     };
     let reply = run
         .asking
@@ -461,8 +479,9 @@ pub fn lead_done(
         let v = value.as_ref().expect("checked");
         let decided = v["outcome"] == "decided";
         let answer = v["answer"].as_str().unwrap_or_default().trim().to_string();
-        let ld = lead.ok_or("no lead")?;
-        match commit_answer(run, &l, ld, &entry, "lead", &answer) {
+        let ld = lead.expect("checked");
+        let who = if decided { "lead, decided" } else { "lead" };
+        match commit_answer(run, &l, ld, &entry, who, &answer) {
             Ok(commit) => {
                 record(
                     run,
@@ -479,6 +498,7 @@ pub fn lead_done(
                     None,
                     cost,
                     Vec::new(),
+                    None,
                 )?;
                 send(json!({
                     "state": if decided { "decided" } else { "answered" },
@@ -539,8 +559,8 @@ fn relay(
         recommended,
         cost,
         Vec::new(),
+        Some(why.to_string()).filter(|w| !w.is_empty()),
     )?;
-    let _ = why;
     send(json!({
         "state": "waiting",
         "question": entry.id,
@@ -562,7 +582,16 @@ fn commit_answer(
 ) -> Result<String, String> {
     let rel = format!("specs/{}/spec.md", l.feature);
     let path = lead.workdir.join(&rel);
-    let text = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+    // Only the clarification goes into an answer's commit: an edit of spec.md not committed
+    // would reach the build with it, past the lock (Phase 6 review).
+    let text = git::show(&lead.workdir, "HEAD", &rel)?
+        .ok_or_else(|| format!("{rel} is not committed on the feature branch"))?;
+    let now = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+    if now.replace("\r\n", "\n") != text.replace("\r\n", "\n") {
+        return Err(format!(
+            "{rel} has changes in the spec session that are not committed; Fallow does not commit them with an answer"
+        ));
+    }
     let asked_by = run
         .state
         .steps
@@ -616,6 +645,12 @@ pub fn engineer_answer(run: &mut Run, lead: &Lead, q: &str, answer: &str) -> Res
     if entry.state != QuestionState::WaitingEngineer {
         return Err(format!("{q} is not waiting for you"));
     }
+    if run.state.stage.is_final() {
+        return Err("the loop is over".into());
+    }
+    if l.unlocked {
+        return Err("the feature is unlocked: lock it again, then answer the question here".into());
+    }
     let commit = commit_answer(run, &l, lead, &entry, "engineer", answer)?;
     record(
         run,
@@ -628,34 +663,117 @@ pub fn engineer_answer(run: &mut Run, lead: &Lead, q: &str, answer: &str) -> Res
         entry.recommended.clone(),
         0.0,
         Vec::new(),
+        None,
     )?;
-    // The step that asked ended blocked: it runs again in its session with the answer.
-    let blocked = run
-        .state
-        .steps
-        .get(&entry.step)
-        .cloned()
-        .filter(|s| super::machine::first_reason(s).is_some_and(|r| r.starts_with(super::machine::BLOCKED)))
-        .filter(|s| {
-            // Nothing of its part ran after it.
-            !run.state
-                .steps
-                .values()
-                .any(|x| x.n > s.n && x.part == s.part && x.kind == s.kind)
-        });
     run.append(Event::Steering {
         kind: SteeringKind::Answer,
         target: entry.task.clone(),
         detail: Some(answer.to_string()),
     })?;
-    if let Some(s) = blocked {
+    // The step that asked resumes with it once it has ended.
+    deliver(run)?;
+    Ok(json!({ "commit": commit }))
+}
+
+/// Relayed: its question went to the engineer.
+fn relayed(q: &QuestionEntry) -> bool {
+    q.state == QuestionState::WaitingEngineer
+        || (q.state == QuestionState::Answered && q.by.as_deref() == Some("engineer"))
+}
+
+/// The question of step `n` that went to the engineer: whatever the step returned, it ends
+/// blocked on it and resumes in its session with the answer (FR-021).
+pub fn relayed_of(l: &LoopState, n: u32) -> Option<&QuestionEntry> {
+    l.questions.values().find(|q| q.step == n && relayed(q))
+}
+
+/// Gives the engineer's answers to the steps that asked: each asking step that has ended, was
+/// judged, and has not run again since, runs again in its session with the answer. Whenever
+/// the answer came (while the step ran, after it ended, across a restart), it reaches the
+/// agent once. Returns whether a step was queued.
+pub fn deliver(run: &mut Run) -> Result<bool, String> {
+    let l = lp(run)?;
+    if l.unlocked || run.state.stage.is_final() {
+        return Ok(false);
+    }
+    let mut answered: Vec<&QuestionEntry> = l
+        .questions
+        .values()
+        .filter(|q| q.state == QuestionState::Answered && q.by.as_deref() == Some("engineer"))
+        .collect();
+    answered.sort_by_key(|q| q.seq);
+    for q in answered {
+        let Some(s) = run.state.steps.get(&q.step).cloned() else {
+            continue;
+        };
+        if s.end.is_none()
+            || run.busy == Some(Busy::Step(s.n))
+            || super::machine::first_reason(&s).is_none()
+        {
+            continue;
+        }
+        if run
+            .state
+            .steps
+            .values()
+            .any(|x| x.n > s.n && x.part == s.part && x.kind == s.kind)
+        {
+            continue;
+        }
+        let commit = q.commit.clone().unwrap_or_default();
         let text = format!(
-            "{answer}\n\n(Fallow committed this answer to {q} to spec.md's Clarifications, {}.)",
+            "{}\n\n(Fallow committed this answer to {} to spec.md's Clarifications, {}.)",
+            q.answer.as_deref().unwrap_or_default(),
+            q.id,
             &commit[..commit.len().min(7)]
         );
         super::feature::answered(run, &s, &text)?;
+        return Ok(true);
     }
-    Ok(json!({ "commit": commit }))
+    Ok(false)
+}
+
+/// After a restart: a question that was with the lead lost its call; it goes to the engineer.
+pub fn orphans(run: &mut Run) -> Result<(), String> {
+    let Some(l) = run.state.feature_loop.clone() else {
+        return Ok(());
+    };
+    if run.state.stage.is_final() {
+        return Ok(());
+    }
+    for q in l.questions.values().filter(|q| q.state == QuestionState::WithLead) {
+        let _ = git::worktree_remove(&run.state.repo, &run.worktrees().join(format!("lead-{}", q.id)));
+        relay(run, q, &Err(String::new()), 0.0, "the lead's call was cut short when Fallow stopped", |_| {})?;
+    }
+    Ok(())
+}
+
+/// The engineer confirms a decision the lead took at the Free level (FR-020a, constitution II).
+pub fn confirm(run: &mut Run, q: &str) -> Result<Value, String> {
+    let l = lp(run)?;
+    let entry = l.questions.get(q).cloned().ok_or("there is no such question")?;
+    if entry.state != QuestionState::Decided {
+        return Err(format!("{q} is not a decision of the lead"));
+    }
+    record(
+        run,
+        &entry,
+        QuestionState::Confirmed,
+        Some("engineer"),
+        entry.answer.clone(),
+        None,
+        entry.options.clone(),
+        entry.recommended.clone(),
+        0.0,
+        Vec::new(),
+        None,
+    )?;
+    run.append(Event::Steering {
+        kind: SteeringKind::Answer,
+        target: entry.task.clone(),
+        detail: Some(format!("confirmed the lead's decision on {q}")),
+    })?;
+    Ok(json!({}))
 }
 
 /// The engineer overrules an answer the lead gave or a decision it took (FR-022): the reversal
@@ -691,6 +809,7 @@ pub fn overrule(run: &mut Run, lead: &Lead, q: &str, answer: &str) -> Result<Val
         entry.recommended.clone(),
         0.0,
         reopened.clone(),
+        None,
     )?;
     if run.state.stage == Stage::Ready {
         run.append(Event::Stage {
@@ -749,7 +868,8 @@ mod tests {
 
     fn said(outcome: &str, answer: &str, basis: &str) -> Value {
         json!({ "outcome": outcome, "answer": answer, "basis": basis,
-                "reserved": false, "changes_criterion": false })
+                "reserved": false, "changes_criterion": false,
+                "touches_interface": false, "adds_dependency": false })
     }
 
     #[test]
@@ -766,6 +886,16 @@ mod tests {
     fn decided_only_at_free() {
         let v = said("decided", "no floats", "none");
         assert_eq!(relay_reason(Level::Free, &v, "Floats?", &[]), None);
+        // Only a small question (FR-020a): no public interface, no dependency; a missing flag
+        // counts as set.
+        for flag in ["touches_interface", "adds_dependency"] {
+            let mut w = v.clone();
+            w[flag] = json!(true);
+            assert!(relay_reason(Level::Free, &w, "Floats?", &[]).is_some(), "{flag}");
+            let mut w = v.clone();
+            w.as_object_mut().unwrap().remove(flag);
+            assert!(relay_reason(Level::Free, &w, "Floats?", &[]).is_some(), "{flag} missing");
+        }
         assert!(relay_reason(Level::Normal, &v, "Floats?", &[]).is_some());
         assert!(relay_reason(Level::Strict, &v, "Floats?", &[]).is_some());
     }

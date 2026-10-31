@@ -599,6 +599,10 @@ pub fn stop(run: &mut Run, reason: Option<String>) -> Result<(), String> {
         return Err("a merge is running; stop the run after it".into());
     }
     run.stop.store(true, Ordering::Relaxed);
+    // The lead's call for a question stops too.
+    if let Some(a) = &run.asking {
+        a.stop.store(true, Ordering::Relaxed);
+    }
     run.append(Event::Steering {
         kind: SteeringKind::Stop,
         target: None,

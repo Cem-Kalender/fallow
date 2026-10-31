@@ -121,6 +121,11 @@ pub enum Request {
     /// (FR-021, FR-022).
     QuestionAnswer { id: u64, q: String, answer: String },
     Overrule { id: u64, q: String, answer: String },
+    /// 007: the engineer confirms a decision of the lead (FR-020a).
+    QuestionConfirm { id: u64, q: String },
+    /// 007: what Fallow keeps on disk, and deleting a loop's or conversation's data (FR-003b).
+    Data,
+    DeleteData { kind: String, id: String },
 }
 
 #[derive(Debug)]
@@ -283,6 +288,11 @@ pub struct Ctx {
     pub config: Option<PathBuf>,
     /// 007: the suffix of the pipe the step tools' bridge connects to (tests have their own).
     pub endpoint: Option<String>,
+    /// 007: where desktop notifications go, their switch, and the page's address with its
+    /// secret (research S-14).
+    pub notify: Arc<dyn crate::platform::notify::Notify>,
+    pub notify_on: Arc<AtomicBool>,
+    pub page: Option<String>,
 }
 
 pub struct Engine {
@@ -297,6 +307,8 @@ pub struct Engine {
     pub studio: crate::studio::Studio,
     /// What the bus last said about each run: its event number and what it needed.
     published: BTreeMap<u64, (u64, Option<String>)>,
+    /// 007: "Needs you" items become notifications (FR-003a).
+    notifier: crate::service::notify::Notifier,
 }
 
 pub fn runs_dir(data: &Path) -> PathBuf {
@@ -309,7 +321,13 @@ impl Engine {
         crate::platform::private_dir(&data)?;
         crate::platform::private_dir(&runs_dir(&data))?;
         let studio = crate::studio::Studio::load(&data, ctx.config.clone())?;
+        let notifier = crate::service::notify::Notifier::new(
+            Arc::clone(&ctx.notify),
+            Arc::clone(&ctx.notify_on),
+            ctx.page.clone(),
+        );
         let mut e = Engine {
+            notifier,
             data,
             runs: BTreeMap::new(),
             ctx,
@@ -345,7 +363,9 @@ impl Engine {
                         asking: None,
                     };
                     if !run.state.stage.is_final() {
-                        if let Err(err) = super::machine::resume(&mut run) {
+                        if let Err(err) = super::machine::resume(&mut run)
+                            .and_then(|()| super::questions::orphans(&mut run))
+                        {
                             e.console.push(format!("run {id}: {err}"));
                         }
                     }
@@ -453,16 +473,173 @@ impl Engine {
                 Msg::Shutdown => {
                     for r in self.runs.values() {
                         r.stop.store(true, std::sync::atomic::Ordering::Relaxed);
+                        if let Some(a) = &r.asking {
+                            a.stop.store(true, std::sync::atomic::Ordering::Relaxed);
+                        }
                     }
                     break;
                 }
             }
             self.publish_changes();
+            self.notify_changes();
             self.console.append(&mut self.studio.console);
             for line in self.console.drain(..) {
                 eprintln!("{line}");
             }
         }
+    }
+
+    /// What Fallow keeps on disk, per project: its loops, conversations and worktrees, with
+    /// their sizes (FR-003b).
+    fn data_view(&self) -> Value {
+        use crate::project::data::size;
+        let mut total = 0u64;
+        let mut projects: Vec<Value> = Vec::new();
+        let mut of = |id: Option<&str>, name: &str| {
+            let loops: Vec<Value> = self
+                .runs
+                .values()
+                .filter(|r| r.state.feature_loop.as_ref().map(|l| l.project.as_str()) == id)
+                .map(|r| {
+                    let bytes = size(&r.dir);
+                    json!({
+                        "id": r.id(), "feature": r.state.feature_loop.as_ref().map(|l| l.feature.clone()),
+                        "task": r.state.task, "stage": r.state.stage, "running": !r.state.stage.is_final(),
+                        "bytes": bytes, "worktrees": size(&r.worktrees()),
+                    })
+                })
+                .collect();
+            let convs: Vec<Value> = self
+                .studio
+                .convs
+                .values()
+                .filter(|c| Some(c.state.project.as_str()) == id)
+                .map(|c| {
+                    json!({
+                        "id": c.state.id, "kind": c.state.kind, "feature": c.state.feature,
+                        "busy": c.state.busy, "turns": c.state.turns.len(), "bytes": size(&c.dir),
+                    })
+                })
+                .collect();
+            let worktrees = id.map_or(0, |p| size(&self.studio.data.join("worktrees").join(p)));
+            let sum: u64 = loops.iter().chain(&convs).filter_map(|v| v["bytes"].as_u64()).sum::<u64>() + worktrees;
+            total += sum;
+            json!({ "id": id, "name": name, "loops": loops, "conversations": convs, "worktrees": worktrees, "bytes": sum })
+        };
+        for p in &self.studio.store.projects {
+            projects.push(of(Some(&p.id), &p.name));
+        }
+        // Runs of 006's single-task flow, outside any project.
+        let other = of(None, "Runs outside a project");
+        if other["loops"].as_array().is_some_and(|a| !a.is_empty()) {
+            projects.push(other);
+        }
+        json!({ "projects": projects, "bytes": total, "folder": self.data })
+    }
+
+    /// Deletes a loop's or a conversation's data, after the page's confirmation naming it
+    /// (FR-003b). A loop still running, and a turn in progress, are refused.
+    fn delete_data(&mut self, kind: &str, id: &str) -> Result<Value, String> {
+        match kind {
+            "loop" => {
+                let n: u64 = id.parse().map_err(|_| format!("no loop {id}"))?;
+                let r = self.runs.get(&n).ok_or_else(|| format!("there is no loop {n}"))?;
+                if !r.state.stage.is_final() {
+                    return Err("the loop is still running: stop it first".into());
+                }
+                let merged = r.state.merged.is_some();
+                let repo = r.state.repo.clone();
+                let dir = r.dir.clone();
+                crate::project::data::remove(&dir, Some(&repo))?;
+                self.runs.remove(&n);
+                self.published.remove(&n);
+                for p in self.studio.store.projects.iter_mut() {
+                    for f in p.features.iter_mut().filter(|f| f.run == Some(n)) {
+                        if merged {
+                            f.ended = Some("merged".into());
+                        }
+                    }
+                }
+                self.studio.store.save()?;
+                self.bus.publish(json!({ "type": "loop_progress", "run": n }));
+                Ok(json!({ "deleted": dir }))
+            }
+            "conv" => {
+                let c = self
+                    .studio
+                    .convs
+                    .get(id)
+                    .ok_or_else(|| format!("there is no conversation {id}"))?;
+                if c.state.busy {
+                    return Err("the lead is answering in this conversation: wait for its turn to end".into());
+                }
+                // The spec session of a feature not merged yet is what the lead answers the
+                // loop's questions from (research S-10).
+                if let Some(f) = c.state.feature.as_deref() {
+                    let open = self
+                        .studio
+                        .store
+                        .get(&c.state.project)
+                        .and_then(|p| p.features.iter().find(|x| x.name() == f))
+                        .is_some_and(|x| {
+                            !(x.ended.is_some()
+                                || x.run.and_then(|r| self.runs.get(&r)).is_some_and(|r| r.state.merged.is_some()))
+                        });
+                    if open {
+                        return Err(format!("this is the spec session of {f}, which is not merged yet: the lead answers its loop's questions from it"));
+                    }
+                }
+                let dir = c.dir.clone();
+                let project = c.state.project.clone();
+                crate::project::data::remove(&dir, None)?;
+                self.studio.convs.remove(id);
+                if let Some(p) = self.studio.store.get_mut(&project) {
+                    if p.conversation.as_deref() == Some(id) {
+                        p.conversation = None;
+                    }
+                    for f in p.features.iter_mut().filter(|f| f.conversation.as_deref() == Some(id)) {
+                        f.conversation = None;
+                    }
+                }
+                self.studio.store.save()?;
+                self.bus.publish(json!({ "type": "project", "project": project }));
+                Ok(json!({ "deleted": dir }))
+            }
+            _ => Err("kind: loop or conv".into()),
+        }
+    }
+
+    /// The "Needs you" items of every loop (FR-003a), newest first.
+    fn needs_items(&self) -> Vec<Value> {
+        let name = |p: &str| {
+            self.studio
+                .store
+                .get(p)
+                .map(|x| x.name.clone())
+                .unwrap_or_else(|| p.to_string())
+        };
+        let mut items: Vec<Value> = self
+            .runs
+            .values()
+            .filter_map(|r| match r.state.feature_loop.as_ref() {
+                Some(l) => super::dashboard::need(r, &name(&l.project)),
+                // A run of 006's single-task flow.
+                None => needs(r).map(|why| {
+                    json!({ "kind": "stopped", "key": format!("{}:needs:{why}", r.id()), "run": r.id(),
+                            "text": why, "task": r.state.task, "at": r.state.stage_at })
+                }),
+            })
+            .collect();
+        items.sort_by(|a, b| b["at"].as_str().cmp(&a["at"].as_str()));
+        items
+    }
+
+    /// New "Needs you" items raise a notification each, unless the project turned them off.
+    fn notify_changes(&mut self) {
+        let items = self.needs_items();
+        let store = &self.studio.store;
+        self.notifier
+            .update(&items, |p| store.get(p).is_none_or(|x| x.notifications));
     }
 
     /// Tells the global scope which loops changed and what started or stopped needing the
@@ -548,7 +725,8 @@ impl Engine {
             return "spec_session";
         }
         let Some(r) = f.run.and_then(|id| self.runs.get(&id)) else {
-            return "locked";
+            // The loop's data was deleted (FR-003b).
+            return if f.ended.as_deref() == Some("merged") { "merged" } else { "locked" };
         };
         if r.state.merged.is_some() {
             return "merged";
@@ -566,7 +744,19 @@ impl Engine {
     }
 
     fn feature_summary(&self, p: &crate::project::Project, f: &crate::project::Feature) -> Value {
+        let run = f.run.and_then(|id| self.runs.get(&id));
+        let now = super::time::unix_now();
         json!({
+            // A loop that ended counts its time until then.
+            "minutes": run.map(|r| {
+                let at = if r.state.stage.is_final() {
+                    super::time::parse_rfc3339(&r.state.stage_at).unwrap_or(now)
+                } else {
+                    now
+                };
+                r.state.minutes_used(at)
+            }),
+            "cost_usd": run.map(|r| r.state.cost_usd),
             "project": p.id,
             "project_name": p.name,
             "name": f.name(),
@@ -1009,19 +1199,22 @@ impl Engine {
     fn dashboard(&self) -> Value {
         let today = super::time::rfc3339(super::time::unix_now());
         let today = today.get(..10).unwrap_or_default();
-        let needs_you: Vec<Value> = self
-            .runs
-            .values()
-            .filter_map(|r| {
-                needs(r).map(|why| json!({ "run": r.id(), "why": why, "task": r.state.task }))
-            })
-            .collect();
+        let needs_you = self.needs_items();
         let loops: Vec<Value> = self
             .runs
             .values()
             .rev()
             .filter(|r| !r.state.stage.is_final())
-            .map(summary)
+            .map(|r| {
+                let name = r
+                    .state
+                    .feature_loop
+                    .as_ref()
+                    .and_then(|l| self.studio.store.get(&l.project))
+                    .map(|p| p.name.clone())
+                    .unwrap_or_default();
+                super::dashboard::card(r, &self.ctx, &name).unwrap_or_else(|| summary(r))
+            })
             .collect();
         let agents_running = self
             .runs
@@ -1191,6 +1384,11 @@ impl Engine {
             }
             Request::QuestionAnswer { id, q, answer } => self.question_answer(id, &q, &answer, false),
             Request::Overrule { id, q, answer } => self.question_answer(id, &q, &answer, true),
+            Request::QuestionConfirm { id, q } => {
+                run_mut(self, id).and_then(|r| super::questions::confirm(r, &q))
+            }
+            Request::Data => Ok(self.data_view()),
+            Request::DeleteData { kind, id } => self.delete_data(&kind, &id),
             Request::Limits {
                 id,
                 usd,

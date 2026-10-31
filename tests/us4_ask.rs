@@ -17,7 +17,7 @@ const BIG: &str = "What should add() do with numbers above a billion?";
 
 fn lead_answer(q: &str, outcome: &str, answer: &str, basis: &str, extra: &str) -> String {
     format!(
-        "[[step]]\nkind = \"lead_answer\"\npart = {q:?}\n{extra}\noutput = {{ outcome = {outcome:?}, answer = {answer:?}, basis = {basis:?}, reserved = false, changes_criterion = false, options = [{{ label = \"refuse them\", recommended = true }}, {{ label = \"add them\" }}] }}\n\n"
+        "[[step]]\nkind = \"lead_answer\"\npart = {q:?}\n{extra}\noutput = {{ outcome = {outcome:?}, answer = {answer:?}, basis = {basis:?}, reserved = false, changes_criterion = false, touches_interface = false, adds_dependency = false, options = [{{ label = \"refuse them\", recommended = true }}, {{ label = \"add them\" }}] }}\n\n"
     )
 }
 
@@ -169,15 +169,17 @@ fn free_lets_the_lead_decide_and_overruling_reopens_the_story() {
     let v = wait_for(tx, id, "ready to merge", |v| v["stage"] == "ready");
     let q1 = question(&v, "q1");
     assert_eq!(q1["state"], "decided", "{q1}");
-    assert!(spec_on_feature_branch(&repo).contains("→ A (lead): No floats"));
+    assert!(spec_on_feature_branch(&repo).contains("→ A (lead, decided): No floats"));
     // A decision never blocks the loop; the page lists it to confirm or overrule.
     let view = ask(tx, Request::Loop { id }).unwrap();
     let qs = view["questions"].as_array().unwrap();
     assert_eq!(qs[0]["overrulable"], true, "{qs:?}");
+    assert_eq!(qs[0]["confirmable"], true, "{qs:?}");
 
     let o = ask(tx, Request::Overrule { id, q: "q1".into(), answer: "Accept floats too".into() }).unwrap();
     assert_eq!(o["reopened"], serde_json::json!(["T002", "T003"]), "{o}");
     assert!(ask(tx, Request::Overrule { id, q: "q1".into(), answer: "again".into() }).is_err(), "only the lead's answers are overruled");
+    assert!(ask(tx, Request::QuestionConfirm { id, q: "q1".into() }).is_err(), "only a decision still standing is confirmed");
     let v = wait_for(tx, id, "ready again", |v| {
         v["stage"] == "ready" && steps_of(v, "review", "US1").len() == 2
     });
@@ -244,6 +246,75 @@ fn strict_relays_every_answer_and_a_slow_lead_is_relayed() {
     });
     assert!(question(&v, "q1")["answer"].is_null());
     assert_eq!(v["feature_loop"]["tasks"]["T002"]["state"], "waiting");
+    drop(e);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+fn restart(e: fallow::service::ToolEngine, root: &std::path::Path) -> fallow::service::ToolEngine {
+    e.tx.send(fallow::run::engine::Msg::Shutdown).unwrap();
+    let fallow::service::ToolEngine { handle, .. } = e;
+    handle.join().unwrap();
+    start_studio(root, &root.join("scenario.toml"), None)
+}
+
+fn prompt_of(root: &std::path::Path, id: u64, step: &Value) -> String {
+    std::fs::read_to_string(root.join("data/runs").join(id.to_string()).join("steps").join(format!("{}.prompt", step["n"]))).unwrap()
+}
+
+#[test]
+fn every_answer_reaches_the_step_that_asked_whenever_it_comes() {
+    // Strict: every question goes to the engineer.
+    let root = scratch("ask-timing");
+    const CHECK: &str = "Is add(2, 3) the right check for US1?";
+    let steps = [
+        // The builder asks, then carries on for a while and ends done: its step still ends
+        // blocked on the question, and the answer, given while it ran, reaches it.
+        task_step("T001", &[("calc/__init__.py", "")], &format!("ask = {FLOATS:?}\nsleep_ms = 6000")),
+        lead_answer("q1", "answer", "No", "spec.md US1", ""),
+        task_step("T001", &[("calc/__init__.py", "")], "when = \"The engineer answers\""),
+        handover_step(1, ""),
+        task_step("T002", &[("calc/__init__.py", CALC_INIT)], ""),
+        task_step("T003", &[("tests/__init__.py", ""), ("tests/test_add.py", TEST_ADD)], ""),
+        handover_step(2, ""),
+        // A checker asks; Fallow stops while its question waits; the answer, given after the
+        // restart, reaches the checker in its session.
+        check_step("US1", true, &format!("ask = {CHECK:?}\nsleep_ms = 30000")),
+        lead_answer("q2", "relay", "", "none", ""),
+        check_step("US1", true, "when = \"The engineer answers\""),
+        task_step("T004", &[("calc/__init__.py", CALC_INIT_SUB), ("tests/test_sub.py", TEST_SUB)], ""),
+        handover_step(3, ""),
+        check_step("US2", true, ""),
+    ]
+    .concat();
+    let (e, repo, id) = lock_level(&root, &steps, Level::Strict);
+    let v = wait_for(&e.tx, id, "q1 relayed", |v| v["feature_loop"]["questions"]["q1"]["state"] == "waiting_engineer");
+    let t001 = steps_of(&v, "build", "T001");
+    assert!(t001[0]["end"].is_null(), "the step still runs: {}", t001[0]);
+    ask(&e.tx, Request::QuestionAnswer { id, q: "q1".into(), answer: "Ints only".into() }).unwrap();
+
+    let v = wait_for(&e.tx, id, "q2 relayed", |v| v["feature_loop"]["questions"]["q2"]["state"] == "waiting_engineer");
+    let t001 = steps_of(&v, "build", "T001");
+    assert_eq!(t001.len(), 2, "T001 ran again with the answer");
+    assert!(t001[0]["verified"][1][0].as_str().unwrap().starts_with("blocked: "), "{}", t001[0]);
+    assert_eq!(t001[1]["resume"], t001[0]["session"]);
+    assert!(prompt_of(&root, id, t001[1]).contains("Ints only"));
+    // The checker saw q1's answer: the build took it in before the check.
+    let check = &steps_of(&v, "review", "US1")[0];
+    let base = check["base"].as_str().unwrap();
+    assert!(git(&repo, &["show", &format!("{base}:specs/001-calc/spec.md")]).contains("A (engineer): Ints only"));
+    assert!(question(&v, "q2")["why"].as_str().unwrap().contains("strict"), "{}", question(&v, "q2"));
+
+    let e = restart(e, &root);
+    let v = wait_for(&e.tx, id, "the loop waits again", |v| !v["needs"].is_null());
+    assert_eq!(steps_of(&v, "review", "US1").len(), 1, "nothing runs before the answer");
+    ask(&e.tx, Request::QuestionAnswer { id, q: "q2".into(), answer: "Yes, and add(0, 0)".into() }).unwrap();
+    let v = wait_for(&e.tx, id, "ready to merge", |v| v["stage"] == "ready");
+    let checks = steps_of(&v, "review", "US1");
+    assert_eq!(checks.len(), 2, "{checks:?}");
+    assert_eq!(checks[1]["resume"], checks[0]["session"], "the checker resumed in its session");
+    assert!(prompt_of(&root, id, checks[1]).contains("Yes, and add(0, 0)"));
+    let merged = git(&repo, &["show", &format!("{}:specs/001-calc/spec.md", v["integrated"].as_str().unwrap())]);
+    assert!(merged.contains("Ints only") && merged.contains("Yes, and add(0, 0)"), "{merged}");
     drop(e);
     let _ = std::fs::remove_dir_all(&root);
 }

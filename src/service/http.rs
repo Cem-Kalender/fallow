@@ -286,6 +286,10 @@ fn studio_route(
             Err(e) => Some(Err(e)),
         },
         ("GET", ["api", "projects", p]) => r(Req::Project { id: p.to_string() }),
+        ("DELETE", ["api", "data", kind, id]) => Some(confirmed().map(|()| Request::DeleteData {
+            kind: kind.to_string(),
+            id: id.to_string(),
+        })),
         ("DELETE", ["api", "projects", p]) => {
             Some(confirmed().map(|()| Request::Studio(Req::RemoveProject { id: p.to_string() })))
         }
@@ -526,6 +530,7 @@ fn handle(mut req: tiny_http::Request, tx: &Sender<Msg>, port: u16, secret: &str
             None => respond(req, 404, "text/plain", "not found".into()),
         },
         (true, ["api", "dashboard"]) => json_reply(req, ask(tx, Request::Dashboard)),
+        (true, ["api", "data"]) => json_reply(req, ask(tx, Request::Data)),
         (true, ["api", "events"]) => {
             let q = url.split_once('?').map(|(_, q)| q).unwrap_or("");
             let arg = |k: &str| {
@@ -626,6 +631,10 @@ fn handle(mut req: tiny_http::Request, tx: &Sender<Msg>, port: u16, secret: &str
                     id: i,
                     q: percent_decode(q),
                     answer: body["answer"].as_str().unwrap_or_default().to_string(),
+                },
+                ["questions", q, "confirm"] => Request::QuestionConfirm {
+                    id: i,
+                    q: percent_decode(q),
                 },
                 ["retry"] => Request::Retry { id: i },
                 ["pause"] => Request::Pause { id: i },

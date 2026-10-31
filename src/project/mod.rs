@@ -3,6 +3,7 @@
 //! installed into each where its files are missing, and their features.
 
 pub mod commands;
+pub mod data;
 pub mod install;
 
 use std::path::{Path, PathBuf};
@@ -66,6 +67,9 @@ pub struct Feature {
     /// Unlocked to change the spec (FR-009).
     #[serde(default)]
     pub unlocked: bool,
+    /// How its loop ended, kept when the loop's data is deleted (FR-003b): `merged`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ended: Option<String>,
     /// The analyze step ran, and what it found (FR-008).
     #[serde(default)]
     pub analyzed: bool,

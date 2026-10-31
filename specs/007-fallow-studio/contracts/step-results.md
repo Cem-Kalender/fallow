@@ -70,12 +70,14 @@ A checker other than the reviewer (for example the security reviewer) answers it
   "basis": "spec.md FR-006 | the spec session, turn 14 | none",
   "options": [{"label": "...", "recommended": true}],
   "reserved": false,
-  "changes_criterion": false }
+  "changes_criterion": false,
+  "touches_interface": false,
+  "adds_dependency": false }
 ```
 
 **Fallow's rules**:
 - `answer` needs a `basis` other than `none`;
-- `decided` is accepted only at the Free level;
+- `decided` is accepted only at the Free level, and only for a small question: `touches_interface` and `adds_dependency` false (a missing flag counts as true);
 - whatever the lead says, the outcome becomes `relay` when the level is Strict, when `reserved` or `changes_criterion` is true or missing, or when the question or the answer names an item the spec reserves for the engineer: Fallow checks this itself, the lead's flags being claims (FR-020a);
 - a lead's call that fails or passes its limit (`lead_answer_sec` in `[defaults]`, 180 by default) relays the question;
 - when relayed, the lead's answer, if it gave one, is its recommendation.

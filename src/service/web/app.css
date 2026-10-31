@@ -319,3 +319,53 @@ button.task.waiting { background: var(--needs-bg); }
 .checks .kv > :last-child { flex: none; }
 button.phase { display: block; width: 100%; text-align: left; border: 0; background: transparent; font-family: var(--sans); cursor: pointer; border-radius: 6px; }
 button.phase:hover { background: var(--chip); }
+
+/* 007 US5: the dashboard (mockup screen 1) */
+.gap-12 { gap: 12px; }
+.m0 { margin: 0; }
+.self-center { align-self: center; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+.grid-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; }
+.bars { display: flex; gap: 4px; }
+.bar { flex: 1; height: 8px; border-radius: 4px; background: var(--line); }
+.bar.done { background: var(--ok-dot); }
+.bar.now { background: linear-gradient(90deg, var(--accent) var(--share, 0%), #DCE3F8 var(--share, 0%)); }
+.project-card .mono { overflow-wrap: anywhere; }
+
+/* 007 US6: the pipeline designer (mockup screen 4) */
+.mb-4 { margin-bottom: 4px; }
+.ink { color: var(--ink); }
+.pl-layout { display: flex; flex-wrap: wrap; gap: 20px; align-items: flex-start; }
+.pl-side { flex: 1 1 260px; max-width: 310px; display: flex; flex-direction: column; gap: 8px; }
+.pl-main { flex: 999 1 460px; min-width: 0; display: flex; flex-direction: column; gap: 12px; }
+.pl-def { flex: 1 1 300px; max-width: 400px; display: flex; flex-direction: column; gap: 10px; }
+.agent-btn { display: flex; gap: 10px; align-items: flex-start; padding: 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); width: 100%; text-align: left; font: 14px var(--sans); color: var(--ink); cursor: pointer; }
+.agent-btn:hover { border-color: var(--accent); }
+.agent-btn.dashed { border-style: dashed; }
+.agent-btn.sel { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); border-style: solid; }
+.agent-btn .pill { font-size: 11px; padding: 1px 7px; }
+.agent-desc { display: block; font-size: 12px; color: var(--muted); margin-top: 2px; }
+.av { flex: none; width: 30px; height: 30px; border-radius: 8px; font-size: 13px; font-weight: 700; display: flex; align-items: center; justify-content: center; background: var(--chip); color: var(--body); }
+.av.purple { background: var(--spec-bg); color: var(--spec); } .av.blue { background: var(--accent-bg); color: var(--accent); }
+.av.green { background: var(--ok-bg); color: var(--ok); } .av.yellow { background: var(--warn-bg); color: var(--warn); }
+.av.red { background: var(--bad-bg); color: var(--bad); } .av.teal { background: var(--teal-bg); color: var(--teal); }
+.title-input { font: 700 22px var(--sans); border: 1px solid transparent; padding: 2px 6px; margin: 2px 0 0 -6px; background: transparent; max-width: 100%; }
+.title-input:hover, .title-input:focus { border-color: var(--line-3); background: var(--panel); }
+.node { border: 1px solid var(--line); border-radius: 12px; background: var(--panel); padding: 12px 14px; }
+.node.fixed { background: var(--panel-2); }
+.node.bad { border-color: var(--bad-line); }
+.node.dashed-needs { border-style: dashed; border-color: var(--needs-line); }
+.link { width: 2px; height: 22px; background: #C9C8C1; margin-left: 28px; }
+.lock-pill { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 600; color: var(--body); background: var(--chip); border-radius: 999px; padding: 2px 8px; }
+.lock-pill svg { width: 11px; height: 11px; }
+.phase-box { border: 2px dashed var(--accent-line); border-radius: 14px; padding: 14px; background: #F8FAFF; }
+.phase-box-k { font-size: 12px; font-weight: 600; color: var(--accent); margin-bottom: 10px; }
+.node-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; }
+.repair-ico { color: var(--needs); display: inline-flex; }
+input.num { width: 56px; padding: 2px 6px; border-radius: 6px; font-weight: 700; color: var(--ink); }
+.step-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; padding-top: 10px; border-top: 1px solid var(--line-2); }
+.def-text { width: 100%; padding: 16px; font: 12px/1.7 var(--mono); color: var(--ink-2); white-space: pre; overflow-x: auto; resize: vertical; }
+.linkish { border: 0; background: none; padding: 0; color: var(--accent); font: inherit; text-decoration: underline; cursor: pointer; }
+@media (max-width: 640px) {
+  .pl-side, .pl-def { max-width: none; }
+}

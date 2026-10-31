@@ -415,6 +415,10 @@ pub enum Event {
         /// Overruled: the tasks built on the old answer, reopened.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         reopened: Vec<String>,
+        /// Relayed: why it went to the engineer (the lead relayed it, a rule of Fallow's, a
+        /// failed or slow call).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        why: Option<String>,
     },
     Unlocked,
     Relocked {
@@ -498,6 +502,8 @@ pub enum QuestionState {
     Decided,
     WaitingEngineer,
     Overruled,
+    /// A decision of the lead the engineer confirmed (FR-020a).
+    Confirmed,
 }
 
 impl Event {

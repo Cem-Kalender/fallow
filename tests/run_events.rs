@@ -248,6 +248,7 @@ fn a_loop_folds_its_phases_tasks_questions_and_outcome() {
             recommended: Some("refuse".into()),
             cost_usd: 0.02,
             reopened: Vec::new(),
+            why: Some("the lead relayed it".into()),
         },
         Event::Unlocked,
         Event::Relocked {

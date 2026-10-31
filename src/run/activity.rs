@@ -197,6 +197,11 @@ fn fallow_lines(run: &Run, last_line: &BTreeMap<u32, u64>) -> Vec<Value> {
                         by_engineer.push(answer);
                         ("you", format!("You overruled the lead on {}: {answer}", q.id), Some("ok"))
                     }
+                    (QuestionState::Confirmed, _) => (
+                        "you",
+                        format!("You confirmed the lead's decision on {}: {answer}", q.id),
+                        Some("ok"),
+                    ),
                 };
                 // After the agent's lines of the same second.
                 let mut e = json!({
@@ -210,13 +215,19 @@ fn fallow_lines(run: &Run, last_line: &BTreeMap<u32, u64>) -> Vec<Value> {
                     e["commit"] = json!(c);
                     e["detail"] = json!(format!("Committed {c} to spec.md's Clarifications"));
                 }
+                if h.state == QuestionState::WaitingEngineer {
+                    if let Some(w) = &q.why {
+                        e["detail"] = json!(format!("Relayed because {w}."));
+                    }
+                }
                 out.push(e);
             }
         }
     }
     for st in &run.state.steering {
         if st.kind == SteeringKind::Answer
-            && by_engineer.contains(&st.detail.as_deref().unwrap_or("").trim())
+            && (by_engineer.contains(&st.detail.as_deref().unwrap_or("").trim())
+                || st.detail.as_deref().is_some_and(|d| d.starts_with("confirmed the lead's decision")))
         {
             continue; // shown with its question
         }
@@ -522,11 +533,14 @@ pub fn view(run: &Run, ctx: &Ctx) -> Result<Value, String> {
                 "id": q.id, "step": q.step, "task": q.task, "text": q.text, "options": q.options,
                 "state": q.state, "by": q.by, "answer": q.answer, "commit": q.commit,
                 "affects": q.affects, "recommended": q.recommended, "reopened": q.reopened,
+                "why": q.why,
             });
+            v["confirmable"] = json!(q.state == QuestionState::Decided && !s.stage.is_final());
             v["agent"] = json!(s.steps.get(&q.step).and_then(|x| x.def.clone()));
             v["overrulable"] = json!(
-                q.state == QuestionState::Decided
-                    || (q.state == QuestionState::Answered && q.by.as_deref() == Some("lead"))
+                !s.stage.is_final()
+                    && (q.state == QuestionState::Decided
+                        || (q.state == QuestionState::Answered && q.by.as_deref() == Some("lead")))
             );
             v
         })

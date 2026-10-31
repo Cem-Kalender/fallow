@@ -110,7 +110,7 @@ const Fallow = (() => {
   function register(name, screen) { screens[name] = screen; }
 
   // `#/`, `#/p/<project>`, `#/p/<project>/f/<feature>`, `#/p/<project>/f/<feature>/loop`,
-  // `#/pipelines`, `#/specs`, `#/loops`.
+  // `#/pipelines`, `#/specs`, `#/loops`, `#/data`.
   function route() {
     const parts = (location.hash.replace(/^#\/?/, "") || "").split("/").filter(Boolean).map(decodeURIComponent);
     if (parts[0] === "p" && parts[1]) {
@@ -120,7 +120,8 @@ const Fallow = (() => {
       }
       return { screen: "project", nav: "dashboard", project: parts[1] };
     }
-    if (parts[0] === "pipelines") return { screen: "pipelines", nav: "pipelines" };
+    if (parts[0] === "pipelines") return { screen: "pipelines", nav: "pipelines", project: parts[1] || null };
+    if (parts[0] === "data") return { screen: "data", nav: "dashboard" };
     if (parts[0] === "specs") return { screen: "dashboard", nav: "spec", filter: "spec" };
     if (parts[0] === "loops") return { screen: "dashboard", nav: "loop", filter: "loops" };
     return { screen: "dashboard", nav: "dashboard" };
@@ -278,7 +279,7 @@ const Fallow = (() => {
       if (t.failure) extras.push(h`<div class="notice-line">${t.failure}</div>`);
       if (last && r.question) extras.push(question(r.question));
       if (r.proposed_feature) extras.push(proposal(r.proposed_feature));
-      if (r.proposed_pipeline) extras.push(h`<div class="card pad-12 mt-8"><div class="row between"><span class="pill blue">proposed pipeline</span><a class="btn btn2 sm" href="#/pipelines">Open in the designer</a></div><pre class="term">${r.proposed_pipeline}</pre></div>`);
+      if (r.proposed_pipeline) extras.push(h`<div class="card pad-12 mt-8"><div class="row between"><span class="pill blue">proposed pipeline</span><button class="btn btn2 sm" data-draft="${r.proposed_pipeline}">Open in the designer</button></div><pre class="term">${r.proposed_pipeline}</pre></div>`);
       out.push(leadMsg(meta, md(t.reply), extras));
     });
     if (c.pending_approval) {
@@ -388,6 +389,15 @@ const Fallow = (() => {
     setTimeout(() => { if (el.textContent === text) el.remove(); }, 8000);
   }
 
+  // A pipeline the lead proposed opens in the designer as a draft (FR-028): never saved here.
+  document.addEventListener("click", (ev) => {
+    const el = ev.target.closest("[data-draft]");
+    if (!el) return;
+    try { sessionStorage.setItem("fallow.draft", el.dataset.draft); } catch (_) { /* opens empty */ }
+    const r = route();
+    location.hash = r.project ? `#/pipelines/${encodeURIComponent(r.project)}` : "#/pipelines";
+  });
+
   // Forms: `data-submit="name"` calls the screen's `act(name, form, ev)`.
   document.addEventListener("submit", (ev) => {
     const f = ev.target.closest("[data-submit]");
@@ -398,13 +408,14 @@ const Fallow = (() => {
 
   const atEnd = (el) => !el || el.scrollHeight - el.scrollTop - el.clientHeight < 40;
 
-  const stagePill = (stage) => ({
-    spec_session: h`<span class="pill purple">spec</span>`,
-    locked: h`<span class="pill blue">locked</span>`,
-    building: h`<span class="pill blue">building</span>`,
-    ready_to_merge: h`<span class="pill green">ready</span>`,
-    done_unverified: h`<span class="pill orange">not verified</span>`,
-    merged: h`<span class="pill grey">merged</span>`,
+  // Short labels for the project screen, the dashboard's long ones with `long` (the mockups').
+  const stagePill = (stage, long) => ({
+    spec_session: h`<span class="pill purple">${long ? "Spec session" : "spec"}</span>`,
+    locked: h`<span class="pill blue">${long ? "Locked" : "locked"}</span>`,
+    building: h`<span class="pill blue">${long ? "Building" : "building"}</span>`,
+    ready_to_merge: h`<span class="pill green">${long ? "Ready to merge" : "ready"}</span>`,
+    done_unverified: h`<span class="pill orange">${long ? "Done, not verified" : "not verified"}</span>`,
+    merged: h`<span class="pill grey">${long ? "Merged" : "merged"}</span>`,
   })[stage] || h`<span class="pill grey">${stage}</span>`;
 
   // Re-renders `render()` on every change in `scope`, until the screen is left.

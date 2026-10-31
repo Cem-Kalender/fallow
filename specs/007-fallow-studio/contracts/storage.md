@@ -47,7 +47,7 @@
 | `loop_created` | project, feature, lock, lock_commit, base_branch, build_branch, pipeline (resolved, as TOML), level, budget_usd, budget_minutes, phases[] (from `tasks.md`; each with n, label, title, story, tasks) |
 | `task` | id, state, commit?, repairs (its gate run is the `gate_run` event that follows) |
 | `phase` | n, state, session?, handover? |
-| `question` | id, step, task, text, options[], state, by?, answer?, commit?, affects |
+| `question` | id, step, task, text, options[], state, by?, answer?, commit?, affects, recommended?, cost_usd?, reopened[]?, why? (relayed: why it went to the engineer) |
 | `unlocked` | (always the engineer's action; recorded with a `steering` event) |
 | `relocked` | lock, commit, affected[], phases[] (the new lock's `tasks.md`) |
 | `outcome` | ready \| done_unverified, missing[] |

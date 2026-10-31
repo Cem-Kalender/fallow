@@ -308,6 +308,8 @@ Unless a task says otherwise, tests use the `fake` runtime (research S-13).
 - [X] T063 [US4] Relay to the engineer: the step ends blocked, the loop waits (clarified 2026-10-30), the answer API, and the step resumes in its session.
 - [X] T064 [US4] Overrule: the reversal commit, the tasks after the answer reopened as a repair, and the checkpoint run again.
 - [X] T065 [US4] On the page, in `screens/loop.js` and the inbox: the question banner with options and the recommendation, answer and overrule buttons, and "lead answered" or "decided by the lead" entries with their commits in the feed.
+  - Done on the loop page, with Confirm for a decision of the lead. The question's card in the dashboard's "Needs you" inbox comes with US5 (T068, T069).
+  - Unlock edge case: while the feature is unlocked, a waiting question is not answered in the spec session; the engineer answers it on the loop page after the new lock (answers are not committed while the documents are open again).
 
 **Checkpoint**: Q4 of quickstart.md works with real agents.
 
@@ -321,21 +323,22 @@ Unless a task says otherwise, tests use the `fake` runtime (research S-13).
 
 ### Tests for User Story 5
 
-- [ ] T066 [P] [US5] `tests/us5_dashboard.rs`: two loops in two projects shown with their phase progress; needs-you items for a question, a ready feature and a stopped loop; "waiting for a slot" above the cap.
-- [ ] T067 [P] [US5] `tests/us5_notify.rs`, with a recording `platform::notify`: one notification per item; the text names only the project, the feature and what is needed (a marker test: no code or output); the off switch.
+- [X] T066 [P] [US5] `tests/us5_dashboard.rs`: two loops in two projects shown with their phase progress; needs-you items for a question, a ready feature and a stopped loop; "waiting for a slot" above the cap.
+- [X] T067 [P] [US5] `tests/us5_notify.rs`, with a recording `platform::notify`: one notification per item; the text names only the project, the feature and what is needed (a marker test: no code or output); the off switch.
 
 ### Implementation for User Story 5
 
-- [ ] T068 [US5] The dashboard API and global events in `src/service/http.rs`: projects, needs-you, loops with phase progress and agents' activity in a few words, features, agents running, and cost today.
-- [ ] T069 [US5] The full dashboard screen in `screens/dashboard.js`, matching `mockup/Main.dc.html`: needs-you cards, running loops with phase bars, the features table, and the header count.
-- [ ] T070 [US5] Windows notifications in `src/platform/notify.rs` (research S-14):
+- [X] T068 [US5] The dashboard API and global events in `src/service/http.rs`: projects, needs-you, loops with phase progress and agents' activity in a few words, features, agents running, and cost today.
+- [X] T069 [US5] The full dashboard screen in `screens/dashboard.js`, matching `mockup/Main.dc.html`: needs-you cards, running loops with phase bars, the features table, and the header count.
+- [X] T070 [US5] Windows notifications in `src/platform/notify.rs` (research S-14):
   - `Shell_NotifyIconW` on a hidden message-only window, with the new `windows-sys` features;
   - balloons, and a click opens the item's URL;
   - a menu with Open, Notifications on/off and Stop;
   - a no-op on other platforms.
-- [ ] T071 [US5] `src/service/notify.rs`: needs-you items become notifications, with deduplication and the setting.
-- [ ] T072 [P] [US5] `tests/us5_data.rs`: the data view's sizes per project, loop, conversation and worktree; deleting a loop or conversation's data after confirmation; a running loop refused (FR-003b, constitution V).
-- [ ] T073 [US5] The data view: `GET /api/data` and `DELETE /api/data/<kind>/<id>` in `src/service/http.rs`, sizes computed in `src/project/data.rs`, and a "Data" panel reached from the dashboard in `screens/dashboard.js`, in the mockup's style, with the confirmation dialog.
+  - Built on a hidden window of its own rather than a message-only one (its menu needs a window that can come to the front), which also needs `windows-sys`'s `Win32_Graphics_Gdi` feature for the window class. Items already there when Fallow starts were notified before it stopped and are not raised again.
+- [X] T071 [US5] `src/service/notify.rs`: needs-you items become notifications, with deduplication and the setting.
+- [X] T072 [P] [US5] `tests/us5_data.rs`: the data view's sizes per project, loop, conversation and worktree; deleting a loop or conversation's data after confirmation; a running loop refused (FR-003b, constitution V).
+- [X] T073 [US5] The data view: `GET /api/data` and `DELETE /api/data/<kind>/<id>` in `src/service/http.rs`, sizes computed in `src/project/data.rs`, and a "Data" panel reached from the dashboard in `screens/dashboard.js`, in the mockup's style, with the confirmation dialog.
 
 **Checkpoint**: the dashboard matches screen 1, and notifications arrive with the page closed.
 

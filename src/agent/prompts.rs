@@ -302,7 +302,7 @@ pub fn loop_answer(a: &AskCx) -> String {
             s.push_str(&format!("- {r}\n"));
         }
     }
-    s.push_str("\nReturn `outcome` (answer, decided or relay), the `answer`, its `basis` (the document and place, or the conversation's turn; `none` when nothing settles it), `options` with one recommended when you relay, `reserved` and `changes_criterion`.");
+    s.push_str("\nReturn `outcome` (answer, decided or relay), the `answer`, its `basis` (the document and place, or the conversation's turn; `none` when nothing settles it), `options` with one recommended when you relay, `reserved`, `changes_criterion`, `touches_interface` and `adds_dependency`.");
     s
 }
 

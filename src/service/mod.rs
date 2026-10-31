@@ -72,6 +72,32 @@ pub fn serve(
     let (tx, rx) = mpsc::channel::<Msg>();
     let exe =
         std::env::current_exe().map_err(|e| format!("cannot find Fallow's own executable: {e}"))?;
+    // The pipe first: it is what makes this the only service.
+    let secret = crate::platform::random::hex(32).map_err(|e| e.to_string())?;
+    let web = http::Web::start(tx.clone(), secret.clone())?;
+    let port = web.port;
+    // The notification icon (research S-14); without it, Fallow goes on without notifications.
+    let notify_on = Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let home = page_url(port, &secret, "/");
+    let tx_tray = std::sync::Mutex::new(tx.clone());
+    let tray = crate::platform::notify::Tray::start(
+        home.clone(),
+        Arc::clone(&notify_on),
+        Box::new(move |c| {
+            if c == crate::platform::notify::Choice::Stop {
+                if let Ok(t) = tx_tray.lock() {
+                    let _ = t.send(Msg::Shutdown);
+                }
+            }
+        }),
+    );
+    let tray: Option<Arc<crate::platform::notify::Tray>> = match tray {
+        Ok(t) => Some(Arc::new(t)),
+        Err(e) => {
+            eprintln!("fallow: no desktop notifications: {e}");
+            None
+        }
+    };
     let ctx = Ctx {
         slots: Arc::default(),
         settings,
@@ -80,11 +106,13 @@ pub fn serve(
         pid: std::process::id(),
         config: paths.dir.clone(),
         endpoint: None,
+        notify: match &tray {
+            Some(t) => Arc::clone(t) as Arc<dyn crate::platform::notify::Notify>,
+            None => Arc::new(crate::platform::notify::Off),
+        },
+        notify_on,
+        page: Some(home),
     };
-    // The pipe first: it is what makes this the only service.
-    let secret = crate::platform::random::hex(32).map_err(|e| e.to_string())?;
-    let web = http::Web::start(tx.clone(), secret.clone())?;
-    let port = web.port;
     let tx_pipe = tx.clone();
     let url_secret = secret.clone();
     let listener = pipe::listen(
@@ -120,6 +148,7 @@ pub fn serve(
         );
     }
     engine.serve(rx);
+    drop(tray);
     drop(listener);
     drop(web);
     let _ = std::fs::remove_file(data.join(SERVICE_FILE));
@@ -318,6 +347,9 @@ pub fn engine_for_tests(
         pid: std::process::id(),
         config: None,
         endpoint: None,
+        notify: Arc::new(crate::platform::notify::Off),
+        notify_on: Arc::default(),
+        page: None,
     };
     let engine = Engine::load(data, ctx)?;
     let h = std::thread::spawn(move || engine.serve(rx));
@@ -340,6 +372,26 @@ pub fn engine_with_tools(
     exe: PathBuf,
     approval_wait: Option<std::time::Duration>,
 ) -> Result<ToolEngine, String> {
+    engine_with_notify(
+        data,
+        settings,
+        config,
+        exe,
+        approval_wait,
+        Arc::new(crate::platform::notify::Off),
+    )
+}
+
+/// `engine_with_tools` whose notifications go to `notify`, with the page at
+/// `http://fallow.test/`.
+pub fn engine_with_notify(
+    data: PathBuf,
+    settings: Settings,
+    config: Option<PathBuf>,
+    exe: PathBuf,
+    approval_wait: Option<std::time::Duration>,
+    notify: Arc<dyn crate::platform::notify::Notify>,
+) -> Result<ToolEngine, String> {
     static N: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
     let suffix = format!(
         "test-{}-{}",
@@ -355,6 +407,9 @@ pub fn engine_with_tools(
         pid: std::process::id(),
         config,
         endpoint: Some(suffix.clone()),
+        notify,
+        notify_on: Arc::new(std::sync::atomic::AtomicBool::new(true)),
+        page: Some("http://fallow.test/".into()),
     };
     let tx_pipe = tx.clone();
     let listener = pipe::listen(

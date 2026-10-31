@@ -36,6 +36,10 @@ windows-sys = { version = "0.61", features = [
     "Win32_System_Pipes",
     "Win32_System_SystemInformation",
     "Win32_System_Threading",
+    # The notification icon (007 research S-14); Gdi for the window class's fields.
+    "Win32_Graphics_Gdi",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
 ] }
 
 [dev-dependencies]

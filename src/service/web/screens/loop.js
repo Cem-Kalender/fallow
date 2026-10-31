@@ -67,7 +67,8 @@
   // ---- The question banner ------------------------------------------------------------------
   function banner(v) {
     const n = v.needs;
-    const q = (v.questions || []).find((x) => x.state === "waiting_engineer");
+    const over = v.stage === "done" || v.stage === "stopped";
+    const q = over ? null : (v.questions || []).find((x) => x.state === "waiting_engineer");
     if (q) {
       const opts = (q.options || []).slice();
       if (q.recommended) opts.sort((a, b) => (b === q.recommended) - (a === q.recommended));
@@ -76,6 +77,7 @@
           <div class="row wrap gap-8"><span class="pill orange">${q.agent || "builder"} asks · ${q.task || q.id}</span><span class="tiny muted">the loop waits for your answer; other loops go on</span></div>
           <div class="b mt-8 lh">${q.text}</div>
           ${q.recommended ? h`<div class="small muted mt-6">The lead recommends: ${q.recommended}</div>` : ""}
+          ${q.why ? h`<div class="tiny muted mt-6">Relayed to you because ${q.why}.</div>` : ""}
         </div>
         <div class="row wrap gap-8">
           ${opts.map((o, i) => h`<button class="btn${i ? " btn2" : ""}" data-act="qanswer" data-q="${q.id}" data-answer="${o}">${o}${o === q.recommended ? h` <span class="pill blue rec-pill">recommended</span>` : ""}</button>`)}
@@ -285,6 +287,7 @@
       with_lead: h`<span class="pill grey">with the lead</span>`,
       waiting_engineer: h`<span class="pill orange">asks you</span>`,
       overruled: h`<span class="pill grey">overruled</span>`,
+      confirmed: h`<span class="pill green">decided by the lead · you confirmed</span>`,
     };
     const qpill = (q) => STATE[q.state] || (q.state === "decided" ? h`<span class="pill orange">decided by the lead</span>`
       : q.by === "lead" ? h`<span class="pill green">lead answered</span>` : h`<span class="pill green">you answered</span>`);
@@ -293,7 +296,7 @@
       <div class="small lh">${q.text}</div>
       ${q.answer ? h`<div class="small lh body-ink">→ ${q.answer}${q.commit ? h` <span class="mono tiny muted">${short(q.commit)}</span>` : ""}</div>` : ""}
       ${q.reopened && q.reopened.length ? h`<div class="tiny muted">Reopened ${q.reopened.join(", ")}</div>` : ""}
-      ${q.overrulable ? h`<div class="mt-6"><button class="btn btn2 sm" data-act="overrule" data-q="${q.id}">Overrule…</button></div>` : ""}
+      ${q.confirmable || q.overrulable ? h`<div class="row gap-8 mt-6">${q.confirmable ? h`<button class="btn btn2 sm" data-act="qconfirm" data-q="${q.id}">Confirm</button>` : ""}${q.overrulable ? h`<button class="btn btn2 sm" data-act="overrule" data-q="${q.id}">Overrule…</button>` : ""}</div>` : ""}
     </div>`);
     const commits = v.checks.commits || [];
     const steering = (v.steering || []).slice(-6).map((s) => h`<div>${hhmm(Date.parse(s.at))} ${s.kind.replace(/_/g, " ")}${s.detail ? `: ${s.detail}` : ""}</div>`);
@@ -467,6 +470,8 @@
       }
       case "qanswer":
         return run(`questions/${encodeURIComponent(el.dataset.q)}/answer`, { answer: el.dataset.answer });
+      case "qconfirm":
+        return run(`questions/${encodeURIComponent(el.dataset.q)}/confirm`, {});
       case "qwrite": {
         const q = (state.view.questions || []).find((x) => x.id === el.dataset.q);
         const text = await confirm({ title: `Answer ${q ? q.agent || "the builder" : "the builder"}`, text: q ? q.text : "", ok: "Send the answer", input: { label: "Your answer", value: "" } });
