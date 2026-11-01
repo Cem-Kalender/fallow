@@ -5,8 +5,8 @@
 //!   under 500 ms;
 //! - idle memory: settled, with no loop running, under 60 MB;
 //! - running memory: four loops whose checkpoints run 4 checker steps at once (the scripted
-//!   fake agent), under 200 MB. (A loop runs one step at a time: checkers marked
-//!   `parallel_with` still run one after the other, so the four steps come from four loops.)
+//!   fake agent), under 200 MB. (The four steps come from four loops, each with one checker, so
+//!   the measure holds whatever a pipeline marks `parallel_with`.)
 //!
 //! Each run uses its own config and data folders, so the engineer's are never touched; it needs
 //! no other Fallow service running for the same user (there is one per user). Memory is the

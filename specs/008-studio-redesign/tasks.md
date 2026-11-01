@@ -223,11 +223,13 @@
   - the routes `#/pipelines` and `#/agents`.
   
   Update `README.md`'s description of the loop page and of Pipelines and Agents.
-- [ ] T035 Measure:
+- [X] T035 Measure:
   - `cargo xtask bench` (page ready ≤ 500 ms, idle ≤ 60 MB, running ≤ 200 MB);
   - SC-004 through the timing case of `tests/us8_parallel.rs` (T023), which runs in CI with `cargo test`.
   
   Record the results here.
+
+  **Results (2026-11-01, debug build, Windows 11, 8 GB):** page ready 110 ms (p95 of 30), idle 11.1 MB, running 15.7 MB: all within budget. SC-004: `checkers_alongside_each_other_overlap_and_are_judged_together` passes; the two checkers overlap, and the checkpoint takes at most the slower one's time plus 10% and 1 s.
 - [ ] T036 A fresh-context review of the whole change against spec.md, the contracts and the constitution, then fix its findings.
 - [ ] T037 Run quickstart Q1–Q5 with real agents (`claude`, Sonnet) in the sandbox, within $60. Record the runs, their costs and the problems found in this file, and fix what they find.
 
