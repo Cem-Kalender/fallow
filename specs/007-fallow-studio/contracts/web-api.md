@@ -56,7 +56,7 @@ The global events are `project`, `feature`, `loop_progress`, `needs_you` and `ne
 | `GET /api/features/<p>/<f>/doc?path=<p>` | | `{text, version, last_edit_by}` |
 | `PUT /api/features/<p>/<f>/doc?path=<p>` | `{text, version}` | Refused with 409 while a lead turn runs, or if the version moved; the page keeps the draft (research S-21). Only the spec paths are allowed |
 | `POST /api/features/<p>/<f>/step` | `{to}` | Moves the stepper (FR-006); the lead's next turn runs that step |
-| `POST /api/features/<p>/<f>/lock` | `{pipeline, autonomy, budget}` | 422 with the lock check's problems, or `{lock, loop}` |
+| `POST /api/features/<p>/<f>/lock` | `{pipeline, autonomy, budget}` | Refused (409) with the lock check's problems, or `{lock, loop}` |
 | `POST /api/features/<p>/<f>/unlock` | `{confirm: true}` | Pauses the loop after its current step, and reopens the session (FR-009) |
 | `POST /api/features/<p>/<f>/dismiss` | `{finding}` | Dismisses an analyze finding (recorded); a CRITICAL one no longer blocks the lock |
 | `GET /api/features/<p>/<f>/relock-preview` | | `{affected: ["US2", ...], why[]}`, shown before the new lock (S-17) |
@@ -85,7 +85,7 @@ The global events are `project`, `feature`, `loop_progress`, `needs_you` and `ne
 | Method and path | Body | Returns |
 |---|---|---|
 | `GET /api/agents?project=<p>` | | The definitions with their source, and parse errors with line numbers |
-| `PUT /api/agents/<name>?scope=user\|project:<p>` | `{text}`, or since 008 `{fields, body?}` (008 contracts/agents-api.md) | Checked (contracts/agent-definition.md); 422 with problems |
+| `PUT /api/agents/<name>?scope=user\|project:<p>` | `{text}`, or since 008 `{fields, body?}` (008 contracts/agents-api.md) | Checked (contracts/agent-definition.md); refused (409) with problems |
 | `DELETE /api/agents/<name>?scope=...` | `{confirm: true}` | A user's or project's own definition only; defaults are reset, not deleted |
 | `GET /api/pipelines?project=<p>` | | Pipelines with `verifying` and what is missing, their text and file, and the project's chosen one |
 | `POST /api/pipelines/check` | `{toml, project?}` | The pipeline as it would be, or its problems; nothing is saved (the designer, and drafts the lead proposes) |

@@ -171,13 +171,15 @@ fn write_value(v: &FieldValue) -> Result<String, String> {
             return Err(format!("{s:?}: a value cannot hold a line break"));
         }
         // A quote can stand in a plain value (`Checks the "happy path"`), never in a quoted one
-        // nor in a list item, which the reader splits on quotes.
+        // nor in a list item, which the reader splits on quotes. Quotes come in pairs: an odd one
+        // would hide a comment kept after the value (`5" screen # note`) from the reader.
         if s.contains('"') {
-            return if !in_list && !s.starts_with('"') && plain_ok(s, false) {
+            let paired = s.matches('"').count() % 2 == 0;
+            return if !in_list && paired && !s.starts_with('"') && plain_ok(s, false) {
                 Ok(s.to_string())
             } else {
                 Err(format!(
-                    "{s:?}: a quote can stand only inside a plain value"
+                    "{s:?}: quotes can stand only in pairs, inside a plain value"
                 ))
             };
         }
@@ -586,6 +588,17 @@ mod tests {
             set_fields(
                 text,
                 &[("may_run".into(), FieldValue::List(vec!["a \"b\"".into()]))]
+            )
+            .is_err()
+        );
+        // A lone quote is refused: with a comment kept after it, the reader would take the
+        // comment as part of the value.
+        let commented = text.replace("description: d\r\n", "description: d # note\r\n");
+        assert!(commented.contains("# note"));
+        assert!(
+            set_fields(
+                &commented,
+                &[("description".into(), FieldValue::Str("5\" screen".into()))]
             )
             .is_err()
         );

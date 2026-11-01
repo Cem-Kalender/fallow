@@ -172,7 +172,8 @@ pub(crate) fn limit_hit(run: &Run) -> Option<(String, String)> {
     run.state.limit_hit(super::time::unix_now())
 }
 
-/// Decides and starts what comes next. Does nothing while something runs.
+/// Decides and starts what comes next. Does nothing while gates or a merge run; agent steps
+/// may start while others run (008 US5).
 pub fn drive(run: &mut Run, ctx: &Ctx) -> Result<(), String> {
     if run.busy.is_some() || run.state.stage.is_final() || run.state.stopped.is_some() {
         return Ok(());

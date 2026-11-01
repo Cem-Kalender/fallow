@@ -122,7 +122,7 @@
       ...pick("phase", "start").map(one("phase-start", "phase")),
       ...pick("task", null).map(one("task", "phase")),
       ...pick("phase", "end").map(one("phase-end", "phase")),
-      ...unitsOf(pick("checkpoint", "start")).map((u) => col("checkpoint", u, "checkpoint")),
+      ...pick("checkpoint", "start").map(one("checkpoint", "checkpoint")),
       ...unitsOf(pick("checkpoint", "end")).map((u) => col("checkpoint", u, "checkpoint")),
       ...pick("once", "end").map(one("once-end", null)),
       col("fixed", [{ key: "merge" }], null),
@@ -369,7 +369,8 @@
   function stepForm(st, i) {
     const k = kindOf(st.agent);
     const same = (o) => o !== st && o.when === st.when && atOf(o) === atOf(st) && kindOf(o.agent) === "checker";
-    const peers = k === "checker" && st.when !== "task" ? s.draft.steps.filter(same) : [];
+    // Only checkers at a story's checkpoint (its end) run alongside each other (008 R-7).
+    const peers = k === "checker" && st.when === "checkpoint" && atOf(st) === "end" ? s.draft.steps.filter(same) : [];
     const along = (o) => (st.parallel_with || []).includes(o.agent) || (o.parallel_with || []).includes(st.agent);
     const region = (o) => `${o.when}/${o.when === "task" ? "" : atOf(o)}`;
     const mates = s.draft.steps.map((o, j) => [o, j]).filter(([o]) => region(o) === region(st));
@@ -390,11 +391,15 @@
 
   function addForm() {
     const p = s.adding;
+    // A checker added at a checkpoint's end may run alongside the checkers already there.
+    const peers = kindOf(p.agent) === "checker" && p.when === "checkpoint" && (p.at || "end") === "end"
+      ? s.draft.steps.filter((o) => o.agent !== p.agent && o.when === "checkpoint" && atOf(o) === "end" && kindOf(o.agent) === "checker") : [];
     return h`<div class="small muted">ADD A STEP</div>
       <div class="step-form mt-10">
         <div class="field"><label for="add-agent">Agent</label><select id="add-agent" data-change="add-field" data-k="agent">${agentOpts(p.agent)}</select></div>
         <div class="field"><label for="add-when">Runs</label><select id="add-when" data-change="add-when">${whenOpts(p.when)}</select></div>
         ${p.when !== "task" ? h`<div class="field"><label for="add-at">At</label><select id="add-at" data-change="add-field" data-k="at">${opt("end", "the end", p.at || "end")}${opt("start", "the start", p.at || "end")}</select></div>` : ""}
+        ${peers.length ? h`<fieldset class="field along"><legend>Alongside</legend>${peers.map((o) => h`<label class="row gap-6"><input type="checkbox" id="add-along-${o.agent}" data-change="add-along" data-agent="${o.agent}"${raw((p.along || []).includes(o.agent) ? " checked" : "")}> ${o.agent}</label>`)}</fieldset>` : ""}
       </div>
       <div class="row wrap gap-8 mt-10"><button class="btn sm" data-act="add-confirm">Add</button><button class="btn btn2 sm" data-act="add-cancel">Cancel</button>
         <span class="tiny muted self-center">Fallow places the step by when it runs.</span></div>`;
@@ -542,12 +547,22 @@
         s.focus = el.id;
         return render();
       case "add-field":
+        // The agent and its place decide whether it may run alongside others.
         s.adding[el.dataset.k] = el.value;
+        s.focus = el.id;
+        return render();
+      case "add-along": {
+        const other = el.dataset.agent;
+        s.adding.along = (s.adding.along || []).filter((a) => a !== other);
+        if (el.checked) s.adding.along.push(other);
         return;
+      }
       case "add-cancel": s.adding = null; return render();
       case "add-confirm": {
         const at = document.getElementById("add-at");
-        const st = { agent: document.getElementById("add-agent").value, when: s.adding.when, on_fail: "repair", paths: [], parallel_with: [] };
+        const agent = document.getElementById("add-agent").value;
+        const along = [...document.querySelectorAll("[data-change=add-along]")].filter((x) => x.checked).map((x) => x.dataset.agent);
+        const st = { agent, when: s.adding.when, on_fail: "repair", paths: [], parallel_with: along };
         if (st.when !== "task") st.at = at ? at.value : "end";
         d.steps.push(st);
         s.adding = null;

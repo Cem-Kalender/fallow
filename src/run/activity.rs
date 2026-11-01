@@ -638,6 +638,9 @@ pub fn view(run: &Run, ctx: &Ctx) -> Result<Value, String> {
             } else if checked == total
                 && verdict.is_some_and(|v| v.approved && v.complete)
                 && all_passed
+                // Also a checker that runs only for some paths, or did not finish (constitution
+                // I: never green while a checker of the round has not passed).
+                && checkers.iter().all(|c| c["passed"] == true)
                 && !pending
                 && !rechecking
             {

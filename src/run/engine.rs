@@ -197,7 +197,7 @@ pub enum Busy {
 
 /// An agent step running now (008 US5: checkers marked `parallel_with` run at the same time).
 pub struct Running {
-    /// Ends this step early (stop, unlock, shutdown).
+    /// Ends this step early (stop, shutdown). An unlock lets it finish and halts after it.
     pub stop: Arc<AtomicBool>,
     /// Its process group, sampled for the memory budget (research S-19).
     pub group: Arc<crate::platform::job::Group>,

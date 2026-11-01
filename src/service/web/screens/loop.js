@@ -288,7 +288,9 @@
     not_checked: () => ({ cls: "", label: "not checked", say: "no checker in this pipeline verifies it" }),
   };
   // Stories with criteria, and those a checker reported on even without criteria.
-  const withCriteria = (v) => (v.checks.stories || []).filter((s) => (s.total || 0) > 0 || (s.checkers || []).length > 0);
+  // A story with no criteria in the spec has no pill (spec edge cases); a checker's finding on
+  // it still shows in the feed.
+  const withCriteria = (v) => (v.checks.stories || []).filter((s) => (s.total || 0) > 0);
 
   function evidence(s, where = "row") {
     const pill = (c) => ({ passed: h`<span class="pill green">checked</span>`, failed: h`<span class="pill red">failed</span>` })[c.state]

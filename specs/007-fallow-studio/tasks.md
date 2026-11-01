@@ -232,7 +232,7 @@ Unless a task says otherwise, tests use the `fake` runtime (research S-13).
   - `fallow:gates` per task or per phase;
   - checkpoint, phase and once steps, in fresh sessions;
   - the `paths` filter;
-  - `parallel_with` within the cap. *Built so far: such checkers run one after the other at the same point, since a loop runs one step at a time. Running them at once is left for US5 (several loops and steps at once).*
+  - `parallel_with` within the cap. *Built so far: such checkers run one after the other at the same point, since a loop runs one step at a time. Running them at once is left for US5 (several loops and steps at once).* *Superseded by 008 (2026-11-01): checkers marked `parallel_with` at a story's checkpoint run at the same time (008 US5).*
 - [X] T046 [US2] Checks per task in `src/verify/claims.rs` and `src/run/machine.rs`: the claim against the worktree, the locked documents untouched, the task tick, Fallow's commit, and the gates against the baseline.
 - [X] T047 [US2] The handover step: its instruction in `src/agent/prompts.rs`, its schema in `src/agent/schemas.rs`, its check of the three sections and that nothing else changed, and Fallow's commit.
 - [X] T048 [US2] Checker verdicts in `src/verify/verdict.rs`: criteria `USn/k` from `spec.md`, must-fail cases, and findings with severity, where `high` or above fails.
@@ -422,7 +422,7 @@ Notes on Phase 10 as built:
   HTTP client crate; its one listener is the loopback page (`tiny_http`). Loopback, secret, Host and Origin are `service_http`.
 - T083: `cargo xtask bench`. A loop runs one step at a time, and checkers marked `parallel_with`
   still run one after the other (T053's note), so the 4 concurrent steps come from four loops.
-  On the debug build: page ready 160 ms (p95), idle 10 MB, running 15 MB.
+  On the debug build: page ready 160 ms (p95), idle 10 MB, running 15 MB. *Since 008 (2026-11-01), checkers marked `parallel_with` at a checkpoint run at the same time; the bench still measures four loops (008 T035).*
 - T084: every action is a button or a link; the focus ring is never removed; no icon-only button
   lacks a label. Every text colour pair is at least 4.5:1 except the document's line numbers
   (#A3A29B, 2.6:1), now the faint ink.

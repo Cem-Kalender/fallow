@@ -7,7 +7,7 @@
 | `{text}` | The whole definition, as in 007 ("Edit as text") |
 | `{fields, body?}` | A map of frontmatter keys to new values, and optionally the instructions; only these lines and the body change, in one write, in the file's own line endings |
 
-`fields` may hold `description`, `runtime`, `model`, `kind`, `may_run` (a list of strings) and `returns`. Any other key is refused (422, naming it). `name` cannot change through `fields`.
+`fields` may hold `description`, `runtime`, `model`, `kind`, `may_run` (a list of strings) and `returns`. Any other key is refused (409, naming it, as every refusal in 007's web API). `name` cannot change through `fields`.
 
 The text the change applies to:
 1. the definition at that scope, if it exists;
@@ -19,4 +19,4 @@ The rewrite:
 - **An absent key:** it is added as the last line of the frontmatter.
 - **Everything else:** other lines, comments, blank lines and the body are kept as they are.
 
-The result then goes through 007's checks, and is refused on any problem, as `{text}` is (422, lines named). That covers a pipeline that would stop parsing or verifying. The reply is `{saved: <path>}`, as in 007.
+The result then goes through 007's checks, and is refused on any problem, as `{text}` is (409, lines named). That covers a pipeline that would stop parsing or verifying. The reply is `{saved: <path>}`, as in 007.

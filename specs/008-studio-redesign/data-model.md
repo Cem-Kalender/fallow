@@ -42,7 +42,7 @@
 | Field | Rule |
 |---|---|
 | n | The step's number |
-| stop | Its own stop flag; Stop, shutdown and unlock signal every running step |
+| stop | Its own stop flag; Stop and shutdown signal every running step; an unlock lets them finish, then the loop halts (007 FR-009) |
 | group | Its process group, for memory sampling and the slot cap |
 | tool | Its token for Fallow's MCP tools |
 | asking | Its question waiting for the lead, if any |

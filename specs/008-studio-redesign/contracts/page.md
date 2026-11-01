@@ -42,7 +42,7 @@ The navigation is Dashboard · Spec sessions · Loops · Pipelines · Agents. Pi
   - "fails → you" under a step with `on_fail = engineer`.
 - **Nodes:** each shows when the step runs (EACH TASK, EACH PHASE, CHECKPOINT, ONCE, ALWAYS), the agent, and one line about it. It has a left bar coloured by role: maker blue, checker green, Fallow (`fallow:gates`) grey, the engineer's fixed steps orange.
 - **+ on a forward edge:** every forward edge after the Lock has one. It adds a step whose `when` and `at` are preset from where the + is (the form can change them); the engineer picks the agent, and Fallow places the step by when it runs. On the per-task edge, once the pipeline has its task maker, the preset agent is the gates.
-- **Selecting a node:** shows its settings under the graph (agent, when, at, paths, alongside, on failure). Removing a node removes the step; fixed nodes cannot be removed.
+- **Selecting a node:** shows its settings under the graph (agent, when, at, paths, alongside, on failure). Alongside is offered only to checkers at a story's checkpoint (its end), where the loop runs them together; the + form offers it too, so a checker is added alongside the reviewer in one go. Removing a node removes the step; fixed nodes cannot be removed.
 - **Keyboard:**
   - every node and + is focusable, with an `aria-label` (step, when, agent);
   - arrow keys move between nodes in layout order;

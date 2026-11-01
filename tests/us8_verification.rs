@@ -333,3 +333,64 @@ fn an_incomplete_verdict_is_never_shown_as_checked() {
     drop(e);
     let _ = std::fs::remove_dir_all(&root);
 }
+
+#[test]
+fn a_checker_for_some_paths_that_did_not_pass_is_never_shown_as_checked() {
+    // The security reviewer runs alongside the reviewer only when calc/ changed, and cannot
+    // start; the reviewer passes every criterion. The story is not checked (constitution I).
+    let root = scratch("verif-paths");
+    let dir = root.join("config").join("pipelines");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("with-security.toml"),
+        WITH_SECURITY
+            .replace(
+                "agent = \"reviewer\"\nwhen = \"checkpoint\"\n",
+                "agent = \"reviewer\"\nwhen = \"checkpoint\"\nparallel_with = [\"security-reviewer\"]\n",
+            )
+            .replace(
+                "agent = \"security-reviewer\"\nwhen = \"checkpoint\"\n",
+                "agent = \"security-reviewer\"\nwhen = \"checkpoint\"\npaths = [\"calc/**\"]\n",
+            ),
+    )
+    .unwrap();
+    let agents = root.join("config").join("agents");
+    std::fs::create_dir_all(&agents).unwrap();
+    let shipped = fallow::defs::DEFAULT_AGENTS
+        .iter()
+        .find(|(n, _)| *n == "security-reviewer")
+        .unwrap()
+        .1;
+    std::fs::write(
+        agents.join("security-reviewer.md"),
+        shipped.replace("runtime: claude", "runtime: fake"),
+    )
+    .unwrap();
+    let steps = [
+        task_step("T001", &[("calc/__init__.py", "")], ""),
+        handover_step(1, ""),
+        task_step("T002", &[("calc/__init__.py", CALC_INIT)], ""),
+        task_step(
+            "T003",
+            &[("tests/__init__.py", ""), ("tests/test_add.py", TEST_ADD)],
+            "",
+        ),
+        handover_step(2, ""),
+        check_step("US1", true, "when = \"You are the reviewer\""),
+    ]
+    .concat();
+    let (e, _repo, id) = locked_calc(&root, &steps, Some("with-security"));
+    let tx = &e.tx;
+    let v = wait_for(tx, id, "the engineer asked", |v| {
+        !v["needs_engineer"].is_null()
+    });
+    let v = ask(tx, Request::Loop { id }).unwrap_or(v);
+    let s = story(&v, "US1");
+    assert_eq!(s["checked"], 2, "the reviewer passed every criterion: {s}");
+    assert_ne!(
+        s["state"], "checked",
+        "never green while a checker did not pass: {s}"
+    );
+    drop(e);
+    let _ = std::fs::remove_dir_all(&root);
+}
