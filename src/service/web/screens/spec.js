@@ -3,7 +3,7 @@
 // while a turn runs), and the lock.
 "use strict";
 (() => {
-  const { h, raw, get, post, api, messages, composer, syncComposer, chatAct, sendSay, alertLine, atEnd, live, icon, confirm } = Fallow;
+  const { h, raw, get, post, api, messages, composer, syncComposer, chatAct, sendSay, alertLine, atEnd, live, icon, confirm, chatWide, expandBtn, deleteSession } = Fallow;
   let state = null; // the feature view
   let route = null;
   let stop = null;
@@ -113,13 +113,14 @@
     const c = f.conversation || { turns: [], mode: "ask" };
     app.innerHTML = h`<div class="screen" id="spec-screen" data-key="${key}">
       <div class="subbar">
-        <div><div class="crumb"><a href="#/p/${encodeURIComponent(route.project)}">${f.project_name}</a></div>
+        <div><div class="crumb"><a href="#/p/${encodeURIComponent(route.project)}">${f.project_name}</a> · <button class="linkish" data-act="delete-session">Delete this session…</button></div>
           <h1 class="page-title">${f.name} <span class="small muted">· ${f.title} · spec session with the lead</span></h1></div>
         <div class="grow"></div>
         <div id="stepper">${stepper(f)}</div>
       </div>
-      <div class="studio">
+      <div class="studio${chatWide("spec") ? " chat-wide" : ""}">
         <section class="chat-col narrow" aria-label="Conversation">
+          <div class="chat-head"><div class="avatar" aria-hidden="true">L</div><div><b>Spec session</b> <span class="small muted">· with the lead</span></div><span class="grow"></span>${expandBtn("spec")}</div>
           ${f.kind === "folder" ? h`<div class="notice">A plain folder: Fallow cannot check what a command the lead runs writes, and a loop needs git.</div>` : ""}
           <div class="chat" id="chat">${messages(c)}</div>
           ${f.stage === "spec_session" ? composer(c, "Answer, or tell the lead what to change…") : h`<div class="composer small muted">The feature is locked: its spec session continues when you unlock it.</div>`}
@@ -206,6 +207,11 @@
       const again = () => load(appEl);
       if (conv && (await chatAct(conv, name, el, again))) return;
       try {
+        if (name === "delete-session") {
+          const f = state;
+          if (await deleteSession(f.project, f.name, !!f.locked_before, !!f.plain)) location.hash = "#/specs";
+          return;
+        }
         if (name === "say") return sendSay(conv, again);
         if (name === "tab") {
           if (editing) {

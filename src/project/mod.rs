@@ -79,6 +79,9 @@ pub struct Feature {
     /// The analyze step ran, and what it found (FR-008).
     #[serde(default)]
     pub analyzed: bool,
+    /// The documents changed after analyze ran, so it must run again (008 T042).
+    #[serde(default)]
+    pub analyze_outdated: bool,
     #[serde(default)]
     pub findings: Vec<crate::speckit::lock::Finding>,
 }

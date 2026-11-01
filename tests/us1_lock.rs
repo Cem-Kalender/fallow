@@ -140,7 +140,8 @@ fn the_lock_names_every_problem_then_commits_and_creates_the_loop() {
     put("specs/001-cart/tasks.md", TASKS_GOOD);
     // T086: the documents changed after analyze, so analyze runs again before the lock.
     let err = lock(tx).unwrap_err();
-    assert!(err.contains("analyze step has not run"), "{err}");
+    // 008 T042: the message says why analyze must run again.
+    assert!(err.contains("the documents changed after analyze"), "{err}");
     sreq(
         tx,
         Req::Say {
@@ -439,7 +440,7 @@ fn a_document_changed_after_analyze_sends_the_session_back_to_analyze() {
     assert!(
         v["lock_check"]["problems"]
             .to_string()
-            .contains("analyze step has not run"),
+            .contains("the documents changed after analyze"),
         "{}",
         v["lock_check"]
     );

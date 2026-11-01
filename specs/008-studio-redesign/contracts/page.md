@@ -19,12 +19,12 @@ The navigation is Dashboard · Spec sessions · Loops · Pipelines · Agents. Pi
    - Note, Limits, Pause or Go on (not at ready or done), and Stop.
    - The latest steering line sits under the header.
 2. **Notice:** the done-unverified notice (007).
-3. **The pipeline strip** (007).
+3. **The live graph** (T043, `mockup/loop-graph.html`): the loop's pipeline drawn as in Pipelines (The graph, below), each step with its state: working (a pulsing halo; checkers that run alongside each other side by side), asks you (orange), done (ticked; only a step that ran), to come. The story's repair under way is the bold red edge. A step with an agent is a button: it shows that agent above the feed and filters the feed to it; again, or "Show all agents", shows every agent. Keyboard as in Pipelines; the focused step keeps its focus across live updates.
 4. **The question banner** (007), when a question waits.
 5. **"Verified by Fallow":** one pill per story with criteria. Under it, at most one open evidence panel, which opens by itself when a story fails. "What was verified" (in the header) opens a dialog with every story's evidence instead.
 6. **Body:**
    - the task tree;
-   - the agent cards, the task detail and the feed;
+   - the selected step's agent (none when every agent is shown), the task detail and the feed;
    - the side column: gates vs baseline, questions, commits. It holds no story card and no steering card.
 
 ## The graph (research R-6)

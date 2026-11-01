@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Loop page with the live graph (008 mockup, proposal)</title><link rel="stylesheet" href="mockup.css">
+<style>
+  .lg { background: #fff; border: 1px solid var(--line, #E3E2DC); border-radius: 12px; padding: 6px 8px 2px; }
+  .lg svg { width: 100%; height: auto; display: block; }
+  .lg text { font-family: Inter, system-ui, sans-serif; }
+  .lg .grp { fill: #F5F7FE; stroke: #BFCBF0; stroke-width: 1.5; stroke-dasharray: 6 5; }
+  .lg .grp.cp { fill: #F4FAF6; stroke: #BFDCC9; }
+  .lg .gl { font-size: 10.5px; font-weight: 700; letter-spacing: .05em; fill: #2F52C9; }
+  .lg .gl.cp { fill: #226640; }
+  .lg .e { fill: none; stroke: #9C9B94; stroke-width: 1.5; }
+  .lg .e.done { stroke: #2E7D4F; }
+  .lg .nx { fill: none; stroke: #2F52C9; stroke-width: 1.3; stroke-dasharray: 2 4; }
+  .lg .rp { fill: none; stroke: #B4470F; stroke-width: 1.4; stroke-dasharray: 6 5; }
+  .lg .rp.live { stroke-width: 2.4; stroke-dasharray: none; }
+  .lg .lab { font-size: 11px; fill: #9A3A0B; }
+  .lg .labn { font-size: 11px; fill: #2F52C9; }
+  .lg .box { fill: #fff; stroke: #D4D3CC; }
+  .lg .done .box { fill: #F4FAF6; stroke: #BFDCC9; }
+  .lg .fixed .box { fill: #FBFBF9; stroke-dasharray: 5 4; }
+  .lg .now .box { fill: #F5F7FE; stroke: #2F52C9; stroke-width: 2.5; }
+  .lg .sel .box { stroke: #1D1C1A; stroke-width: 2.5; }
+  .lg .k { font-size: 9.5px; font-weight: 700; letter-spacing: .05em; fill: #5E5D58; }
+  .lg .done .k { fill: #226640; }
+  .lg .now .k { fill: #2F52C9; }
+  .lg .t { font-size: 13px; font-weight: 700; fill: #1D1C1A; }
+  .lg .s { font-size: 11px; fill: #5E5D58; }
+  .lg .bar.maker { fill: #2F52C9; } .lg .bar.checker { fill: #226640; } .lg .bar.fallow { fill: #5E5D58; } .lg .bar.you { fill: #B4470F; }
+  .lg .pulse { fill: none; stroke: #2F52C9; stroke-width: 2; opacity: .35; }
+  .lg .tick { fill: #226640; font-size: 13px; font-weight: 700; }
+  .agentbar { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
+  .agentbar .sw { width: 10px; height: 10px; border-radius: 3px; display: inline-block; margin-right: 6px; }
+  .legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: #5E5D58; margin: 6px 2px 0; }
+  .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 5px; vertical-align: -1px; }
+  .body2 { display: grid; grid-template-columns: 250px minmax(0, 1fr) 300px; gap: 12px; margin-top: 12px; }
+  .callout { border: 2px dashed #B4470F; border-radius: 10px; padding: 8px 10px; font-size: 12.5px; color: #9A3A0B; background: #FFFCF9; }
+</style></head>
+<body>
+<header class="top">
+  <span class="logo"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke-width="2"><path d="M4 20c4-1 6-5 8-9s4-7 8-7"/><path d="M4 14c3 0 5-2 6-4"/><path d="M12 20c3-1 5-3 6-6"/></svg>Fallow</span>
+  <nav class="nav"><a>Dashboard</a><a>Spec sessions</a><a class="on">Loops</a><a>Pipelines</a><a>Agents</a></nav>
+  <span class="grow"></span><span class="pill orange">1 needs you</span><span class="small muted">$7.11 today</span>
+</header>
+<main class="page">
+  <div class="head">
+    <div><div class="small muted">fallowsandbox · locked at <span class="mono">07bd2eb</span> · pipeline <span class="link">standard + security</span></div>
+      <h1>001-shopping-cart-with-total <span class="pill blue">Checking US2</span></h1></div>
+    <span style="flex:1"></span>
+    <div class="totals"><span><b>9</b> of 140 min</span><span><b>$3.12</b> of $7.00</span><span><b>11</b>/14 tasks</span><span><b>1</b> repair</span></div>
+    <div class="row"><button class="btn btn2">Note for next step</button><button class="btn btn2">Limits</button><button class="btn btn2">Pause</button><button class="btn btn2">Stop</button></div>
+  </div>
+  <div class="steer">Your last steering: 17:02 · limits set to $7.00 · <span class="link">all steering</span></div>
+
+  <!-- The pipeline as the live graph: the Pipelines tab's drawing, with each step's state. -->
+  <div class="lg" role="group" aria-label="The loop's pipeline, live">
+  <svg viewBox="0 0 1360 330">
+    <defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0L10,5L0,10z" fill="#9C9B94"/></marker>
+      <marker id="ag" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0L10,5L0,10z" fill="#2E7D4F"/></marker>
+      <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0L10,5L0,10z" fill="#B4470F"/></marker></defs>
+    <!-- groups -->
+    <rect class="grp" x="330" y="34" width="372" height="236" rx="12"/><text class="gl" x="346" y="54">FOR EACH PHASE IN tasks.md · PHASE 3 OF 5</text>
+    <rect class="grp cp" x="760" y="34" width="250" height="250" rx="12"/><text class="gl cp" x="776" y="54">AT EACH STORY'S CHECKPOINT · US2</text>
+    <!-- forward edges -->
+    <path class="e done" d="M170 150 H196" marker-end="url(#ag)"/>
+    <path class="e done" d="M326 150 H368" marker-end="url(#ag)"/>
+    <path class="e done" d="M508 150 H540" marker-end="url(#ag)"/>
+    <path class="e done" d="M680 150 C 720 150, 730 108, 788 108" marker-end="url(#ag)"/>
+    <path class="e done" d="M680 150 C 720 150, 730 196, 788 196" marker-end="url(#ag)"/>
+    <path class="e" d="M938 108 C 990 108, 1000 150, 1048 150"/>
+    <path class="e" d="M938 196 C 990 196, 1000 150, 1048 150"/>
+    <path class="e" d="M1048 150 H1060" marker-end="url(#a)"/>
+    <path class="e" d="M1190 150 H1206" marker-end="url(#a)"/>
+    <!-- back-edges -->
+    <path class="nx" d="M650 120 C 650 78, 400 78, 400 118"/><text class="labn" x="490" y="80">next task · 3/3 in this phase</text>
+    <path class="rp" d="M610 180 C 610 230, 420 230, 420 182" marker-end="url(#ar)"/><text class="lab" x="440" y="244">gates fail → repair · ≤ 3 per task</text>
+    <path class="rp live" d="M863 226 C 863 300, 438 300, 438 182" marker-end="url(#ar)"/><text class="lab" x="560" y="316">US2: a finding → one repair · round 2 of 3, then you</text>
+    <!-- nodes: spec, lock -->
+    <g class="done fixed"><rect class="box" x="40" y="120" width="130" height="60" rx="10"/><rect class="bar you" x="40" y="120" width="4" height="60" rx="2"/>
+      <text class="k" x="54" y="139">DONE</text><text class="t" x="54" y="157">Spec session</text><text class="s" x="54" y="172">lead + you</text><text class="tick" x="152" y="139">✓</text></g>
+    <g class="done fixed"><rect class="box" x="196" y="120" width="130" height="60" rx="10"/><rect class="bar you" x="196" y="120" width="4" height="60" rx="2"/>
+      <text class="k" x="210" y="139">DONE</text><text class="t" x="210" y="157">Lock</text><text class="s" x="210" y="172">you · 07bd2eb</text><text class="tick" x="308" y="139">✓</text></g>
+    <!-- builder, gates -->
+    <g class="done"><rect class="box" x="368" y="120" width="140" height="60" rx="10"/><rect class="bar maker" x="368" y="120" width="4" height="60" rx="2"/>
+      <text class="k" x="382" y="139">EACH TASK · 11/14</text><text class="t" x="382" y="157">builder</text><text class="s" x="382" y="172">$2.41 · 1 repair</text></g>
+    <g class="done"><rect class="box" x="540" y="120" width="140" height="60" rx="10"/><rect class="bar fallow" x="540" y="120" width="4" height="60" rx="2"/>
+      <text class="k" x="554" y="139">EACH TASK</text><text class="t" x="554" y="157">Gates</text><text class="s" x="554" y="172">last: passed · 46 tests</text></g>
+    <!-- checkers, running together -->
+    <g class="now sel"><circle class="pulse" cx="863" cy="108" r="0"/><rect class="pulse" x="783" y="73" width="160" height="70" rx="13"/>
+      <rect class="box" x="788" y="78" width="150" height="60" rx="10"/><rect class="bar checker" x="788" y="78" width="4" height="60" rx="2"/>
+      <text class="k" x="802" y="97">NOW · 1m 20s</text><text class="t" x="802" y="115">reviewer</text><text class="s" x="802" y="130">US2 · 3 of 5 criteria</text></g>
+    <g class="now"><rect class="pulse" x="783" y="161" width="160" height="70" rx="13"/>
+      <rect class="box" x="788" y="166" width="150" height="60" rx="10"/><rect class="bar checker" x="788" y="166" width="4" height="60" rx="2"/>
+      <text class="k" x="802" y="185">NOW · 1m 18s</text><text class="t" x="802" y="203">security-reviewer</text><text class="s" x="802" y="218">alongside · src/** changed</text></g>
+    <!-- merge -->
+    <g class="fixed"><rect class="box" x="1060" y="120" width="130" height="60" rx="10"/><rect class="bar you" x="1060" y="120" width="4" height="60" rx="2"/>
+      <text class="k" x="1074" y="139">ONCE · AT THE END</text><text class="t" x="1074" y="157">docs-writer</text><text class="s" x="1074" y="172">waits for every story</text></g>
+    <g class="fixed"><rect class="box" x="1206" y="120" width="120" height="60" rx="10"/><rect class="bar you" x="1206" y="120" width="4" height="60" rx="2"/>
+      <text class="k" x="1220" y="139">ONCE</text><text class="t" x="1220" y="157">Merge</text><text class="s" x="1220" y="172">you</text></g>
+  </svg>
+  </div>
+  <div class="legend"><span><i style="background:#2F52C9"></i>working now (pulses)</span><span><i style="background:#2E7D4F"></i>done</span><span><i style="background:#D4D3CC"></i>to come</span><span><i style="background:#B4470F"></i>a failure's path · bold: the one under way</span><span>Click a step to see its agent and its activity below.</span></div>
+
+  <section class="card" aria-label="Verified by Fallow" style="margin-top:12px">
+    <div class="verif">
+      <h2 class="th" style="margin:0 6px 0 0">Verified by Fallow</h2>
+      <span class="vpill ok"><b>US1 ✓ 5/5</b><span class="t">Add products to a cart</span></span>
+      <span class="vpill"><b>US2 3/5 checking</b><span class="t">See the cart and its total</span></span>
+      <span class="vpill"><b>US3 0/4</b><span class="t">Remove products and empty the cart</span></span>
+    </div>
+  </section>
+
+  <div class="body2">
+    <aside class="card"><h2 class="th">tasks.md · 11/14</h2>
+      <div class="task">Phase 1 · Foundation 2/2</div><div class="task">Phase 2 · US1 Add products 3/3</div>
+      <div class="task cur">Phase 3 · US2 See the cart 3/3</div><div class="task muted">◇ checkpoint: review US2 (now)</div>
+      <div class="task">Phase 4 · US3 Remove and clear 0/3</div><div class="task">Phase 5 · Persistence 0/3</div></aside>
+    <section style="display:flex;flex-direction:column;gap:12px;min-width:0">
+      <!-- The selected step's agent: replaces the row of agent cards. -->
+      <div class="card"><div class="agentbar"><span><span class="sw" style="background:#226640"></span><b>reviewer</b></span><span class="pill blue">working · US2</span>
+        <span class="small muted">claude · sonnet · a fresh session per check · 2 steps · $0.38</span><span style="flex:1"></span><span class="link small">Edit this agent in Agents →</span><span class="link small">Show all agents</span></div>
+        <div class="small" style="margin-top:6px">Checks every acceptance scenario of a user story by running something; never edits.</div></div>
+      <div class="card feed"><div class="row"><span class="muted">All</span><span class="muted">builder</span><b>reviewer</b><span class="muted">security-reviewer</span><span class="muted">Fallow checks</span></div>
+        <div class="line"><span class="muted">17:22</span><span>reviewer</span><span>Ran <code>python -m shop add Milk 2</code> · exit 0</span></div>
+        <div class="line"><span class="muted">17:22</span><span>reviewer</span><span>Ran <code>python -m shop cart</code> · Total: 4.98</span></div>
+        <div class="line"><span class="muted">17:23</span><span>reviewer</span><span>US2/3 checked: the empty cart prints "Your cart is empty."</span></div></div>
+    </section>
+    <aside class="side">
+      <div class="card"><h2 class="th">Gates vs baseline</h2><div class="kv"><span>tests <span class="mono muted">python -m unittest</span></span><b style="color:var(--ok)">passed</b></div><div class="kv"><span>newly failing</span><span>none</span></div></div>
+      <div class="card"><h2 class="th">Commits on fallow/001-…/build</h2><div class="kv"><span class="mono">7890677</span><span class="small">T007 Added the cart command…</span></div><div class="kv"><span class="mono">0c37b6d</span><span class="small">T006 lines and total_cents…</span></div></div>
+    </aside>
+  </div>
+  <div class="callout" style="margin-top:12px"><b>Proposal (2026-11-01):</b> the strip of stages and the row of agent cards make way for the pipeline's own graph, live: what runs now pulses (two checkers side by side when they run together), done steps are green and ticked, the repair under way is the bold red edge with its round. Clicking a step shows its agent above the feed and filters the feed to it; "Show all agents" goes back to every line. On a phone the graph scrolls inside its box, as in Pipelines.</div>
+</main>
+</body></html>

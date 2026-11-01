@@ -1,7 +1,7 @@
 // Screen 3: the orchestration loop (mockup/Run.dc.html; US3, FR-017 to FR-019). The header with
-// totals, pause and stop; the pipeline strip; the question banner; the task tree; the agent
-// cards; one feed of every agent's work and Fallow's checks, filterable and following live; the
-// checks column; and the engineer's steering.
+// totals and the steering; the pipeline as a live graph (008 T043), whose steps pick the agent
+// shown above the feed; the question banner; what Fallow verified; the task tree; one feed of
+// every agent's work and Fallow's checks, filterable and following live; the checks column.
 "use strict";
 (() => {
   const { h, raw, get, post, live, confirm, alertLine, icon, money } = Fallow;
@@ -126,24 +126,115 @@
       ${rows}</aside>`;
   }
 
-  // ---- The agent cards ---------------------------------------------------------------------------
-  function cards(v) {
+  // ---- The pipeline as the live graph (008 T043; mockup/loop-graph.html) -------------------------
+  // The Pipelines tab's layout of the loop's pipeline, each step with its state: working steps
+  // pulse, done ones are ticked, a step that asks the engineer is orange. A click on a step
+  // shows its agent above the feed and filters the feed to it.
+  const GATES = "fallow:gates";
+  function liveGraph(v) {
+    const pl = v.pipeline;
+    if (!pl || !pl.steps || !Fallow.pipelineLayout) return strip(v);
+    const checker = (a) => (pl.steps.find((s) => s.agent === a) || {}).checker;
+    const g = Fallow.pipelineLayout(
+      { name: pl.name, caps: pl.caps, steps: pl.steps.map((s) => Object.assign({ parallel_with: [], paths: [], on_fail: "repair" }, s)) },
+      (a) => (checker(a) ? "checker" : "maker"),
+    );
+    const byName = Object.fromEntries((v.agents || []).map((a) => [a.name, a]));
+    const final = ["done", "stopped"].includes(v.stage);
+    const merging = ["ready", "done_unverified"].includes(v.stage);
+    const tasksDone = v.used.of > 0 && v.used.tasks >= v.used.of;
+    const gatesBusy = /gates/.test(v.busy || "");
+    // The repair under way (the builder working on a story, not a task): its edge is bold.
+    const builderOn = ((v.agents || []).find((a) => a.kind === "maker" && a.status === "working") || {}).task || "";
+    const storyRepair = /^US\d/.test(builderOn);
+    // Where the loop waits for the engineer, when nothing runs: the last step that ended.
+    const stuck = v.waits_at ? v.waits_at.agent : null;
+    const WHEN = { task: "EACH TASK", phase: "EACH PHASE", checkpoint: "CHECKPOINT", once: "ONCE" };
+    const FIXED = {
+      spec: ["Spec session", "lead + you"],
+      lock: ["Lock", `you · ${short(v.lock_commit)}`],
+      merge: ["Merge", "you"],
+    };
+    const fit = (s, w, px) => (s.length * px > w - 22 ? `${s.slice(0, Math.max(3, Math.floor((w - 22) / px) - 1))}…` : s);
+    const selKey = state.tab === "all" ? null : state.tab;
+    const node = (n) => {
+      let phase = "";
+      let k;
+      let t;
+      let sub;
+      let agent = null;
+      if (!n.st) {
+        [t, sub] = FIXED[n.key] || [n.key, ""];
+        if (n.key === "merge") phase = v.stage === "done" ? "done" : merging ? "now" : "";
+        else phase = "done";
+        k = phase === "done" ? "DONE" : phase === "now" ? "NOW" : "ALWAYS";
+      } else {
+        const st = n.st;
+        agent = st.agent;
+        const a = byName[agent];
+        t = agent === GATES ? "Gates" : agent;
+        if (agent === GATES) {
+          phase = gatesBusy ? "now" : (v.checks.gates || []).length && (final || merging || tasksDone) ? "done" : "";
+          sub = (v.checks.gates || []).length ? `last: ${v.checks.gates[v.checks.gates.length - 1].outcome}` : "Fallow · vs the baseline";
+        } else {
+          const twice = pl.steps.filter((x) => x.agent === agent).length > 1;
+          // The part its agent works on, or the one it waits on.
+          const part = (a && a.task) || (stuck === agent && v.waits_at.part) || "";
+          const whenOf = /^T\d/.test(part) ? "task" : /^US\d/.test(part) ? "checkpoint" : /^phase/.test(part) ? "phase" : "once";
+          const here = !twice || st.when === whenOf || (whenOf === "checkpoint" && st.when === "task");
+          const ran = a && a.steps > 0;
+          phase = a && a.status === "working" && here ? "now" : (a && a.status === "asks you" && here) || (stuck === agent && here) ? "asks"
+            : ran && (final || merging || (st.when === "task" && tasksDone)) ? "done" : "";
+          sub = a ? `${a.steps} step${a.steps === 1 ? "" : "s"} · ${money(a.cost_usd)}` : "";
+          if (phase === "now" && a.task) sub = `on ${a.task} · ${money(a.cost_usd)}`;
+        }
+        // Short, so it fits the narrower nodes: the group already says when a step runs.
+        const when = st.when === "task" ? `EACH TASK · ${v.used.tasks}/${v.used.of}` : WHEN[st.when] || st.when;
+        const on = a && a.task ? a.task : st.when === "task" ? `${v.used.tasks}/${v.used.of}` : "";
+        k = phase === "now" ? `NOW${on ? ` · ${on}` : ""}` : phase === "asks" ? "WAITS FOR YOU" : phase === "done" ? "DONE" : when;
+      }
+      const key = agent === GATES ? "fallow" : agent || "";
+      const sel = !!key && selKey === key;
+      const label = `${t}: ${phase === "now" ? "working now" : phase === "asks" ? "asks you" : phase === "done" ? "done" : "to come"}`;
+      const pick = key ? h` tabindex="0" role="button" data-act="pick-agent" data-agent="${key}" aria-pressed="${sel ? "true" : "false"}" aria-label="${label}"` : h` aria-label="${label}"`;
+      return h`<g class="gn ${n.role}${phase ? ` ${phase}` : ""}${sel ? " sel" : ""}" data-col="${n.col}" data-key="${n.key}"${pick}>
+        ${phase === "now" ? h`<rect class="halo" x="${n.x - 5}" y="${n.y - 5}" width="${n.w + 10}" height="${n.h + 10}" rx="13"></rect>` : ""}
+        <rect class="box" x="${n.x}" y="${n.y}" width="${n.w}" height="${n.h}" rx="10"></rect><rect class="bar" x="${n.x}" y="${n.y}" width="4" height="${n.h}" rx="2"></rect>
+        <text class="k" x="${n.x + 14}" y="${n.y + 18}">${fit(k, phase === "done" ? n.w - 16 : n.w, 6.2)}</text>
+        <text class="t" x="${n.x + 14}" y="${n.y + 36}">${fit(t, n.w, 7.6)}</text>
+        ${n.h >= 56 ? h`<text class="s" x="${n.x + 14}" y="${n.y + 53}">${fit(sub || "", n.w, 6.1)}</text>` : ""}
+        ${phase === "done" ? h`<text class="tick" x="${n.x + n.w - 18}" y="${n.y + 18}">✓</text>` : ""}
+        ${n.st && n.st.on_fail === "engineer" && !g.nodes.some((m) => m.col === n.col && m.y > n.y) ? h`<text class="you" x="${n.x + 14}" y="${n.y + n.h + 14}">fails → you</text>` : ""}
+      </g>`;
+    };
+    return h`<div><div class="lg-graph" role="group" aria-label="${`The loop's pipeline, ${pl.name}, live`}"><svg viewBox="0 0 ${g.w} ${g.h}" preserveAspectRatio="xMidYMid meet">
+      <defs><marker id="lg-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0L10,5L0,10z" class="ah"></path></marker>
+        <marker id="lg-r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0L10,5L0,10z" class="ah-r"></path></marker></defs>
+      ${g.groups.map((b) => h`<rect class="grp ${b.group}" x="${b.x}" y="${b.y}" width="${b.w}" height="${b.h}" rx="12"></rect><text class="gl ${b.group}" x="${b.x + 14}" y="${b.y + 18}">${b.label}</text>`)}
+      ${g.edges.map((e) => h`<path class="e" d="${e.d}"${raw(e.arrow ? ' marker-end="url(#lg-a)"' : "")}></path>`)}
+      ${g.back.map((b) => h`<path class="${b.kind === "next" ? "nx" : `rp${storyRepair && /^a finding/.test(b.label) ? " live" : ""}`}" d="${b.d}"${raw(b.kind === "next" ? "" : ' marker-end="url(#lg-r)"')}></path><text class="${b.kind === "next" ? "lnx" : "lrp"}" x="${b.lx}" y="${b.ly}" text-anchor="middle">${b.label}</text>`)}
+      ${g.nodes.map(node)}
+    </svg></div>
+    <div class="lg-legend"><span><i class="sw-now"></i>working now</span><span><i class="sw-done"></i>done</span><span><i class="sw-todo"></i>to come</span><span><i class="sw-fail"></i>what a failure leads to</span><span>Click a step to see its agent and its activity.</span></div></div>`;
+  }
+
+  // The selected step's agent, above the feed (008 T043): replaces the row of agent cards.
+  function agentFocus(v) {
     const pill = (s) => ({ working: h`<span class="pill blue">working</span>`, "asks you": h`<span class="pill orange">asks you</span>`,
       idle: h`<span class="pill grey">idle</span>`, waiting: h`<span class="pill grey">waiting</span>` })[s] || h`<span class="pill grey">${s}</span>`;
-    const agents = (v.agents || []).map((a) => h`<div class="card pad-12${a.status === "asks you" ? " needs" : ""}">
-      <div class="row between"><b>${a.name}</b>${pill(a.status)}</div>
-      <div class="tiny muted mt-4">${a.runtime || "?"} · ${a.model || "default model"} · <span class="mono">${a.where}</span></div>
-      <div class="small mt-8">${a.task ? `${a.task} · ${a.tool_calls} tool call${a.tool_calls === 1 ? "" : "s"} · ` : a.steps ? `${a.steps} step${a.steps === 1 ? "" : "s"} · ` : `${a.kind === "checker" ? "checks" : "works"} per ${a.when} · `}${money(a.cost_usd)}</div>
-    </div>`);
-    const gates = v.checks.gates || [];
-    const bad = gates.filter((g) => !g.ok);
-    const last = gates.length ? gates[gates.length - 1] : null;
-    const fallow = h`<div class="card pad-12 fallow-card">
-      <div class="row between"><b>Fallow</b>${bad.length ? h`<span class="pill red">checks fail</span>` : gates.length ? h`<span class="pill green">checks pass</span>` : h`<span class="pill grey">no gates yet</span>`}</div>
-      <div class="tiny muted mt-4">not an agent: commits, gates, verdicts</div>
-      <div class="small mt-8">${last ? `last gate after ${last.part || "the build"} · ${last.outcome}` : (v.pipeline && v.pipeline.steps.some((s) => s.agent === "fallow:gates")) ? "gates run after each task" : "this pipeline has no gates"}</div>
-    </div>`;
-    return h`<div class="agent-grid">${agents}${fallow}</div>`;
+    const all = h`<button class="linkish small" data-act="tab" data-tab="all">Show all agents</button>`;
+    if (state.tab === "fallow") {
+      const gates = v.checks.gates || [];
+      const last = gates.length ? gates[gates.length - 1] : null;
+      return h`<div class="card pad-12 agent-focus"><b>Fallow</b><span class="tiny muted">not an agent: commits, gates, verdicts</span><span class="small">${last ? `last gate after ${last.part || "the build"} · ${last.outcome}` : "no gate run yet"}</span><span class="grow"></span>${all}</div>`;
+    }
+    const a = (v.agents || []).find((x) => x.name === state.tab);
+    if (!a) return raw("");
+    const ended = ["done", "stopped", "ready", "done_unverified"].includes(v.stage);
+    return h`<div class="card pad-12 agent-focus${a.status === "asks you" ? " needs" : ""}"><b>${a.name}</b>${ended && a.status !== "working" && a.steps > 0 ? h`<span class="pill green">done</span>` : ended && !a.steps ? h`<span class="pill grey">did not run</span>` : pill(a.status)}
+      <span class="tiny muted">${a.runtime || "?"} · ${a.model || "default model"} · <span class="mono">${a.where}</span></span>
+      <span class="small">${a.task ? `${a.task} · ${a.tool_calls} tool call${a.tool_calls === 1 ? "" : "s"} · ` : a.steps ? `${a.steps} step${a.steps === 1 ? "" : "s"} · ` : ""}${money(a.cost_usd)}</span>
+      <span class="grow"></span><a class="small" href="#/agents/${encodeURIComponent(v.project_id || v.project || "_")}/${encodeURIComponent(a.name)}">Edit this agent in Agents →</a>${all}</div>`;
   }
 
   // ---- The feed ------------------------------------------------------------------------------
@@ -403,6 +494,8 @@
   function render(app) {
     const v = state.view;
     if (!v) return;
+    const focused = document.activeElement && document.activeElement.closest && document.activeElement.closest(".lg-graph [data-key]");
+    const focusKey = focused ? focused.dataset.key : null;
     const old = document.getElementById("feed");
     const keep = old ? old.scrollTop : 0;
     const paused = v.paused_by_engineer;
@@ -423,13 +516,13 @@
       </div>
       ${steerLine(v)}
       ${v.stage === "done_unverified" ? h`<div class="notice">Done, not verified by Fallow: ${(v.outcome && v.outcome[1] || []).join(", ")}. Review the work yourself before merging.</div>` : ""}
-      ${strip(v)}
+      ${liveGraph(v)}
       ${banner(v)}
       ${verification(v)}
       <div class="row wrap top gap-16 loop-body">
         ${tree(v)}
         <section aria-label="Agents and activity" class="col gap-12 loop-main">
-          ${cards(v)}
+          ${agentFocus(v)}
           ${taskCard()}
           ${feedCard(v)}
         </section>
@@ -439,6 +532,10 @@
     else {
       const f = document.getElementById("feed");
       if (f) f.scrollTop = keep;
+    }
+    if (focusKey) {
+      const again = document.querySelector(`.lg-graph [data-key="${CSS.escape(focusKey)}"]`);
+      if (again) again.focus();
     }
   }
 
@@ -520,6 +617,13 @@
       case "tab":
         state.tab = el.dataset.tab;
         return render(app);
+      case "pick-agent": {
+        // A step of the live graph: its agent above the feed, the feed filtered to it; again,
+        // every agent (008 T043).
+        state.tab = state.tab === el.dataset.agent ? "all" : el.dataset.agent;
+        el.focus();
+        return render(app);
+      }
       case "vstory":
         state.vopen = state.vopen === el.dataset.story ? null : el.dataset.story;
         return render(app);
@@ -606,6 +710,32 @@
       default:
     }
   }
+
+  // The live graph by keyboard (008 T043, FR-018): Enter or Space picks a step, the arrows move
+  // between the steps.
+  document.addEventListener("keydown", (ev) => {
+    const el = ev.target && ev.target.closest && ev.target.closest(".lg-graph [role=button]");
+    if (!el) return;
+    if (ev.key === "Enter" || ev.key === " ") {
+      ev.preventDefault();
+      el.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    } else if (/^Arrow(Left|Right|Up|Down)$/.test(ev.key)) {
+      ev.preventDefault();
+      const all = [...document.querySelectorAll(".lg-graph [role=button]")];
+      const col = +el.dataset.col;
+      const back = ev.key === "ArrowLeft" || ev.key === "ArrowUp";
+      let next;
+      if (ev.key === "ArrowLeft" || ev.key === "ArrowRight") {
+        const cols = [...new Set(all.map((o) => +o.dataset.col))].sort((x, y) => x - y);
+        const c = cols[cols.indexOf(col) + (back ? -1 : 1)];
+        next = all.find((o) => +o.dataset.col === c);
+      } else {
+        const k = all.indexOf(el) + (back ? -1 : 1);
+        if (all[k] && +all[k].dataset.col === col) next = all[k];
+      }
+      if (next) next.focus();
+    }
+  });
 
   Fallow.register("loop", {
     enter,

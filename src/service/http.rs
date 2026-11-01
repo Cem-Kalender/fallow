@@ -341,6 +341,12 @@ fn studio_route(
             Err(e) => Some(Err(e)),
         },
         ("GET", ["api", "projects", p]) => r(Req::Project { id: p.to_string() }),
+        ("DELETE", ["api", "features", p, f]) => {
+            Some(confirmed().map(|()| Request::DeleteFeature {
+                project: p.to_string(),
+                feature: f.to_string(),
+            }))
+        }
         ("DELETE", ["api", "data", kind, id]) => Some(confirmed().map(|()| Request::DeleteData {
             kind: kind.to_string(),
             id: id.to_string(),
@@ -568,6 +574,15 @@ fn handle(mut req: tiny_http::Request, tx: &Sender<Msg>, port: u16, secret: &str
     let id = |s: &str| s.parse::<u64>().ok();
     let decoded: Vec<String> = parts.iter().map(|p| percent_decode(p)).collect();
     let dparts: Vec<&str> = decoded.iter().map(String::as_str).collect();
+    // 008 T044: the folder picker opens on the engineer's desktop; this request waits for it.
+    if method == "POST" && dparts == ["api", "projects", "pick"] {
+        let reply = match crate::platform::picker::pick_folder("Add a project folder to Fallow") {
+            Ok(Some(p)) => Reply::Ok(json!({ "path": p })),
+            Ok(None) => Reply::Ok(json!({ "cancelled": true })),
+            Err(e) => Reply::Err(e),
+        };
+        return json_reply(req, reply);
+    }
     match studio_route(&method, &dparts, &body, &url) {
         Some(Ok(r)) => return json_reply(req, ask(tx, r)),
         Some(Err(e)) => return json_reply(req, Reply::Err(e)),

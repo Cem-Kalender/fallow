@@ -9,7 +9,7 @@ after one of US1's criteria failed.
 
 | Screen | Mockup | 1440 px | 390 px |
 |---|---|---|---|
-| Loop, waiting for you after a failure | `mockup/loop-1440.png`, `loop-390.png` | `loop-asks-1440.png`, `loop-asks-1440-fold.png` | `loop-asks-390.png` |
+| Loop, waiting for you after a failure | `mockup/loop-graph.html` (the live graph, T043), `mockup/loop-1440.png`, `loop-390.png` | `loop-asks-1440.png`, `loop-asks-1440-fold.png` | `loop-asks-390.png` |
 | Loop, ready to merge | (same) | `loop-ready-1440.png`, `loop-ready-verified-1440.png` (What was verified open) | `loop-ready-390.png` |
 | Pipelines, a checker selected | `mockup/pipelines-1440.png`, `pipelines-390.png` | `pipelines-1440.png` | `pipelines-390.png` |
 | Agents | `mockup/agents-1440.png`, `agents-390.png` | `agents-1440.png` | `agents-390.png` |
@@ -23,9 +23,11 @@ after one of US1's criteria failed.
 - **A failure shows itself (FR-003).** US1's failed criterion opens its panel by itself, with
   what was run, what came back and what was expected. The question banner says the same.
 - **Keyboard reach (FR-018).** Tab reaches every new control in this order:
-  - **Loop:** the navigation, the pipeline link, Note for next step, Limits, Pause, Stop, the
+  - **Loop:** the navigation, the pipeline link, Note for next step, Limits, Pause, Stop, each
+    step of the live graph that has an agent (named with its state, e.g. "reviewer: done"), the
     question's answers, then each story pill (named with its status, e.g. "US1, Add: 1 failed").
-    After those come the task tree and the feed.
+    After those come the task tree and the feed. In the graph the arrows move as in Pipelines,
+    Enter picks a step, and the focus stays on it across live updates.
   - **Pipelines:** every node, then every + (each named with where it adds), then the step's
     settings and "Edit this agent in Agents →", then the caps.
   - **Agents:** Save for, Save, Runtime, Model, Kind, Returns, May run, Description, Edit as
@@ -44,8 +46,11 @@ after one of US1's criteria failed.
     demo loop has steering yet.
   - The question banner ("the loop asks you") is 007's, shown while the loop waits. The mockup's
     loop was repairing, not waiting.
-  - On a phone the strip's tiles wrap two to a row without arrows, and Stop wraps to its own
-    line.
+  - The pipeline is the live graph of `mockup/loop-graph.html` (retaken 2026-11-01 for T043):
+    the step where the loop waits for you is orange ("WAITS FOR YOU"), done steps are ticked, a
+    working step pulses. The row of agent cards is gone: a click on a step shows its agent above
+    the feed. On a phone the graph keeps its size and scrolls inside its box, and Stop wraps to
+    its own line.
 - **Pipelines:**
   - The header keeps 007's controls: the editable name, Based on, Use for this project, Delete
     and Edit as TOML. The mockup showed only the name as a title.

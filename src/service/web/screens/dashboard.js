@@ -108,7 +108,9 @@
       : f.stage === "stopped" ? "Locked · stopped"
       : loop ? "Locked · implement" : "Locked";
     const verb = { spec_session: "Continue", locked: "Open", building: "Watch", ready_to_merge: "Review", done_unverified: "Review", stopped: "Open", merged: "History" }[f.stage] || "Open";
-    return h`<tr><td class="b">${f.name}</td><td class="muted">${f.project_name}</td><td>${stagePill(f.stage, true)}</td><td class="body-ink">${step}</td><td class="right"><a href="${href}">${verb}</a></td></tr>`;
+    // A spec session can be deleted from here (008 T038); a loop that runs keeps it.
+    const del = f.stage === "spec_session" ? h` <button class="btn btn2 xs" data-act="delete-session" data-project="${f.project}" data-feature="${f.name}" data-locked="${f.locked_before ? "1" : ""}" data-plain="${f.plain ? "1" : ""}" aria-label="${`Delete the spec session of ${f.name}`}">Delete…</button>` : "";
+    return h`<tr><td class="b">${f.name}</td><td class="muted">${f.project_name}</td><td>${stagePill(f.stage, true)}</td><td class="body-ink">${step}</td><td class="right"><a href="${href}">${verb}</a>${del}</td></tr>`;
   }
 
   function render(app, d) {
@@ -118,13 +120,13 @@
     const projects = d.projects || [];
     app.innerHTML = h`<div class="page"><div class="split">
       <aside class="side col" aria-label="Projects">
-        <div class="row between"><h2 class="th">Projects</h2><button class="btn btn2 xs" type="button" data-act="focus-add">+ Add folder</button></div>
-        <form class="col gap-8" data-submit="add">
-          <label for="add-path" class="small body-ink">Add a folder</label>
+        <div class="row between"><h2 class="th">Projects</h2><button class="btn btn2 xs plus-btn" type="button" data-act="pick" aria-label="Add a project folder" title="Add a project folder: Spec Kit's skills and the default agents are installed in it; git is set up when its first loop starts, if you agree.">+</button></div>
+        ${typing ? h`<form class="col gap-8" data-submit="add">
+          <label for="add-path" class="small body-ink">The folder's path</label>
           <div class="row gap-8"><input id="add-path" type="text" class="grow min0" placeholder="C:\\Repos\\my-project"><button class="btn btn2 xs" type="submit">Add</button></div>
-        </form>
+        </form>` : ""}
         ${projects.map(project)}
-        <div class="card dashed pad-14"><div class="small body-ink lh">Adding a folder installs the Spec Kit skills and the default agents for it. Git is set up when the first loop starts, if you agree.</div></div>
+        ${projects.length ? "" : h`<div class="card dashed pad-14"><div class="small body-ink lh">Add a project with +: choose its folder. Fallow installs Spec Kit's skills and the default agents in it; git is set up when its first loop starts, if you agree.</div></div>`}
         <a class="small" href="#/data">What Fallow keeps on disk</a>
       </aside>
       <div class="main col gap-28">
@@ -155,7 +157,24 @@
 
   const state = { projects: [] };
 
+  // Typing a path is the fallback when there is no folder picker (008 T044).
+  let typing = false;
+  let appRoot = null;
+
+  async function addPath(path) {
+    try {
+      const out = await Fallow.post("/api/projects", { path });
+      const sk = out.spec_kit || {};
+      if (sk.found && sk.installed.length === 0) alertLine(`Spec Kit ${sk.found} was already there; Fallow left it as it is.`);
+      typing = false;
+      location.hash = `#/p/${encodeURIComponent(out.project)}`;
+    } catch (e) {
+      alertLine(e.message);
+    }
+  }
+
   async function load(app) {
+    appRoot = app;
     try {
       render(app, await get("/api/dashboard"));
     } catch (e) {
@@ -174,8 +193,25 @@
       if (stop) stop();
       stop = null;
     },
-    async act(name) {
-      if (name === "focus-add") return document.getElementById("add-path").focus();
+    async act(name, el) {
+      if (name === "delete-session") {
+        await Fallow.deleteSession(el.dataset.project, el.dataset.feature, el.dataset.locked === "1", el.dataset.plain === "1");
+        return;
+      }
+      if (name === "pick") {
+        // 008 T044: Windows' folder picker opens on the desktop; without one, type the path.
+        let out;
+        try {
+          out = await Fallow.post("/api/projects/pick", {});
+        } catch (e) {
+          typing = true;
+          load(appRoot);
+          alertLine(e.message);
+          return;
+        }
+        if (out.cancelled || !out.path) return;
+        return addPath(out.path);
+      }
       if (name === "new-feature") {
         const ps = state.projects;
         if (ps.length === 1) location.hash = `#/p/${encodeURIComponent(ps[0].id)}`;
@@ -183,17 +219,9 @@
         return;
       }
       if (name === "add") {
-        const input = document.getElementById("add-path");
-        const path = input.value.trim();
+        const path = document.getElementById("add-path").value.trim();
         if (!path) return alertLine("Type the folder's path.");
-        try {
-          const out = await Fallow.post("/api/projects", { path });
-          const sk = out.spec_kit || {};
-          if (sk.found && sk.installed.length === 0) alertLine(`Spec Kit ${sk.found} was already there; Fallow left it as it is.`);
-          location.hash = `#/p/${encodeURIComponent(out.project)}`;
-        } catch (e) {
-          alertLine(e.message);
-        }
+        return addPath(path);
       }
     },
   });

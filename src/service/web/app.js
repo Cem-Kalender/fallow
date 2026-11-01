@@ -213,40 +213,104 @@ const Fallow = (() => {
   const money = (v) => (typeof v === "number" ? `$${v.toFixed(2)}` : "cost not reported");
 
   // ---- Markdown, small: paragraphs, lists, `code`, **bold** (the lead's replies) -------------
+  // Inline markdown on escaped text: code spans first (their text stays as written), then bold
+  // and italic. No HTML of the text passes through (008 T041).
   function inline(s) {
-    return esc(s)
-      .replace(/`([^`]+)`/g, "<code>$1</code>")
-      .replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>");
+    const codes = [];
+    const t = esc(String(s).replace(/\u0000/g, "")).replace(/`([^`]+)`/g, (_, c) => `\u0000${codes.push(c) - 1}\u0000`);
+    return t
+      .replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>")
+      .replace(/(^|[^*\w])\*([^*\s][^*]*?)\*(?!\w)/g, "$1<i>$2</i>")
+      .replace(/(^|[^_\w])_([^_\s][^_]*?)_(?!\w)/g, "$1<i>$2</i>")
+      .replace(/\u0000(\d+)\u0000/g, (_, i) => `<code>${codes[+i]}</code>`);
   }
+
+  // The lead's and the agents' markdown (008 T041): headings, tables, fenced code, block quotes,
+  // lists and paragraphs, each line escaped.
   function md(text) {
     const out = [];
     let list = null;
     let para = [];
+    let quote = [];
+    let table = null;
+    let fence = null;
+    // A row's cells; a `|` inside a code span stays in its cell.
+    const cells = (line) => {
+      const out = [""];
+      let code = false;
+      for (const ch of line.trim().replace(/^\|/, "").replace(/\|$/, "")) {
+        if (ch === "`") code = !code;
+        if (ch === "|" && !code) out.push("");
+        else out[out.length - 1] += ch;
+      }
+      return out.map((c) => c.trim());
+    };
     const flushPara = () => {
       if (para.length) { out.push(`<p>${inline(para.join(" "))}</p>`); para = []; }
     };
     const flushList = () => {
       if (list) { out.push(`<${list.tag}>${list.items.map((i) => `<li>${inline(i)}</li>`).join("")}</${list.tag}>`); list = null; }
     };
-    for (const line of String(text || "").split("\n")) {
+    const flushQuote = () => {
+      if (quote.length) { out.push(`<blockquote>${inline(quote.join(" "))}</blockquote>`); quote = []; }
+    };
+    const flushTable = () => {
+      if (!table) return;
+      const [head, ...rows] = table;
+      out.push(`<div class="md-table"><table><thead><tr>${head.map((c) => `<th>${inline(c)}</th>`).join("")}</tr></thead><tbody>${rows.map((r) => `<tr>${r.map((c) => `<td>${inline(c)}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`);
+      table = null;
+    };
+    const flushAll = () => { flushPara(); flushList(); flushQuote(); flushTable(); };
+    const lines = String(text || "").split("\n");
+    for (let k = 0; k < lines.length; k++) {
+      const line = lines[k];
+      if (fence) {
+        if (/^\s*```/.test(line)) { out.push(`<pre class="md-code"><code>${esc(fence.join("\n"))}</code></pre>`); fence = null; }
+        else fence.push(line);
+        continue;
+      }
+      if (/^\s*```/.test(line)) { flushAll(); fence = []; continue; }
+      // A table: a row of cells, then a separator row (|---|---|) under the header.
+      if (/^\s*\|.*\|\s*$/.test(line)) {
+        if (table) { table.push(cells(line)); continue; }
+        if (/^\s*\|?[\s:|-]+\|?\s*$/.test(lines[k + 1] || "") && (lines[k + 1] || "").includes("-")) {
+          flushAll();
+          table = [cells(line)];
+          k++;
+          continue;
+        }
+      } else flushTable();
+      const hd = line.match(/^\s*(#{1,6})\s+(.*)$/);
+      const q = line.match(/^\s*>\s?(.*)$/);
       const b = line.match(/^\s*[-*] (.*)$/);
       const n = line.match(/^\s*\d+[.)] (.*)$/);
-      if (b || n) {
+      if (hd) {
+        flushAll();
+        out.push(`<h4 class="md-h md-h${hd[1].length}">${inline(hd[2].replace(/\s*#+\s*$/, ""))}</h4>`);
+      } else if (q) {
         flushPara();
+        flushList();
+        quote.push(q[1]);
+      } else if (b || n) {
+        flushPara();
+        flushQuote();
         const tag = b ? "ul" : "ol";
         if (list && list.tag !== tag) flushList();
         if (!list) list = { tag, items: [] };
         list.items.push((b || n)[1]);
       } else if (!line.trim()) {
-        flushPara();
-        flushList();
+        flushAll();
+      } else if (/^\s*([-*_])(\s*\1){2,}\s*$/.test(line)) {
+        flushAll();
+        out.push("<hr>");
       } else {
         flushList();
+        flushQuote();
         para.push(line.trim());
       }
     }
-    flushPara();
-    flushList();
+    if (fence) out.push(`<pre class="md-code"><code>${esc(fence.join("\n"))}</code></pre>`);
+    flushAll();
     return raw(out.join(""));
   }
 
@@ -314,9 +378,10 @@ const Fallow = (() => {
         <div class="term">${a.command}</div>
         <div class="row wrap gap-8 mt-10">
           <button class="btn" data-act="approve" data-id="${a.id}" data-answer="once">Allow once</button>
-          <button class="btn btn2" data-act="approve" data-id="${a.id}" data-answer="always" data-command="${a.command}">Always in this project</button>
+          ${a.always ? h`<button class="btn btn2" data-act="approve" data-id="${a.id}" data-answer="always" data-command="${a.always}">Always in this project</button>` : ""}
           <button class="btn btn2" data-act="approve" data-id="${a.id}" data-answer="deny">Deny</button>
-        </div></div>`);
+        </div>
+        ${a.always_not ? h`<div class="tiny muted mt-6">Not offered for always: ${a.always_not}.</div>` : a.always !== a.command ? h`<div class="tiny muted mt-6">"Always" would allow <span class="mono">${a.always}</span>, the plain command before the rest.</div>` : ""}</div>`);
     }
     if (!out.length) out.push(h`<div class="empty small">Say what you want to talk about; the lead answers from the project's code and documents.</div>`);
     return out;
@@ -338,17 +403,57 @@ const Fallow = (() => {
 
   function composer(c, placeholder) {
     const mode = c ? c.mode : "ask";
+    // One box, as in VS Code's chat (008 T046): the message on top, a slim bar under it with the
+    // mode on the left and the send arrow on the right.
     return h`<form class="composer" data-submit="say">
-      <div class="composer-row">
-        <button type="button" class="mode-chip" data-act="mode" data-mode="${mode}" title="Shift+Tab switches the mode" aria-label="${`Mode: ${MODE_LABEL[mode]}. Shift+Tab switches it.`}">${chipInner(mode)}</button>
+      <div class="cbox">
         <label for="say" class="sr">Message the lead</label>
         <textarea id="say" rows="2" placeholder="${placeholder}"></textarea>
-        <button class="btn" type="submit"${raw(c && c.busy ? " disabled" : "")}>Send</button>
+        <div class="cbar">
+          <button type="button" class="mode-chip" data-act="mode" data-mode="${mode}" title="Shift+Tab switches the mode" aria-label="${`Mode: ${MODE_LABEL[mode]}. Shift+Tab switches it.`}">${chipInner(mode)}</button>
+          <span class="grow"></span>
+          <button class="send-btn" type="submit" aria-label="Send" title="Send"${raw(c && c.busy ? " disabled" : "")}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg></button>
+        </div>
       </div></form>`;
   }
 
   // Shared actions of a chat; returns true when it handled `name`.
+  // The chat can take the screen's whole width (008 T039), remembered per screen in this browser
+  // only: a convenience, so a browser that keeps nothing simply shows it narrow again.
+  const chatWide = (screen) => {
+    try { return localStorage.getItem(`fallow.chatWide.${screen}`) === "1"; } catch { return false; }
+  };
+  const expandBtn = (screen) => {
+    const wide = chatWide(screen);
+    return h`<button class="btn btn2 xs" data-act="chat-expand" data-screen="${screen}" aria-pressed="${wide ? "true" : "false"}">${wide ? "Show the side panels" : "Expand"}</button>`;
+  };
+
+  // Deleting a spec session (008 T038), after a confirmation that names what goes: before the
+  // lock, its draft too. Resolves to true when it was deleted.
+  async function deleteSession(project, feature, locked, plain) {
+    const items = locked
+      ? ["the chat with the lead", "the documents stay where the loop and the merge put them"]
+      : ["the chat with the lead", plain ? `the draft: the folder specs/${feature}` : `the draft: specs/${feature} and its branch ${feature}`, "the feature leaves the project"];
+    const ok = await confirm({ title: `Delete the spec session of ${feature}?`, text: locked ? "Only the chat goes." : "Nothing of it was locked; this cannot be undone.", items, ok: "Delete" });
+    if (!ok) return false;
+    try {
+      await api("DELETE", `/api/features/${encodeURIComponent(project)}/${encodeURIComponent(feature)}`, { confirm: true });
+      return true;
+    } catch (e) {
+      alertLine(e.message);
+      return false;
+    }
+  }
+
   async function chatAct(conv, name, el, after) {
+    if (name === "chat-expand") {
+      const studio = el.closest(".studio");
+      const wide = studio.classList.toggle("chat-wide");
+      try { localStorage.setItem(`fallow.chatWide.${el.dataset.screen}`, wide ? "1" : "0"); } catch { /* kept for this view only */ }
+      el.textContent = wide ? "Show the side panels" : "Expand";
+      el.setAttribute("aria-pressed", wide ? "true" : "false");
+      return true;
+    }
     if (name === "mode") {
       const v = await get(`/api/conversations/${conv}`);
       await post(`/api/conversations/${conv}/mode`, { mode: nextMode(v.mode) });
@@ -388,16 +493,45 @@ const Fallow = (() => {
     try {
       await post(`/api/conversations/${conv}/say`, { text });
       box.value = "";
+      box.style.height = "";
     } catch (e) { alertLine(e.message); }
     after();
   }
 
   // Shift+Tab in the message box switches the mode, as in Claude Code (FR-007a).
+  // The top bar's height, for the screens that fit the window (008 T039): it wraps when narrow.
+  const topHeight = () => {
+    const bar = document.querySelector(".top-bar");
+    if (bar) document.documentElement.style.setProperty("--top-h", `${bar.offsetHeight}px`);
+  };
+  window.addEventListener("resize", topHeight);
+  window.addEventListener("load", topHeight);
+  if (typeof ResizeObserver === "function") {
+    document.addEventListener("DOMContentLoaded", () => {
+      const bar = document.querySelector(".top-bar");
+      if (bar) new ResizeObserver(topHeight).observe(bar);
+    });
+  }
+
+  document.addEventListener("input", (ev) => {
+    if (ev.target && ev.target.id === "say") {
+      ev.target.style.height = "auto";
+      ev.target.style.height = `${Math.min(ev.target.scrollHeight, 240)}px`;
+    }
+  });
+
   document.addEventListener("keydown", (ev) => {
     if (ev.key === "Tab" && ev.shiftKey && ev.target && ev.target.id === "say") {
       ev.preventDefault();
       const chip = document.querySelector("[data-act=mode]");
       if (chip) chip.click();
+    }
+    // Enter sends, Shift+Enter starts a new line (the engineer, 2026-11-01); not while an
+    // input method is composing a character.
+    if (ev.key === "Enter" && !ev.shiftKey && !ev.isComposing && ev.target && ev.target.id === "say") {
+      ev.preventDefault();
+      const send = ev.target.form && ev.target.form.querySelector("[type=submit]");
+      if (send && !send.disabled && ev.target.value.trim()) ev.target.form.requestSubmit(send);
     }
   });
 
@@ -455,7 +589,7 @@ const Fallow = (() => {
     return () => w.stop();
   }
 
-  return { saveFor, scopeOf, esc, h, raw, md, LOGO, icon, api, get, post, watch, live, here, confirm, register, route, show, start, money,
+  return { deleteSession, chatWide, expandBtn, saveFor, scopeOf, esc, h, raw, md, LOGO, icon, api, get, post, watch, live, here, confirm, register, route, show, start, money,
     MODE_LABEL, messages, composer, syncComposer, chatAct, sendSay, alertLine, atEnd, stagePill, filesRead,
     get headerWatch() { return headerWatch; } };
 

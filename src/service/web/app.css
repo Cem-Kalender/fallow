@@ -250,13 +250,32 @@ dialog.confirm ul { margin: 10px 0 0; padding-left: 20px; color: var(--body); li
 .lead-body p { margin: 0 0 8px; }
 .lead-body ul, .lead-body ol { margin: 6px 0 8px; padding-left: 20px; }
 .lead-body code { font-family: var(--mono); font-size: 12px; background: var(--chip); padding: 1px 4px; border-radius: 4px; }
+/* The lead's markdown (008 T041): headings, tables, code blocks, quotes. */
+.lead-body .md-h { margin: 12px 0 6px; font-size: 14.5px; font-weight: 700; color: var(--ink); }
+.lead-body .md-h1, .lead-body .md-h2 { font-size: 15.5px; }
+.lead-body .md-table { overflow-x: auto; margin: 6px 0 10px; }
+.lead-body table { border-collapse: collapse; font-size: 13px; min-width: 100%; }
+.lead-body th, .lead-body td { border: 1px solid var(--line); padding: 5px 8px; text-align: left; vertical-align: top; }
+.lead-body th { background: var(--panel-2); font-weight: 600; }
+.lead-body .md-code { background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; overflow-x: auto; margin: 6px 0 10px; }
+.lead-body .md-code code { background: none; padding: 0; white-space: pre; }
+.lead-body blockquote { margin: 6px 0 10px; padding: 2px 0 2px 12px; border-left: 3px solid var(--line-3); color: var(--muted); }
+.lead-body hr { border: 0; border-top: 1px solid var(--line); margin: 10px 0; }
 .lead-meta { font-size: 12px; color: var(--muted); margin-bottom: 4px; }
 .lead-meta b { color: var(--ink); }
 .typing { color: var(--muted); font-style: italic; }
-.composer { padding: 16px 24px; border-top: 1px solid var(--line); background: var(--panel); }
-.composer-row { max-width: 860px; margin: 0 auto; display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; }
-.composer textarea { flex: 1 1 220px; min-width: 0; min-height: 46px; }
-.mode-chip { flex: none; min-height: 44px; display: inline-flex; align-items: center; gap: 6px; padding: 0 12px; border: 1px solid var(--line-3); border-radius: 999px; background: var(--panel); font: 600 13px var(--sans); color: var(--body); cursor: pointer; }
+.composer { padding: 12px 24px 16px; border-top: 1px solid var(--line); background: var(--panel-2); }
+/* The composer as one box (008 T046, after VS Code's chat). */
+.cbox { max-width: 860px; margin: 0 auto; border: 1px solid var(--line-3); border-radius: 12px; background: var(--panel); }
+.cbox:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-bg); }
+.cbox textarea { display: block; width: 100%; min-height: 48px; max-height: 240px; border: 0; border-radius: 12px 12px 0 0; background: transparent; padding: 12px 14px 4px; resize: none; box-shadow: none; outline: none; font: 14px/1.5 var(--sans); }
+.cbar { display: flex; align-items: center; gap: 6px; padding: 2px 8px 8px; }
+.send-btn { flex: none; width: 32px; height: 32px; display: grid; place-items: center; border: 0; border-radius: 8px; background: var(--ink); color: #FFFFFF; cursor: pointer; }
+.send-btn:disabled { opacity: .35; cursor: default; }
+.send-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.mode-chip { flex: none; min-height: 30px; display: inline-flex; align-items: center; gap: 6px; padding: 0 8px; border: 0; border-radius: 8px; background: transparent; font: 600 12.5px var(--sans); color: var(--body); cursor: pointer; }
+.mode-chip:hover { background: var(--chip); }
+.mode-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .mode-chip svg { stroke: var(--accent); }
 .mode-chip .hint { font-weight: 500; color: var(--faint); }
 .question { padding: 16px; border-color: var(--accent-line); }
@@ -318,8 +337,6 @@ button.task.waiting { background: var(--needs-bg); }
 .task .sub { display: block; font-size: 12px; color: var(--needs-ink); }
 .task.current .sub { color: var(--accent); }
 .task.ital { font-style: italic; }
-.agent-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; }
-.fallow-card { background: #FAFAF8; }
 .feed-card { padding: 4px 16px 12px; }
 .feed-tabs { margin: 0 -16px 4px; padding: 0 12px; }
 .follow { font-size: 12px; color: var(--muted); display: inline-flex; align-items: center; gap: 6px; padding: 8px 4px; }
@@ -425,40 +442,40 @@ input.num { width: 56px; padding: 2px 6px; border-radius: 6px; font-weight: 700;
 .d-block { display: block; }
 
 /* The pipeline as a graph (008 US4, research R-6): drawn in a fixed 1360 x 430 space. */
-.pl-graph { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; overflow-x: auto;
+.pl-graph, .lg-graph { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; overflow-x: auto;
   background-image: radial-gradient(#E9E8E2 1px, transparent 1px); background-size: 18px 18px; }
-.pl-graph svg { display: block; width: 100%; height: auto; aspect-ratio: 1360 / 430; font-family: var(--sans); }
-.pl-graph .grp { fill: var(--accent-bg-2); stroke: var(--accent-line); stroke-width: 1.5; stroke-dasharray: 6 5; }
-.pl-graph .grp.checkpoint { fill: var(--ok-panel); stroke: var(--ok-line); }
-.pl-graph .gl { font-size: 10.5px; font-weight: 700; letter-spacing: .05em; fill: var(--accent); }
-.pl-graph .gl.checkpoint { fill: var(--ok); }
-.pl-graph .e { fill: none; stroke: #9C9B94; stroke-width: 1.5; }
-.pl-graph .ah { fill: #9C9B94; }
-.pl-graph .ah-r { fill: var(--needs); }
-.pl-graph .nx { fill: none; stroke: var(--accent); stroke-width: 1.3; stroke-dasharray: 2 4; }
-.pl-graph .rp { fill: none; stroke: var(--needs); stroke-width: 1.4; stroke-dasharray: 6 5; }
-.pl-graph .lnx { font-size: 11px; fill: var(--accent); }
-.pl-graph .lrp { font-size: 11px; fill: var(--needs-ink); }
-.pl-graph .gn { cursor: pointer; outline: none; }
-.pl-graph .gn .box { fill: var(--panel); stroke: var(--line-3); stroke-width: 1; }
-.pl-graph .gn.fixed .box { fill: var(--panel-2); stroke-dasharray: 5 4; }
-.pl-graph .gn .bar { fill: var(--muted); }
-.pl-graph .gn.maker .bar { fill: var(--accent); }
-.pl-graph .gn.checker .bar { fill: var(--ok); }
-.pl-graph .gn.fixed .bar { fill: var(--needs); }
-.pl-graph .gn.unknown .bar { fill: var(--bad); }
-.pl-graph .gn.unknown .box { stroke: var(--bad-line); }
-.pl-graph .gn:hover .box { stroke: var(--accent); }
-.pl-graph .gn.sel .box { stroke: var(--accent); stroke-width: 2.5; fill: var(--accent-bg-2); }
-.pl-graph .gn:focus-visible .box { stroke: var(--accent); stroke-width: 3; }
-.pl-graph .gn .k { font-size: 9.5px; font-weight: 700; letter-spacing: .05em; fill: var(--muted); }
-.pl-graph .gn .t { font-size: 13px; font-weight: 700; fill: var(--ink); }
-.pl-graph .gn .s { font-size: 11px; fill: var(--muted); }
-.pl-graph .gn .you { font-size: 10.5px; fill: var(--needs-ink); }
-.pl-graph .gplus { cursor: pointer; outline: none; }
-.pl-graph .gplus circle { fill: var(--panel); stroke: #9C9B94; stroke-width: 1.3; }
-.pl-graph .gplus path { stroke: var(--ink-2); stroke-width: 1.6; }
-.pl-graph .gplus:hover circle, .pl-graph .gplus:focus-visible circle { stroke: var(--accent); stroke-width: 2.5; fill: var(--accent-bg); }
+.pl-graph svg, .lg-graph svg { display: block; width: 100%; height: auto; aspect-ratio: 1360 / 430; font-family: var(--sans); }
+.pl-graph .grp, .lg-graph .grp { fill: var(--accent-bg-2); stroke: var(--accent-line); stroke-width: 1.5; stroke-dasharray: 6 5; }
+.pl-graph .grp.checkpoint, .lg-graph .grp.checkpoint { fill: var(--ok-panel); stroke: var(--ok-line); }
+.pl-graph .gl, .lg-graph .gl { font-size: 10.5px; font-weight: 700; letter-spacing: .05em; fill: var(--accent); }
+.pl-graph .gl.checkpoint, .lg-graph .gl.checkpoint { fill: var(--ok); }
+.pl-graph .e, .lg-graph .e { fill: none; stroke: #9C9B94; stroke-width: 1.5; }
+.pl-graph .ah, .lg-graph .ah { fill: #9C9B94; }
+.pl-graph .ah-r, .lg-graph .ah-r { fill: var(--needs); }
+.pl-graph .nx, .lg-graph .nx { fill: none; stroke: var(--accent); stroke-width: 1.3; stroke-dasharray: 2 4; }
+.pl-graph .rp, .lg-graph .rp { fill: none; stroke: var(--needs); stroke-width: 1.4; stroke-dasharray: 6 5; }
+.pl-graph .lnx, .lg-graph .lnx { font-size: 11px; fill: var(--accent); }
+.pl-graph .lrp, .lg-graph .lrp { font-size: 11px; fill: var(--needs-ink); }
+.pl-graph .gn, .lg-graph .gn { cursor: pointer; outline: none; }
+.pl-graph .gn .box, .lg-graph .gn .box { fill: var(--panel); stroke: var(--line-3); stroke-width: 1; }
+.pl-graph .gn.fixed .box, .lg-graph .gn.fixed .box { fill: var(--panel-2); stroke-dasharray: 5 4; }
+.pl-graph .gn .bar, .lg-graph .gn .bar { fill: var(--muted); }
+.pl-graph .gn.maker .bar, .lg-graph .gn.maker .bar { fill: var(--accent); }
+.pl-graph .gn.checker .bar, .lg-graph .gn.checker .bar { fill: var(--ok); }
+.pl-graph .gn.fixed .bar, .lg-graph .gn.fixed .bar { fill: var(--needs); }
+.pl-graph .gn.unknown .bar, .lg-graph .gn.unknown .bar { fill: var(--bad); }
+.pl-graph .gn.unknown .box, .lg-graph .gn.unknown .box { stroke: var(--bad-line); }
+.pl-graph .gn:hover .box, .lg-graph .gn:hover .box { stroke: var(--accent); }
+.pl-graph .gn.sel .box, .lg-graph .gn.sel .box { stroke: var(--accent); stroke-width: 2.5; fill: var(--accent-bg-2); }
+.pl-graph .gn:focus-visible .box, .lg-graph .gn:focus-visible .box { stroke: var(--accent); stroke-width: 3; }
+.pl-graph .gn .k, .lg-graph .gn .k { font-size: 9.5px; font-weight: 700; letter-spacing: .05em; fill: var(--muted); }
+.pl-graph .gn .t, .lg-graph .gn .t { font-size: 13px; font-weight: 700; fill: var(--ink); }
+.pl-graph .gn .s, .lg-graph .gn .s { font-size: 11px; fill: var(--muted); }
+.pl-graph .gn .you, .lg-graph .gn .you { font-size: 10.5px; fill: var(--needs-ink); }
+.pl-graph .gplus, .lg-graph .gplus { cursor: pointer; outline: none; }
+.pl-graph .gplus circle, .lg-graph .gplus circle { fill: var(--panel); stroke: #9C9B94; stroke-width: 1.3; }
+.pl-graph .gplus path, .lg-graph .gplus path { stroke: var(--ink-2); stroke-width: 1.6; }
+.pl-graph .gplus:hover circle, .lg-graph .gplus:hover circle, .pl-graph .gplus:focus-visible circle, .lg-graph .gplus:focus-visible circle { stroke: var(--accent); stroke-width: 2.5; fill: var(--accent-bg); }
 .pl-legend .sw { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 5px; background: var(--muted); }
 .pl-legend .sw.maker { background: var(--accent); } .pl-legend .sw.checker { background: var(--ok); }
 .pl-legend .sw.fixed { background: var(--needs); }
@@ -470,7 +487,7 @@ fieldset.field.along legend { padding: 0; margin-bottom: 4px; }
 }
 /* Below 700 px the graph keeps a legible size and scrolls inside its box, never the page. */
 @media (max-width: 700px) {
-  .pl-graph svg { width: 760px; max-width: none; }
+  .pl-graph svg, .lg-graph svg { width: 760px; max-width: none; }
 }
 @media (max-width: 900px) {
   .pl-under { grid-template-columns: minmax(0, 1fr); }
@@ -479,3 +496,46 @@ fieldset.field.along legend { padding: 0; margin-bottom: 4px; }
 .pl-graph.wide svg { min-width: 1500px; }
 /* A label stays with its control when a header row wraps. */
 .pair { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
+/* The chat screens fit the window (008 T039): the chat and the documents scroll inside, the
+   composer stays in view; Expand gives the chat the whole width. */
+@media (min-width: 901px) {
+  #spec-screen, #project-screen { flex: none; height: calc(100vh - var(--top-h, 58px)); min-height: 480px; }
+  .studio { flex-wrap: nowrap; overflow: hidden; }
+  .studio > * { min-height: 0; }
+  .studio > .column { overflow-y: auto; }
+  .chat-col .chat { min-height: 0; }
+  .docs { min-height: 0; overflow: hidden; }
+}
+@media (max-width: 900px) {
+  .chat-col .chat { max-height: 70vh; }
+}
+.studio.chat-wide > :not(.chat-col) { display: none; }
+.studio.chat-wide > .chat-col { flex: 1 1 100%; max-width: none; border-right: 0; }
+/* Adding a project is one "+" (008 T044). */
+.plus-btn { width: 30px; height: 30px; padding: 0; font-size: 18px; line-height: 1; display: grid; place-items: center; }
+/* The loop page's live graph (008 T043; mockup/loop-graph.html): the Pipelines tab's drawing
+   with each step's state. */
+.lg-graph svg { aspect-ratio: auto; }
+.lg-graph .gn.done .box { fill: var(--ok-panel); stroke: var(--ok-line); }
+.lg-graph .gn.done .k { fill: var(--ok); }
+.lg-graph .gn.now .box { fill: var(--accent-bg-2); stroke: var(--accent); stroke-width: 2.5; }
+.lg-graph .gn.now .k { fill: var(--accent); }
+.lg-graph .gn.asks .box { fill: var(--needs-panel); stroke: var(--needs); stroke-width: 2.5; }
+.lg-graph .gn.asks .k { fill: var(--needs-ink); }
+.lg-graph .gn.sel .box { stroke: var(--ink); stroke-width: 2.5; }
+.lg-graph .gn .tick { font-size: 13px; font-weight: 700; fill: var(--ok); }
+.lg-graph .gn .halo { fill: none; stroke: var(--accent); stroke-width: 2; opacity: .35; }
+@media (prefers-reduced-motion: no-preference) {
+  .lg-graph .gn .halo { animation: lg-pulse 1.6s ease-in-out infinite; }
+}
+@keyframes lg-pulse { 0%, 100% { opacity: .1; } 50% { opacity: .5; } }
+.lg-legend { display: flex; flex-wrap: wrap; gap: 14px; font-size: 12px; color: var(--muted); margin: 6px 2px 0; }
+.lg-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 5px; vertical-align: -1px; }
+.lg-legend .sw-now { background: var(--accent); } .lg-legend .sw-done { background: var(--ok); } .lg-legend .sw-todo { background: var(--line-3); } .lg-legend .sw-fail { background: var(--needs); }
+.agent-focus { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; }
+.lg-graph .rp.live { stroke-width: 2.6; stroke-dasharray: none; }
+/* The live graph: the focus ring wins over every state; steps without an agent are not buttons;
+   a selected step that is still to come keeps its own fill. */
+.lg-graph .gn.gn:focus-visible .box { stroke: var(--ink); stroke-width: 3.5; }
+.lg-graph .gn:not([role=button]) { cursor: default; pointer-events: none; }
+.lg-graph .gn.sel:not(.now):not(.done):not(.asks) .box { fill: var(--panel); }

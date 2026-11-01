@@ -114,10 +114,15 @@ impl Conv {
                 .collect::<Vec<_>>()
         );
         v["pending_approval"] = match &self.pending {
-            Some(p) => json!({
-                "id": p.id,
-                "command": p.input["command"].as_str().unwrap_or(&p.tool),
-            }),
+            Some(p) => {
+                let command = p.input["command"].as_str().unwrap_or(&p.tool);
+                // What "always in this project" could allow, or why it cannot (008 T040).
+                let (always, why) = match crate::project::commands::always_prefix(command) {
+                    Ok(pre) => (Some(pre), None),
+                    Err(why) => (None, Some(why)),
+                };
+                json!({ "id": p.id, "command": command, "always": always, "always_not": why })
+            }
             None => Value::Null,
         };
         v

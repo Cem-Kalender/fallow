@@ -14,7 +14,7 @@ use super::feature;
 use super::state::Step;
 use crate::agent::Activity;
 use crate::defs::Kind;
-use crate::defs::pipeline::{At, GATES, When};
+use crate::defs::pipeline::{At, GATES, OnFail, When};
 use crate::verify::git;
 
 /// What the feed is filtered on (`GET /api/loops/<l>/activity?agent=&kind=&after=`).
@@ -708,6 +708,9 @@ pub fn view(run: &Run, ctx: &Ctx) -> Result<Value, String> {
                 "agent": st.agent, "when": format!("{:?}", st.when).to_lowercase(),
                 "at": if st.at() == At::Start { "start" } else { "end" },
                 "paths": st.paths, "checker": lib.agent(&st.agent).is_some_and(|d| d.kind == Kind::Checker),
+                // For the live graph (008 T043): what runs alongside, and where a failure goes.
+                "parallel_with": st.parallel_with,
+                "on_fail": if st.on_fail == OnFail::Engineer { "engineer" } else { "repair" },
             })).collect::<Vec<_>>(),
             "reviews": pl.steps.iter().any(|st| st.when == When::Checkpoint && st.at() == At::End),
         })
@@ -744,6 +747,12 @@ pub fn view(run: &Run, ctx: &Ctx) -> Result<Value, String> {
         "lock_commit": l.lock_commit, "build_branch": l.build_branch, "base_branch": l.base_branch,
         "stage": stage, "unlocked": l.unlocked, "outcome": l.outcome, "busy": super::engine::view(run)["busy"],
         "waiting": run.waiting, "needs": s.needs, "limit_reached": s.limit_reached,
+        // Where the loop waits for the engineer, for the live graph (008 T043): the step that
+        // failed or asked, when nothing runs and no limit was reached; its agent and its part.
+        "waits_at": s.needs.as_ref().filter(|_| run.running.is_empty() && s.limit_reached.is_none())
+            .and_then(|_| s.steps.values().filter(|x| x.def.is_some()).max_by_key(|x| x.n))
+            .filter(|x| matches!(x.verified, Some((false, _))) || matches!(x.end, Some(StepEnd::Failed { .. })))
+            .map(|x| json!({ "agent": x.def, "part": x.task.clone().or_else(|| x.part.clone()) })),
         "current_phase": current_phase, "phases": phases, "pipeline": pipeline, "agents": agents,
         "checks": { "gates": gates.into_values().collect::<Vec<_>>(), "stories": stories, "commits": commits },
         "budget": { "usd": s.limits.usd, "minutes": s.limits.minutes },

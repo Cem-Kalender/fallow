@@ -61,7 +61,7 @@ pub fn lead_turn(t: &LeadTurn) -> String {
                 ));
             }
             s.push_str(&format!(
-                "Feature folder: `{dir}`. The Spec Kit step to work on: {step}. Run it with its skill when the engineer's message asks for it or when the step before is done, and set `step` to the step you ran. Ask clarify questions one at a time as `question`. After analyze, return every finding in `findings`. Spec Kit is installed in your working copy, at every turn: use its skills, templates and scripts.\n\n"
+                "Feature folder: `{dir}`. The Spec Kit step to work on: {step}. Run it with its skill when the engineer's message asks for it or when the step before is done, and set `step` to the step you ran. Ask clarify questions one at a time as `question`. After analyze, return every finding in `findings`. When you change spec.md, plan.md or tasks.md after analyze ran (to fix a finding, say), analyze must run again before the feature can be locked: say so, and do not tell the engineer it can be locked until analyze has run on the documents as they are. Spec Kit is installed in your working copy, at every turn: use its skills, templates and scripts.\n\n"
             ));
         }
     }

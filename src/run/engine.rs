@@ -155,6 +155,11 @@ pub enum Request {
         kind: String,
         id: String,
     },
+    /// 008 T038: deletes a spec session; before the lock, its draft goes too.
+    DeleteFeature {
+        project: String,
+        feature: String,
+    },
 }
 
 #[derive(Debug)]
@@ -684,33 +689,7 @@ impl Engine {
                         ));
                     }
                 }
-                let dir = c.dir.clone();
-                let project = c.state.project.clone();
-                // Its worktree goes with it, when Fallow made one (FR-003b).
-                let wt = c.state.workdir.clone();
-                if wt.starts_with(self.data.join("worktrees")) {
-                    if let Some(p) = self.studio.store.get(&project) {
-                        let _ = git::worktree_remove(&p.path, &wt);
-                    }
-                    if wt.exists() {
-                        std::fs::remove_dir_all(&wt)
-                            .map_err(|e| format!("{}: {e}", wt.display()))?;
-                    }
-                }
-                crate::project::data::remove(&dir, None)?;
-                self.studio.convs.remove(id);
-                if let Some(p) = self.studio.store.get_mut(&project) {
-                    if p.conversation.as_deref() == Some(id) {
-                        p.conversation = None;
-                    }
-                    for f in p
-                        .features
-                        .iter_mut()
-                        .filter(|f| f.conversation.as_deref() == Some(id))
-                    {
-                        f.conversation = None;
-                    }
-                }
+                let (dir, project) = self.remove_conv(id)?;
                 self.studio.store.save()?;
                 self.bus
                     .publish(json!({ "type": "project", "project": project }));
@@ -718,6 +697,137 @@ impl Engine {
             }
             _ => Err("kind: loop or conv".into()),
         }
+    }
+
+    /// Removes a conversation's data and its worktree, when Fallow made one (FR-003b), and every
+    /// reference to it; the caller saves the store. Returns its folder and its project.
+    fn remove_conv(&mut self, id: &str) -> Result<(PathBuf, String), String> {
+        let c = self
+            .studio
+            .convs
+            .get(id)
+            .ok_or_else(|| format!("there is no conversation {id}"))?;
+        let dir = c.dir.clone();
+        let project = c.state.project.clone();
+        let wt = c.state.workdir.clone();
+        if wt.starts_with(self.data.join("worktrees")) {
+            if let Some(p) = self.studio.store.get(&project) {
+                let _ = git::worktree_remove(&p.path, &wt);
+            }
+            if wt.exists() {
+                std::fs::remove_dir_all(&wt).map_err(|e| format!("{}: {e}", wt.display()))?;
+            }
+        }
+        crate::project::data::remove(&dir, None)?;
+        self.studio.convs.remove(id);
+        if let Some(p) = self.studio.store.get_mut(&project) {
+            if p.conversation.as_deref() == Some(id) {
+                p.conversation = None;
+            }
+            for f in p
+                .features
+                .iter_mut()
+                .filter(|f| f.conversation.as_deref() == Some(id))
+            {
+                f.conversation = None;
+            }
+        }
+        Ok((dir, project))
+    }
+
+    /// Deletes a spec session (008 T038). Before the lock, its draft goes too: the chat, the
+    /// feature's worktree and branch (or, in a plain folder, its `specs/NNN` folder), and the
+    /// feature leaves the project. After a lock, only the chat goes; the documents stay where
+    /// the loop and the merge put them. Refused while the lead answers or a loop still goes.
+    fn delete_feature(&mut self, project: &str, feature: &str) -> Result<Value, String> {
+        let p = self
+            .studio
+            .store
+            .get(project)
+            .ok_or_else(|| format!("there is no project {project}"))?;
+        let f = p
+            .features
+            .iter()
+            .find(|f| f.name() == feature)
+            .ok_or_else(|| format!("there is no feature {feature}"))?
+            .clone();
+        let repo = p.path.clone();
+        let plain = p.kind() != crate::project::Kind::Git;
+        if let Some(r) = f.run.and_then(|n| self.runs.get(&n)) {
+            if !r.state.stage.is_final() {
+                return Err(format!(
+                    "the loop of {feature} is still going: stop it before deleting its spec session"
+                ));
+            }
+        }
+        if let Some(c) = f
+            .conversation
+            .as_deref()
+            .and_then(|c| self.studio.convs.get(c))
+        {
+            if c.state.busy {
+                return Err(
+                    "the lead is answering in this session: wait for its turn to end".into(),
+                );
+            }
+        }
+        // The branch must be deletable before anything goes, so a delete never stops half-way.
+        if f.locks.is_empty() && !plain {
+            if let Some(b) = &f.branch {
+                if git::branch(&repo).as_deref() == Some(b.as_str()) {
+                    return Err(format!(
+                        "{b} is checked out in {}: check out another branch there first",
+                        repo.display()
+                    ));
+                }
+            }
+        }
+        let mut removed: Vec<String> = Vec::new();
+        if let Some(c) = f.conversation.as_deref() {
+            if self.studio.convs.contains_key(c) {
+                self.remove_conv(c)?;
+                removed.push("the chat".into());
+            }
+        }
+        if f.locks.is_empty() {
+            // The draft: never locked, so nothing of it was built or merged.
+            if let Some(b) = &f.branch {
+                if !plain {
+                    // The worktree's folder is gone; git forgets it, then lets the branch go.
+                    git::worktree_prune(&repo);
+                    if let Err(e) = git::delete_branch(&repo, b) {
+                        self.studio.store.save()?;
+                        return Err(format!(
+                            "the chat is deleted, but the branch {b} could not be: {e}"
+                        ));
+                    }
+                    removed.push(format!("the branch {b}"));
+                }
+            }
+            if plain {
+                let d = repo.join(&f.dir);
+                if d.exists() {
+                    std::fs::remove_dir_all(&d).map_err(|e| format!("{}: {e}", d.display()))?;
+                    removed.push(f.dir.clone());
+                }
+            }
+            if let Some(p) = self.studio.store.get_mut(project) {
+                p.features.retain(|x| x.name() != feature);
+            }
+        } else if let Some(x) = self
+            .studio
+            .store
+            .get_mut(project)
+            .and_then(|p| p.feature_mut(feature))
+        {
+            // Unlocked, then left: with its session gone it is its last loop's again, not a spec
+            // session without a chat.
+            x.unlocked = false;
+        }
+        self.studio.store.save()?;
+        self.bus
+            .publish(json!({ "type": "project", "project": project }));
+        Ok(json!({ "deleted": removed, "feature_removed": f.locks.is_empty() }))
     }
 
     /// The "Needs you" items of every loop (FR-003a), newest first.
@@ -911,6 +1021,9 @@ impl Engine {
             "step": f.step,
             "run": f.run,
             "conversation": f.conversation,
+            // Deleting its spec session keeps the documents once it was locked (008 T038).
+            "locked_before": !f.locks.is_empty(),
+            "plain": p.kind() != crate::project::Kind::Git,
         })
     }
 
@@ -1660,6 +1773,7 @@ impl Engine {
             }
             Request::Data => Ok(self.data_view()),
             Request::DeleteData { kind, id } => self.delete_data(&kind, &id),
+            Request::DeleteFeature { project, feature } => self.delete_feature(&project, &feature),
             Request::Limits {
                 id,
                 usd,

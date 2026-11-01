@@ -281,6 +281,29 @@ pub fn rev(dir: &Path, rev: &str) -> Result<String, String> {
     .map(|s| s.trim().to_string())
 }
 
+/// Forgets worktrees whose folders are gone, so their branches can be deleted.
+pub fn worktree_prune(repo: &Path) {
+    let _ = git(repo, &["worktree", "prune"]);
+}
+
+/// Deletes `branch` (not checked out anywhere), merged or not; one that is not there is fine.
+pub fn delete_branch(dir: &Path, branch: &str) -> Result<(), String> {
+    if git(
+        dir,
+        &[
+            "rev-parse",
+            "--verify",
+            "-q",
+            &format!("refs/heads/{branch}"),
+        ],
+    )
+    .is_err()
+    {
+        return Ok(());
+    }
+    git(dir, &["branch", "-D", branch]).map(|_| ())
+}
+
 /// Moves `branch` (not checked out anywhere) to `commit`.
 pub fn set_branch(dir: &Path, branch: &str, commit: &str) -> Result<(), String> {
     git(dir, &["branch", "-f", branch, commit]).map(|_| ())

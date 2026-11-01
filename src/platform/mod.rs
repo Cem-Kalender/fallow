@@ -3,6 +3,7 @@
 //! the door open and is not built in CI.
 
 pub mod notify;
+pub mod picker;
 
 /// The machine's physical memory in MB, if it can be read.
 #[cfg(windows)]

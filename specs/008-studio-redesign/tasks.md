@@ -260,6 +260,27 @@
 
 ---
 
+## Phase 9: The engineer's first use (2026-11-01)
+
+The engineer used the built 008 and reported these points, part of 008. Decided with the engineer on 2026-11-01: deleting a spec session removes its unlocked draft too; Spec Kit's own scripts run without asking; the loop page shows the pipeline as the live graph (`mockup/loop-graph.html`).
+
+- [X] T038 Delete a spec session (the engineer: "we shouldn't be piling up idle spec sessions"):
+  - a Delete button on the spec session screen and in the Spec sessions list, with the confirmation naming what goes;
+  - before the lock, the chat, the feature's worktree and its branch go, and the feature leaves the project;
+  - after a lock (merged, stopped or done), only the chat goes and the session leaves the Spec sessions list; the documents stay where the merge put them;
+  - refused while a lead turn runs or a loop of the feature is still going;
+  - `DELETE /api/features/<p>/<f>` with `{confirm: true}`; a test in `tests/`.
+- [X] T039 The chat in a spec session and in the project conversation has a fixed height and scrolls, with the composer always in view; an "Expand" control makes it take the whole width (and back), remembered per screen in the browser.
+- [X] T040 Spec Kit's own scripts (`bash .specify/scripts/bash/<name>.sh …` and `.specify/scripts/powershell/<name>.ps1`, one plain command each, optionally the `A || B` fallback the templates write) run in spec sessions without asking, whatever the mode except Read only; other commands ask as before. When "Always in this project" cannot apply to a command, the page says why before asking for a prefix, and does not offer it. A test.
+- [X] T041 The page renders the lead's and the agents' markdown: headings, tables, fenced code, block quotes, bold, italic and inline code (plain text escaped, no HTML passed through). A test of the renderer outside the page.
+- [X] T042 After the documents change since analyze ran, the lock check says "the documents changed after analyze: ask the lead to run analyze again", and the lead's turn is told that its own edits after analyze need analyze again before the lock.
+- [X] T043 The loop page shows the pipeline as the live graph (`mockup/loop-graph.html`), the Pipelines tab's layout with each step's state: working steps pulse (two checkers side by side when they run together), done steps are ticked, the repair under way is the bold red edge with its round. The strip and the row of agent cards go; clicking a step shows its agent above the feed and filters the feed to it ("Show all agents" goes back). Keyboard as in the Pipelines graph; at 390 px it scrolls inside its box.
+- [X] T044 Adding a project is one "+" button: Fallow opens Windows' folder picker on the desktop (`POST /api/projects/pick`), and the chosen folder is added as today; cancelling does nothing. Elsewhere (no picker), the page asks for the path as before.
+- [X] T046 The composer becomes one box, as in VS Code's chat (the engineer, 2026-11-01): the message on top, growing with what is typed up to a limit; under it, inside the box, the mode on the left (Shift+Tab as before) and a send arrow on the right.
+- [X] T045 A fresh-context review of T038–T044 and T046, its findings fixed; the visual check's README updated for the loop page.
+
+---
+
 ## Dependencies & Execution Order
 
 - **Setup (Phase 1)**: T001 before T032; T002 before T023.

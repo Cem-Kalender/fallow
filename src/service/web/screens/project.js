@@ -3,7 +3,7 @@
 // the right.
 "use strict";
 (() => {
-  const { h, raw, get, post, messages, composer, syncComposer, chatAct, sendSay, alertLine, atEnd, stagePill, live, confirm } = Fallow;
+  const { h, raw, get, post, messages, composer, syncComposer, chatAct, sendSay, alertLine, atEnd, stagePill, live, confirm, chatWide, expandBtn } = Fallow;
   let state = null;
   let stop = null;
 
@@ -76,7 +76,7 @@
           <button class="btn" type="submit">+ New feature</button>
         </form>
       </div>
-      <div class="studio">
+      <div class="studio${chatWide("project") ? " chat-wide" : ""}">
         <aside class="column" aria-label="Features">
           <h2 class="th">Features</h2>
           ${p.feature_list.length ? p.feature_list.slice().reverse().map((f) => featureLink(p, f)) : h`<div class="small muted">No features yet.</div>`}
@@ -91,7 +91,7 @@
           <button class="btn btn2 sm mt-8" data-act="remove">Remove from Fallow</button>
         </aside>
         <section class="chat-col" aria-label="Conversation with the lead">
-          <div class="chat-head"><div class="avatar" aria-hidden="true">L</div><div><b>Project conversation</b> <span class="small muted">· lead · reads the code, never edits it here</span></div></div>
+          <div class="chat-head"><div class="avatar" aria-hidden="true">L</div><div><b>Project conversation</b> <span class="small muted">· lead · reads the code, never edits it here</span></div><span class="grow"></span>${expandBtn("project")}</div>
           ${p.kind === "folder" ? h`<div class="notice">This project is a plain folder: Fallow cannot check what a command the lead runs writes. Set up git to work in a copy of your own.</div>` : ""}
           <div class="chat" id="chat">${messages(c)}</div>
           ${composer(c, "Ask about the code, plan features, or design a pipeline…")}

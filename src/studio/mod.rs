@@ -601,6 +601,15 @@ impl Studio {
                 approved.push(g.command.clone());
             }
         }
+        // Spec Kit's own scripts run without asking in a spec session (008 T040); Fallow makes
+        // features itself, so the script that creates one still asks.
+        if feature.is_some() {
+            for s in project::commands::speckit_scripts(&workdir) {
+                if !s.contains("create-new-feature") && !approved.contains(&s) {
+                    approved.push(s);
+                }
+            }
+        }
         let c = self.convs.get(conv).expect("checked");
         let mode = c.state.mode;
         let first = c.state.turns.is_empty();
@@ -876,6 +885,7 @@ impl Studio {
                 }
                 if let Some(fs) = findings {
                     feat.analyzed = true;
+                    feat.analyze_outdated = false;
                     feat.findings = fs;
                 }
             }
@@ -956,6 +966,7 @@ impl Studio {
             unlocked: false,
             ended: None,
             analyzed: false,
+            analyze_outdated: false,
             findings: Vec::new(),
         };
         self.project_mut(project_id)?.features.push(feature);
@@ -1141,6 +1152,7 @@ impl Studio {
             return Ok(());
         };
         feat.analyzed = false;
+        feat.analyze_outdated = true;
         let at = |s: &str| STEPS.iter().position(|x| *x == s).unwrap_or(0);
         let moved = at(&feat.step) > at("analyze");
         if moved {
@@ -1173,6 +1185,7 @@ impl Studio {
         let at = |s: &str| STEPS.iter().position(|x| *x == s).unwrap_or(0);
         if at(to) <= at("analyze") {
             f.analyzed = false;
+            f.analyze_outdated = false;
         }
         f.step = to.to_string();
         let conv = f.conversation.clone();
@@ -1205,6 +1218,18 @@ impl Studio {
             );
         }
         let analyzed = f.analyzed;
+        let outdated = f.analyze_outdated;
+        // Say why analyze must run: never ran, or the documents changed after it (008 T042).
+        let reword = |mut ps: Vec<String>| {
+            if outdated {
+                for p in &mut ps {
+                    if p.starts_with("the analyze step has not run") {
+                        *p = "the documents changed after analyze: ask the lead to run analyze again".into();
+                    }
+                }
+            }
+            ps
+        };
         match lock::check(
             &f.dir,
             read("spec.md").as_deref(),
@@ -1215,8 +1240,8 @@ impl Studio {
         ) {
             Ok(l) if problems.is_empty() => Ok(l),
             Ok(_) => Err(problems),
-            Err(mut e) => {
-                problems.append(&mut e);
+            Err(e) => {
+                problems.append(&mut reword(e));
                 Err(problems)
             }
         }
@@ -1398,7 +1423,10 @@ impl Studio {
                 if let Some(why) = project::commands::command_problem(&pre) {
                     return Err(format!("{pre:?}: {why}"));
                 }
-                if command != pre && !command.starts_with(&format!("{pre} ")) {
+                let rest = command.strip_prefix(pre.as_str());
+                if !rest
+                    .is_some_and(|r| r.is_empty() || r.starts_with([' ', '&', ';', '|', '>', '<']))
+                {
                     return Err(format!("{pre:?} is not the start of {command:?}"));
                 }
                 Some(pre)
