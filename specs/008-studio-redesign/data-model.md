@@ -17,7 +17,11 @@
 | criteria[] | list | Per criterion: `id` (`USn/k`), `text`, `must_fail`, `state` (`passed \| failed \| not yet`, as 007 writes it), `ran`, `result`, `expected` (the scenario's Then part, for a failure) |
 | checkers[] | list | As in 007: each checker of the story, passed or not, with its reasons |
 
-**Rules**: "the current review round" is the review steps queued after the story's last repair or reopen (`queued_seq > last_repair`, as `checkpoint()` decides in feature.rs); "latest verdict" is the last verdict among them. After a repair a criterion is `not yet` until it is answered again. The view keeps listing every story; the page shows no pill for a story without criteria.
+**Rules**: review rounds start at each repair of the story and at a new lock that reopened it (`queued_seq` bounds, as `checkpoint()` uses). The view shows the latest round that has a verdict; "latest verdict" is the last verdict in it. While a repair or a new lock waits to be checked, that round stays shown with `rechecking = true` (the page marks it "being repaired" or "checking again"), so a failure stays visible while it is repaired. The view keeps listing every story; the page shows no pill for a story without criteria.
+
+| Field | Type | Rule |
+|---|---|---|
+| rechecking | bool | A repair or a new lock came after the round shown; its result is not in yet |
 
 ## Parallel group (derived, per story checkpoint)
 

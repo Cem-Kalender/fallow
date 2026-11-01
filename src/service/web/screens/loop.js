@@ -272,6 +272,81 @@
   }
 
   // ---- The checks column --------------------------------------------------------------------------
+  // ---- What Fallow verified (008 US1; contracts/loop-view.md) ---------------------------------
+  // One pill per story with criteria; one evidence panel at a time. The criteria's text is
+  // spec.md's: it is shown only beside the evidence.
+  const VSTATE = {
+    checked: (s) => ({ cls: "ok", label: s.total ? `✓ ${s.checked}/${s.total}` : "✓", say: s.total ? "all criteria checked" : "its checkers passed" }),
+    failed: (s) => ({
+      cls: "fail",
+      label: s.failed ? `✗ ${s.failed} failed` : "✗ findings",
+      say: s.failed ? `${s.failed} failed` : "a checker found problems",
+    }),
+    progress: (s) => (s.rechecking
+      ? { cls: "", label: "checking again", say: "a repair or a new lock is being checked" }
+      : { cls: "", label: s.total ? `${s.checked}/${s.total}` : "…", say: `${s.checked} of ${s.total} criteria checked so far` }),
+    not_checked: () => ({ cls: "", label: "not checked", say: "no checker in this pipeline verifies it" }),
+  };
+  // Stories with criteria, and those a checker reported on even without criteria.
+  const withCriteria = (v) => (v.checks.stories || []).filter((s) => (s.total || 0) > 0 || (s.checkers || []).length > 0);
+
+  function evidence(s, where = "row") {
+    const pill = (c) => ({ passed: h`<span class="pill green">checked</span>`, failed: h`<span class="pill red">failed</span>` })[c.state]
+      || (s.checked_by_pipeline ? h`<span class="pill grey">not yet</span>` : h`<span class="pill grey">not checked</span>`);
+    const others = (s.checkers || []).filter((c) => c.agent !== s.reviewer);
+    const by = s.checked_by_pipeline
+      ? `checked by ${s.reviewer || "the reviewer"}, by running each one`
+      : "no checker in this pipeline verifies these criteria";
+    return h`<div class="evidence" id="evidence-${where}-${s.id}">
+      <div class="row wrap gap-8"><b>${s.id} · ${s.title}</b><span class="grow"></span><span class="tiny muted">${by}${s.rechecking ? " · being repaired or checked again" : ""}</span></div>
+      ${s.criteria.map((c) => h`<div class="crit${c.state === "failed" ? " bad" : ""}">${pill(c)}<div class="min0">
+        <div>${plain(c.text)}${c.must_fail ? h` <span class="must">must fail</span>` : ""}</div>
+        ${c.ran ? h`<div class="evl"><span class="evk">ran</span> <span class="mono">${c.ran}</span></div>` : ""}
+        ${c.result ? h`<div class="evl${c.state === "failed" ? " got" : ""}"><span class="evk">got</span> ${c.result}</div>` : ""}
+        ${c.expected ? h`<div class="evl"><span class="evk">expected</span> ${c.expected}</div>` : ""}</div></div>`)}
+      ${others.map((c) => h`<div class="crit${c.passed ? "" : " bad"}">${c.passed ? h`<span class="pill green">passed</span>` : h`<span class="pill red">findings</span>`}<div class="min0"><b>${c.agent}</b>${c.reasons.length ? h`<div class="evl">${c.reasons.join("; ")}</div>` : ""}</div></div>`)}
+    </div>`;
+  }
+
+  function verification(v) {
+    const list = withCriteria(v);
+    if (!list.length) return raw("");
+    const open = list.find((s) => s.id === state.vopen);
+    return h`<section class="card pad-14 verif" aria-label="Verified by Fallow">
+      <div class="row wrap gap-10">
+        <h2 class="th">Verified by Fallow</h2>
+        ${list.map((s) => {
+          const x = VSTATE[s.state] ? VSTATE[s.state](s) : VSTATE.progress(s);
+          const on = !!open && open.id === s.id;
+          return h`<button class="vpill ${x.cls}${on ? " on" : ""}" data-act="vstory" data-story="${s.id}" aria-expanded="${on ? "true" : "false"}" aria-controls="evidence-row-${s.id}" aria-label="${`${s.id}, ${s.title}: ${x.say}. ${on ? "Close" : "Open"} the evidence`}"><b>${s.id} ${x.label}</b><span class="vt">${s.title}</span></button>`;
+        })}
+      </div>
+      ${open ? evidence(open) : ""}
+    </section>`;
+  }
+
+  // "What was verified": every story's evidence, before the merge (FR-004). A snapshot: the
+  // loop is ready, so nothing changes while it is open.
+  function showVerified() {
+    const d = document.getElementById("verified");
+    if (!d || !state.view) return;
+    const list = withCriteria(state.view);
+    d.querySelector("#verified-body").innerHTML = list.length
+      ? list.map((s) => evidence(s, "dialog").s).join("")
+      : h`<p class="muted">This feature's spec has no acceptance criteria.</p>`.s;
+    d.showModal();
+  }
+
+  // A story opens by itself once for each new failing verdict (FR-003): a failure after a
+  // repair opens again, though the state stays "failed" in between.
+  function openFailures(v) {
+    for (const s of withCriteria(v)) {
+      const mark = `${s.state}:${s.round || ""}`;
+      if (s.state === "failed" && state.vlast[s.id] !== mark) state.vopen = s.id;
+      state.vlast[s.id] = mark;
+    }
+  }
+
   function checks(v) {
     const g = v.checks.gates || [];
     const gates = g.length
@@ -279,14 +354,6 @@
           ${x.baseline ? h`<div class="kv"><span>baseline (${short(x.baseline.commit)})</span><span class="muted">${x.baseline.outcome}${x.baseline.failing ? `, ${x.baseline.failing} failing` : ""}</span></div>` : ""}
           <div class="kv"><span>newly failing</span><span class="${x.newly_failing.length ? "bad-text" : "ok-text"}">${x.newly_failing.length ? x.newly_failing.join(", ") : "none"}</span></div>`)
       : h`<div class="small muted">${(v.pipeline && v.pipeline.steps.some((s) => s.agent === "fallow:gates")) ? "The gates run after the first task." : "This pipeline runs no gates: not verified by Fallow."}</div>`;
-    // Without a checker at the checkpoints nothing will check the criteria (T086: Solo said
-    // "not yet" and promised a reviewer).
-    const checked = !!(v.pipeline && v.pipeline.steps.some((s) => s.checker && s.when === "checkpoint"));
-    const stories = (v.checks.stories || []).map((s) => h`<div class="card pad-14">
-      <h2 class="th mb-8">${s.id} acceptance</h2>
-      ${s.criteria.map((c) => h`<div class="kv"><span>${plain(c.text)}${c.must_fail ? h` <span class="must">must fail</span>` : ""}</span>${({ passed: h`<span class="pill green">checked</span>`, failed: h`<span class="pill red">failed</span>` })[c.state] || (checked ? h`<span class="pill grey">not yet</span>` : h`<span class="pill grey">not checked</span>`)}</div>`)}
-      ${(s.checkers || []).filter((c) => c.agent !== s.reviewer).map((c) => h`<div class="kv"><span>${c.agent}${c.reasons.length ? h`<span class="tiny muted d-block">${c.reasons.join("; ")}</span>` : ""}</span>${c.passed ? h`<span class="pill green">passed</span>` : h`<span class="pill red">failed</span>`}</div>`)}
-      <div class="tiny muted mt-6">${s.reviewer ? `Checked by ${s.reviewer}, by running each one.` : checked ? "The reviewer confirms each one by running it at the checkpoint." : "No checker in this pipeline: Fallow does not verify these."}</div></div>`);
     const STATE = {
       with_lead: h`<span class="pill grey">with the lead</span>`,
       waiting_engineer: h`<span class="pill orange">asks you</span>`,
@@ -303,18 +370,22 @@
       ${q.confirmable || q.overrulable ? h`<div class="row gap-8 mt-6">${q.confirmable ? h`<button class="btn btn2 sm" data-act="qconfirm" data-q="${q.id}">Confirm</button>` : ""}${q.overrulable ? h`<button class="btn btn2 sm" data-act="overrule" data-q="${q.id}">Overrule…</button>` : ""}</div>` : ""}
     </div>`);
     const commits = v.checks.commits || [];
-    const steering = (v.steering || []).slice(-6).map((s) => h`<div>${hhmm(Date.parse(s.at))} ${s.kind.replace(/_/g, " ")}${s.detail ? `: ${s.detail}` : ""}</div>`);
     return h`<aside class="col checks" aria-label="Checks">
       <div class="card pad-14"><h2 class="th mb-8">Gates vs baseline</h2>${gates}</div>
-      ${stories}
       ${questions.length ? h`<div class="card pad-14"><h2 class="th mb-8">Questions <span class="tiny muted">· ${v.level || "normal"}</span></h2>${questions}</div>` : ""}
       <div class="card pad-14"><h2 class="th mb-8">Commits on ${v.build_branch}</h2>
         ${commits.length ? commits.slice(0, 6).map((c) => h`<div class="kv commit-row"><span class="mono tiny">${short(c.commit)}</span><span class="small" title="${`${c.task} ${c.text}`}">${c.task} ${c.text}</span></div>`) : h`<div class="small muted">None yet.</div>`}
         ${commits.length > 6 ? h`<div class="kv"><span class="muted">+ ${commits.length - 6} earlier</span><span></span></div>` : ""}</div>
-      <div class="card pad-14"><h2 class="th mb-8">Your steering</h2>
-        <div class="small body-ink lh">${steering.length ? steering : "Nothing yet."}</div>
-        <div class="row wrap gap-8 mt-10"><button class="btn btn2 sm" data-act="note">Note for next step</button><button class="btn btn2 sm" data-act="limits">Limits</button></div></div>
     </aside>`;
+  }
+
+  // The latest steering under the header (008 US2): what the engineer last did, with its time.
+  function steerLine(v) {
+    const all = v.steering || [];
+    const s = all[all.length - 1];
+    if (!s) return raw("");
+    const what = `${s.kind.replace(/_/g, " ")}${s.detail ? `: ${s.detail}` : ""}`;
+    return h`<div class="steer-line small muted" title="${all.slice(-6).map((x) => `${hhmm(Date.parse(x.at))} ${x.kind.replace(/_/g, " ")}${x.detail ? `: ${x.detail}` : ""}`).join("\n")}">Your last steering: ${hhmm(Date.parse(s.at))} · ${what}${all.length > 1 ? ` · ${all.length} in all` : ""}</div>`;
   }
 
   // ---- The page ------------------------------------------------------------------------------------
@@ -334,12 +405,16 @@
         <div class="row wrap gap-20 small body-ink totals">
           <span><b>${v.used.minutes}</b> of ${v.budget.minutes} min</span><span><b>${money(v.used.usd)}</b> of ${money(v.budget.usd)}</span>
           <span><b>${v.used.tasks}</b>/${v.used.of} tasks</span><span><b>${v.repairs}</b> repair${v.repairs === 1 ? "" : "s"}</span></div>
-        ${merge ? h`<button class="btn" data-act="merge">${v.stage === "ready" ? "Merge" : "Merge anyway…"}</button>` : ""}
-        ${over ? "" : h`${merge ? "" : h`<button class="btn btn2" data-act="${paused ? "resume" : "pause"}">${paused ? "Go on" : "Pause"}</button>`}<button class="btn btn2" data-act="stop">Stop</button>`}
+        <div class="row wrap gap-8 steer-buttons" role="group" aria-label="The loop's controls">
+          ${merge ? h`<button class="btn btn2" data-act="verified">What was verified</button><button class="btn" data-act="merge">${v.stage === "ready" ? "Merge" : "Merge anyway…"}</button>` : ""}
+          ${over ? "" : h`<button class="btn btn2" data-act="note">Note for next step</button><button class="btn btn2" data-act="limits">Limits</button>${merge ? "" : h`<button class="btn btn2" data-act="${paused ? "resume" : "pause"}">${paused ? "Go on" : "Pause"}</button>`}<button class="btn btn2" data-act="stop">Stop</button>`}
+        </div>
       </div>
+      ${steerLine(v)}
       ${v.stage === "done_unverified" ? h`<div class="notice">Done, not verified by Fallow: ${(v.outcome && v.outcome[1] || []).join(", ")}. Review the work yourself before merging.</div>` : ""}
       ${strip(v)}
       ${banner(v)}
+      ${verification(v)}
       <div class="row wrap top gap-16 loop-body">
         ${tree(v)}
         <section aria-label="Agents and activity" class="col gap-12 loop-main">
@@ -385,6 +460,7 @@
       // so a page that asked only for what follows its last place could miss or repeat some.
       const [v, a] = await Promise.all([get(`/api/loops/${state.id}`), get(`/api/loops/${state.id}/activity`)]);
       state.view = v;
+      openFailures(v);
       state.feed = a.entries;
       state.next = a.next;
       if (state.task) state.detail = await get(`/api/loops/${state.id}/tasks/${encodeURIComponent(state.task)}`).catch(() => null);
@@ -396,7 +472,7 @@
 
   async function enter(app, r) {
     if (stop) stop();
-    state = { project: r.project, feature: r.feature, id: null, view: null, feed: [], next: 0, tab: "all", follow: true, task: null, detail: null, open: new Set(), closed: new Set() };
+    state = { project: r.project, feature: r.feature, id: null, view: null, feed: [], next: 0, tab: "all", follow: true, task: null, detail: null, open: new Set(), closed: new Set(), vopen: null, vlast: {} };
     app.innerHTML = h`<div class="page"><div class="card empty">Loading the loop…</div></div>`.s;
     try {
       const f = await get(`/api/features/${encodeURIComponent(r.project)}/${encodeURIComponent(r.feature)}`);
@@ -433,6 +509,11 @@
       case "tab":
         state.tab = el.dataset.tab;
         return render(app);
+      case "vstory":
+        state.vopen = state.vopen === el.dataset.story ? null : el.dataset.story;
+        return render(app);
+      case "verified":
+        return showVerified();
       case "follow":
         state.follow = el.checked;
         return scrollFeed();

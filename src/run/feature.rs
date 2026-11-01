@@ -480,6 +480,48 @@ fn paths_match(globs: &[String], changed: &[String]) -> bool {
     })
 }
 
+/// The seqs where a story's review rounds start: each repair of it, and a new lock that reopened
+/// it (research S-17); checks queued before the last one are stale.
+pub(crate) fn round_bounds(run: &Run, l: &LoopState, story: &str) -> Vec<u64> {
+    let mut b: Vec<u64> = run
+        .state
+        .steps
+        .values()
+        .filter(|s| s.kind == StepKind::Repair && s.part.as_deref() == Some(story))
+        .map(|s| s.queued_seq)
+        .chain(
+            l.phases
+                .iter()
+                .filter(|p| stories_of(p).iter().any(|s| s == story))
+                .filter_map(|p| p.reopened),
+        )
+        .collect();
+    b.sort_unstable();
+    b
+}
+
+/// Where a story's current review round starts (0: the first round). Shared by the checkpoint
+/// and the loop view.
+pub(crate) fn round_start(run: &Run, l: &LoopState, story: &str) -> u64 {
+    round_bounds(run, l, story).last().copied().unwrap_or(0)
+}
+
+/// Whether a checker's failed verdict holds findings, rather than a check that did not finish
+/// (incomplete, interrupted, its session lost) or that waits for an answer: those are asked
+/// again and are no finding (008: a story's row never shows them as failed).
+pub(crate) fn has_findings(reasons: &[String]) -> bool {
+    reasons.iter().any(|r| {
+        ![
+            INCOMPLETE,
+            machine::INTERRUPTED,
+            machine::SESSION_LOST,
+            machine::BLOCKED,
+        ]
+        .iter()
+        .any(|p| r.starts_with(p))
+    })
+}
+
 /// The checker that answers a story's acceptance scenarios: the first one at the checkpoint's
 /// end without `paths`, which makes the pipeline verifying (contracts/pipeline.md). Other
 /// checkers answer their own checks in `findings` (contracts/step-results.md).
@@ -1641,24 +1683,7 @@ fn checkpoint(
         return Ok(Some(true));
     }
     let answerer = scenario_checker(pl, lib);
-    // The latest repair of the story, or a new lock that reopened it: checks before it are
-    // stale (research S-17).
-    let reopened = l
-        .phases
-        .iter()
-        .filter(|p| stories_of(p).iter().any(|s| s == story))
-        .filter_map(|p| p.reopened)
-        .max()
-        .unwrap_or(0);
-    let last_repair = run
-        .state
-        .steps
-        .values()
-        .filter(|s| s.kind == StepKind::Repair && s.part.as_deref() == Some(story))
-        .map(|s| s.queued_seq)
-        .max()
-        .unwrap_or(0)
-        .max(reopened);
+    let last_repair = round_start(run, l, story);
     let fresh = fresh_since(run).max(last_repair);
     let mut all = true;
     for c in &checkers {
@@ -2625,4 +2650,28 @@ fn check_done(run: &mut Run, ctx: &Ctx, step: &Step, value: &Value) -> Result<()
         reasons,
         commit: None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::has_findings;
+
+    #[test]
+    fn only_real_findings_count() {
+        assert!(!has_findings(&[]));
+        assert!(!has_findings(&[
+            "incomplete verdict: US1/2 has no answer".into()
+        ]));
+        assert!(!has_findings(&[
+            "interrupted: resumed after Fallow started again".into()
+        ]));
+        assert!(!has_findings(&["blocked: a question (q1)".into()]));
+        assert!(has_findings(&[
+            "high: eval of input in calc/__init__.py".into()
+        ]));
+        assert!(has_findings(&[
+            "incomplete verdict: x".into(),
+            "US1/1 failed: the result is 6".into()
+        ]));
+    }
 }

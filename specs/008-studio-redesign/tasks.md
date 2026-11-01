@@ -34,20 +34,20 @@
 
 **Independent Test**: a fake-runtime loop with one passing story and one failing criterion. Check the loop view's summary, then the page's row, the panel that opens by itself, and "What was verified".
 
-- [ ] T003 [P] [US1] Write `tests/us8_verification.rs`, testing `GET /api/loops/<l>` (`Request::Loop`) per contracts/loop-view.md:
+- [X] T003 [P] [US1] Write `tests/us8_verification.rs`, testing `GET /api/loops/<l>` (`Request::Loop`) per contracts/loop-view.md:
   - `state` is `checked` with `checked = total` for a passed story;
   - `failed` with `failed = 1`, and the criterion's `state = "failed"` and `expected` set, for a failing one;
   - `progress` while the review is under way;
   - a story whose criteria all passed but whose second checker (for example a security reviewer) failed is `failed` with `findings = true`, never `checked` (a must-fail case, constitution I);
   - `not_checked` with `checked_by_pipeline = false` on a pipeline without a checker at the checkpoints (a must-fail case);
   - after a repair, criteria are `not_yet` until answered again.
-- [ ] T004 [US1] In `src/run/activity.rs`, add the story summary to each entry of `checks.stories[]`:
+- [X] T004 [US1] In `src/run/activity.rs`, add the story summary to each entry of `checks.stories[]`:
   - `checked_by_pipeline` (the pipeline has a scenario checker, feature.rs `scenario_checker`), `total`, `checked`, `failed`, `findings` (any checker of the story failed in the current round);
   - `state`, following data-model.md's rule: "`not_checked` if not checked_by_pipeline; else `failed` if failed > 0 or findings; else `checked` if checked = total; else `progress`";
   - per criterion, `expected` (the scenario's **Then** part, emphasis removed) when it failed.
   
   The current round is the review steps with `queued_seq` after the story's last repair or reopen, as `checkpoint()` decides; criteria keep 007's state values (`passed`, `failed`, `not yet`).
-- [ ] T005 [US1] In `src/service/web/screens/loop.js`, replace the story cards of the side column with the "Verified by Fallow" row under the pipeline strip:
+- [X] T005 [US1] In `src/service/web/screens/loop.js`, replace the story cards of the side column with the "Verified by Fallow" row under the pipeline strip:
   - one pill per story: `✓ n/n`, `✗ k failed`, `k/n`, or `not checked`;
   - at most one evidence panel under it, with each criterion's text, status, `ran`, `result` and `expected`, wrapping long text inside the panel;
   - the panel opens by itself when a story turns `failed`;
@@ -55,8 +55,8 @@
   - pills are buttons, reachable and usable by keyboard, with labels ("US2: 1 criterion failed, open the evidence"); text contrast at least 4.5:1 (FR-018).
   
   Keep the page's place across redraws (the open story). No pill for a story without criteria.
-- [ ] T006 [US1] In `src/service/web/screens/loop.js`, add "What was verified" next to Merge / Merge anyway; it opens a dialog (007's `confirm`-style modal) with every story's evidence, apart from the row's one-panel rule.
-- [ ] T007 [P] [US1] Add the styles of the row, the pills (green, orange, grey) and the panel to `src/service/web/app.css`, keeping 007's tokens; at 390 px they wrap without sideways scrolling.
+- [X] T006 [US1] In `src/service/web/screens/loop.js`, add "What was verified" next to Merge / Merge anyway; it opens a dialog (007's `confirm`-style modal) with every story's evidence, apart from the row's one-panel rule.
+- [X] T007 [P] [US1] Add the styles of the row, the pills (green, orange, grey) and the panel to `src/service/web/app.css`, keeping 007's tokens; at 390 px they wrap without sideways scrolling.
 
 **Checkpoint**: US1 works on its own; 007's tests that read `checks.stories` still pass (adjust any that asserted the old shape only where it changed).
 
@@ -68,9 +68,9 @@
 
 **Independent Test**: on a fake-runtime loop, leave a note and change a limit from the header, and see the latest steering line. At ready, no Pause.
 
-- [ ] T008 [US2] In `src/service/web/screens/loop.js`'s header, place Note for the next step, Limits, Pause or Go on, and Stop (buttons reachable by keyboard, FR-018), using the existing `note`, `limits`, `pause`, `resume` and `stop` actions and dialogs. Show the latest entry of `steering[]` on a line under the header. Hide Pause at `ready`, `done_unverified` and final stages (FR-005).
-- [ ] T009 [US2] Remove the "Your steering" card from the side column in `src/service/web/screens/loop.js`; the side column keeps gates, questions and commits (contracts/page.md).
-- [ ] T010 [P] [US2] Style the header controls and the steering line in `src/service/web/app.css`, wrapping at 390 px.
+- [X] T008 [US2] In `src/service/web/screens/loop.js`'s header, place Note for the next step, Limits, Pause or Go on, and Stop (buttons reachable by keyboard, FR-018), using the existing `note`, `limits`, `pause`, `resume` and `stop` actions and dialogs. Show the latest entry of `steering[]` on a line under the header. Hide Pause at `ready`, `done_unverified` and final stages (FR-005).
+- [X] T009 [US2] Remove the "Your steering" card from the side column in `src/service/web/screens/loop.js`; the side column keeps gates, questions and commits (contracts/page.md).
+- [X] T010 [P] [US2] Style the header controls and the steering line in `src/service/web/app.css`, wrapping at 390 px.
 
 **Checkpoint**: US1 and US2 together give the redesigned loop page.
 

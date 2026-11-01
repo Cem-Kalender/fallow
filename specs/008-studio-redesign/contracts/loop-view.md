@@ -23,6 +23,7 @@
 - A criterion's `state` is `passed`, `failed` or `not yet` (007's values, unchanged).
 - `findings` is true when any checker of the story failed in the current round; `state` is then `failed` even if no criterion failed (constitution I: never green while a checker failed).
 - `expected` is present for a failed criterion: the scenario's **Then** part, without the markdown emphasis.
+- The story shows the latest review round that has a verdict; `rechecking` is true when a repair or a new lock came after it, so its failure stays visible while it is repaired (data-model.md).
 - `checked_by_pipeline` is false when no checker of the pipeline answers the criteria (no scenario checker). Every story is then `not_checked`, and the page says that no checker in this pipeline verifies these criteria.
 
 The view's `agents[]` gains nothing. An agent's `status` is `working` while any of its steps runs, so two parallel checkers both show as working. `busy` lists the running steps, for example `"steps 14, 15"`, or `"gates"`, `"merge"` or `""`.

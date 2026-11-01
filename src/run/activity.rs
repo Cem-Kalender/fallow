@@ -534,16 +534,51 @@ pub fn view(run: &Run, ctx: &Ctx) -> Result<Value, String> {
     let spec = feature::doc_at(run, &l.lock_commit, "spec.md")
         .and_then(|t| crate::speckit::spec::read("spec.md", &t).ok())
         .unwrap_or_default();
+    // The checkers that judge a story at its checkpoint's end; those without `paths` always run.
+    let judges: Vec<(String, bool)> = pl
+        .as_ref()
+        .map(|pl| {
+            pl.steps
+                .iter()
+                .filter(|x| {
+                    x.when == When::Checkpoint
+                        && x.at() == At::End
+                        && lib.agent(&x.agent).is_some_and(|a| a.kind == Kind::Checker)
+                })
+                .map(|x| (x.agent.clone(), x.paths.is_empty()))
+                .collect()
+        })
+        .unwrap_or_default();
     let stories: Vec<Value> = spec
         .stories
         .iter()
         .map(|st| {
+            // The latest review round with a verdict (008, data-model.md): while a repair or a
+            // new lock waits to be checked, the round that led to it stays shown, marked.
+            let bounds = feature::round_bounds(run, l, &st.id);
+            let of_story = |x: &&Step| {
+                x.kind == StepKind::Review && x.part.as_deref() == Some(st.id.as_str())
+            };
+            let reviewed = |x: &&Step| of_story(x) && x.verified.is_some();
+            let latest = s.steps.values().filter(reviewed).map(|x| x.queued_seq).max();
+            let (from, to) = match latest {
+                Some(q) => (
+                    bounds.iter().copied().filter(|b| *b < q).max().unwrap_or(0),
+                    bounds.iter().copied().find(|b| *b > q).unwrap_or(u64::MAX),
+                ),
+                None => (feature::round_start(run, l, &st.id), u64::MAX),
+            };
+            let rechecking = to != u64::MAX;
+            let in_round = |x: &&Step| reviewed(x) && x.queued_seq > from && x.queued_seq < to;
+            // A check of the story queued or running in the round shown: not judged yet.
+            let pending = !rechecking
+                && s.steps
+                    .values()
+                    .filter(of_story)
+                    .any(|x| x.verified.is_none() && x.queued_seq > from);
             // The verdict of the checker that answers the scenarios (others report findings).
-            let last = s.steps.values().rev().find(|x| {
-                x.kind == StepKind::Review
-                    && x.part.as_deref() == Some(st.id.as_str())
-                    && x.verified.is_some()
-                    && answerer.as_deref().is_none_or(|a| x.def.as_deref() == Some(a))
+            let last = s.steps.values().rev().filter(in_round).find(|x| {
+                answerer.as_deref().is_none_or(|a| x.def.as_deref() == Some(a))
             });
             let verdict = last.and_then(|x| s.verdicts.iter().find(|v| v.step == x.n));
             let criteria: Vec<Value> = st
@@ -551,27 +586,62 @@ pub fn view(run: &Run, ctx: &Ctx) -> Result<Value, String> {
                 .iter()
                 .map(|sc| {
                     let a = verdict.and_then(|v| v.answers.iter().find(|a| a.criterion == sc.id));
+                    // Checked only when the verdict was complete for it and says what was run
+                    // and what came out (constitution I): a missing part is "not yet".
+                    let missing = verdict.is_some_and(|v| {
+                        !v.complete && (v.missing.is_empty() || v.missing.iter().any(|m| m.contains(sc.id.as_str())))
+                    });
+                    let state = match a {
+                        Some(a) if !a.passed => "failed",
+                        Some(a) if !missing && !a.ran.trim().is_empty() && !a.result.trim().is_empty() => "passed",
+                        _ => "not yet",
+                    };
                     json!({
-                        "id": sc.id, "text": sc.text, "must_fail": sc.must_fail,
-                        "state": match a { None => "not yet", Some(a) if a.passed => "passed", Some(_) => "failed" },
+                        "id": sc.id, "text": sc.text, "must_fail": sc.must_fail, "state": state,
                         "ran": a.map(|a| a.ran.clone()), "result": a.map(|a| a.result.clone()),
+                        "expected": (state == "failed").then(|| expected_of(&sc.text)),
                     })
                 })
                 .collect();
-            // Every checker's latest outcome on the story, with its reasons (FR-026).
+            // Every checker's latest outcome on the story in this round, with its reasons
+            // (FR-026).
             let mut checkers: Vec<Value> = Vec::new();
-            for x in s.steps.values().rev().filter(|x| {
-                x.kind == StepKind::Review && x.part.as_deref() == Some(st.id.as_str()) && x.verified.is_some()
-            }) {
+            let mut findings = false;
+            for x in s.steps.values().rev().filter(in_round) {
                 let def = x.def.clone().unwrap_or_default();
                 if checkers.iter().any(|c| c["agent"] == def.as_str()) {
                     continue;
                 }
                 let (ok, reasons) = x.verified.clone().unwrap_or_default();
+                findings |= !ok && feature::has_findings(&reasons);
                 checkers.push(json!({ "agent": def, "step": x.n, "passed": ok, "reasons": reasons }));
             }
+            // Every checker that always runs passed in this round.
+            let all_passed = judges.iter().filter(|(_, always)| *always).all(|(agent, _)| {
+                checkers.iter().any(|c| c["agent"] == agent.as_str() && c["passed"] == true)
+            });
+            let total = criteria.len();
+            let count = |state: &str| criteria.iter().filter(|c| c["state"] == state).count();
+            let (checked, failed) = (count("passed"), count("failed"));
+            let state = if answerer.is_none() {
+                "not_checked"
+            } else if failed > 0 || findings {
+                "failed"
+            } else if checked == total
+                && verdict.is_some_and(|v| v.approved && v.complete)
+                && all_passed
+                && !pending
+                && !rechecking
+            {
+                "checked"
+            } else {
+                "progress"
+            };
             json!({ "id": st.id, "title": st.title, "criteria": criteria, "checkers": checkers,
-                    "approved": verdict.map(|v| v.approved), "reviewer": last.and_then(|x| x.def.clone()) })
+                    "approved": verdict.map(|v| v.approved), "reviewer": last.and_then(|x| x.def.clone()),
+                    "checked_by_pipeline": answerer.is_some(), "total": total, "checked": checked,
+                    "failed": failed, "findings": findings, "state": state, "rechecking": rechecking,
+                    "round": last.map(|x| x.n) })
         })
         .collect();
     let mut commits: Vec<Value> = Vec::new();
@@ -673,4 +743,47 @@ pub fn view(run: &Run, ctx: &Ctx) -> Result<Value, String> {
         "questions": questions,
         "level": l.level,
     }))
+}
+
+/// What a failed criterion expected: its scenario's **Then** part, without the emphasis and the
+/// `(must fail)` mark (008, contracts/loop-view.md).
+fn expected_of(text: &str) -> String {
+    let plain = text.replace("**", "");
+    // The marker of the scenario's outcome: its **Then**, else the last "Then " (a "Then" in the
+    // Given part is no outcome).
+    let then = text
+        .rfind("**Then**")
+        .map(|i| text[i + "**Then**".len()..].replace("**", ""))
+        .or_else(|| {
+            plain
+                .rfind("Then ")
+                .map(|i| plain[i + "Then ".len()..].to_string())
+        })
+        .unwrap_or_else(|| plain.clone());
+    then.replace("(must fail)", "")
+        .trim()
+        .trim_end_matches('.')
+        .trim()
+        .to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::expected_of;
+
+    #[test]
+    fn what_a_failed_criterion_expected() {
+        assert_eq!(
+            expected_of("**Given** a cart, **When** it is shown, **Then** the total is `4.98`."),
+            "the total is `4.98`"
+        );
+        assert_eq!(
+            expected_of(
+                "**Given** a file \"Then what\", **When** read, **Then** it is refused (must fail)"
+            ),
+            "it is refused"
+        );
+        assert_eq!(expected_of("Given x, When y, Then z happens."), "z happens");
+        assert_eq!(expected_of("The total is exact."), "The total is exact");
+    }
 }

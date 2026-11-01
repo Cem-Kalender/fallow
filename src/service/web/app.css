@@ -195,6 +195,27 @@ textarea { resize: none; }
 dialog.confirm { border: 1px solid var(--line); border-radius: 12px; padding: 20px; max-width: 480px; width: calc(100% - 32px); color: var(--ink); }
 dialog.confirm::backdrop { background: rgba(28, 28, 26, .35); }
 dialog.confirm h2 { font-size: 17px; }
+dialog.confirm.wide { max-width: 860px; max-height: calc(100vh - 64px); overflow: auto; }
+
+/* What Fallow verified (008 US1): one pill per story, one evidence panel at a time. */
+.verif .th { margin: 0 6px 0 0; }
+.vpill { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; border: 1px solid var(--line); background: var(--panel); border-radius: 999px; padding: 5px 12px; font: 600 13px var(--sans); color: var(--ink); cursor: pointer; text-align: left; }
+.vpill .vt { font-weight: 400; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.vpill.ok b { color: var(--ok); }
+.vpill.fail { border-color: var(--needs-line); background: var(--needs-bg); }
+.vpill.fail b { color: var(--needs-ink); }
+.vpill.on { outline: 2px solid var(--accent); outline-offset: 1px; }
+.evidence { margin-top: 12px; overflow-wrap: anywhere; }
+.evidence .crit { display: grid; grid-template-columns: 86px minmax(0, 1fr); gap: 12px; padding: 10px 6px; border-top: 1px solid var(--line-2); font-size: 14px; }
+.evidence .crit > .pill { justify-self: start; align-self: start; }
+.evidence .crit.bad { background: var(--needs-panel); }
+.evidence .evl { font-size: 12px; color: var(--muted); margin-top: 4px; }
+.evidence .evl .evk { display: inline-block; min-width: 56px; font-family: var(--mono); }
+.evidence .evl.got { color: var(--bad); font-weight: 600; }
+
+/* The engineer's steering in the loop page's header (008 US2). */
+.steer-buttons { justify-content: flex-end; }
+.steer-line { margin-top: -8px; overflow-wrap: anywhere; }
 dialog.confirm ul { margin: 10px 0 0; padding-left: 20px; color: var(--body); line-height: 1.5; }
 
 @media (max-width: 640px) {
