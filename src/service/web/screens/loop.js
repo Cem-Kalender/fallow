@@ -386,8 +386,17 @@
     const all = v.steering || [];
     const s = all[all.length - 1];
     if (!s) return raw("");
-    const what = `${s.kind.replace(/_/g, " ")}${s.detail ? `: ${s.detail}` : ""}`;
-    return h`<div class="steer-line small muted" title="${all.slice(-6).map((x) => `${hhmm(Date.parse(x.at))} ${x.kind.replace(/_/g, " ")}${x.detail ? `: ${x.detail}` : ""}`).join("\n")}">Your last steering: ${hhmm(Date.parse(s.at))} · ${what}${all.length > 1 ? ` · ${all.length} in all` : ""}</div>`;
+    return h`<div class="steer-line small muted" title="${all.slice(-6).map((x) => `${hhmm(Date.parse(x.at))} ${steerText(x)}`).join("\n")}">Your last steering: ${hhmm(Date.parse(s.at))} · ${steerText(s)}${all.length > 1 ? ` · ${all.length} in all` : ""}</div>`;
+  }
+
+  // One steering entry in words: new limits read "limits set to $10.00, 90 min", not the record.
+  function steerText(x) {
+    if (x.kind === "set_limits" && x.detail) {
+      const f = Object.fromEntries(x.detail.split(" ").map((p) => p.split("=")).filter((p) => p.length === 2 && p[1] !== "-"));
+      const parts = [f.usd && `$${f.usd}`, f.min && `${f.min} min`, f.repair_cap && `${f.repair_cap} repairs per task`].filter(Boolean);
+      return `${x.detail.endsWith(" once") ? "continued once past the limit" : "limits set to"}${parts.length ? ` ${parts.join(", ")}` : ""}`;
+    }
+    return `${x.kind.replace(/_/g, " ")}${x.detail ? `: ${x.detail}` : ""}`;
   }
 
   // ---- The page ------------------------------------------------------------------------------------

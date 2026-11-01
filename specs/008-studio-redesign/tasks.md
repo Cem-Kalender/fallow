@@ -231,7 +231,32 @@
 
   **Results (2026-11-01, debug build, Windows 11, 8 GB):** page ready 110 ms (p95 of 30), idle 11.1 MB, running 15.7 MB: all within budget. SC-004: `checkers_alongside_each_other_overlap_and_are_judged_together` passes; the two checkers overlap, and the checkpoint takes at most the slower one's time plus 10% and 1 s.
 - [X] T036 A fresh-context review of the whole change against spec.md, the contracts and the constitution, then fix its findings.
-- [ ] T037 Run quickstart Q1–Q5 with real agents (`claude`, Sonnet) in the sandbox, within $60. Record the runs, their costs and the problems found in this file, and fix what they find.
+- [X] T037 Run quickstart Q1–Q5 with real agents (`claude`, Sonnet) in the sandbox, within $60. Record the runs, their costs and the problems found in this file, and fix what they find.
+
+  **Run of 2026-11-01** (debug build, the sandbox `fallowsandbox`, every agent on Sonnet; $4.39 in all):
+  - **Feature `005-discount-codes`:** two stories, five tasks, pipeline `standard-security` (Standard with `security-reviewer` alongside the reviewer, saved through the page's graph flow). The spec session took two lead turns, specify-to-tasks and analyze, and cost $1.33. Loop 5 ran to "Ready to merge" in about 4 minutes for $3.06, with no repairs. It is left at ready for the engineer to merge.
+  - **Q1:**
+    - The row reads `US1 ✓ 9/9` and `US2 ✓ 4/4`, and no criterion text shows until a story is opened.
+    - Opening US1 lists its 9 criteria, each with what was run and what came out.
+    - "What was verified" opens the evidence next to Merge.
+    - A failed criterion (step 3) and a Solo loop (step 4) did not occur with real agents. Both are covered by `tests/us8_verification.rs` and the visual check.
+  - **Q2:**
+    - A note and a cost limit raised to $10 from the header's calls were recorded, and the note reached the next step's prompt (step 2).
+    - At ready there is no Pause and no steering card.
+  - **Q3:**
+    - Saving the reviewer's model as `opus` "for this project only" wrote `.fallow/agents/reviewer.md`, which differs from the definition in force only in its `model:` line. The copy was deleted after the check.
+    - Making the reviewer a maker was refused, naming the loop and the pipelines that would no longer verify.
+  - **Q4:**
+    - On Standard, the page shows both groups, "next task" and both repair back-edges.
+    - The + after the gates with "Alongside reviewer" ticked stacked `security-reviewer` with the reviewer. The TOML has `parallel_with = ["reviewer"]`, and the pipeline stayed verifying.
+    - With the keyboard, Enter selected the reviewer and Delete removed it after the confirmation. The page said "Not verified any more: no review at checkpoints". That was a draft, not saved.
+  - **Q5:**
+    - With real agents the two checkers ran at the same time at both checkpoints. For US1 the reviewer ran 08:48:01–08:48:23 and the security reviewer 08:48:02–08:48:21, so the checkpoint took 22 s, the slower one's time. For US2 they ran 08:48:56–08:49:13 and 08:48:57–08:49:13.
+    - Both stories show both checkers passed. The cases in `tests/us8_parallel.rs` pass.
+  - **Problems found:**
+    - The latest-steering line showed the raw record ("set limits: usd=10.00 min=- repair_cap=-"). It now reads "limits set to $10.00". Fixed.
+    - The engineer saw the desktop notification's header with a generic exe icon (the toast's body has Fallow's icon). This is reported in the session, and the fix is the engineer's choice.
+
 
 ---
 
