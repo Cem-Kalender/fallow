@@ -129,7 +129,7 @@
 
 **Independent Test**: open Standard, add a parallel security reviewer through a +, remove checkers, and use the keyboard only.
 
-- [ ] T017 [US4] In `src/service/web/screens/pipelines.js`, write the layout as a pure function `layout(pipeline)`, returning nodes, edges, back-edges and groups in a fixed 1360 × 430 space, by contracts/page.md's columns:
+- [X] T017 [US4] In `src/service/web/screens/pipelines.js`, write the layout as a pure function `layout(pipeline)`, returning nodes, edges, back-edges and groups in a fixed 1360 × 430 space, by contracts/page.md's columns:
   1. Spec session and Lock, both fixed;
   2. "For each phase in tasks.md": `at = start` phase steps, the per-task steps, then `at = end` phase steps;
   3. "At each story's checkpoint": `at = start` steps, then the checkers, with each `parallel_with` set stacked in one column;
@@ -137,14 +137,14 @@
   5. Merge, fixed.
   
   Forward edges branch into a stacked column and join after it. Add the dotted "next task" back-edge, red repair back-edges labelled with the caps, and "→ you" for `on_fail = engineer`.
-- [ ] T018 [US4] Draw the layout as SVG in the editor's box (a `viewBox` scaled to fit; scrolling inside the box below 700 px). Nodes carry a role colour (maker blue, checker green, `fallow:gates` grey, the engineer's fixed steps orange) and the "when" label. This replaces the list-style flow; "Edit as TOML" stays (FR-011).
-- [ ] T019 [US4] Add the + on each forward edge: a small form (agent; `when` and `at` preset from the edge's place) appends the step to the draft pipeline, and the graph redraws. There are no free-drawn edges (FR-012).
-- [ ] T020 [US4] Selecting a node shows its settings under the graph (agent, when, at, paths, alongside (`parallel_with`), on failure), reusing 007's step fields. A change updates the draft, the graph and the TOML. Removing a node removes the step; Spec session, Lock and Merge cannot be removed. After a removal, the pipeline check (`/api/pipelines/check`) says what is no longer verified (FR-013).
-- [ ] T021 [US4] Keyboard and labels (FR-018):
+- [X] T018 [US4] Draw the layout as SVG in the editor's box (a `viewBox` scaled to fit; scrolling inside the box below 700 px). Nodes carry a role colour (maker blue, checker green, `fallow:gates` grey, the engineer's fixed steps orange) and the "when" label. This replaces the list-style flow; "Edit as TOML" stays (FR-011).
+- [X] T019 [US4] Add the + on each forward edge: a small form (agent; `when` and `at` preset from the edge's place) appends the step to the draft pipeline, and the graph redraws. There are no free-drawn edges (FR-012).
+- [X] T020 [US4] Selecting a node shows its settings under the graph (agent, when, at, paths, alongside (`parallel_with`), on failure), reusing 007's step fields. A change updates the draft, the graph and the TOML. Removing a node removes the step; Spec session, Lock and Merge cannot be removed. After a removal, the pipeline check (`/api/pipelines/check`) says what is no longer verified (FR-013).
+- [X] T021 [US4] Keyboard and labels (FR-018):
   - nodes and + are focusable `role="button"` elements with an `aria-label` naming the step, when it runs and its agent;
   - arrow keys move between nodes in layout order;
   - Enter selects, Delete removes (with confirmation).
-- [ ] T022 [P] [US4] Style the graph (groups, nodes, edges, back-edges, +, the selected node, the settings panel) in `src/service/web/app.css`, in 007's tokens.
+- [X] T022 [P] [US4] Style the graph (groups, nodes, edges, back-edges, +, the selected node, the settings panel) in `src/service/web/app.css`, in 007's tokens.
 
 **Checkpoint**: the graph shows every default pipeline correctly, and adding, editing and removing steps keeps the TOML in step.
 

@@ -42,7 +42,7 @@ Decisions for [spec.md](./spec.md), on top of 007's code (see `specs/007-fallow-
 - a node is a `<g>` with a `<rect>` and text; its role colour from the agent's kind (maker blue, checker green, `fallow:gates` grey, the engineer's fixed steps orange);
 - a `+` button on each forward edge opens a small form: the agent, and when it runs (preset from where the + is); Fallow appends the step to the TOML with that `when`/`at`, and the layout puts it in place;
 - selecting a node shows its settings form under the graph (agent, when, at, paths, parallel_with, on_fail), the same fields 007's step card had; removing it deletes the step;
-- the layout is computed in a fixed 1360 × 430 coordinate space and scaled to the box (`viewBox`, `preserveAspectRatio="xMidYMid meet"`), so edges and nodes stay aligned (a lesson of the mock); below 700 px wide, the graph scrolls inside its box.
+- the layout is computed in a 1360 × 430 coordinate space (wider or taller only for a pipeline with very many steps, or a tall stack of checkers alongside each other, so nodes keep a readable size; the box then scrolls) and scaled to the box (`viewBox`, `preserveAspectRatio="xMidYMid meet"`), so edges and nodes stay aligned (a lesson of the mock); below 700 px wide, the graph scrolls inside its box.
 
 Keyboard: every node and `+` is a focusable `<g tabindex="0" role="button">` with an `aria-label` naming the step, when it runs and its agent (FR-018); arrow keys move between nodes in layout order; Enter selects; Delete removes (with the usual confirmation).
 

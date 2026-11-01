@@ -30,18 +30,18 @@ The navigation is Dashboard · Spec sessions · Loops · Pipelines · Agents. Pi
 ## The graph (research R-6)
 
 - **Columns, left to right:**
-  1. Spec session, Lock (both fixed);
+  1. Spec session, Lock (both fixed), then the `once` steps `at = start`;
   2. "For each phase in tasks.md": `at = start` phase steps, then the per-task steps in pipeline order, then `at = end` phase steps;
   3. "At each story's checkpoint": `at = start` steps, then the checkers; a `parallel_with` set is one column of stacked nodes;
-  4. `once` steps;
+  4. the `once` steps `at = end`;
   5. Merge (fixed).
 - **Edges:**
   - one forward edge between consecutive columns, which branches into a stacked column and joins after it;
   - a dotted "next task" back-edge over the per-task steps;
   - a red dashed back-edge for `on_fail = repair` (to the builder, labelled "fails → repair, same session · ≤ N", with N from the pipeline's caps);
-  - "→ you" for `on_fail = engineer`.
+  - "fails → you" under a step with `on_fail = engineer`.
 - **Nodes:** each shows when the step runs (EACH TASK, EACH PHASE, CHECKPOINT, ONCE, ALWAYS), the agent, and one line about it. It has a left bar coloured by role: maker blue, checker green, Fallow (`fallow:gates`) grey, the engineer's fixed steps orange.
-- **+ on a forward edge:** adds a step. Its `when` and `at` are preset from where the + is; the engineer picks the agent.
+- **+ on a forward edge:** every forward edge after the Lock has one. It adds a step whose `when` and `at` are preset from where the + is (the form can change them); the engineer picks the agent, and Fallow places the step by when it runs. On the per-task edge, once the pipeline has its task maker, the preset agent is the gates.
 - **Selecting a node:** shows its settings under the graph (agent, when, at, paths, alongside, on failure). Removing a node removes the step; fixed nodes cannot be removed.
 - **Keyboard:**
   - every node and + is focusable, with an `aria-label` (step, when, agent);

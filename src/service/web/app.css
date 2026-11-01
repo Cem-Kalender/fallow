@@ -418,3 +418,57 @@ input.num { width: 56px; padding: 2px 6px; border-radius: 6px; font-weight: 700;
   .ag-fields .field.wide { grid-column: auto; }
 }
 .d-block { display: block; }
+
+/* The pipeline as a graph (008 US4, research R-6): drawn in a fixed 1360 x 430 space. */
+.pl-graph { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; overflow-x: auto;
+  background-image: radial-gradient(#E9E8E2 1px, transparent 1px); background-size: 18px 18px; }
+.pl-graph svg { display: block; width: 100%; height: auto; aspect-ratio: 1360 / 430; font-family: var(--sans); }
+.pl-graph .grp { fill: var(--accent-bg-2); stroke: var(--accent-line); stroke-width: 1.5; stroke-dasharray: 6 5; }
+.pl-graph .grp.checkpoint { fill: var(--ok-panel); stroke: var(--ok-line); }
+.pl-graph .gl { font-size: 10.5px; font-weight: 700; letter-spacing: .05em; fill: var(--accent); }
+.pl-graph .gl.checkpoint { fill: var(--ok); }
+.pl-graph .e { fill: none; stroke: #9C9B94; stroke-width: 1.5; }
+.pl-graph .ah { fill: #9C9B94; }
+.pl-graph .ah-r { fill: var(--needs); }
+.pl-graph .nx { fill: none; stroke: var(--accent); stroke-width: 1.3; stroke-dasharray: 2 4; }
+.pl-graph .rp { fill: none; stroke: var(--needs); stroke-width: 1.4; stroke-dasharray: 6 5; }
+.pl-graph .lnx { font-size: 11px; fill: var(--accent); }
+.pl-graph .lrp { font-size: 11px; fill: var(--needs-ink); }
+.pl-graph .gn { cursor: pointer; outline: none; }
+.pl-graph .gn .box { fill: var(--panel); stroke: var(--line-3); stroke-width: 1; }
+.pl-graph .gn.fixed .box { fill: var(--panel-2); stroke-dasharray: 5 4; }
+.pl-graph .gn .bar { fill: var(--muted); }
+.pl-graph .gn.maker .bar { fill: var(--accent); }
+.pl-graph .gn.checker .bar { fill: var(--ok); }
+.pl-graph .gn.fixed .bar { fill: var(--needs); }
+.pl-graph .gn.unknown .bar { fill: var(--bad); }
+.pl-graph .gn.unknown .box { stroke: var(--bad-line); }
+.pl-graph .gn:hover .box { stroke: var(--accent); }
+.pl-graph .gn.sel .box { stroke: var(--accent); stroke-width: 2.5; fill: var(--accent-bg-2); }
+.pl-graph .gn:focus-visible .box { stroke: var(--accent); stroke-width: 3; }
+.pl-graph .gn .k { font-size: 9.5px; font-weight: 700; letter-spacing: .05em; fill: var(--muted); }
+.pl-graph .gn .t { font-size: 13px; font-weight: 700; fill: var(--ink); }
+.pl-graph .gn .s { font-size: 11px; fill: var(--muted); }
+.pl-graph .gn .you { font-size: 10.5px; fill: var(--needs-ink); }
+.pl-graph .gplus { cursor: pointer; outline: none; }
+.pl-graph .gplus circle { fill: var(--panel); stroke: #9C9B94; stroke-width: 1.3; }
+.pl-graph .gplus path { stroke: var(--ink-2); stroke-width: 1.6; }
+.pl-graph .gplus:hover circle, .pl-graph .gplus:focus-visible circle { stroke: var(--accent); stroke-width: 2.5; fill: var(--accent-bg); }
+.pl-legend .sw { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 5px; background: var(--muted); }
+.pl-legend .sw.maker { background: var(--accent); } .pl-legend .sw.checker { background: var(--ok); }
+.pl-legend .sw.fixed { background: var(--needs); }
+.pl-under { grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 1fr); }
+fieldset.field.along { border: 0; padding: 0; margin: 0; }
+fieldset.field.along legend { padding: 0; margin-bottom: 4px; }
+@media (max-width: 1100px) {
+  .pl-under { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+}
+/* Below 700 px the graph keeps a legible size and scrolls inside its box, never the page. */
+@media (max-width: 700px) {
+  .pl-graph svg { width: 760px; max-width: none; }
+}
+@media (max-width: 900px) {
+  .pl-under { grid-template-columns: minmax(0, 1fr); }
+}
+/* A pipeline with very many steps keeps readable nodes: its graph scrolls in the box. */
+.pl-graph.wide svg { min-width: 1500px; }
