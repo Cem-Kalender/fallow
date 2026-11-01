@@ -47,7 +47,7 @@ impl Step {
     }
 
     pub fn queued(&self) -> bool {
-        self.started.is_none()
+        self.started.is_none() && self.end.is_none()
     }
 
     /// The structured result, when the step produced one.

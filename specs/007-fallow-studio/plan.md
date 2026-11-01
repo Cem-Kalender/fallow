@@ -177,5 +177,5 @@ hidden:
   client crates. This proves less than a capture, which can come back with a later feature.
 - **Take over a part (II).** 006's "take over" has no route for loops: 007's steering is pause,
   stop, a note, limits and unlock (FR-019). The engineer works on a feature by unlocking it.
-- **`parallel_with`.** Checkers marked to run together run one after the other, because a loop
-  runs one step at a time. Several loops do run at once, within the cap (FR-004).
+- **`parallel_with`.** Closed by 008 (specs/008-studio-redesign, research R-7): checkers marked
+  to run together now run at the same time within the cap, and are judged together.

@@ -156,7 +156,7 @@
 
 **Independent Test**: `tests/us8_parallel.rs` with the fake runtime.
 
-- [ ] T023 [P] [US5] Write `tests/us8_parallel.rs`:
+- [X] T023 [P] [US5] Write `tests/us8_parallel.rs`:
   - two checkers with `parallel_with`, each scripted to take 3 s, have overlapping `started`/`finished` times, and the checkpoint is judged only after both;
   - both failing lead to one repair whose instruction holds both checkers' reasons, then both run again;
   - with `max_parallel = 1` they run one after the other with the same outcome (a must-fail case for overlap);
@@ -173,16 +173,16 @@
   - `run_of_token` searches every entry;
   - `delete_data` refuses while `is_busy()`;
   - `view()["busy"]` lists the running steps.
-- [ ] T025 [US5] In `src/run/machine.rs`:
+- [X] T025 [US5] In `src/run/machine.rs`:
   - `drive` stops only while Gates or a Merge run (`busy`), not while steps run: it goes on to `feature::drive` with steps running, so that a finished member is processed while another still runs; `feature::drive`'s loop stops when `step()` starts nothing;
   - `stop`, `merge`, `retry` and `answer` use `is_busy()` and the running set instead of `busy == Step(n)`;
   - starting gates or a merge still requires that nothing runs.
-- [ ] T026 [US5] In `src/run/questions.rs`:
+- [X] T026 [US5] In `src/run/questions.rs`:
   - `open`, `call` and `ask` find the step by its token in the running set;
   - `ask` refuses only a second open question of the same step;
   - `lead_done` takes `asking` from the entry that asked;
   - `deliver`'s "nothing later" test also compares the step's agent (`def`).
-- [ ] T027 [US5] In `src/run/feature.rs`'s `checkpoint()`:
+- [X] T027 [US5] In `src/run/feature.rs`'s `checkpoint()`:
   - compute the story's parallel groups (the connected sets of `parallel_with` among the chosen checkers);
   - queue every member without a review since the last repair, and treat running members as pending;
   - judge only when every member has a verdict:
@@ -191,16 +191,16 @@
     - otherwise all failing members' reasons go to one `repair_or_ask` (the review-round cap unchanged).
   
   Checkers not in a group stay sequential.
-- [ ] T028 [US5] In `src/run/feature.rs`'s `step()` and `start()`:
+- [X] T028 [US5] In `src/run/feature.rs`'s `step()` and `start()`:
   - while steps run, `step()` starts nothing but queued members of the open parallel group, and decides nothing else until the group is judged;
   - start every queued member of a group while `machine::slot` gives a slot;
   - a member that fails to start ends as failed (007's start retries first) and is handled like an incomplete member; the members already running go on;
   - run `take_answers` once before a group starts, not between its members;
   - give each member the remaining budget divided by the size of its group (not by how many start together);
   - `start()` inserts into the running set and no longer replaces a shared stop flag.
-- [ ] T029 [US5] In `src/run/feature.rs`, make `requeue_cut_short` take up every cut-short step that has no later step of the same kind, part and agent, not only the last one (research R-7).
-- [ ] T030 [P] [US5] In `src/run/activity.rs` and `src/run/dashboard.rs`, show every running step's agent as working, with its task and tool count.
-- [ ] T031 [US5] Update `specs/007-fallow-studio/contracts/pipeline.md` (remove the "runs one after the other" caveat), `specs/007-fallow-studio/plan.md`'s Complexity Tracking (the `parallel_with` gap is closed by 008), and the pipeline designer's wording in `src/service/web/screens/pipelines.js`.
+- [X] T029 [US5] In `src/run/feature.rs`, make `requeue_cut_short` take up every cut-short step that has no later step of the same kind, part and agent, not only the last one (research R-7).
+- [X] T030 [P] [US5] In `src/run/activity.rs` and `src/run/dashboard.rs`, show every running step's agent as working, with its task and tool count.
+- [X] T031 [US5] Update `specs/007-fallow-studio/contracts/pipeline.md` (remove the "runs one after the other" caveat), `specs/007-fallow-studio/plan.md`'s Complexity Tracking (the `parallel_with` gap is closed by 008), and the pipeline designer's wording in `src/service/web/screens/pipelines.js`.
 
 **Checkpoint**: US5's tests pass, and 007's loop tests (us2_*, us3_*, us4_ask, us5_dashboard) still pass.
 

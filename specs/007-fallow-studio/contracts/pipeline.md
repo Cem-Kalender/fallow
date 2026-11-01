@@ -54,7 +54,7 @@ on_fail = "engineer"
 | `at` | For `phase`, `checkpoint` and `once`: `"start"` or `"end"` (the default). A checkpoint step at the end is the story's checkpoint |
 | `paths` | Globs. The step runs only when the changes since its last run touch one of them |
 | `on_fail` | `repair`: back to the phase's builder session with the reasons. `engineer`: the loop asks |
-| `parallel_with` | Checker steps at the same point meant to run at the same time, within the concurrency cap. *In this version a loop runs one step at a time: they run one after the other (tasks.md, T053 and T088).* |
+| `parallel_with` | Checker steps at the same point meant to run at the same time, within the concurrency cap. They run at the same time within the concurrency cap (one after the other when only one slot is free), are judged together when all have finished, and their findings go to one repair (008, research R-7). |
 
 ## Checks (refused with the step's index)
 

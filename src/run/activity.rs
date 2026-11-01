@@ -450,6 +450,12 @@ pub fn view(run: &Run, ctx: &Ctx) -> Result<Value, String> {
         .find(|p| p.state != PhaseState::Done)
         .map(|p| p.spec.n);
     let blocked_def = s.needs.as_ref().and_then(|_| {
+        super::questions::waiting(l)
+            .and_then(|q| s.steps.get(&q.step))
+            .and_then(|x| x.def.clone())
+    });
+    let blocked_def = blocked_def.or_else(|| {
+        s.needs.as_ref()?;
         s.steps
             .values()
             .next_back()

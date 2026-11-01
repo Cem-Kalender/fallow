@@ -269,7 +269,45 @@ fn step(run: &mut Run, ctx: &Ctx) -> Result<(), String> {
         if !machine::slot(run, ctx) {
             return Ok(());
         }
-        return start(run, ctx, n);
+        return match start(run, ctx, n) {
+            Ok(()) => Ok(()),
+            Err(why) => {
+                // Nothing of the step runs: it must not hold the loop.
+                run.running.remove(&n);
+                let step = run.state.steps.get(&n).cloned();
+                // A checker that cannot start, in a round where a checker alongside it was
+                // asked too, ends as failed and is asked again like one that did not finish
+                // (008 T028): the others go on. A checker on its own stops the loop as before
+                // (FR-029).
+                let along = step.as_ref().is_some_and(|st| {
+                    let Some(part) = st.part.as_deref().filter(|_| st.kind == StepKind::Review)
+                    else {
+                        return false;
+                    };
+                    let mates = alongside_of(run, ctx, st.def.as_deref());
+                    let since = round_start(run, &l, part);
+                    run.state.steps.values().any(|x| {
+                        x.kind == StepKind::Review
+                            && x.part == st.part
+                            && x.def.as_ref().is_some_and(|d| mates.contains(d))
+                            && x.queued_seq > since
+                    })
+                });
+                if along && step.is_some_and(|st| st.end.is_none()) {
+                    run.append(Event::StepFinished {
+                        n,
+                        end: StepEnd::Failed {
+                            why: format!("cannot start: {why}"),
+                        },
+                        cost_usd: None,
+                        duration_ms: 0,
+                        denials: Vec::new(),
+                    })?;
+                    return Ok(());
+                }
+                Err(why)
+            }
+        };
     }
     // While steps run (checkers alongside each other, 008 R-7), nothing new is decided: the
     // checkpoint is judged when the last of them has finished.
@@ -748,10 +786,35 @@ fn extra(
 /// A step cut short (Fallow stopped, or its session was lost) with nothing after it: queued
 /// again, in its session or a new one.
 fn requeue_cut_short(run: &mut Run) -> Result<bool, String> {
-    let Some(last) = run.state.steps.values().next_back().cloned() else {
-        return Ok(false);
+    // Every step cut short with nothing after it of the same kind, part and agent: several
+    // checkers may have run alongside each other when Fallow stopped (008 R-7). All of them
+    // in one pass, the oldest first, so they share what is left of the budget.
+    let cut = |s: &Step| {
+        machine::first_reason(s)
+            .is_some_and(|r| r.starts_with(INTERRUPTED) || r.starts_with(SESSION_LOST))
     };
-    let Some(reason) = machine::first_reason(&last).map(str::to_string) else {
+    let cut_short: Vec<Step> = run
+        .state
+        .steps
+        .values()
+        .filter(|s| cut(s))
+        .filter(|s| {
+            !run.state
+                .steps
+                .values()
+                .any(|x| x.n > s.n && x.kind == s.kind && x.part == s.part && x.def == s.def)
+        })
+        .cloned()
+        .collect();
+    let mut queued = false;
+    for last in cut_short {
+        queued |= requeue_one(run, &last)?;
+    }
+    Ok(queued)
+}
+
+fn requeue_one(run: &mut Run, last: &Step) -> Result<bool, String> {
+    let Some(reason) = machine::first_reason(last).map(str::to_string) else {
         return Ok(false);
     };
     // A step whose question went to the engineer resumes with the answer, not before.
@@ -1691,99 +1754,112 @@ fn checkpoint(
     let answerer = scenario_checker(pl, lib);
     let last_repair = round_start(run, l, story);
     let fresh = fresh_since(run).max(last_repair);
-    let mut all = true;
-    for c in &checkers {
-        let last = run
-            .state
-            .steps
-            .values()
-            .rev()
-            .find(|s| {
-                s.kind == StepKind::Review
-                    && s.part.as_deref() == Some(story)
-                    && s.def.as_deref() == Some(c.agent.as_str())
-                    && s.queued_seq > last_repair
-            })
-            .cloned();
-        match last.as_ref().map(|s| s.verified.clone()) {
-            None => {
-                // A repair still running or not yet gated: wait for it.
-                let open = run.state.steps.values().any(|s| {
-                    s.kind == StepKind::Repair
-                        && s.part.as_deref() == Some(story)
-                        && s.verified.is_none()
-                });
-                if open {
-                    return Ok(Some(false));
-                }
-                if let Some(r) = run
+    // Checkers marked to run alongside each other form one unit, run at the same time and
+    // judged together (008 R-7); a checker alone is a unit of one. Units go in pipeline order.
+    for unit in parallel_units(&checkers) {
+        let lasts: Vec<(pipeline::Step, Option<Step>)> = unit
+            .into_iter()
+            .map(|c| {
+                let last = run
                     .state
                     .steps
                     .values()
                     .rev()
-                    .find(|s| s.kind == StepKind::Repair && s.part.as_deref() == Some(story))
-                    .cloned()
-                {
-                    match &r.verified {
-                        Some((false, reasons)) => {
-                            let reasons = reasons.clone();
-                            repair_or_ask(
-                                run,
-                                story,
-                                None,
-                                n,
-                                pl.caps.review_rounds,
-                                &builder_of(pl),
-                                reasons,
-                            )?;
-                            return Ok(Some(false));
-                        }
-                        Some((true, _)) => {
-                            if let Some(c) = r.verified_commit.clone() {
-                                if pl.steps.iter().any(|s| s.agent == pipeline::GATES) {
-                                    // The repair is gated like a task before the checkers
-                                    // look again.
-                                    match gated(run, ctx, story, &c)? {
-                                        None => return Ok(Some(false)),
-                                        Some(f) if !f.is_empty() => {
-                                            repair_or_ask(
-                                                run,
-                                                story,
-                                                None,
-                                                n,
-                                                pl.caps.review_rounds,
-                                                &builder_of(pl),
-                                                f,
-                                            )?;
-                                            return Ok(Some(false));
-                                        }
-                                        Some(_) => {}
+                    .find(|s| {
+                        s.kind == StepKind::Review
+                            && s.part.as_deref() == Some(story)
+                            && s.def.as_deref() == Some(c.agent.as_str())
+                            && s.queued_seq > last_repair
+                    })
+                    .cloned();
+                (c, last)
+            })
+            .collect();
+        // Members without a check in this round: after the story's repair is settled, all of
+        // them are queued at once.
+        let unchecked: Vec<&pipeline::Step> = lasts
+            .iter()
+            .filter(|(_, last)| last.is_none())
+            .map(|(c, _)| c)
+            .collect();
+        if !unchecked.is_empty() {
+            // A repair still running or not yet gated: wait for it.
+            let open = run.state.steps.values().any(|s| {
+                s.kind == StepKind::Repair
+                    && s.part.as_deref() == Some(story)
+                    && s.verified.is_none()
+            });
+            if open {
+                return Ok(Some(false));
+            }
+            if let Some(r) = run
+                .state
+                .steps
+                .values()
+                .rev()
+                .find(|s| s.kind == StepKind::Repair && s.part.as_deref() == Some(story))
+                .cloned()
+            {
+                match &r.verified {
+                    Some((false, reasons)) => {
+                        let reasons = reasons.clone();
+                        repair_or_ask(
+                            run,
+                            story,
+                            None,
+                            n,
+                            pl.caps.review_rounds,
+                            &builder_of(pl),
+                            reasons,
+                        )?;
+                        return Ok(Some(false));
+                    }
+                    Some((true, _)) => {
+                        if let Some(c) = r.verified_commit.clone() {
+                            if pl.steps.iter().any(|s| s.agent == pipeline::GATES) {
+                                // The repair is gated like a task before the checkers look again.
+                                match gated(run, ctx, story, &c)? {
+                                    None => return Ok(Some(false)),
+                                    Some(f) if !f.is_empty() => {
+                                        repair_or_ask(
+                                            run,
+                                            story,
+                                            None,
+                                            n,
+                                            pl.caps.review_rounds,
+                                            &builder_of(pl),
+                                            f,
+                                        )?;
+                                        return Ok(Some(false));
                                     }
+                                    Some(_) => {}
                                 }
                             }
                         }
-                        None => return Ok(Some(false)),
                     }
+                    None => return Ok(Some(false)),
                 }
-                let spec_text = doc_at(run, &l.lock_commit, "spec.md").unwrap_or_default();
-                let spec = speckit::spec::read("spec.md", &spec_text).map_err(|e| {
-                    e.iter()
-                        .map(|p| p.to_string())
-                        .collect::<Vec<_>>()
-                        .join("; ")
-                })?;
-                let st = spec
-                    .story(story)
-                    .ok_or_else(|| format!("{story} is not in the locked spec.md"))?;
-                let scenarios: Vec<prompts::Scenario> = st
-                    .scenarios
-                    .iter()
-                    .map(|s| prompts::Scenario {
-                        id: &s.id,
-                        text: &s.text,
-                        must_fail: s.must_fail,
-                    })
-                    .collect();
+            }
+            let spec_text = doc_at(run, &l.lock_commit, "spec.md").unwrap_or_default();
+            let spec = speckit::spec::read("spec.md", &spec_text).map_err(|e| {
+                e.iter()
+                    .map(|p| p.to_string())
+                    .collect::<Vec<_>>()
+                    .join("; ")
+            })?;
+            let st = spec
+                .story(story)
+                .ok_or_else(|| format!("{story} is not in the locked spec.md"))?;
+            let scenarios: Vec<prompts::Scenario> = st
+                .scenarios
+                .iter()
+                .map(|s| prompts::Scenario {
+                    id: &s.id,
+                    text: &s.text,
+                    must_fail: s.must_fail,
+                })
+                .collect();
+            for c in unchecked {
                 let may = may_of(run, lib, &c.agent);
                 let text = if answerer.as_deref() == Some(c.agent.as_str()) {
                     prompts::loop_check(
@@ -1817,89 +1893,200 @@ fn checkpoint(
                     &format!("{} checks {story}", c.agent),
                     text,
                 )?;
-                return Ok(Some(false));
             }
-            Some(None) => return Ok(Some(false)),
-            Some(Some((false, reasons))) => {
-                // Incomplete: the checker is asked again, not the engineer (FR-012).
-                if reasons.iter().all(|r| r.starts_with(INCOMPLETE)) {
-                    let tries = run
-                        .state
-                        .steps
-                        .values()
-                        .filter(|s| {
-                            s.kind == StepKind::Review
-                                && s.part.as_deref() == Some(story)
-                                && s.def.as_deref() == Some(c.agent.as_str())
-                                && s.queued_seq > fresh
-                                && !machine::cut_short(s)
-                        })
-                        .count();
-                    if tries >= CHECK_TRIES {
-                        run.append(Event::NeedsEngineer {
-                            why: format!(
-                                "{} gave no usable verdict on {story} after {tries} tries: {}",
-                                c.agent,
-                                reasons.join("; ")
-                            ),
-                            options: vec!["retry".into(), "stop".into()],
-                        })?;
-                        return Ok(Some(false));
-                    }
-                    let missing: Vec<String> = reasons
-                        .iter()
-                        .map(|r| r.trim_start_matches(INCOMPLETE).to_string())
-                        .collect();
-                    let session = last
-                        .as_ref()
-                        .and_then(|s| s.session.clone())
-                        .filter(|s| !run.state.lost_sessions.contains(s))
-                        .filter(|_| !reasons.iter().any(|r| r.contains("worktree changed")));
-                    let text = match &session {
-                        Some(_) => prompts::loop_check_missing(story, &missing),
-                        None => machine::instruction_of(run, last.as_ref().map_or(0, |s| s.n)),
-                    };
-                    queue(
-                        run,
-                        StepKind::Review,
-                        Some(story),
-                        None,
-                        Some(n),
-                        &c.agent,
-                        session,
-                        &format!("{} checks {story} again", c.agent),
-                        text,
-                    )?;
-                    return Ok(Some(false));
-                }
-                let allowed = last.as_ref().is_some_and(|s| s.queued_seq < last_go(run));
-                if c.on_fail == OnFail::Engineer && !allowed {
-                    run.append(Event::NeedsEngineer {
-                        why: format!(
-                            "{} found problems in {story}: {}",
-                            c.agent,
-                            reasons.join("; ")
-                        ),
-                        options: vec!["allow one more repair".into(), "stop".into()],
-                    })?;
-                    return Ok(Some(false));
-                }
-                repair_or_ask(
-                    run,
-                    story,
-                    None,
-                    n,
-                    pl.caps.review_rounds,
-                    &builder_of(pl),
-                    reasons,
-                )?;
-                return Ok(Some(false));
-            }
-            Some(Some((true, _))) => {}
+            return Ok(Some(false));
         }
-        all &= true;
+        // A member still running: the unit is judged when all have answered.
+        if lasts
+            .iter()
+            .any(|(_, last)| last.as_ref().is_some_and(|s| s.verified.is_none()))
+        {
+            return Ok(Some(false));
+        }
+        // Incomplete members are asked again, each on its own (FR-012); when one of them has
+        // used up its tries, the engineer is asked first and none is queued.
+        let incomplete: Vec<(&pipeline::Step, &Step, &Vec<String>)> = lasts
+            .iter()
+            .filter_map(|(c, last)| {
+                let s = last.as_ref()?;
+                match &s.verified {
+                    Some((false, reasons)) if reasons.iter().all(|r| r.starts_with(INCOMPLETE)) => {
+                        Some((c, s, reasons))
+                    }
+                    _ => None,
+                }
+            })
+            .collect();
+        for (c, _, reasons) in &incomplete {
+            let tries = run
+                .state
+                .steps
+                .values()
+                .filter(|x| {
+                    x.kind == StepKind::Review
+                        && x.part.as_deref() == Some(story)
+                        && x.def.as_deref() == Some(c.agent.as_str())
+                        && x.queued_seq > fresh
+                        && !machine::cut_short(x)
+                })
+                .count();
+            if tries >= CHECK_TRIES {
+                run.append(Event::NeedsEngineer {
+                    why: format!(
+                        "{} gave no usable verdict on {story} after {tries} tries: {}",
+                        c.agent,
+                        reasons.join("; ")
+                    ),
+                    options: vec!["retry".into(), "stop".into()],
+                })?;
+                return Ok(Some(false));
+            }
+        }
+        let mut again = false;
+        for (c, s, reasons) in incomplete {
+            let missing: Vec<String> = reasons
+                .iter()
+                .map(|r| r.trim_start_matches(INCOMPLETE).to_string())
+                .collect();
+            let session = s
+                .session
+                .clone()
+                .filter(|x| !run.state.lost_sessions.contains(x))
+                .filter(|_| !reasons.iter().any(|r| r.contains("worktree changed")));
+            let text = match &session {
+                Some(_) => prompts::loop_check_missing(story, &missing),
+                None => machine::instruction_of(run, s.n),
+            };
+            queue(
+                run,
+                StepKind::Review,
+                Some(story),
+                None,
+                Some(n),
+                &c.agent,
+                session,
+                &format!("{} checks {story} again", c.agent),
+                text,
+            )?;
+            again = true;
+        }
+        if again {
+            return Ok(Some(false));
+        }
+        // The members that found problems: one repair with all their findings, or the
+        // engineer when one of them says so.
+        let failing: Vec<(&pipeline::Step, &Step, Vec<String>)> = lasts
+            .iter()
+            .filter_map(|(c, last)| {
+                let s = last.as_ref()?;
+                match &s.verified {
+                    Some((false, reasons)) => Some((c, s, reasons.clone())),
+                    _ => None,
+                }
+            })
+            .collect();
+        if failing.is_empty() {
+            continue;
+        }
+        let several = failing.len() > 1;
+        let reasons: Vec<String> = failing
+            .iter()
+            .flat_map(|(c, _, rs)| {
+                rs.iter().map(move |r| {
+                    if several {
+                        format!("{}: {r}", c.agent)
+                    } else {
+                        r.clone()
+                    }
+                })
+            })
+            .collect();
+        let go = last_go(run);
+        let ask_engineer = failing
+            .iter()
+            .any(|(c, s, _)| c.on_fail == OnFail::Engineer && s.queued_seq >= go);
+        if ask_engineer {
+            let who: Vec<&str> = failing.iter().map(|(c, ..)| c.agent.as_str()).collect();
+            run.append(Event::NeedsEngineer {
+                why: format!(
+                    "{} found problems in {story}: {}",
+                    who.join(" and "),
+                    reasons.join("; ")
+                ),
+                options: vec!["allow one more repair".into(), "stop".into()],
+            })?;
+            return Ok(Some(false));
+        }
+        repair_or_ask(
+            run,
+            story,
+            None,
+            n,
+            pl.caps.review_rounds,
+            &builder_of(pl),
+            reasons,
+        )?;
+        return Ok(Some(false));
     }
-    Ok(Some(all))
+    Ok(Some(true))
+}
+
+/// The checkers of a checkpoint in units: those connected by `parallel_with` (in either
+/// direction) form one unit; units in the order their first member appears (008 R-7).
+/// The other checkers of the story's checkpoint that run alongside `def` (its unit): empty for
+/// a checker on its own, so a pipeline without `parallel_with` behaves as in 007.
+fn alongside_of(run: &Run, ctx: &Ctx, def: Option<&str>) -> Vec<String> {
+    let Some(def) = def else { return Vec::new() };
+    let lib = library(run, ctx);
+    let Ok(pl) = pipeline_of(run, &lib) else {
+        return Vec::new();
+    };
+    let checkers: Vec<pipeline::Step> = pl
+        .steps
+        .iter()
+        .filter(|s| s.when == When::Checkpoint && s.at() == At::End)
+        .cloned()
+        .collect();
+    parallel_units(&checkers)
+        .into_iter()
+        .find(|u| u.iter().any(|s| s.agent == def))
+        .map(|u| {
+            u.into_iter()
+                .map(|s| s.agent)
+                .filter(|a| a != def)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn parallel_units(checkers: &[pipeline::Step]) -> Vec<Vec<pipeline::Step>> {
+    let mut unit_of: Vec<usize> = (0..checkers.len()).collect();
+    fn root(u: &mut [usize], mut i: usize) -> usize {
+        while u[i] != i {
+            u[i] = u[u[i]];
+            i = u[i];
+        }
+        i
+    }
+    for (i, c) in checkers.iter().enumerate() {
+        for other in &c.parallel_with {
+            if let Some(j) = checkers.iter().position(|x| &x.agent == other) {
+                let (a, b) = (root(&mut unit_of, i), root(&mut unit_of, j));
+                if a != b {
+                    unit_of[a.max(b)] = a.min(b);
+                }
+            }
+        }
+    }
+    let mut units: Vec<(usize, Vec<pipeline::Step>)> = Vec::new();
+    for (i, c) in checkers.iter().enumerate() {
+        let r = root(&mut unit_of, i);
+        match units.iter_mut().find(|(x, _)| *x == r) {
+            Some((_, u)) => u.push(c.clone()),
+            None => units.push((r, vec![c.clone()])),
+        }
+    }
+    units.into_iter().map(|(_, u)| u).collect()
 }
 
 /// Every phase is done: the outcome (FR-015) and ready to merge.
@@ -1998,9 +2185,24 @@ fn start(run: &mut Run, ctx: &Ctx, n: u32) -> Result<(), String> {
     let runtime = agent::registry::runtime(&def.runtime, &ctx.settings)
         .map_err(|e| format!("{} cannot run: {e}", def.name))?;
     // Answers committed to the feature branch since reach the build at this boundary, also
-    // before a check, so a checker sees them (research S-9, S-10). Not while other steps run:
-    // checkers running alongside each other check the same commit (008 R-7).
-    if run.running.is_empty() {
+    // before a check, so a checker sees them (research S-9, S-10). Not while other steps run,
+    // nor once a checker alongside this one has begun the story's round: checkers alongside
+    // each other check the same commit, also when they start apart (one slot, or asked again)
+    // (008 R-7). Checkers on their own see every answer, as in 007.
+    let mates = alongside_of(run, ctx, step.def.as_deref());
+    let round_begun = step.kind == StepKind::Review
+        && step.part.as_deref().is_some_and(|p| {
+            let since = round_start(run, &l, p);
+            run.state.steps.values().any(|x| {
+                x.n != n
+                    && x.kind == StepKind::Review
+                    && x.part.as_deref() == Some(p)
+                    && x.def.as_ref().is_some_and(|d| mates.contains(d))
+                    && x.queued_seq > since
+                    && x.started.is_some()
+            })
+        });
+    if run.running.is_empty() && !round_begun {
         take_answers(run, &l)?;
     }
     let (worktree, base) = match step.kind {
