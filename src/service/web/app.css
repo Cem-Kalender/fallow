@@ -539,3 +539,8 @@ fieldset.field.along legend { padding: 0; margin-bottom: 4px; }
 .lg-graph .gn.gn:focus-visible .box { stroke: var(--ink); stroke-width: 3.5; }
 .lg-graph .gn:not([role=button]) { cursor: default; pointer-events: none; }
 .lg-graph .gn.sel:not(.now):not(.done):not(.asks) .box { fill: var(--panel); }
+/* The agent and pipeline lists keep to the window and scroll on their own, beside the editor
+   (the engineer, 2026-11-01); on a phone they stay in the flow of the page. */
+@media (min-width: 901px) {
+  .ag-side, .pl-side { position: sticky; top: 12px; max-height: calc(100vh - var(--top-h, 58px) - 24px); overflow-y: auto; overscroll-behavior: contain; padding: 4px; }
+}

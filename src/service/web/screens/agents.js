@@ -110,10 +110,14 @@
       if (keepText && keepText.dataset.for === name) s.text = keepText.value;
     }
     s.fresh = false;
+    const side = document.querySelector(".ag-side");
+    const sideTop = side ? side.scrollTop : 0;
     app.innerHTML = h`<div class="page ag-page">
       <div class="row wrap gap-8 mb-12"><label for="ag-project" class="small muted">Project</label>
         <select id="ag-project" data-change="project">${opt("", "None: yours only", s.project || "")}${s.projects.map((p) => opt(p.id, p.name, s.project || ""))}</select></div>
       <div class="ag-layout">${list()}${editor()}</div></div>`.s;
+    const side2 = document.querySelector(".ag-side");
+    if (side2) side2.scrollTop = sideTop;
     if (focus) {
       const el = document.getElementById(focus);
       if (el) el.focus();
@@ -177,6 +181,7 @@
     if (r.agent && !agentOf(r.agent)) alertLine(`There is no agent ${r.agent} here.`);
     pick(r.agent && agentOf(r.agent) ? r.agent : (agentOf("builder") ? "builder" : (s.agents[0] || {}).name));
     render();
+    s.here = location.hash;
     // Keyboard use goes on from the agent chosen (FR-018).
     if (r.agent) {
       const b = document.querySelector(`.ag-item[data-name="${CSS.escape(s.agent || "")}"]`);
@@ -221,7 +226,12 @@
     switch (name) {
       case "agent":
         if (el.dataset.name === s.agent || !(await leaveOk())) return;
-        location.hash = `#/agents/${projectPart()}/${encodeURIComponent(el.dataset.name)}`;
+        {
+          // Asked already: the address change that follows needs no second question.
+          const to = `#/agents/${projectPart()}/${encodeURIComponent(el.dataset.name)}`;
+          if (to !== location.hash) s.asked = true;
+          location.hash = to;
+        }
         return;
       case "new-agent": {
         const n = await confirm({ title: "A new agent", text: "Its name, in a-z, 0-9 and -. It is saved as <name>.md.", ok: "Create", input: { label: "Name", value: "" } });
@@ -281,8 +291,38 @@
     }
   }
 
+  // Another agent of the same project: chosen from what is loaded, without rebuilding the page.
+  function update(r) {
+    if (!s || !s.app || (r.project || null) !== s.project) return false;
+    const name = r.agent || "builder";
+    if (!agentOf(name)) return false;
+    const show = () => {
+      if (name !== s.agent) {
+        pick(name);
+        render();
+      }
+      const b = document.querySelector(`.ag-item[data-name="${CSS.escape(name)}"]`);
+      if (b) b.focus();
+      s.here = location.hash;
+    };
+    const asked = s.asked;
+    s.asked = false;
+    if (name === s.agent || asked || !dirty()) {
+      show();
+      return true;
+    }
+    // Back or Forward with unsaved edits: they go only when the engineer agrees; if not, the
+    // address shown before comes back (no new navigation).
+    leaveOk().then((ok) => {
+      if (ok) return show();
+      if (s.here) history.replaceState(null, "", s.here);
+    });
+    return true;
+  }
+
   Fallow.register("agents", {
     enter,
+    update,
     act(name, el, ev) {
       if (ev && ev.type === "input") return;
       return act(name, el);

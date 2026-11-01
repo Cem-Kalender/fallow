@@ -157,6 +157,10 @@ const Fallow = (() => {
       if (on) a.setAttribute("aria-current", "page");
       else a.removeAttribute("aria-current");
     });
+    // Within the same screen, a screen that can follow the new address itself does (the engineer,
+    // 2026-11-01: choosing another agent rebuilt the whole page); otherwise it is entered anew.
+    const same = screens[r.screen];
+    if (same && current === same && same.update && same.update(r)) return;
     if (current && current.leave) current.leave();
     // A fresh container for each screen: an answer the screen left behind still awaits writes
     // into the old one, detached, never over the new screen.

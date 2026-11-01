@@ -436,6 +436,8 @@
     const focus = document.activeElement && document.activeElement.id;
     const keepRaw = document.getElementById("pl-raw");
     if (keepRaw && s.rawMode) s.raw = keepRaw.value;
+    const side = document.querySelector(".pl-side");
+    const sideTop = side ? side.scrollTop : 0;
     app.innerHTML = h`<div class="page pl-page">
       <div class="row wrap gap-8 mb-12"><label for="pl-project" class="small muted">Project</label>
         <select id="pl-project" data-change="project">${opt("", "None: yours only", s.project || "")}${s.projects.map((p) => opt(p.id, p.name, s.project || ""))}</select></div>
@@ -446,6 +448,8 @@
           ${s.rawMode ? "" : under()}
         </main>
       </div></div>`.s;
+    const side2 = document.querySelector(".pl-side");
+    if (side2) side2.scrollTop = sideTop;
     const want = s.focus || focus;
     s.focus = null;
     if (want) {
@@ -499,6 +503,7 @@
       await check();
     }
     render();
+    s.here = location.hash;
   }
 
   function stepAt(el) { return s.draft.steps[+el.dataset.i]; }
@@ -514,7 +519,11 @@
     switch (name) {
       case "pick-pipeline":
         if (s.dirty && !(await confirm({ title: "Leave your changes?", text: "This pipeline has changes that are not saved.", ok: "Leave them" }))) return;
-        location.hash = `#/pipelines/${projectPart()}/${encodeURIComponent(el.dataset.name)}`;
+        {
+          const to = `#/pipelines/${projectPart()}/${encodeURIComponent(el.dataset.name)}`;
+          if (to !== location.hash) s.asked = true;
+          location.hash = to;
+        }
         return;
       case "new-pipeline": {
         const n = await confirm({ title: "A new pipeline", text: "Its name, in a-z, 0-9 and -. It starts as a copy of Standard.", ok: "Create", input: { label: "Name", value: "" } });
@@ -732,8 +741,40 @@
   // For tests of the layout outside the page.
   Fallow.pipelineLayout = layout;
 
+  // Another pipeline of the same project: chosen from what is loaded, without rebuilding the page.
+  function update(r) {
+    if (!s || !s.app || (r.project || null) !== s.project || !r.pipeline) return false;
+    if (!s.pipelines.some((p) => p.name === r.pipeline)) return false;
+    const show = () => {
+      if (!s.draft || s.draft.name !== r.pipeline || s.draft.proposed || s.dirty) {
+        // 1. A pipeline chosen shows as a graph, never the TOML of the one before.
+        s.rawMode = false;
+        s.raw = "";
+        pickPipeline(r.pipeline);
+        render();
+      }
+      const b = document.querySelector(`.pl-side [data-act=pick-pipeline][data-name="${CSS.escape(r.pipeline)}"]`);
+      if (b) b.focus();
+      s.here = location.hash;
+    };
+    const asked = s.asked;
+    s.asked = false;
+    if (asked || !s.dirty) {
+      show();
+      return true;
+    }
+    // Back or Forward with unsaved changes: they go only when the engineer agrees; if not, the
+    // address shown before comes back (no new navigation).
+    confirm({ title: "Leave your changes?", text: "This pipeline has changes that are not saved.", ok: "Leave them" }).then((ok) => {
+      if (ok) return show();
+      if (s.here) history.replaceState(null, "", s.here);
+    });
+    return true;
+  }
+
   Fallow.register("pipelines", {
     enter,
+    update,
     act(name, el, ev) {
       // Text fields commit on change, not on every key.
       if (ev && ev.type === "input") return;
