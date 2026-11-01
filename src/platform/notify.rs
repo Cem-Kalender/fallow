@@ -50,6 +50,72 @@ pub enum Choice {
 #[cfg(windows)]
 pub use tray::Tray;
 
+/// Fallow's app identity for its notifications (008, the engineer's choice of 2026-11-01).
+/// Windows shows a notification under the identity of the process that raised it; without one,
+/// the header shows a generic program icon. This sets the process's identity and registers its
+/// name and icon for the current user only: the key
+/// `HKCU\Software\Classes\AppUserModelId\Fallow` (`DisplayName`, `IconUri`), whose icon is a copy
+/// of Fallow's icon in `data`. Nothing else is written; deleting the key and the file undoes it.
+/// Call it before the notification icon is added.
+#[cfg(windows)]
+pub fn register_identity(data: &std::path::Path) -> Result<(), String> {
+    use windows_sys::Win32::System::Registry::{
+        HKEY, HKEY_CURRENT_USER, KEY_SET_VALUE, REG_OPTION_NON_VOLATILE, REG_SZ, RegCloseKey,
+        RegCreateKeyExW, RegSetValueExW,
+    };
+    use windows_sys::Win32::UI::Shell::SetCurrentProcessExplicitAppUserModelID;
+    const ID: &str = "Fallow";
+    const ICON: &[u8] = include_bytes!("../../assets/icon/fallow.ico");
+    let wide = |s: &str| s.encode_utf16().chain(Some(0)).collect::<Vec<u16>>();
+    let icon = data.join("fallow.ico");
+    if std::fs::read(&icon).ok().as_deref() != Some(ICON) {
+        std::fs::write(&icon, ICON).map_err(|e| format!("cannot write {}: {e}", icon.display()))?;
+    }
+    let key = wide(&format!("Software\\Classes\\AppUserModelId\\{ID}"));
+    // SAFETY: plain Win32 calls with live, NUL-terminated wide strings; the key is closed.
+    unsafe {
+        let mut h: HKEY = std::ptr::null_mut();
+        let e = RegCreateKeyExW(
+            HKEY_CURRENT_USER,
+            key.as_ptr(),
+            0,
+            std::ptr::null(),
+            REG_OPTION_NON_VOLATILE,
+            KEY_SET_VALUE,
+            std::ptr::null(),
+            &mut h,
+            std::ptr::null_mut(),
+        );
+        if e != 0 {
+            return Err(format!(
+                "cannot register Fallow's notification identity (error {e})"
+            ));
+        }
+        let path = icon.display().to_string();
+        for (name, value) in [("DisplayName", ID), ("IconUri", path.as_str())] {
+            let (n, v) = (wide(name), wide(value));
+            RegSetValueExW(
+                h,
+                n.as_ptr(),
+                0,
+                REG_SZ,
+                v.as_ptr().cast(),
+                (v.len() * 2) as u32,
+            );
+        }
+        RegCloseKey(h);
+        let id = wide(ID);
+        SetCurrentProcessExplicitAppUserModelID(id.as_ptr());
+    }
+    Ok(())
+}
+
+/// No notification identity to register on this platform.
+#[cfg(not(windows))]
+pub fn register_identity(_data: &std::path::Path) -> Result<(), String> {
+    Ok(())
+}
+
 /// No notification icon on this platform yet.
 #[cfg(not(windows))]
 pub struct Tray;

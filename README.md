@@ -62,7 +62,9 @@ target/debug/fallow stop       # stops the service; loops resume at the next sta
 The dashboard is served on `127.0.0.1` only, with a secret per launch; `fallow` opens it signed
 in. Fallow's settings are in its config folder (`settings.toml`), its data (loops, conversations,
 worktrees, run records) in its data folder, readable by you only. The dashboard's "What Fallow
-keeps on disk" shows how large each part is and deletes what you no longer need.
+keeps on disk" shows how large each part is and deletes what you no longer need. On Windows, Fallow
+also registers its name and icon for its notifications, for you only, under
+`HKCU\Software\Classes\AppUserModelId\Fallow`; deleting that key undoes it.
 
 ## Budgets
 

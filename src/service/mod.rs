@@ -82,6 +82,10 @@ pub fn serve(
     let notify_on = Arc::new(std::sync::atomic::AtomicBool::new(!off_file.exists()));
     let home = page_url(port, &secret, "/");
     let tx_tray = std::sync::Mutex::new(tx.clone());
+    // The header of a notification shows Fallow's name and icon, not a generic program's.
+    if let Err(e) = crate::platform::notify::register_identity(&data) {
+        eprintln!("fallow: {e}");
+    }
     let tray = crate::platform::notify::Tray::start(
         home.clone(),
         Arc::clone(&notify_on),
