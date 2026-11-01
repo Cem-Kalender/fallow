@@ -397,4 +397,24 @@ input.num { width: 56px; padding: 2px 6px; border-radius: 6px; font-weight: 700;
 @media (max-width: 640px) {
   .pl-side, .pl-def { max-width: none; }
 }
+
+/* Pipelines and Agents, two tabs (008 US3). */
+.pl-under { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; align-items: start; }
+.ag-layout { display: grid; grid-template-columns: 280px minmax(0, 1fr); gap: 20px; align-items: start; }
+.ag-side { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.group-title { font: 700 11px var(--sans); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin: 10px 0 0; }
+.ag-item { display: flex; flex-direction: column; gap: 3px; width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); text-align: left; font: 14px var(--sans); color: var(--ink); cursor: pointer; min-width: 0; overflow-wrap: anywhere; }
+.ag-item:hover { border-color: var(--accent); }
+.ag-item.sel { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.ag-item .d { font-size: 12px; color: var(--muted); line-height: 1.4; }
+.ag-item .pill { font-size: 11px; padding: 1px 7px; }
+.ag-editor { padding: 18px 20px; min-width: 0; overflow-wrap: anywhere; }
+.ag-fields { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-top: 14px; }
+.ag-fields .field.wide { grid-column: span 2; }
+.ag-fields select, .ag-fields input { width: 100%; }
+@media (max-width: 900px) {
+  .ag-layout, .pl-under { grid-template-columns: minmax(0, 1fr); }
+  .ag-fields { grid-template-columns: minmax(0, 1fr); }
+  .ag-fields .field.wide { grid-column: auto; }
+}
 .d-block { display: block; }

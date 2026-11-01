@@ -24,7 +24,7 @@
   - `agents.html`: the grouped list and the editor with fields.
   
   Add screenshots of each at 1440 px and 390 px, and `mockup/README.md` naming what each shows (FR-017; research R-8).
-- [ ] T002 [P] Make the fake agent safe for two agents at once: take a lock file around its read-modify-write of `scenario.used` in `src/bin/fallow-fake-agent.rs`, so two steps never pick the same scripted step (research R-7).
+- [X] T002 [P] Make the fake agent safe for two agents at once: take a lock file around its read-modify-write of `scenario.used` in `src/bin/fallow-fake-agent.rs`, so two steps never pick the same scripted step (research R-7).
 
 ---
 
@@ -82,7 +82,7 @@
 
 **Independent Test**: switch agents, save a model change for this project only, check the file. Select a step in Pipelines and follow its link to Agents.
 
-- [ ] T011 [P] [US3] Write `tests/us8_agent_fields.rs` (contracts/agents-api.md):
+- [X] T011 [P] [US3] Write `tests/us8_agent_fields.rs` (contracts/agents-api.md):
   - saving `{fields: {model: "opus"}}` for `project:<p>` on a default agent writes the project copy, differing from the default only in the `model:` line;
   - a comment, the order of the keys and a hand-written value (an unknown model) are kept;
   - an item with a space (`"npm audit"`) round-trips through 007's reader unchanged;
@@ -90,13 +90,13 @@
   - a list (`may_run`) is written as `[a, b]`;
   - an unknown field key, or `name`, is refused naming it;
   - a change that stops a pipeline in use from verifying is refused as in 007 (a must-fail case).
-- [ ] T012 [US3] In `src/studio/defs.rs`, accept `fields` in `put_agent`:
+- [X] T012 [US3] In `src/studio/defs.rs`, accept `fields` in `put_agent`:
   - take the text at that scope, else the resolved definition, else refuse;
   - rewrite only those keys' frontmatter lines in place (keeping a trailing comment), adding absent ones at the end of the frontmatter;
   - run 007's checks on the result.
   
   Allowed keys are exactly `description`, `runtime`, `model`, `kind`, `may_run` and `returns` (contracts/agents-api.md). Add `fields` to `Req::PutAgent` in `src/studio/mod.rs` and to the route's body in `src/service/http.rs`.
-- [ ] T013 [US3] Create `src/service/web/screens/agents.js`, the Agents tab, with the selected project kept in `#/agents/<project>` and an agent opened by `#/agents/<project>/<agent>` (`_` for no project). Serve it like the other screens (`include_str!` and its route in `src/service/http.rs`) and load it from `src/service/web/index.html`:
+- [X] T013 [US3] Create `src/service/web/screens/agents.js`, the Agents tab, with the selected project kept in `#/agents/<project>` and an agent opened by `#/agents/<project>/<agent>` (`_` for no project). Serve it like the other screens (`include_str!` and its route in `src/service/http.rs`) and load it from `src/service/web/index.html`:
   - agents grouped Lead / Makers / Checkers, each with its source and "in N pipelines";
   - the editor:
     - name, kind and source, with "Used in" links to `#/pipelines/<p>/<pipeline>`;
@@ -106,18 +106,18 @@
     - New agent, and Save, Reset and Delete as in 007.
   - Clicking an agent always shows that agent (the editor's draft is kept only for the agent shown).
   - Every field and button is reachable by keyboard and labelled (FR-018).
-- [ ] T014 [US3] Rework `src/service/web/screens/pipelines.js` into the Pipelines tab:
+- [X] T014 [US3] Rework `src/service/web/screens/pipelines.js` into the Pipelines tab:
   - the pipeline list on the left, each with verifying or not verifying, what is missing, and the project's own pipeline marked;
   - the editor in the middle;
   - the graph over the rest of the width, and under it a row with the selected step's settings, its agent in brief (name, kind, runtime and model) with "Edit this agent in Agents →" (`#/agents/<p>/<agent>`), and what the pipeline guarantees;
   - `#/pipelines/<p>/<pipeline>` opens that pipeline;
   - the agent editor moves out of this screen.
-- [ ] T015 [US3] In `src/service/web/index.html` and `src/service/web/app.js`:
+- [X] T015 [US3] In `src/service/web/index.html` and `src/service/web/app.js`:
   - the navigation (in index.html) becomes Dashboard · Spec sessions · Loops · Pipelines · Agents;
   - the router (app.js) takes `#/agents`, `#/agents/<p>`, `#/agents/<p>/<agent>` and `#/pipelines/<p>/<pipeline>` (contracts/page.md);
   - a shared "Save for: All my projects / This project only" select, defaulting to this project when one is selected, with the folder paths in its tooltip, used by both tabs;
   - the long override note becomes that tooltip.
-- [ ] T016 [P] [US3] Add the styles of the Agents tab, the grouped list, the field grid and the Pipelines list to `src/service/web/app.css`, wrapping at 390 px.
+- [X] T016 [P] [US3] Add the styles of the Agents tab, the grouped list, the field grid and the Pipelines list to `src/service/web/app.css`, wrapping at 390 px.
 
 **Checkpoint**: both tabs work, and US3's acceptance scenarios hold.
 
@@ -164,7 +164,7 @@
   - a question from one of them is answered while the other still runs;
   - one member that cannot start (its agent missing) does not stop the other, and is asked again;
   - SC-004: with `max_parallel = 2`, the checkpoint takes no longer than the slower checker plus 10%.
-- [ ] T024 [US5] In `src/run/engine.rs`:
+- [X] T024 [US5] In `src/run/engine.rs`:
   - `Run` keeps `busy` for Gates and Merge, and gains `running: BTreeMap<u32, Running { stop, group, tool, asking }>`;
   - a helper `is_busy()` is true while either is set;
   - `Msg::Done { Step { n } }` removes only entry `n`;

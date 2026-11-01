@@ -1,10 +1,11 @@
-// Screen 4: the pipeline designer (mockup/Pipeline.dc.html; FR-024 to FR-028). The agent library
-// on the left with each agent's source, the pipeline's flow in the middle, built from the fixed
-// steps, and the selected agent's definition on the right, with its problems at their lines.
-// A pipeline the lead proposed opens here as a draft and is used only once saved.
+// The Pipelines tab (007 FR-024 to FR-028; 008 US3, FR-009, FR-010): the pipelines on the left,
+// marked verifying or not, the pipeline's flow over the rest of the width, built from the fixed
+// steps, and under it the selected step's agent in brief and what the pipeline guarantees. The
+// agents themselves are edited in the Agents tab. A pipeline the lead proposed opens here as a
+// draft and is used only once saved.
 "use strict";
 (() => {
-  const { h, raw, get, api, post, confirm, alertLine, icon } = Fallow;
+  const { h, raw, get, api, post, confirm, alertLine, icon, saveFor } = Fallow;
   const GATES = "fallow:gates";
   // The mockup's avatar colours, by agent.
   const COLOURS = {
@@ -16,7 +17,8 @@
   let s = null; // the screen's state
 
   const q = (p) => (p ? `?project=${encodeURIComponent(p)}` : "");
-  const scopeOf = (where) => (where === "project" && s.project ? `project:${s.project}` : "user");
+  const scopeOf = (where) => Fallow.scopeOf(where, s.project);
+  const projectPart = () => encodeURIComponent(s.project || "_");
   const agentOf = (name) => s.agents.find((a) => a.name === name);
   const kindOf = (name) => (name === GATES ? "gates" : (agentOf(name) || {}).kind);
 
@@ -66,26 +68,43 @@
   }
 
   // ---- Rendering ------------------------------------------------------------------------
-  function avatar(name) {
-    const c = COLOURS[name] || "grey";
-    return h`<span class="av ${c}" aria-hidden="true">${name.charAt(0).toUpperCase()}</span>`;
-  }
-
-  // A runtime the definitions name that cannot run here (GET /api/runtimes).
-  const runtimeMissing = (name) => s.runtimes.some((r) => r.name === name && !r.installed);
-
   const SOURCE = { default: ["grey", "default"], user: ["blue", "yours"], project: ["purple", "this project"] };
 
-  function library() {
-    return h`<aside class="pl-side" aria-label="Agents">
-      <div class="row between"><h2 class="th">Agents</h2><button class="btn btn2 xs" data-act="new-agent">+ New</button></div>
-      <div class="mono tiny muted mb-4">~/.fallow/agents/*.md · project overrides in .fallow/agents/</div>
-      ${s.agents.map((a) => {
-        const [c, label] = SOURCE[a.source] || ["grey", a.source];
-        return h`<button class="agent-btn${a.name === s.agent ? " sel" : ""}${a.source === "default" ? "" : " dashed"}" data-act="agent" data-name="${a.name}" aria-pressed="${a.name === s.agent ? "true" : "false"}">${avatar(a.name)}<span class="min0"><b>${a.name}</b> <span class="pill ${c}">${label}</span> <span class="pill grey">${a.kind}</span><span class="agent-desc">${a.description}</span><span class="agent-desc mono">${a.runtime}${a.model ? ` · ${a.model}` : ""}${runtimeMissing(a.runtime) ? h` <span class="error">· not installed</span>` : ""}</span></span></button>`;
+  function pipelineList() {
+    return h`<aside class="pl-side" aria-label="Pipelines">
+      <div class="row between"><h2 class="th">Pipelines</h2><button class="btn btn2 xs" data-act="new-pipeline">+ New</button></div>
+      ${s.project ? h`<div class="small muted mb-4">${(s.projects.find((p) => p.id === s.project) || {}).name || s.project} uses <b>${s.projectPipeline || "standard"}</b></div>` : ""}
+      ${s.pipelines.map((p) => {
+        const sel = s.draft && p.name === s.draft.name && s.draft.saved;
+        return h`<button class="ag-item${sel ? " sel" : ""}" data-act="pick-pipeline" data-name="${p.name}" aria-pressed="${sel ? "true" : "false"}">
+          <span class="row wrap gap-6"><b>${p.name}</b>${p.verifying ? h`<span class="pill green">verifying</span>` : h`<span class="pill orange">not verifying</span>`}${s.project && s.projectPipeline === p.name ? h`<span class="pill blue">this project's</span>` : ""}</span>
+          ${p.description ? h`<span class="d">${p.description}</span>` : ""}
+          ${p.verifying ? "" : h`<span class="d">missing: ${(p.missing || []).join(", ")}</span>`}</button>`;
       })}
       ${s.problems.length ? h`<div class="card pad-12"><div class="b small">Files Fallow could not use</div><ul class="problems">${s.problems.map((p) => h`<li class="mono">${p}</li>`)}</ul></div>` : ""}
     </aside>`;
+  }
+
+  // Under the flow: the selected step's agent in brief, and what the pipeline guarantees.
+  function under() {
+    const d = s.draft;
+    const st = s.open !== null ? d.steps[s.open] : null;
+    const a = st && st.agent !== GATES ? agentOf(st.agent) : null;
+    const brief = !st ? h`<div class="small muted">Select a step ("Change") to see its agent here.</div>`
+      : st.agent === GATES ? h`<div class="small muted">AGENT OF THE SELECTED STEP</div><b>Fallow's gates</b><div class="small muted mt-6">Not an agent: Fallow runs the project's gates (squad.toml) against the baseline.</div>`
+      : h`<div class="small muted">AGENT OF THE SELECTED STEP</div>
+        <div class="row wrap gap-6 mt-4"><b>${st.agent}</b>${a ? h`<span class="pill grey">${a.kind}</span>` : h`<span class="pill red">unknown</span>`}</div>
+        ${a ? h`<div class="small muted mt-6">${a.description}</div><div class="mono tiny mt-6">${a.runtime}${a.model ? ` · ${a.model}` : ""}</div>` : ""}
+        <div class="mt-10"><a href="#/agents/${projectPart()}/${encodeURIComponent(st.agent)}">Edit this agent in Agents →</a></div>`;
+    const gates = d.steps.some((x) => x.agent === GATES && x.when === "task");
+    const checked = d.steps.some((x) => x.when === "checkpoint" && kindOf(x.agent) === "checker" && !(x.paths || []).length);
+    const guarantee = d.verifying === false
+      ? h`A result ends as "Done, not verified by Fallow": ${(d.missing || []).join("; ")}.`
+      : h`${gates ? "Every task gated against the baseline" : "No gates"}; ${checked ? "every story's criteria checked by running them" : "no story check"}. A result can be "Ready to merge".`;
+    return h`<div class="pl-under">
+      <div class="card pad-14">${brief}</div>
+      <div class="card pad-14 small lh"><b>What this pipeline guarantees</b><div class="muted mt-6">${guarantee}</div></div>
+    </div>`;
   }
 
   function lockPill(text) {
@@ -197,8 +216,7 @@
       <label for="pl-based" class="small muted">Based on</label>
       <select id="pl-based" data-change="based">${opt("", "—", "")}${s.pipelines.map((p) => opt(p.name, `${p.name}${p.verifying ? "" : " (not verified)"}`, ""))}</select>
       <button class="btn btn2" data-act="ask-lead"${raw(s.project ? "" : " disabled title=\"Choose a project first\"")}>Ask the lead</button>
-      <label for="pl-scope" class="sr">Save to</label>
-      <select id="pl-scope">${opt("user", "Yours (~/.fallow)", s.scope)}${s.project ? opt("project", "This project (.fallow/)", s.scope) : ""}</select>
+      ${saveFor("pl-scope", s.project, s.scope, "pipelines")}
       <button class="btn" data-act="save">Save</button>
     </div>
     <div class="row wrap gap-8 mt-8">
@@ -210,52 +228,20 @@
     ${d.problems.length ? h`<div class="card pad-12 mt-8" role="alert"><div class="b small">This pipeline cannot be used yet</div><ul class="problems">${d.problems.map((p) => h`<li>${p}</li>`)}</ul></div>` : ""}`;
   }
 
-  // The definition editor, with its problems at their lines.
-  function editor() {
-    const a = agentOf(s.agent);
-    if (!a && !s.newAgent) return h`<aside class="pl-def" aria-label="Agent definition"><div class="card empty small">Choose an agent to see its definition.</div></aside>`;
-    const name = a ? a.name : s.newAgent;
-    const used = a ? a.used_by.length : 0;
-    const lines = s.defProblems.map((p) => {
-      const m = p.match(/:(\d+): (.*)$/);
-      return m ? { line: +m[1], text: m[2] } : { line: 0, text: p };
-    });
-    return h`<aside class="pl-def" aria-label="Agent definition">
-      <div class="row between"><h2 class="th">${name}.md</h2><span class="tiny muted">used by ${used} pipeline${used === 1 ? "" : "s"}</span></div>
-      ${a && a.update ? h`<div class="notice small">An update of this default is beside your copy, in <span class="mono">${name}.md.new</span>. <button class="btn btn2 xs" data-act="show-update">${s.showUpdate ? "Hide it" : "Show it"}</button>${s.showUpdate ? h`<pre class="term">${a.update}</pre>` : ""}</div>` : ""}
-      <label for="def-text" class="sr">${name}.md</label>
-      <textarea id="def-text" class="card def-text" spellcheck="false" rows="22" data-for="${name}">${s.defText}</textarea>
-      ${lines.length ? h`<ul class="problems" role="alert">${lines.map((l) => h`<li>${l.line ? h`<button class="linkish" data-act="goto-line" data-line="${l.line}">line ${l.line}</button>: ` : ""}${l.text}</li>`)}</ul>` : ""}
-      <div class="row wrap gap-8">
-        <label for="def-scope" class="sr">Save to</label>
-        <select id="def-scope">${opt("user", "Yours (~/.fallow)", a && a.source === "project" ? "project" : "user")}${s.project ? opt("project", "This project (.fallow/)", a && a.source === "project" ? "project" : "user") : ""}</select>
-        <button class="btn sm" data-act="save-agent">Save</button>
-        ${a && a.source !== "default" ? h`<button class="btn btn2 sm" data-act="delete-agent">${a.source === "user" && a.shipped ? "Reset to the default" : "Delete"}</button>` : ""}
-      </div>
-      <div class="card pad-14 small lh body-ink"><b class="ink">What Fallow adds around every agent</b>
-        <div class="mt-6">its own worktree · only the commands listed · a fixed result shape · Fallow commits and checks the work · limits on time, turns and cost</div></div>
-    </aside>`;
-  }
-
   function render() {
     const app = s.app;
     const focus = document.activeElement && document.activeElement.id;
-    // Unsaved edits survive a redraw, but only for the agent still shown: a click on another
-    // agent loads its text, which the old editor's must not overwrite.
-    const keepDef = document.getElementById("def-text");
-    if (keepDef && keepDef.dataset.for === (s.agent || s.newAgent || "")) s.defText = keepDef.value;
     const keepRaw = document.getElementById("pl-raw");
     if (keepRaw && s.rawMode) s.raw = keepRaw.value;
     app.innerHTML = h`<div class="page pl-page">
       <div class="row wrap gap-8 mb-12"><label for="pl-project" class="small muted">Project</label>
-        <select id="pl-project" data-change="project">${opt("", "None: yours only", s.project || "")}${s.projects.map((p) => opt(p.id, p.name, s.project || ""))}</select>
-        <span class="tiny muted">A project's own agents and pipelines in .fallow/ override yours by name.</span></div>
+        <select id="pl-project" data-change="project">${opt("", "None: yours only", s.project || "")}${s.projects.map((p) => opt(p.id, p.name, s.project || ""))}</select></div>
       <div class="pl-layout">
-        ${library()}
+        ${pipelineList()}
         <main class="pl-main">${header()}
           ${s.rawMode ? h`<div class="card pad-12"><label for="pl-raw" class="sr">Pipeline TOML</label><textarea id="pl-raw" class="def-text" spellcheck="false" rows="24">${s.raw}</textarea><div class="row gap-8 mt-8"><button class="btn sm" data-act="apply-raw">Check</button></div></div>` : flow()}
+          ${s.rawMode ? "" : under()}
         </main>
-        ${editor()}
       </div></div>`.s;
     if (focus) {
       const el = document.getElementById(focus);
@@ -274,35 +260,28 @@
     s.projects = dash.projects || [];
   }
 
-  function pickAgent(name) {
-    const a = agentOf(name);
-    s.agent = name;
-    s.newAgent = null;
-    s.defText = a ? a.text : "";
-    s.defProblems = [];
-    s.showUpdate = false;
-  }
-
   function pickPipeline(name) {
     const pl = s.pipelines.find((p) => p.name === name) || s.pipelines[0];
     if (!pl) return;
     s.draft = draftOf(pl);
     s.dirty = false;
     s.open = null;
-    s.scope = pl.source === "project" ? "project" : "user";
+    // "Save for": this project only when one is open (FR-010).
+    s.scope = s.project ? "project" : "user";
   }
 
   async function enter(app, r) {
     s = { app, project: r.project || null, agents: [], pipelines: [], runtimes: [], projects: [], problems: [], open: null,
-      agent: "builder", newAgent: null, defText: "", defProblems: [], scope: "user", rawMode: false, raw: "", dirty: false };
+      scope: "user", rawMode: false, raw: "", dirty: false };
     try {
       await load();
     } catch (e) {
       app.innerHTML = h`<div class="page"><div class="card empty">${e.message}</div></div>`.s;
       return;
     }
-    pickAgent(agentOf("builder") ? "builder" : (s.agents[0] || {}).name);
-    pickPipeline(s.projectPipeline || "standard");
+    if (!Fallow.here(app)) return;
+    if (r.pipeline && !s.pipelines.some((p) => p.name === r.pipeline)) alertLine(`There is no pipeline ${r.pipeline} here.`);
+    pickPipeline(r.pipeline || s.projectPipeline || "standard");
     // A pipeline the lead proposed: a draft, never saved until the engineer saves it.
     let proposed = null;
     try { proposed = sessionStorage.getItem("fallow.draft"); sessionStorage.removeItem("fallow.draft"); } catch (_) { proposed = null; }
@@ -327,55 +306,18 @@
   async function act(name, el) {
     const d = s.draft;
     switch (name) {
-      case "agent": pickAgent(el.dataset.name); return render();
-      case "new-agent": {
-        const n = await confirm({ title: "A new agent", text: "Its name, in a-z, 0-9 and -. It is saved as <name>.md.", ok: "Create", input: { label: "Name", value: "" } });
-        if (!n) return;
-        s.agent = null;
-        s.newAgent = n;
-        s.defText = `---\nname: ${n}\ndescription: What it checks\nruntime: claude\nmodel: sonnet\nkind: checker\nmay_run: [gates, plan.commands]\nreturns: verdict\n---\n\nSay what it checks, and how, by running something.\n`;
-        s.defProblems = [];
-        return render();
-      }
-      case "show-update": s.showUpdate = !s.showUpdate; return render();
-      case "goto-line": {
-        const ta = document.getElementById("def-text");
-        const line = +el.dataset.line;
-        const at = ta.value.split("\n").slice(0, line - 1).reduce((n, l) => n + l.length + 1, 0);
-        ta.focus();
-        ta.setSelectionRange(at, at + (ta.value.split("\n")[line - 1] || "").length);
+      case "pick-pipeline":
+        if (s.dirty && !(await confirm({ title: "Leave your changes?", text: "This pipeline has changes that are not saved.", ok: "Leave them" }))) return;
+        location.hash = `#/pipelines/${projectPart()}/${encodeURIComponent(el.dataset.name)}`;
         return;
-      }
-      case "save-agent": {
-        const name = s.agent || s.newAgent;
-        const text = document.getElementById("def-text").value;
-        s.defText = text;
-        try {
-          await api("PUT", `/api/agents/${encodeURIComponent(name)}?scope=${encodeURIComponent(scopeOf(document.getElementById("def-scope").value))}`, { text });
-          s.defProblems = [];
-          await load();
-          pickAgent(name);
-          alertLine(`${name}.md is saved.`);
-        } catch (e) {
-          s.defProblems = e.message.split("\n").filter(Boolean);
-        }
-        return render();
-      }
-      case "delete-agent": {
-        const a = agentOf(s.agent);
-        const reset = a.source === "user" && a.shipped;
-        const scope = a.source === "project" ? `project:${s.project}` : "user";
-        const ok = await confirm({
-          title: reset ? `Reset ${a.name} to the default?` : `Delete ${a.name}?`,
-          text: reset ? "Your changes to it are replaced by the definition Fallow ships." : "Its definition file is deleted.",
-          items: [a.file], ok: reset ? "Reset" : "Delete",
-        });
-        if (!ok) return;
-        try {
-          await api("DELETE", `/api/agents/${encodeURIComponent(a.name)}?scope=${encodeURIComponent(scope)}`, { confirm: true });
-          await load();
-          pickAgent(agentOf(a.name) ? a.name : "builder");
-        } catch (e) { alertLine(e.message); }
+      case "new-pipeline": {
+        const n = await confirm({ title: "A new pipeline", text: "Its name, in a-z, 0-9 and -. It starts as a copy of Standard.", ok: "Create", input: { label: "Name", value: "" } });
+        if (!n) return;
+        pickPipeline("standard");
+        s.draft.name = n;
+        s.draft.saved = false;
+        s.draft.source = null;
+        s.dirty = true;
         return render();
       }
       case "edit-step": s.open = s.open === +el.dataset.i ? null : +el.dataset.i; return render();

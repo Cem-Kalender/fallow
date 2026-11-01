@@ -107,6 +107,16 @@ const Fallow = (() => {
     });
   }
 
+  // "Save for" (008 FR-010): where an agent or a pipeline is saved, said plainly; the folders
+  // only in the tooltip. With a project open, "this project only" by default.
+  function saveFor(id, project, current, sub) {
+    const cur = current || (project ? "project" : "user");
+    const tip = `All my projects: ~/.fallow/${sub}/ · This project only: .fallow/${sub}/ in the project, which overrides yours by name`;
+    return h`<label for="${id}" class="small muted" title="${tip}">Save for</label>
+      <select id="${id}" title="${tip}">${raw(`<option value="user"${cur === "user" ? " selected" : ""}>all my projects</option>`)}${project ? raw(`<option value="project"${cur === "project" ? " selected" : ""}>this project only</option>`) : ""}</select>`;
+  }
+  const scopeOf = (where, project) => (where === "project" && project ? `project:${project}` : "user");
+
   // ---- Screens and the router -------------------------------------------------------------
   const screens = {};
   let current = null;
@@ -114,7 +124,8 @@ const Fallow = (() => {
   function register(name, screen) { screens[name] = screen; }
 
   // `#/`, `#/p/<project>`, `#/p/<project>/f/<feature>`, `#/p/<project>/f/<feature>/loop`,
-  // `#/pipelines`, `#/specs`, `#/loops`, `#/data`.
+  // `#/pipelines[/<project>[/<pipeline>]]`, `#/agents[/<project>[/<agent>]]` (`_`: no project),
+  // `#/specs`, `#/loops`, `#/data`.
   function route() {
     const parts = (location.hash.replace(/^#\/?/, "") || "").split("/").filter(Boolean).map(decodeURIComponent);
     if (parts[0] === "p" && parts[1]) {
@@ -124,7 +135,9 @@ const Fallow = (() => {
       }
       return { screen: "project", nav: "dashboard", project: parts[1] };
     }
-    if (parts[0] === "pipelines") return { screen: "pipelines", nav: "pipelines", project: parts[1] || null };
+    const project = (p) => (p && p !== "_" ? p : null);
+    if (parts[0] === "pipelines") return { screen: "pipelines", nav: "pipelines", project: project(parts[1]), pipeline: parts[2] || null };
+    if (parts[0] === "agents") return { screen: "agents", nav: "agents", project: project(parts[1]), agent: parts[2] || null };
     if (parts[0] === "data") return { screen: "data", nav: "dashboard" };
     if (parts[0] === "specs") return { screen: "dashboard", nav: "spec", filter: "spec" };
     if (parts[0] === "loops") return { screen: "dashboard", nav: "loop", filter: "loops" };
@@ -133,6 +146,11 @@ const Fallow = (() => {
 
   function show() {
     const r = route();
+    // Pipelines and Agents keep the selected project between them (008 FR-006).
+    for (const [nav, base] of [["pipelines", "#/pipelines"], ["agents", "#/agents"]]) {
+      const a = document.querySelector(`[data-nav="${nav}"]`);
+      if (a) a.setAttribute("href", r.project ? `${base}/${encodeURIComponent(r.project)}` : base);
+    }
     document.querySelectorAll("[data-nav]").forEach((a) => {
       const on = a.dataset.nav === r.nav;
       a.classList.toggle("on", on);
@@ -437,7 +455,7 @@ const Fallow = (() => {
     return () => w.stop();
   }
 
-  return { esc, h, raw, md, LOGO, icon, api, get, post, watch, live, here, confirm, register, route, show, start, money,
+  return { saveFor, scopeOf, esc, h, raw, md, LOGO, icon, api, get, post, watch, live, here, confirm, register, route, show, start, money,
     MODE_LABEL, messages, composer, syncComposer, chatAct, sendSay, alertLine, atEnd, stagePill, filesRead,
     get headerWatch() { return headerWatch; } };
 

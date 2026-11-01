@@ -572,8 +572,8 @@ pub fn merge(run: &mut Run, tx: std::sync::mpsc::Sender<Msg>) -> Result<(), Stri
     {
         return Err("the loop has not finished checking this result".into());
     }
-    if run.busy.is_some() {
-        return Err("a merge is already running".into());
+    if run.is_busy() {
+        return Err("a merge or a step is already running".into());
     }
     let commit = run
         .state
@@ -612,11 +612,8 @@ pub fn stop(run: &mut Run, reason: Option<String>) -> Result<(), String> {
     if run.busy == Some(Busy::Merge) {
         return Err("a merge is running; stop the run after it".into());
     }
-    run.stop.store(true, Ordering::Relaxed);
-    // The lead's call for a question stops too.
-    if let Some(a) = &run.asking {
-        a.stop.store(true, Ordering::Relaxed);
-    }
+    // Every running step ends, and the lead's calls for their questions too.
+    run.stop_all();
     run.append(Event::Steering {
         kind: SteeringKind::Stop,
         target: None,

@@ -14,7 +14,7 @@ use std::time::Duration;
 
 use serde_json::{Value, json};
 
-use super::engine::{Busy, Ctx, Msg, Reply, Run};
+use super::engine::{Ctx, Msg, Reply, Run};
 use super::events::*;
 use super::state::{LoopState, QuestionEntry};
 use crate::agent::{self, Call, Session, prompts, rights};
@@ -106,12 +106,18 @@ pub fn bridge(
     Ok((StepTool { token, n, group }, path))
 }
 
+/// The running step that holds this tool token (several may run at once, 008 R-7).
+fn step_of_token(run: &Run, token: &str) -> Option<u32> {
+    run.running
+        .iter()
+        .find(|(_, x)| x.tool.token == token)
+        .map(|(n, _)| *n)
+}
+
 /// A bridge opening for a loop step.
-pub fn open(run: &Run, pid: u32) -> Result<Value, String> {
-    let t = run.tool.as_ref().ok_or("unknown or finished step")?;
-    if run.busy != Some(Busy::Step(t.n)) {
-        return Err("the step is not running".into());
-    }
+pub fn open(run: &Run, token: &str, pid: u32) -> Result<Value, String> {
+    let n = step_of_token(run, token).ok_or("unknown or finished step")?;
+    let t = &run.running[&n].tool;
     if !t.group.contains(pid) {
         return Err("the connecting process is not part of the step".into());
     }
@@ -123,18 +129,15 @@ pub fn call(
     run: &mut Run,
     ctx: &Ctx,
     lead: Result<Lead, String>,
+    token: &str,
     name: &str,
     args: Value,
     reply: Sender<Reply>,
 ) {
-    let Some(n) = run.tool.as_ref().map(|t| t.n) else {
+    let Some(n) = step_of_token(run, token) else {
         let _ = reply.send(Reply::Err("unknown or finished step".into()));
         return;
     };
-    if run.busy != Some(Busy::Step(n)) {
-        let _ = reply.send(Reply::Err("the step is not running".into()));
-        return;
-    }
     match name {
         // The line itself is in the step's activity, from the tool call.
         "progress" => {
@@ -239,7 +242,7 @@ fn ask(
     if run.state.stage.is_final() {
         return Err("the loop is over".into());
     }
-    if open_of(&l, n).is_some() || run.asking.is_some() {
+    if open_of(&l, n).is_some() || run.running.get(&n).is_some_and(|x| x.asking.is_some()) {
         return Err(ONE_OPEN.into());
     }
     let text = args["question"]
@@ -292,11 +295,13 @@ fn ask(
         None,
     )?;
     let stop = Arc::new(AtomicBool::new(false));
-    run.asking = Some(Asking {
-        q: id.clone(),
-        reply,
-        stop: Arc::clone(&stop),
-    });
+    if let Some(x) = run.running.get_mut(&n) {
+        x.asking = Some(Asking {
+            q: id.clone(),
+            reply,
+            stop: Arc::clone(&stop),
+        });
+    }
     // Fallow's own refusals go straight to the engineer, without the lead.
     let lead = match lead {
         Ok(x) => x,
@@ -511,7 +516,12 @@ pub fn lead_done(
         (_, None) => Some("Fallow could not find the feature's spec session to commit to".into()),
         (Ok(v), Some(_)) => relay_reason(l.level, v, &entry.text, &reserved),
     };
-    let reply = run.asking.take_if(|a| a.q == q).map(|a| a.reply);
+    // The step that asked, if it still runs, gets the answer within its step.
+    let reply = run
+        .running
+        .values_mut()
+        .find_map(|x| x.asking.take_if(|a| a.q == q))
+        .map(|a| a.reply);
     let send = |v: Value| {
         if let Some(r) = &reply {
             let _ = r.send(Reply::Ok(v));
@@ -773,16 +783,18 @@ pub fn deliver(run: &mut Run) -> Result<bool, String> {
             continue;
         };
         if s.end.is_none()
-            || run.busy == Some(Busy::Step(s.n))
+            || run.running.contains_key(&s.n)
             || super::machine::first_reason(&s).is_none()
         {
             continue;
         }
+        // Nothing later of the same step: same kind, part and agent (two checkers of one story
+        // run alongside each other, 008 R-7).
         if run
             .state
             .steps
             .values()
-            .any(|x| x.n > s.n && x.part == s.part && x.kind == s.kind)
+            .any(|x| x.n > s.n && x.part == s.part && x.kind == s.kind && x.def == s.def)
         {
             continue;
         }

@@ -84,7 +84,7 @@
           <div class="sep"></div>
           <h2 class="th">Project files</h2>
           <div class="feat"><span>constitution.md</span><span class="tiny muted">.specify/memory</span></div>
-          <a class="feat" href="#/pipelines/${encodeURIComponent(p.id)}"><span>.fallow/agents/</span><span class="tiny muted">${p.agent_overrides} override${p.agent_overrides === 1 ? "" : "s"}</span></a>
+          <a class="feat" href="#/agents/${encodeURIComponent(p.id)}"><span>.fallow/agents/</span><span class="tiny muted">${p.agent_overrides} override${p.agent_overrides === 1 ? "" : "s"}</span></a>
           <div class="feat"><span>approved commands</span><span class="tiny muted">${p.approved_commands.length}</span></div>
           <label class="feat" for="notify-toggle"><span>Desktop notifications</span><input id="notify-toggle" type="checkbox" data-change="notifications"${raw(p.notifications ? " checked" : "")}></label>
           ${p.kind === "folder" ? h`<button class="btn btn2 sm mt-8" data-act="git-init">Set up git</button>` : ""}

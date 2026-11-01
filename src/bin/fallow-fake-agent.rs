@@ -293,6 +293,9 @@ fn main() -> ExitCode {
         }
     };
     let used_path = scenario.with_extension("used");
+    // Two agents of one loop can start at once (008: checkers running alongside each other):
+    // the record of used steps is read and written under a lock, so they never pick the same.
+    let lock = Lock::take(&scenario.with_extension("lock"));
     let mut used: Vec<usize> = std::fs::read_to_string(&used_path)
         .unwrap_or_default()
         .lines()
@@ -311,6 +314,7 @@ fn main() -> ExitCode {
                 .is_none_or(|w| instruction.contains(w.as_str()))
     });
     let Some((n, step)) = pick else {
+        drop(lock);
         if resumed && !fork {
             // What Claude Code 2.1 does for a session it does not know: an error result with no
             // message, the reason on stderr only (T086).
@@ -336,6 +340,7 @@ fn main() -> ExitCode {
             .collect::<Vec<_>>()
             .join("\n"),
     );
+    drop(lock);
     emit(
         json!({"type": "assistant", "session_id": session, "message": {"content": [{"type": "text", "text": format!("Working on {kind}.")}]}}),
     );
@@ -514,4 +519,40 @@ fn main() -> ExitCode {
     }
     emit(result);
     ExitCode::SUCCESS
+}
+
+/// An exclusive lock file, removed when dropped. A lock older than 10 s is left over from an
+/// agent that was killed, and is taken over.
+struct Lock(std::path::PathBuf);
+
+impl Lock {
+    fn take(path: &std::path::Path) -> Lock {
+        let start = std::time::Instant::now();
+        loop {
+            match std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(path)
+            {
+                Ok(_) => return Lock(path.to_path_buf()),
+                Err(_) => {
+                    let stale = std::fs::metadata(path)
+                        .and_then(|m| m.modified())
+                        .ok()
+                        .and_then(|m| m.elapsed().ok())
+                        .is_some_and(|age| age > std::time::Duration::from_secs(10));
+                    if stale || start.elapsed() > std::time::Duration::from_secs(20) {
+                        let _ = std::fs::remove_file(path);
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(15));
+                }
+            }
+        }
+    }
+}
+
+impl Drop for Lock {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
 }

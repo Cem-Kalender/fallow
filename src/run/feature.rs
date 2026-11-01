@@ -15,7 +15,7 @@ use std::time::Duration;
 
 use serde_json::Value;
 
-use super::engine::{Busy, Ctx, Done, Msg, Run};
+use super::engine::{Ctx, Done, Msg, Run};
 use super::events::*;
 use super::machine::{self, BLOCKED, INTERRUPTED, SESSION_LOST};
 use super::state::{LoopState, PhaseStatus, Step};
@@ -201,6 +201,7 @@ pub fn drive(run: &mut Run, ctx: &Ctx) -> Result<(), String> {
         let before = run.state.seq;
         step(run, ctx)?;
         if run.busy.is_some()
+            || (!run.running.is_empty() && machine::queued(run).is_none())
             || run.state.needs.is_some()
             || run.state.seq == before
             || run.state.stage != Stage::Building
@@ -269,6 +270,11 @@ fn step(run: &mut Run, ctx: &Ctx) -> Result<(), String> {
             return Ok(());
         }
         return start(run, ctx, n);
+    }
+    // While steps run (checkers alongside each other, 008 R-7), nothing new is decided: the
+    // checkpoint is judged when the last of them has finished.
+    if !run.running.is_empty() {
+        return Ok(());
     }
     let lib = library(run, ctx);
     let pl = pipeline_of(run, &lib)?;
@@ -1992,8 +1998,11 @@ fn start(run: &mut Run, ctx: &Ctx, n: u32) -> Result<(), String> {
     let runtime = agent::registry::runtime(&def.runtime, &ctx.settings)
         .map_err(|e| format!("{} cannot run: {e}", def.name))?;
     // Answers committed to the feature branch since reach the build at this boundary, also
-    // before a check, so a checker sees them (research S-9, S-10).
-    take_answers(run, &l)?;
+    // before a check, so a checker sees them (research S-9, S-10). Not while other steps run:
+    // checkers running alongside each other check the same commit (008 R-7).
+    if run.running.is_empty() {
+        take_answers(run, &l)?;
+    }
     let (worktree, base) = match step.kind {
         StepKind::Review => {
             let commit = git::head(&build_wt(run))?;
@@ -2036,7 +2045,15 @@ fn start(run: &mut Run, ctx: &Ctx, n: u32) -> Result<(), String> {
         Some(s) if !run.state.lost_sessions.contains(s) => Session::Resume(s.clone()),
         _ => Session::New(crate::platform::random::uuid_v4().map_err(|e| e.to_string())?),
     };
-    let remaining = (run.state.limits.usd - run.state.cost_usd).max(0.01);
+    // The budget left, shared with the steps running or queued alongside this one (008 R-7).
+    let alongside = run.running.len()
+        + run
+            .state
+            .steps
+            .values()
+            .filter(|x| x.n != n && x.started.is_none() && x.end.is_none())
+            .count();
+    let remaining = (run.state.limits.usd - run.state.cost_usd).max(0.01) / (1 + alongside) as f64;
     let budget = def.limits.usd.map_or(remaining, |u| u.min(remaining));
     let minutes = def.limits.minutes.unwrap_or(run.state.limits.step_minutes);
     // The step's process group, sampled for the memory budget (research S-19).
@@ -2044,9 +2061,7 @@ fn start(run: &mut Run, ctx: &Ctx, n: u32) -> Result<(), String> {
         crate::platform::job::Group::new()
             .map_err(|e| format!("cannot create a process group: {e}"))?,
     );
-    run.group = Some(Arc::clone(&group));
     let (tool, mcp) = super::questions::bridge(run, ctx, n, Arc::clone(&group))?;
-    run.tool = Some(tool);
     let call = Call {
         instruction: {
             let mut text = machine::instruction_of(run, n);
@@ -2102,9 +2117,16 @@ fn start(run: &mut Run, ctx: &Ctx, n: u32) -> Result<(), String> {
             })?;
         }
     }
-    run.busy = Some(Busy::Step(n));
-    run.stop = Arc::new(AtomicBool::new(false));
-    let stop = Arc::clone(&run.stop);
+    let stop = Arc::new(AtomicBool::new(false));
+    run.running.insert(
+        n,
+        super::engine::Running {
+            stop: Arc::clone(&stop),
+            group,
+            tool,
+            asking: None,
+        },
+    );
     let tx = ctx.tx.clone();
     let activity_path = run.steps_dir().join(format!("{n}.jsonl"));
     let id = run.id();

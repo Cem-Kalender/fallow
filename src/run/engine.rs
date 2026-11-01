@@ -187,12 +187,23 @@ pub enum Msg {
     Shutdown,
 }
 
-/// What is running for a run right now (never persisted: a restart finds nothing running).
+/// What Fallow itself runs for a run right now: its gates or a merge (never persisted: a restart
+/// finds nothing running). Agent steps are in `Run::running`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Busy {
-    Step(u32),
     Gates,
     Merge,
+}
+
+/// An agent step running now (008 US5: checkers marked `parallel_with` run at the same time).
+pub struct Running {
+    /// Ends this step early (stop, unlock, shutdown).
+    pub stop: Arc<AtomicBool>,
+    /// Its process group, sampled for the memory budget (research S-19).
+    pub group: Arc<crate::platform::job::Group>,
+    /// Its MCP tools, and its `ask` waiting for the lead (research S-10).
+    pub tool: super::questions::StepTool,
+    pub asking: Option<super::questions::Asking>,
 }
 
 /// One run in memory.
@@ -201,22 +212,35 @@ pub struct Run {
     pub log: Log,
     pub state: RunState,
     pub busy: Option<Busy>,
-    /// Ends the running step early (stop, take over).
+    /// Ends Fallow's own gates early (stop).
     pub stop: Arc<AtomicBool>,
+    /// The agent steps running now, by number.
+    pub running: BTreeMap<u32, Running>,
     /// Pages waiting for the next change (long polling), with when they started waiting.
     pub waiters: Vec<(Instant, Sender<Reply>)>,
     /// Activity lines seen since Fallow started, so a waiting page knows there are new ones.
     pub activity: u64,
-    /// The running step's process group, sampled for the memory budget (research S-19).
-    pub group: Option<Arc<crate::platform::job::Group>>,
     /// Why the next step has not started: no free slot, or not enough memory.
     pub waiting: Option<String>,
-    /// 007: the running step's MCP tools, and its `ask` waiting for the lead (research S-10).
-    pub tool: Option<super::questions::StepTool>,
-    pub asking: Option<super::questions::Asking>,
 }
 
 impl Run {
+    /// Something runs: an agent step, the gates or a merge.
+    pub fn is_busy(&self) -> bool {
+        self.busy.is_some() || !self.running.is_empty()
+    }
+
+    /// Signals every running step, and the gates, to end now.
+    pub fn stop_all(&self) {
+        self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        for x in self.running.values() {
+            x.stop.store(true, std::sync::atomic::Ordering::Relaxed);
+            if let Some(a) = &x.asking {
+                a.stop.store(true, std::sync::atomic::Ordering::Relaxed);
+            }
+        }
+    }
+
     pub fn id(&self) -> u64 {
         self.state.id
     }
@@ -390,10 +414,8 @@ impl Engine {
                         stop: Arc::new(AtomicBool::new(false)),
                         waiters: Vec::new(),
                         activity: 0,
-                        group: None,
+                        running: BTreeMap::new(),
                         waiting: None,
-                        tool: None,
-                        asking: None,
                     };
                     e.runs.insert(id, run);
                 }
@@ -454,7 +476,9 @@ impl Engine {
                         Some(id) => {
                             let lead = self.lead_of(id);
                             if let Some(r) = self.runs.get_mut(&id) {
-                                super::questions::call(r, &self.ctx, lead, &name, args, reply);
+                                super::questions::call(
+                                    r, &self.ctx, lead, &token, &name, args, reply,
+                                );
                             }
                         }
                         None => {
@@ -487,11 +511,13 @@ impl Engine {
                 }
                 Msg::Done { run, done } => {
                     if let Some(r) = self.runs.get_mut(&run) {
-                        r.busy = None;
-                        r.group = None;
-                        // The step's tools end with it; a question it asked is still answered.
-                        r.tool = None;
-                        r.asking = None;
+                        // A step's tools end with it; a question it asked is still answered.
+                        match &done {
+                            Done::Step { n, .. } => {
+                                r.running.remove(n);
+                            }
+                            _ => r.busy = None,
+                        }
                         if let Err(e) = super::machine::on_done(r, &self.ctx, done) {
                             self.console.push(format!("run {run}: {e}"));
                         }
@@ -517,10 +543,7 @@ impl Engine {
                 }
                 Msg::Shutdown => {
                     for r in self.runs.values() {
-                        r.stop.store(true, std::sync::atomic::Ordering::Relaxed);
-                        if let Some(a) = &r.asking {
-                            a.stop.store(true, std::sync::atomic::Ordering::Relaxed);
-                        }
+                        r.stop_all();
                     }
                     break;
                 }
@@ -606,7 +629,7 @@ impl Engine {
                     return Err("the loop is still running: stop it first".into());
                 }
                 // Stopped, its last step may still be ending, with its files open.
-                if r.busy.is_some() {
+                if r.is_busy() {
                     return Err(
                         "the loop's last step is still ending: try again in a moment".into(),
                     );
@@ -1090,7 +1113,7 @@ impl Engine {
                 finding,
             } => self.studio.dismiss(&project, &feature, finding),
             Req::ToolOpen { token, pid } => match self.run_of_token(&token) {
-                Some(id) => super::questions::open(&self.runs[&id], pid),
+                Some(id) => super::questions::open(&self.runs[&id], &token, pid),
                 None => self.studio.tool_open(&token, pid),
             },
             Req::Agents { project } => self.studio.agents_view(project.as_deref()),
@@ -1098,6 +1121,17 @@ impl Engine {
                 let scope = crate::studio::defs::Scope::parse(&scope)?;
                 let live = self.live_pipelines();
                 self.studio.put_agent(&name, &scope, &text, &live)
+            }
+            Req::PutAgentFields {
+                name,
+                scope,
+                fields,
+                body,
+            } => {
+                let scope = crate::studio::defs::Scope::parse(&scope)?;
+                let live = self.live_pipelines();
+                self.studio
+                    .put_agent_fields(&name, &scope, &fields, body.as_deref(), &live)
             }
             Req::DeleteAgent { name, scope } => {
                 let scope = crate::studio::defs::Scope::parse(&scope)?;
@@ -1385,10 +1419,8 @@ impl Engine {
             stop: Arc::new(AtomicBool::new(false)),
             waiters: Vec::new(),
             activity: 0,
-            group: None,
+            running: BTreeMap::new(),
             waiting: None,
-            tool: None,
-            asking: None,
         };
         run.append(Event::LoopCreated {
             project: p.id.clone(),
@@ -1450,11 +1482,7 @@ impl Engine {
                 super::dashboard::card(r, &self.ctx, &name).unwrap_or_else(|| summary(r))
             })
             .collect();
-        let agents_running = self
-            .runs
-            .values()
-            .filter(|r| matches!(r.busy, Some(Busy::Step(_))))
-            .count();
+        let agents_running = self.runs.values().map(|r| r.running.len()).sum::<usize>();
         let cost_today: f64 = self
             .runs
             .values()
@@ -1506,8 +1534,8 @@ impl Engine {
             used += g.map_or(0, |g| g.memory_mb() as i64).max(STEP_MB);
         };
         for r in self.runs.values() {
-            if matches!(r.busy, Some(Busy::Step(_))) {
-                count(r.group.as_deref());
+            for x in r.running.values() {
+                count(Some(&x.group));
             }
         }
         let turns: Vec<&crate::studio::Tool> = self.studio.tools.values().collect();
@@ -1715,7 +1743,7 @@ impl Engine {
     fn run_of_token(&self, token: &str) -> Option<u64> {
         self.runs
             .iter()
-            .find(|(_, r)| r.tool.as_ref().is_some_and(|t| t.token == token))
+            .find(|(_, r)| r.running.values().any(|x| x.tool.token == token))
             .map(|(id, _)| *id)
     }
 
@@ -1793,12 +1821,10 @@ pub fn needs(r: &Run) -> Option<String> {
         });
     }
     match s.stage {
-        Stage::Planning if s.plan_approvable && r.busy.is_none() => {
+        Stage::Planning if s.plan_approvable && !r.is_busy() => {
             Some("The plan is ready to approve".into())
         }
-        Stage::Planning if r.busy.is_none() => {
-            Some("The planner is waiting for your answer".into())
-        }
+        Stage::Planning if !r.is_busy() => Some("The planner is waiting for your answer".into()),
         Stage::Ready => Some("Ready to merge".into()),
         _ => None,
     }
@@ -1808,10 +1834,12 @@ pub fn needs(r: &Run) -> Option<String> {
 pub fn view(r: &Run) -> Value {
     let mut v = serde_json::to_value(&r.state).unwrap_or(Value::Null);
     v["needs_engineer"] = json!(needs(r));
+    let steps: Vec<String> = r.running.keys().map(u32::to_string).collect();
     v["busy"] = json!(match &r.busy {
-        Some(Busy::Step(n)) => format!("step {n}"),
         Some(Busy::Gates) => "gates".into(),
         Some(Busy::Merge) => "merge".into(),
+        None if steps.len() == 1 => format!("step {}", steps[0]),
+        None if !steps.is_empty() => format!("steps {}", steps.join(", ")),
         None => String::new(),
     });
     v["waiting"] = json!(r.waiting);

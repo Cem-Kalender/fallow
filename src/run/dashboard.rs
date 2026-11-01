@@ -4,7 +4,7 @@
 
 use serde_json::{Value, json};
 
-use super::engine::{Busy, Ctx, Run};
+use super::engine::{Ctx, Run};
 use super::events::*;
 use super::state::LoopState;
 use crate::agent::Activity;
@@ -118,10 +118,9 @@ pub fn card(run: &Run, _ctx: &Ctx, project_name: &str) -> Option<Value> {
     // The agents, each in a few words.
     // The pipeline as the loop recorded it, without reading the definitions again.
     let pl: Option<crate::defs::pipeline::Raw> = toml::from_str(&l.pipeline).ok();
-    let running = match run.busy {
-        Some(Busy::Step(n)) => s.steps.get(&n),
-        _ => None,
-    };
+    // The running steps: several may run at once (008 R-7).
+    let running: Vec<&super::state::Step> =
+        run.running.keys().filter_map(|n| s.steps.get(n)).collect();
     let waiting = super::questions::waiting(l);
     let mut names: Vec<String> = Vec::new();
     if let Some(pl) = &pl {
@@ -134,7 +133,10 @@ pub fn card(run: &Run, _ctx: &Ctx, project_name: &str) -> Option<Value> {
     let agents: Vec<Value> = names
         .iter()
         .map(|name| {
-            let mine = running.filter(|r| r.def.as_deref() == Some(name.as_str()));
+            let mine = running
+                .iter()
+                .copied()
+                .find(|r| r.def.as_deref() == Some(name.as_str()));
             let asks = waiting.filter(|q| {
                 s.steps.get(&q.step).and_then(|x| x.def.as_deref()) == Some(name.as_str())
             });

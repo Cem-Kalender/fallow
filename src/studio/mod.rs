@@ -154,6 +154,13 @@ pub enum Req {
         scope: String,
         text: String,
     },
+    /// 008: only these frontmatter fields (contracts/agents-api.md).
+    PutAgentFields {
+        name: String,
+        scope: String,
+        fields: serde_json::Map<String, Value>,
+        body: Option<String>,
+    },
     DeleteAgent {
         name: String,
         scope: String,

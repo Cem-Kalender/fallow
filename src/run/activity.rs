@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 
 use serde_json::{Value, json};
 
-use super::engine::{Busy, Ctx, Run};
+use super::engine::{Ctx, Run};
 use super::events::*;
 use super::feature;
 use super::state::Step;
@@ -437,9 +437,12 @@ pub fn view(run: &Run, ctx: &Ctx) -> Result<Value, String> {
     let lib = feature::library(run, ctx);
     let pl = feature::pipeline_of(run, &lib).ok();
     let now = super::time::unix_now();
-    let running: Option<&Step> = match run.busy {
-        Some(Busy::Step(n)) => s.steps.get(&n),
-        _ => None,
+    // The running step of an agent, if any: several may run at once (008 R-7).
+    let running_of = |name: &str| -> Option<&Step> {
+        run.running
+            .keys()
+            .filter_map(|n| s.steps.get(n))
+            .find(|x| x.def.as_deref() == Some(name))
     };
     let current_phase = l
         .phases
@@ -473,8 +476,7 @@ pub fn view(run: &Run, ctx: &Ctx) -> Result<Value, String> {
             let def = lib.agent(name);
             let mine: Vec<&Step> = s.steps.values().filter(|x| x.def.as_deref() == Some(name)).collect();
             let cost: f64 = mine.iter().filter_map(|x| x.cost_usd).sum();
-            let tools = running
-                .filter(|r| r.def.as_deref() == Some(name))
+            let tools = running_of(name)
                 .map(|r| {
                     step_lines(run, r)
                         .iter()
@@ -482,7 +484,7 @@ pub fn view(run: &Run, ctx: &Ctx) -> Result<Value, String> {
                         .count()
                 })
                 .unwrap_or(0);
-            let status = if running.is_some_and(|r| r.def.as_deref() == Some(name)) {
+            let status = if running_of(name).is_some() {
                 "working"
             } else if blocked_def.as_deref() == Some(name) {
                 "asks you"
@@ -500,7 +502,7 @@ pub fn view(run: &Run, ctx: &Ctx) -> Result<Value, String> {
                 "model": def.map(|d| d.model.clone()),
                 "where": if checker { "fresh per check".to_string() } else { l.build_branch.clone() },
                 "status": status,
-                "task": running.filter(|r| r.def.as_deref() == Some(name)).and_then(|r| r.task.clone().or_else(|| r.part.clone())),
+                "task": running_of(name).and_then(|r| r.task.clone().or_else(|| r.part.clone())),
                 "tool_calls": tools,
                 "steps": mine.len(),
                 "cost_usd": cost,

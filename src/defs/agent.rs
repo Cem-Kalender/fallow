@@ -139,6 +139,143 @@ fn value(raw: &str) -> Result<Value, String> {
     Ok(Value::Str(unquote(raw)?))
 }
 
+/// A frontmatter field the page's agent form may set (008 contracts/agents-api.md).
+pub const FIELD_KEYS: &[&str] = &[
+    "description",
+    "runtime",
+    "model",
+    "kind",
+    "may_run",
+    "returns",
+];
+
+/// A new value for a field: a string, or a list of strings.
+#[derive(Debug, Clone, PartialEq)]
+pub enum FieldValue {
+    Str(String),
+    List(Vec<String>),
+}
+
+/// A value written so that [`parse`] reads it back unchanged: quoted only when it would not
+/// otherwise read the same. Refused when no form reads it back (a quote inside it).
+fn write_value(v: &FieldValue) -> Result<String, String> {
+    let plain_ok = |s: &str, in_list: bool| {
+        !s.is_empty()
+            && s.trim() == s
+            && !s.starts_with(['\'', '&', '*', '|', '>', '!', '%', '@', '`', '[', '{', '#'])
+            && !s.contains(" #")
+            && !(in_list && s.contains([',', ']', ' ', ':']))
+    };
+    let one = |s: &str, in_list: bool| -> Result<String, String> {
+        if s.contains('\n') || s.contains('\r') {
+            return Err(format!("{s:?}: a value cannot hold a line break"));
+        }
+        // A quote can stand in a plain value (`Checks the "happy path"`), never in a quoted one
+        // nor in a list item, which the reader splits on quotes.
+        if s.contains('"') {
+            return if !in_list && !s.starts_with('"') && plain_ok(s, false) {
+                Ok(s.to_string())
+            } else {
+                Err(format!(
+                    "{s:?}: a quote can stand only inside a plain value"
+                ))
+            };
+        }
+        Ok(if plain_ok(s, in_list) {
+            s.to_string()
+        } else {
+            format!("\"{s}\"")
+        })
+    };
+    match v {
+        FieldValue::Str(s) => one(s, false),
+        FieldValue::List(items) => Ok(format!(
+            "[{}]",
+            items
+                .iter()
+                .map(|i| one(i, true))
+                .collect::<Result<Vec<_>, _>>()?
+                .join(", ")
+        )),
+    }
+}
+
+/// `text` with only the given fields' frontmatter lines changed (008 FR-008, contracts/
+/// agents-api.md): an existing key's line keeps its place and its comment; an absent key is
+/// added as the frontmatter's last line; every other line, and the body, stay as they are.
+pub fn set_fields(text: &str, fields: &[(String, FieldValue)]) -> Result<String, String> {
+    // A byte-order mark is kept as it was.
+    let (bom, text) = match text.strip_prefix('\u{feff}') {
+        Some(t) => ("\u{feff}", t),
+        None => ("", text),
+    };
+    let nl = if text.contains("\r\n") { "\r\n" } else { "\n" };
+    let mut lines: Vec<String> = text
+        .split('\n')
+        .map(|l| l.trim_end_matches('\r').to_string())
+        .collect();
+    if lines.first().map(|l| l.trim_end()) != Some("---") {
+        return Err("a definition starts with a `---` line".into());
+    }
+    let mut end = lines
+        .iter()
+        .skip(1)
+        .position(|l| l.trim_end() == "---")
+        .map(|i| i + 1)
+        .ok_or("the frontmatter has no closing `---` line")?;
+    for (key, value) in fields {
+        if !FIELD_KEYS.contains(&key.as_str()) {
+            return Err(format!("{key} cannot be set as a field"));
+        }
+        let v = write_value(value)?;
+        let at = (1..end).find(|&i| {
+            let code = strip_comment(&lines[i]);
+            !code.starts_with([' ', '\t'])
+                && code.split_once(':').is_some_and(|(k, _)| k.trim() == key)
+        });
+        match at {
+            Some(i) => {
+                let code_len = strip_comment(&lines[i]).len();
+                let comment = lines[i][code_len..].trim().to_string();
+                lines[i] = if comment.is_empty() {
+                    format!("{key}: {v}")
+                } else {
+                    format!("{key}: {v} {comment}")
+                };
+            }
+            None => {
+                lines.insert(end, format!("{key}: {v}"));
+                end += 1;
+            }
+        }
+    }
+    Ok(format!("{bom}{}", lines.join(nl)))
+}
+
+/// `text` with its body (everything after the frontmatter) replaced by `body`, in the file's own
+/// line endings; the frontmatter stays as it is (008: the form's instructions).
+pub fn set_body(text: &str, body: &str) -> Result<String, String> {
+    let nl = if text.contains("\r\n") { "\r\n" } else { "\n" };
+    let lines: Vec<&str> = text.split('\n').collect();
+    let end = lines
+        .iter()
+        .skip(1)
+        .position(|l| l.trim_end() == "---")
+        .map(|i| i + 1)
+        .ok_or("the frontmatter has no closing `---` line")?;
+    let front = lines[..=end]
+        .iter()
+        .map(|l| l.trim_end_matches('\r'))
+        .collect::<Vec<_>>()
+        .join(nl);
+    let body = body.replace("\r\n", "\n");
+    let body = body.trim_matches('\n');
+    Ok(format!(
+        "{front}{nl}{nl}{}{nl}",
+        body.split('\n').collect::<Vec<_>>().join(nl)
+    ))
+}
+
 const KEYS: &[&str] = &[
     "name",
     "description",
@@ -389,6 +526,85 @@ pub fn parse(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fields_change_only_their_lines() {
+        let text = "---\nname: reviewer\ndescription: Checks every story # by running\nruntime: claude\nmodel: sonnet # the default\nkind: checker\nmay_run: [gates]\nreturns: verdict\n---\n\nThe body.\n";
+        let out = set_fields(
+            text,
+            &[
+                ("model".into(), FieldValue::Str("opus".into())),
+                (
+                    "may_run".into(),
+                    FieldValue::List(vec!["gates".into(), "npm audit".into()]),
+                ),
+            ],
+        )
+        .unwrap();
+        let changed: Vec<(&str, &str)> = text
+            .lines()
+            .zip(out.lines())
+            .filter(|(a, b)| a != b)
+            .collect();
+        assert_eq!(
+            changed,
+            vec![
+                ("model: sonnet # the default", "model: opus # the default"),
+                ("may_run: [gates]", "may_run: [gates, \"npm audit\"]"),
+            ]
+        );
+        // It reads back as written.
+        let d = parse("reviewer.md", "reviewer", &out, Source::User, &["claude"]).unwrap();
+        assert_eq!(d.model, "opus");
+        assert_eq!(
+            d.may_run,
+            vec!["gates".to_string(), "npm audit".to_string()]
+        );
+        assert_eq!(d.description, "Checks every story");
+        assert!(out.ends_with("The body.\n"));
+    }
+
+    #[test]
+    fn an_absent_field_is_added_and_others_are_refused() {
+        let text = "---\r\nname: x\r\ndescription: d\r\nruntime: claude\r\nkind: maker\r\nreturns: work\r\n---\r\nBody\r\n";
+        let out = set_fields(text, &[("model".into(), FieldValue::Str("haiku".into()))]).unwrap();
+        assert!(
+            out.contains("returns: work\r\nmodel: haiku\r\n---\r\nBody"),
+            "{out:?}"
+        );
+        assert!(set_fields(text, &[("name".into(), FieldValue::Str("y".into()))]).is_err());
+        assert!(set_fields(text, &[("limits".into(), FieldValue::Str("1".into()))]).is_err());
+        // A quote stands in a plain value, as the reader takes it; never in a list item.
+        let out = set_fields(
+            text,
+            &[("description".into(), FieldValue::Str("say \"hi\"".into()))],
+        )
+        .unwrap();
+        let d = parse("x.md", "x", &out, Source::User, &["claude"]).unwrap();
+        assert_eq!(d.description, "say \"hi\"");
+        assert!(
+            set_fields(
+                text,
+                &[("may_run".into(), FieldValue::List(vec!["a \"b\"".into()]))]
+            )
+            .is_err()
+        );
+        // A byte-order mark stays.
+        let out = set_fields(
+            &format!("\u{feff}{text}"),
+            &[("model".into(), FieldValue::Str("opus".into()))],
+        )
+        .unwrap();
+        assert!(out.starts_with("\u{feff}---"));
+        // A value the reader would misread is quoted.
+        let out = set_fields(
+            text,
+            &[("description".into(), FieldValue::Str("[draft] # 2".into()))],
+        )
+        .unwrap();
+        let d = parse("x.md", "x", &out, Source::User, &["claude"]).unwrap();
+        assert_eq!(d.description, "[draft] # 2");
+    }
 
     const RT: &[&str] = &["claude", "fake"];
 

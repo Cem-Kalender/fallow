@@ -29,6 +29,7 @@ const SCREENS: &[(&str, &str)] = &[
     ("spec.js", include_str!("web/screens/spec.js")),
     ("loop.js", include_str!("web/screens/loop.js")),
     ("pipelines.js", include_str!("web/screens/pipelines.js")),
+    ("agents.js", include_str!("web/screens/agents.js")),
 ];
 
 /// The fonts Fallow ships (research S-3), served at `/fonts/<name>`.
@@ -284,6 +285,18 @@ fn studio_route(
         ("GET", ["api", "agents"]) => r(Req::Agents {
             project: query_arg(url, "project").filter(|p| !p.is_empty()),
         }),
+        // 008: only the fields the page's agent form changed (contracts/agents-api.md).
+        ("PUT", ["api", "agents", name]) if body.get("fields").is_some() => {
+            match body.get("fields").and_then(Value::as_object) {
+                Some(fields) => r(Req::PutAgentFields {
+                    name: name.to_string(),
+                    scope: query_arg(url, "scope").unwrap_or_else(|| "user".into()),
+                    fields: fields.clone(),
+                    body: s("body"),
+                }),
+                None => Some(Err("fields is a map of field names to values".into())),
+            }
+        }
         ("PUT", ["api", "agents", name]) => match need("text") {
             Ok(text) => r(Req::PutAgent {
                 name: name.to_string(),
