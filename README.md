@@ -23,13 +23,15 @@ the project's principles are in [`.specify/memory/constitution.md`](.specify/mem
   markers are highlighted, and "Lock & start the loop" opens once tasks and analyze are done.
 - **The loop.** One builder works through the locked tasks, phase by phase, in one session per
   phase. After each task Fallow commits it and runs the gates against the baseline; at each user
-  story's checkpoint a reviewer answers every criterion with what it ran. Failures go back to the
-  builder for a repair, capped, then to you. A result a pipeline left unverified (for example
+  story's checkpoint a reviewer answers every criterion with what it ran; checkers a pipeline
+  marks to run alongside each other run at the same time and are judged together. Failures go back
+  to the builder for one repair, capped, then to you. A result a pipeline left unverified (for example
   without gates) ends as "Done, not verified by Fallow", never as ready to merge.
-- **Watching and steering.** The loop page shows the pipeline and its current stage, the task tree,
-  one card per agent, one activity feed (what each agent says, reads, edits and runs, with
-  output), Fallow's own checks, time and cost against the budget. You can pause, stop, leave a
-  note for the next step and change limits.
+- **Watching and steering.** The loop page shows the pipeline and its current stage, what Fallow
+  verified per user story (each criterion with what was run and what came out; a failure opens
+  by itself), the task tree, one card per agent, one activity feed (what each agent says, reads,
+  edits and runs, with output), Fallow's own checks, time and cost against the budget. From its
+  header you pause, stop, leave a note for the next step and change limits.
 - **Questions through the lead.** Agents ask through Fallow's `ask` tool. When the spec or the
   spec session settles it, the lead answers, Fallow commits the answer to the spec, and the agent
   goes on; you can overrule it. Otherwise the lead relays the question to you with options and a
@@ -39,8 +41,10 @@ the project's principles are in [`.specify/memory/constitution.md`](.specify/mem
   which name the project, the feature and what is needed, and never code or output.
 - **Agents and pipelines.** Agents are markdown files with frontmatter in `~/.fallow/agents/`,
   overridden per project in `.fallow/agents/`: makers change files, checkers only run and verify.
-  Pipelines are built from fixed steps in the pipeline designer; Standard, Test first and Solo
-  ship with Fallow, and the lead can propose one, which is used only once you save it.
+  The Agents tab edits them as form fields and instructions; save for all your projects or this
+  project only. The Pipelines tab draws a pipeline as a graph of Fallow's fixed steps, where you
+  add, change and remove steps; Standard, Test first and Solo ship with Fallow, and the lead can
+  propose one, which is used only once you save it.
 - **Runtimes.** Every agent step goes through one runtime interface. Claude Code (`claude -p`) is
   the first; a scripted `fake` runtime drives the tests.
 

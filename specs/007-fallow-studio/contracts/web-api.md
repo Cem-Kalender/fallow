@@ -11,7 +11,7 @@ All bodies are JSON. Errors are `{"ok": false, "error": "<message for the engine
 
 | Path | What |
 |---|---|
-| `/` | The single page (S-1), which routes by hash |
+| `/` | The single page (S-1), which routes by hash: `#/`, `#/p/<project>`, `#/p/<project>/f/<feature>` (the spec session), `#/p/<project>/f/<feature>/loop`, `#/specs`, `#/loops`, `#/data`, and since 008 `#/pipelines[/<project>[/<pipeline>]]` and `#/agents[/<project>[/<agent>]]` (`_` for no project) |
 | `/app.js`, `/app.css` | The page's code and styles |
 | `/fonts/<file>.woff2` | Inter and JetBrains Mono (S-3) |
 
@@ -65,7 +65,7 @@ The global events are `project`, `feature`, `loop_progress`, `needs_you` and `ne
 
 | Method and path | Body | Returns |
 |---|---|---|
-| `GET /api/loops/<l>` | | `{state, pipeline, stage, phases[], agents[], checks, questions[], budget, used, repairs, steering[]}` |
+| `GET /api/loops/<l>` | | `{state, pipeline, stage, phases[], agents[], checks, questions[], budget, used, repairs, steering[]}`. Since 008 each `checks.stories[]` entry holds its summary (`checked_by_pipeline`, `total`, `checked`, `failed`, `findings`, `state`, `checkers[]`, `rechecking`) and a failed criterion its `expected`: 008 contracts/loop-view.md |
 | `GET /api/loops/<l>/activity?agent=&kind=&task=&after=` | | `{entries[], next}`: activity events (FR-018, data-model.md), oldest first, each with its place `i`, `at` (ms), `step`, `agent` (`fallow` for Fallow's checks, `you` for steering), `task`, `kind`, `text`, and `detail`, `output` and `result` where they apply. `after` skips the first entries; Fallow's checks can sort in before agent lines already seen, so a page reloads the feed rather than paging. `kind=check` is Fallow's checks |
 | `GET /api/loops/<l>/steps/<n>/activity` | | One step's raw activity lines |
 | `GET /api/loops/<l>/tasks/<t>` | | The task's steps, diff, commands, commit and gate result (SC-004) |
@@ -85,7 +85,7 @@ The global events are `project`, `feature`, `loop_progress`, `needs_you` and `ne
 | Method and path | Body | Returns |
 |---|---|---|
 | `GET /api/agents?project=<p>` | | The definitions with their source, and parse errors with line numbers |
-| `PUT /api/agents/<name>?scope=user\|project:<p>` | `{text}` | Checked (contracts/agent-definition.md); 422 with problems |
+| `PUT /api/agents/<name>?scope=user\|project:<p>` | `{text}`, or since 008 `{fields, body?}` (008 contracts/agents-api.md) | Checked (contracts/agent-definition.md); 422 with problems |
 | `DELETE /api/agents/<name>?scope=...` | `{confirm: true}` | A user's or project's own definition only; defaults are reset, not deleted |
 | `GET /api/pipelines?project=<p>` | | Pipelines with `verifying` and what is missing, their text and file, and the project's chosen one |
 | `POST /api/pipelines/check` | `{toml, project?}` | The pipeline as it would be, or its problems; nothing is saved (the designer, and drafts the lead proposes) |

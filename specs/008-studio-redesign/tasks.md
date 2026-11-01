@@ -217,7 +217,7 @@
 
 ## Phase 8: Polish & Cross-Cutting Concerns
 
-- [ ] T034 [P] Update `specs/007-fallow-studio/contracts/web-api.md`:
+- [X] T034 [P] Update `specs/007-fallow-studio/contracts/web-api.md`:
   - the loop view's new fields;
   - `PUT /api/agents` with `{fields}`;
   - the routes `#/pipelines` and `#/agents`.
