@@ -210,7 +210,7 @@
 
 **Goal**: the changed screens match the mockup.
 
-- [ ] T032 [US6] Take screenshots of the loop page, Pipelines and Agents at 1440 px and 390 px with headless Chrome, against loops of the fake runtime, into `specs/008-studio-redesign/visual-check/`. In its README, compare them with `mockup/`, noting every difference, and confirm that nothing scrolls sideways at 390 px (no page wider than the window). Check keyboard reach of the new controls (Tab order through pills, header, agent form, graph nodes) and text contrast (FR-018), and that every steering control is visible without scrolling at 1440 × 900 (SC-002).
+- [X] T032 [US6] Take screenshots of the loop page, Pipelines and Agents at 1440 px and 390 px with headless Chrome, against loops of the fake runtime, into `specs/008-studio-redesign/visual-check/`. In its README, compare them with `mockup/`, noting every difference, and confirm that nothing scrolls sideways at 390 px (no page wider than the window). Check keyboard reach of the new controls (Tab order through pills, header, agent form, graph nodes) and text contrast (FR-018), and that every steering control is visible without scrolling at 1440 × 900 (SC-002).
 - [X] T033 [US6] In `specs/007-fallow-studio/tasks.md`, mark T085 as superseded by 008's visual check, with the date and the engineer's decision of 2026-11-01.
 
 ---

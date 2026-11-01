@@ -153,6 +153,11 @@ a.card:hover { border-color: var(--accent); color: var(--ink); }
 .stage .d { font-size: 12px; color: var(--muted); }
 .stage.now .d { color: var(--body); }
 .arrow { flex: none; align-self: center; color: #A3A29B; }
+/* The strip's tiles share one height; on a phone they wrap, and arrows would point nowhere. */
+.strip { align-items: stretch; }
+@media (max-width: 700px) {
+  .strip .arrow { display: none; }
+}
 .task { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; line-height: 1.4; padding: 5px 8px; border-radius: 6px; }
 .task.waiting { background: var(--needs-bg); }
 .task.pending { color: var(--muted); }
@@ -472,3 +477,5 @@ fieldset.field.along legend { padding: 0; margin-bottom: 4px; }
 }
 /* A pipeline with very many steps keeps readable nodes: its graph scrolls in the box. */
 .pl-graph.wide svg { min-width: 1500px; }
+/* A label stays with its control when a header row wraps. */
+.pair { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }

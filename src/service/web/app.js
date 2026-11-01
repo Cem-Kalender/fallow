@@ -112,8 +112,8 @@ const Fallow = (() => {
   function saveFor(id, project, current, sub) {
     const cur = current || (project ? "project" : "user");
     const tip = `All my projects: ~/.fallow/${sub}/ · This project only: .fallow/${sub}/ in the project, which overrides yours by name`;
-    return h`<label for="${id}" class="small muted" title="${tip}">Save for</label>
-      <select id="${id}" title="${tip}">${raw(`<option value="user"${cur === "user" ? " selected" : ""}>all my projects</option>`)}${project ? raw(`<option value="project"${cur === "project" ? " selected" : ""}>this project only</option>`) : ""}</select>`;
+    return h`<span class="pair"><label for="${id}" class="small muted" title="${tip}">Save for</label>
+      <select id="${id}" title="${tip}">${raw(`<option value="user"${cur === "user" ? " selected" : ""}>all my projects</option>`)}${project ? raw(`<option value="project"${cur === "project" ? " selected" : ""}>this project only</option>`) : ""}</select></span>`;
   }
   const scopeOf = (where, project) => (where === "project" && project ? `project:${project}` : "user");
 
