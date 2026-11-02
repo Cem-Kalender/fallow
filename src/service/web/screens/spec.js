@@ -66,7 +66,9 @@
     else if (editing) status = h`<span class="row gap-8"><button class="btn sm" data-act="save">Save</button><button class="btn btn2 sm" data-act="cancel">Cancel</button></span>`;
     else if (!locked && doc) status = h`<button class="btn btn2 sm" data-act="edit">Edit</button>`;
     else status = "";
-    return h`<div class="tabs">${tabs}${later}<div class="grow"></div>${status}</div><div id="doc-pane">${docPane()}</div>`;
+    // The project's files open in place of the documents (009 US5), from the documents' own bar.
+    const filesBtn = editing ? "" : h`<button class="btn btn2 sm" data-act="files-toggle" title="The project's files and what changed on this feature">Files</button>`;
+    return h`<div class="tabs">${tabs}${later}<div class="grow"></div><span class="row gap-8">${filesBtn}${status}</span></div><div id="doc-pane">${docPane()}</div>`;
   }
 
   function lockBar(f) {
@@ -120,7 +122,6 @@
           <h1 class="page-title">${f.name} <span class="small muted">· ${f.title} · spec session with the lead</span></h1></div>
         <div class="grow"></div>
         <div id="stepper">${stepper(f)}</div>
-        <button class="btn${files ? "" : " btn2"} sm" data-act="files-toggle" aria-pressed="${files ? "true" : "false"}">${files ? "Files ✕" : "Files"}</button>
       </div>
       <div class="studio${chatWide("spec") ? " chat-wide" : ""}">
         <section class="chat-col narrow" aria-label="Conversation">
@@ -151,7 +152,8 @@
 
   // 009 US5: the Files drawer in place of the documents, widening over them when a file is open.
   let files = null;
-  const filesHtml = () => h`<div class="${files.isOpen() ? "fs-wide" : "fs-list"}">${files.treeHtml()}${files.isOpen() ? h`<div class="fw-view">${files.viewHtml()}</div>` : ""}</div>`;
+  const filesHtml = () => h`<div class="row between mb-8"><b>Files</b><button class="btn btn2 sm" data-act="files-toggle">← Back to the documents</button></div>
+    <div class="${files.isOpen() ? "fs-wide" : "fs-list"}">${files.treeHtml()}${files.isOpen() ? h`<div class="fw-view">${files.viewHtml()}</div>` : ""}</div>`;
   function drawFiles(focusId) {
     const d = document.getElementById("files-drawer");
     if (!d) return;
@@ -168,12 +170,6 @@
     const c2 = d.querySelector(".fcode");
     if (c2) c2.scrollTop = c1;
     if (files) files.settle(focusId || focusKeep);
-    const b = document.querySelector("[data-act=files-toggle]");
-    if (b) {
-      b.classList.toggle("btn2", !files);
-      b.setAttribute("aria-pressed", files ? "true" : "false");
-      b.textContent = files ? "Files ✕" : "Files";
-    }
   }
   function filesToggle() {
     if (files) {

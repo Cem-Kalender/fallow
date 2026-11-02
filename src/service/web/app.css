@@ -243,6 +243,10 @@ dialog.confirm ul { margin: 10px 0 0; padding-left: 20px; color: var(--body); li
 .chat-col.narrow { flex: 1 1 420px; max-width: 620px; border-right: 1px solid var(--line); }
 .chat-head { padding: 12px 24px; border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: 10px; flex-wrap: wrap; background: var(--panel); }
 .chat { flex: 1; padding: 20px 24px; display: flex; flex-direction: column; gap: 16px; width: 100%; max-width: 860px; margin: 0 auto; overflow-y: auto; }
+/* The messages' own list (009: the working indicator sits after it): laid out as the chat is. */
+#chat-list { display: flex; flex-direction: column; gap: 16px; }
+/* A long document name in a reply wraps instead of widening the chat. */
+.lead-body .pill { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
 .you { align-self: flex-end; max-width: 85%; background: var(--ink); color: #FFFFFF; padding: 12px 14px; border-radius: 12px 12px 2px 12px; font-size: 14px; line-height: 1.5; white-space: pre-wrap; }
 .lead { display: flex; gap: 10px; max-width: 100%; }
 .avatar { flex: none; width: 28px; height: 28px; border-radius: 8px; background: var(--spec-bg); color: var(--spec); font-size: 12px; font-weight: 700; display: flex; align-items: center; justify-content: center; }
