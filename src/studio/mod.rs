@@ -1384,6 +1384,26 @@ impl Studio {
         if title.is_empty() {
             return Err("name the feature".into());
         }
+        // One feature per name: a proposal started twice, or a double click, opens no second
+        // one (009, FR-042). Names compare without case and with spaces collapsed.
+        let same = |t: &str| {
+            t.split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ")
+                .to_lowercase()
+        };
+        if let Some(f) = self
+            .project(project_id)?
+            .features
+            .iter()
+            .find(|f| same(&f.title) == same(title))
+        {
+            let n = f.dir.rsplit('/').next().unwrap_or(&f.dir);
+            return Err(format!(
+                "a feature named \"{}\" exists already ({n})",
+                f.title
+            ));
+        }
         // The engineer's pick, or the project's lead (009, FR-014).
         let lead = match lead {
             Some(l) => {

@@ -17,11 +17,29 @@
     return pills;
   }
 
-  function featureLink(p, f) {
+  function featureHref(p, f) {
     const loop = f.stage === "building" || f.stage === "ready_to_merge" || f.stage === "done_unverified" || f.stage === "merged" || f.stage === "stopped";
-    const href = `#/p/${encodeURIComponent(p.id)}/f/${encodeURIComponent(f.name)}${loop ? "/loop" : ""}`;
+    return `#/p/${encodeURIComponent(p.id)}/f/${encodeURIComponent(f.name)}${loop ? "/loop" : ""}`;
+  }
+
+  function featureLink(p, f) {
     const n = f.name.split("-")[0];
-    return h`<a class="feat" href="${href}"><span><span class="mono tiny muted">${n}</span> ${f.title}</span>${stagePill(f.stage)}</a>`;
+    return h`<a class="feat" href="${featureHref(p, f)}"><span><span class="mono tiny muted">${n}</span> ${f.title}</span>${stagePill(f.stage)}</a>`;
+  }
+
+  // The project's feature of that name, if one was started (FR-042).
+  function featureNamed(p, title) {
+    return (p.feature_list || []).find((f) => norm(f.title) === norm(title)) || null;
+  }
+
+  // A proposal in the chat that was started shows so, with the way to its feature, in place of
+  // its "Start spec session" (FR-042).
+  function markStarted() {
+    for (const card of document.querySelectorAll("#chat-list .proposal[data-proposal]")) {
+      const f = featureNamed(state, card.dataset.proposal);
+      const b = f && card.querySelector("[data-act=start-feature]");
+      if (b) b.outerHTML = h`<a class="btn btn2" href="${featureHref(state, f)}">Started · open ${f.name.split("-")[0]}</a>`.s;
+    }
   }
 
   // The features the lead proposed in this conversation that are not started yet: a feature of
@@ -68,6 +86,7 @@
     const chat = document.getElementById("chat");
     const wasAtEnd = atEnd(chat);
     document.getElementById("chat-list").innerHTML = h`${messages(c)}`.s;
+    markStarted();
     if (wasAtEnd) chat.scrollTop = chat.scrollHeight;
     syncComposer(c);
     drawSide();
@@ -128,6 +147,7 @@
       </div></div>`.s;
     drawn = { rail: "", panel: "" };
     placeSide();
+    markStarted();
     const chat = document.getElementById("chat");
     chat.scrollTop = chat.scrollHeight;
     // What the designer's "Ask the lead" left for the message box; sent only by the engineer.
@@ -164,21 +184,27 @@
     ];
   }
 
+  // An answer for a page the engineer has left (another screen, or another project) is dropped:
+  // it never becomes the state of the page they are on.
   async function load(app, id) {
     try {
-      state = await get(`/api/projects/${encodeURIComponent(id)}`);
-      if (!state.conversation) {
+      let s = await get(`/api/projects/${encodeURIComponent(id)}`);
+      if (!Fallow.here(app)) return;
+      if (!s.conversation) {
         await post(`/api/projects/${encodeURIComponent(id)}/conversation`);
-        state = await get(`/api/projects/${encodeURIComponent(id)}`);
+        s = await get(`/api/projects/${encodeURIComponent(id)}`);
+        if (!Fallow.here(app)) return;
       }
+      state = s;
       render(app);
     } catch (e) {
-      app.innerHTML = h`<div class="page"><div class="card empty">${e.message}</div></div>`.s;
+      if (Fallow.here(app)) app.innerHTML = h`<div class="page"><div class="card empty">${e.message}</div></div>`.s;
     }
   }
 
   // ---- The side rail: proposals and what the lead knows, opened at will ----------------------
   let side = null; // "proposals", "knows" or null (closed)
+  let starting = null; // the project whose new feature is on its way to Fallow
   let drawn = { rail: "", panel: "" }; // what the rail and the panel were last given
   let shown = null; // the proposal "Where it was proposed" brought into view, while marked
   let unmark = 0; // the timer that ends that mark
@@ -386,7 +412,9 @@
       load(app, r.project).then(() => {
         if (!Fallow.here(app)) return;
         if (stop) stop();
-        const conv = state && state.conversation && state.conversation.id;
+        stop = null;
+        // Only this project's conversation: a page that failed to load listens to nothing.
+        const conv = state && state.id === r.project && state.conversation && state.conversation.id;
         if (conv) stop = live(`conv:${conv}`, () => load(app, r.project));
       });
     },
@@ -445,11 +473,48 @@
         if (name === "new-feature" || name === "start-feature") {
           const title = name === "start-feature" ? el.dataset.title : document.getElementById("feature-title").value.trim();
           if (!title) return alertLine("Name the feature first.");
-          const sel = document.getElementById("feature-lead");
-          const body = { title };
-          if (name === "new-feature" && sel && sel.value) body.lead = sel.value;
-          const f = await post(`/api/projects/${encodeURIComponent(state.id)}/features`, body);
-          location.hash = `#/p/${encodeURIComponent(state.id)}/f/${encodeURIComponent(f.feature)}`;
+          // A proposal already started opens its feature (FR-042).
+          const had = featureNamed(state, title);
+          if (had && name === "start-feature") { location.hash = featureHref(state, had); return; }
+          if (had) return alertLine(`A feature named "${had.title}" exists already (${had.name.split("-")[0]}).`);
+          // One request at a time: a second click while it is on its way does nothing.
+          if (starting === state.id) return;
+          const pid = state.id;
+          starting = pid;
+          const button = name === "start-feature" ? el : el.querySelector("[type=submit]");
+          if (button) button.disabled = true;
+          try {
+            const sel = document.getElementById("feature-lead");
+            const body = { title };
+            if (name === "new-feature" && sel && sel.value) body.lead = sel.value;
+            const app = current.app;
+            // Still on this project's page: an answer that comes after the engineer left changes
+            // nothing where they went.
+            const stillHere = () => {
+              const s = document.getElementById("project-screen");
+              return Fallow.here(app) && !!s && s.dataset.id === pid;
+            };
+            let f;
+            try {
+              f = await post(`/api/projects/${encodeURIComponent(pid)}/features`, body);
+            } catch (e) {
+              // Started meanwhile (another window): the page learns of it, and a proposal opens it.
+              // Left meanwhile: nothing is said or opened where the engineer went.
+              if (!stillHere()) return;
+              if (!/exists already/.test(e.message)) throw e;
+              await load(app, pid);
+              if (!stillHere()) return;
+              const now = featureNamed(state, title);
+              if (now && name === "start-feature") { location.hash = featureHref(state, now); return; }
+              if (now) return alertLine(`A feature named "${now.title}" exists already (${now.name.split("-")[0]}).`);
+              throw e;
+            }
+            // Left meanwhile: the engineer stays where they went.
+            if (stillHere()) location.hash = `#/p/${encodeURIComponent(pid)}/f/${encodeURIComponent(f.feature)}`;
+          } finally {
+            if (starting === pid) starting = null;
+            if (button && button.isConnected) button.disabled = false;
+          }
           return;
         }
         if (name === "notifications") {

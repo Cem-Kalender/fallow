@@ -1,8 +1,9 @@
-# The project page side rail: behaviour check (T042)
+# The project page side rail: behaviour check (T042, T044)
 
 Run on 2026-11-02 against `tests/visual_009.rs` (fake runtime, its own port), with
 `node checks/flow.js <url> checks/rail checks/rail-flow.json`. Every step passed; no page errors.
-Steps 9b, 9c, 11b, 12b and 12c were added for the review findings (T043). Screenshots in `rail/`.
+Steps 9b, 9c, 11b, 12b and 12c were added for the review findings (T043), 15b-15d and 17 for one
+feature per name and the reviews of it (T044). Screenshots in `rail/`.
 
 ```text
 helpers => "ok"
@@ -29,6 +30,10 @@ narrow => {}
 14 narrow window: the panel sits in the page above the chat, no sideways scroll => {"open":true,"position":"static","aboveChat":true,"sideways":false}
 wide => {}
 15 Start spec session from the panel starts it; back on the project it has left the panel => {"went":"#/p/repo/f/003-receipt-by-e-mail","badge":"1","titles":["Low-stock warning"]}
+15b the started proposal shows Started in the chat, with the way to its feature => {"startButton":false,"link":"Started · open 003","href":"#/p/repo/f/003-receipt-by-e-mail"}
+15c clicking Start three times at once makes one feature => {"went":"#/p/repo/f/004-low-stock-warning","posts":1,"alerted":false,"added":1,"lowStock":1}
+15d a second feature of that name is refused by Fallow; the chat's Started link opens the feature => {"server":"refused: a feature named \"Low-stock warning\" exists already (004-low-stock-warning)","opened":"#/p/repo/f/004-low-stock-warning","cardLink":"Started · open 004"}
 16 leaving the project closes the panel; it comes back closed => {"open":false,"expanded":"false"}
+17 a project page that fails to load listens to no other project => {"errorCard":true,"reloadsOfTheMissingProject":0}
 page errors: none
 ```

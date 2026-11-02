@@ -97,6 +97,17 @@ output = { reply = "I saw your edit.", step = "clarify" }
     )
     .unwrap();
     assert_eq!(f["feature"], "001-cart");
+    // 009 FR-042: one feature per name, whatever its case and spacing.
+    let again = sreq(
+        tx,
+        Req::NewFeature {
+            project: project.clone(),
+            title: "  cart ".into(),
+            lead: None,
+        },
+    )
+    .unwrap_err();
+    assert!(again.contains("exists already (001-cart)"), "{again}");
     let sc = f["conversation"].as_str().unwrap().to_string();
     sreq(
         tx,

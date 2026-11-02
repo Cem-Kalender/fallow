@@ -422,6 +422,7 @@ After every phase, an independent fresh-context reviewer verifies it, and the im
 - [X] T041 The rail in `src/service/web/screens/project.js` and `src/service/web/app.css`: the right column and "Ask the lead to" removed; the Features/Files column 340 px; "Proposed features" (unstarted proposals with summary, Start spec session, Where it was proposed; count on the icon) and "What the lead knows"; open, close, Escape, click elsewhere, focus, live updates, the message box kept in sight, the narrow layout, and both panels in the `/` menu (FR-039–FR-041). The chat's proposal card carries its title (`data-proposal`) in `src/service/web/app.js`.
 - [X] T042 Demo proposals in `tests/visual_009.rs` (two unstarted, one with an existing feature's name) and the behaviour check `checks/rail-flow.json` (run with `checks/flow.js`): 16 steps, one per behaviour of FR-039–FR-041; results in `checks/rail.md`, screenshots in `checks/rail/`.
 - [X] T043 Fresh-context review of T041–T042, findings fixed, approved.
+- [X] T044 One feature per name (FR-042): `new_feature` in `src/studio/mod.rs` refuses a name in use (test in `tests/us1_conversation.rs`); `src/service/web/screens/project.js` opens the existing feature for a started proposal, marks it "Started" in the chat, and ignores clicks while a feature is on its way; steps 15b–15d in `checks/rail-flow.json`; fresh-context review. From the reviews: a project's page drops answers for a page the engineer has left (`load`), and subscribes only to its own project's conversation (step 17).
 
 ## Dependencies & Execution Order
 
