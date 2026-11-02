@@ -95,37 +95,46 @@ pub fn find_program(program: &str) -> Option<std::path::PathBuf> {
 }
 
 /// The program to start for `program`: as [`find_program`] finds it, except that npm's batch
-/// shim (`claude.cmd`) is replaced by the `.exe` it starts, when it names one that exists. A
-/// batch file runs through `cmd.exe`, which cannot take an argument holding a line break (Rust
-/// refuses to start it), and an agent's instructions are such arguments.
+/// shim (`claude.cmd`) is replaced by the `.exe` it starts. A batch file runs through `cmd.exe`,
+/// which cannot take an argument holding a line break (Rust refuses to start it), and an
+/// agent's instructions are such arguments.
 pub fn program_to_run(program: &str) -> Option<std::path::PathBuf> {
-    let found = find_program(program)?;
+    find_program(program).map(|found| past_shim(&found))
+}
+
+/// The `.exe` an npm shim starts, also while it is missing: an update deletes and writes it
+/// again, and the shim in its place would refuse the agent's arguments ("batch file arguments
+/// are invalid"). A missing program is waited for and tried again by the agent's start. Any
+/// other program, or a shim that names no `.exe`, is kept as it is.
+fn past_shim(found: &std::path::Path) -> std::path::PathBuf {
     let ext = found
         .extension()
         .and_then(|e| e.to_str())
         .map(str::to_ascii_lowercase);
     if !matches!(ext.as_deref(), Some("cmd" | "bat")) {
-        return Some(found);
+        return found.to_path_buf();
     }
-    let shim = std::fs::read_to_string(&found).unwrap_or_default();
-    let dir = found.parent()?;
-    Some(
-        shim_target(&shim)
-            .map(|t| dir.join(t))
-            .filter(|t| t.is_file())
-            .unwrap_or(found),
-    )
+    let shim = std::fs::read_to_string(found).unwrap_or_default();
+    match (shim_target(&shim), found.parent()) {
+        (Some(t), Some(dir)) => dir.join(t),
+        _ => found.to_path_buf(),
+    }
 }
 
 /// The `.exe` an npm batch shim starts, relative to the shim's folder: the quoted path after
-/// `%dp0%\` (or `%~dp0\`) that ends in `.exe`.
+/// `%dp0%\` (or `%~dp0\`) that ends in `.exe` and is given the shim's arguments (`%*`). A
+/// node program's shim names `node.exe` only to look for it (`IF EXIST`, `SET`): not that.
 pub fn shim_target(shim: &str) -> Option<String> {
     for line in shim.lines() {
         for start in ["\"%dp0%\\", "\"%~dp0\\"] {
             if let Some(i) = line.find(start) {
                 let rest = &line[i + start.len()..];
-                let target = &rest[..rest.find('"')?];
-                if target.to_ascii_lowercase().ends_with(".exe") && !target.contains('%') {
+                let end = rest.find('"')?;
+                let target = &rest[..end];
+                if target.to_ascii_lowercase().ends_with(".exe")
+                    && !target.contains('%')
+                    && rest[end + 1..].trim_start().starts_with("%*")
+                {
                     return Some(target.to_string());
                 }
             }
@@ -231,7 +240,7 @@ mod imp {
 
 #[cfg(test)]
 mod tests {
-    use super::shim_target;
+    use super::{past_shim, shim_target};
 
     #[test]
     fn npm_shims_name_the_exe_they_start() {
@@ -255,5 +264,42 @@ mod tests {
             None
         );
         assert_eq!(shim_target("echo hello"), None);
+        // npm's shim for a node program: node.exe is looked for, not started with the arguments.
+        let node = r#"@ECHO off
+GOTO start
+:find_dp0
+SET dp0=%~dp0
+EXIT /b
+:start
+SETLOCAL
+CALL :find_dp0
+
+IF EXIST "%dp0%\node.exe" (
+  SET "_prog=%dp0%\node.exe"
+) ELSE (
+  SET "_prog=node"
+  SET PATHEXT=%PATHEXT:;.JS;=;%
+)
+
+endLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & "%_prog%"  "%dp0%\node_modules\@anthropic-ai\claude-code\cli.js" %*
+"#;
+        assert_eq!(shim_target(node), None);
+    }
+
+    #[test]
+    fn a_shim_leads_to_its_exe_also_while_an_update_has_removed_it() {
+        let dir = std::env::temp_dir().join(format!("fallow-shim-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let shim = dir.join("claude.cmd");
+        std::fs::write(&shim, "@ECHO off\r\n\"%dp0%\\bin\\claude.exe\"   %*\r\n").unwrap();
+        // Not there (the update deleted it): still the exe, never the shim.
+        assert_eq!(past_shim(&shim), dir.join(r"bin\claude.exe"));
+        // A shim naming no exe, and any other program, stay as they are.
+        let node = dir.join("tool.cmd");
+        std::fs::write(&node, "@node \"%~dp0\\cli.js\" %*\r\n").unwrap();
+        assert_eq!(past_shim(&node), node);
+        let exe = dir.join("other.exe");
+        assert_eq!(past_shim(&exe), exe);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

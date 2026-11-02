@@ -17,7 +17,7 @@ use serde_json::Value;
 
 use super::engine::{Ctx, Done, Msg, Run};
 use super::events::*;
-use super::machine::{self, BLOCKED, INTERRUPTED, SESSION_LOST};
+use super::machine::{self, BLOCKED, INTERRUPTED, NOT_STARTED, SESSION_LOST};
 use super::state::{LoopState, PhaseStatus, Step};
 use crate::agent::{self, Call, Session, prompts, rights};
 use crate::config::GateDef;
@@ -32,6 +32,8 @@ const HANDOVER_TRIES: usize = 2;
 const CHECK_TRIES: usize = 3;
 /// The start of a reason that a verdict was incomplete.
 const INCOMPLETE: &str = "incomplete verdict: ";
+/// How many failed starts of a step in a row before the engineer is asked.
+const START_TRIES: usize = 3;
 
 fn lp(run: &Run) -> Result<LoopState, String> {
     run.state
@@ -559,6 +561,7 @@ pub(crate) fn has_findings(reasons: &[String]) -> bool {
             INCOMPLETE,
             machine::INTERRUPTED,
             machine::SESSION_LOST,
+            machine::NOT_STARTED,
             machine::BLOCKED,
         ]
         .iter()
@@ -789,15 +792,11 @@ fn requeue_cut_short(run: &mut Run) -> Result<bool, String> {
     // Every step cut short with nothing after it of the same kind, part and agent: several
     // checkers may have run alongside each other when Fallow stopped (008 R-7). All of them
     // in one pass, the oldest first, so they share what is left of the budget.
-    let cut = |s: &Step| {
-        machine::first_reason(s)
-            .is_some_and(|r| r.starts_with(INTERRUPTED) || r.starts_with(SESSION_LOST))
-    };
     let cut_short: Vec<Step> = run
         .state
         .steps
         .values()
-        .filter(|s| cut(s))
+        .filter(|s| machine::cut_short(s))
         .filter(|s| {
             !run.state
                 .steps
@@ -806,9 +805,17 @@ fn requeue_cut_short(run: &mut Run) -> Result<bool, String> {
         })
         .cloned()
         .collect();
+    // All of them first, then one question for the engineer if starts kept failing.
     let mut queued = false;
+    let mut failed = Vec::new();
     for last in cut_short {
-        queued |= requeue_one(run, &last)?;
+        match requeue_one(run, &last) {
+            Ok(q) => queued |= q,
+            Err(e) => failed.push(e),
+        }
+    }
+    if !failed.is_empty() {
+        return Err(failed.join("; "));
     }
     Ok(queued)
 }
@@ -850,6 +857,42 @@ fn requeue_one(run: &mut Run, last: &Step) -> Result<bool, String> {
             "resumed after Fallow stopped",
             text,
         )?;
+        return Ok(true);
+    }
+    if reason.starts_with(NOT_STARTED) {
+        // The agent never saw its instruction: the same one again, in the session it was to
+        // resume, if any and not lost (one it was to begin was never begun).
+        let session = last
+            .resume
+            .clone()
+            .filter(|s| !run.state.lost_sessions.contains(s));
+        queue(
+            run,
+            last.kind,
+            last.part.as_deref(),
+            last.task.as_deref(),
+            last.phase,
+            &def,
+            session,
+            "again: the agent could not be started",
+            machine::instruction_of(run, last.n),
+        )?;
+        // Starts that fail one after the other are not tried for ever: every third, the
+        // engineer is asked (retry starts the step queued here).
+        let same = |x: &&Step| x.kind == last.kind && x.part == last.part && x.def == last.def;
+        let mut tries: Vec<&Step> = run.state.steps.values().filter(same).collect();
+        tries.sort_by_key(|x| std::cmp::Reverse(x.n));
+        let failed = tries
+            .iter()
+            .filter(|x| x.end.is_some())
+            .take_while(|x| machine::first_reason(x).is_some_and(|r| r.starts_with(NOT_STARTED)))
+            .count();
+        if failed % START_TRIES == 0 {
+            return Err(format!(
+                "{def} could not be started {failed} times in a row: {}",
+                reason.trim_start_matches(NOT_STARTED)
+            ));
+        }
         return Ok(true);
     }
     if reason.starts_with(SESSION_LOST) {
@@ -2429,6 +2472,12 @@ pub fn process(run: &mut Run, ctx: &Ctx, n: u32) -> Result<(), String> {
                 run.append(Event::SessionLost { session: s })?;
             }
             return verified(run, false, vec![format!("{SESSION_LOST}{why}")], None);
+        }
+        // An agent whose program could not be launched never saw its instruction: no attempt
+        // at the work, so no repair; the same step goes again. (A runtime that is not there at
+        // all ends before the step starts, and is dealt with as before.)
+        if never_started && step.started.is_some() {
+            return verified(run, false, vec![format!("{NOT_STARTED}{why}")], None);
         }
         // A checker that did not finish gave no verdict: it is asked again, not repaired.
         if step.kind == StepKind::Review {

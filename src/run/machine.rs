@@ -24,6 +24,9 @@ use crate::verify::{gates, git};
 pub const BLOCKED: &str = "blocked: ";
 pub const INTERRUPTED: &str = "interrupted: ";
 pub const SESSION_LOST: &str = "session lost: ";
+/// A step whose agent could not be started: it never saw its instruction, so it is no attempt
+/// at the work, and the same step goes again (for example while the runtime updates itself).
+pub const NOT_STARTED: &str = "not started: ";
 /// The start of a question raised because Fallow itself could not go on (a transient error).
 pub const COULD_NOT_GO_ON: &str = "Fallow could not go on: ";
 /// The detail of the engineer's "go on" after a pause (a retry's detail is "retry").
@@ -60,10 +63,12 @@ pub(crate) fn activity_lines(run: &Run, n: u32) -> usize {
         .unwrap_or(0)
 }
 
-/// A step cut short by Fallow stopping or by a lost session: the next step takes it up again,
-/// so it is no attempt of its own.
+/// A step cut short by Fallow stopping, by a lost session or by an agent that could not be
+/// started: the next step takes it up again, so it is no attempt of its own.
 pub(crate) fn cut_short(s: &Step) -> bool {
-    first_reason(s).is_some_and(|r| r.starts_with(INTERRUPTED) || r.starts_with(SESSION_LOST))
+    first_reason(s).is_some_and(|r| {
+        r.starts_with(INTERRUPTED) || r.starts_with(SESSION_LOST) || r.starts_with(NOT_STARTED)
+    })
 }
 
 /// After a restart (research R-2): steps that were running are recorded as interrupted and

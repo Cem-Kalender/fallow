@@ -131,6 +131,16 @@ fn fallow_lines(run: &Run, last_line: &BTreeMap<u32, u64>) -> Vec<Value> {
             out.push(e);
             continue;
         }
+        if let Some(why) = first.strip_prefix(super::machine::NOT_STARTED) {
+            out.push(check(
+                at,
+                task,
+                format!("{label} {what} did not start, it goes again: {why}"),
+                None,
+                String::new(),
+            ));
+            continue;
+        }
         if first.starts_with(super::machine::INTERRUPTED)
             || first.starts_with(super::machine::SESSION_LOST)
         {

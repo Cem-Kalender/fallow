@@ -207,3 +207,106 @@ fn the_engineers_options_let_the_loop_go_on() {
     drop(e);
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// 2026-11-02: the builder's program could not be started (Claude Code updating itself: npm's
+/// shim was there, its `.exe` not, and the shim refused the agent's arguments). A step whose
+/// agent never started is no attempt at the task: it uses no repair round and goes again as
+/// the same step, with its instruction; after three such starts in a row the engineer is
+/// asked, and "retry" starts it.
+#[cfg(windows)]
+#[test]
+fn an_agent_that_could_not_be_started_uses_no_repair_and_goes_again_as_the_same_step() {
+    use fallow::run::engine::Request;
+    let root = scratch("not-started");
+    // The builder runs on the fake runtime, through a batch file that cannot take its
+    // arguments: Rust refuses to start it ("batch file arguments are invalid").
+    let shims = root.join("shims");
+    std::fs::create_dir_all(&shims).unwrap();
+    let shim = shims.join("agent.cmd");
+    std::fs::write(&shim, "@echo off\r\nexit /b 1\r\n").unwrap();
+    let agents = root.join("config").join("agents");
+    std::fs::create_dir_all(&agents).unwrap();
+    let shipped = fallow::defs::DEFAULT_AGENTS
+        .iter()
+        .find(|(n, _)| *n == "builder")
+        .unwrap()
+        .1;
+    std::fs::write(
+        agents.join("builder.md"),
+        shipped.replace("runtime: claude", "runtime: fake"),
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("settings.extra.toml"),
+        format!(
+            "[agents.fake]\ncommand = {:?}\nargs = [\"--scenario\", {:?}]\n",
+            shim.display().to_string(),
+            root.join("scenario.toml").display().to_string()
+        ),
+    )
+    .unwrap();
+    let (e, _repo, id) = locked_calc(&root, &calc_loop_ok(), None);
+    let tx = &e.tx;
+    let v = wait_for(tx, id, "the engineer asked", |v| !v["needs"].is_null());
+    let why = v["needs"]["why"].as_str().unwrap();
+    assert!(
+        why.contains("builder could not be started 3 times in a row")
+            && why.contains("batch file arguments are invalid"),
+        "{why}"
+    );
+    let b = steps_of(&v, "build", "T001");
+    // Three starts that failed, and the fourth queued for the retry; no repair at all.
+    assert_eq!(b.len(), 4, "{b:?}");
+    assert!(steps_of(&v, "repair", "T001").is_empty(), "no repair round");
+    assert_eq!(v["feature_loop"]["tasks"]["T001"]["repairs"], 0);
+    let prompt = |s: &Value| {
+        std::fs::read_to_string(
+            root.join("data/runs")
+                .join(id.to_string())
+                .join("steps")
+                .join(format!("{}.prompt", s["n"])),
+        )
+        .unwrap_or_default()
+    };
+    let first = prompt(b[0]);
+    assert!(first.contains("T001"), "{first}");
+    // The program is back (the update is done): npm's shim and the `.exe` it starts.
+    let bin = shims.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    std::fs::copy(env!("CARGO_BIN_EXE_fallow-fake-agent"), bin.join("agent.exe")).unwrap();
+    std::fs::write(
+        &shim,
+        "@ECHO off\r\nGOTO start\r\n:find_dp0\r\nSET dp0=%~dp0\r\nEXIT /b\r\n:start\r\nSETLOCAL\r\nCALL :find_dp0\r\n\"%dp0%\\bin\\agent.exe\"   %*\r\n",
+    )
+    .unwrap();
+    ask(tx, Request::Retry { id }).unwrap();
+    let v = wait_for(tx, id, "T001 accepted", |v| {
+        v["feature_loop"]["tasks"]["T001"]["state"] == "accepted"
+    });
+    assert_eq!(v["feature_loop"]["tasks"]["T001"]["repairs"], 0);
+    assert!(steps_of(&v, "repair", "T001").is_empty(), "no repair round");
+    let b = steps_of(&v, "build", "T001");
+    assert_eq!(b.len(), 4, "{b:?}");
+    // Every start was given the task's own instruction, never a repair of a failure.
+    for s in &b {
+        assert_eq!(prompt(s), first, "step {}", s["n"]);
+    }
+    // The activity says so, and shows no failure of the task.
+    let a = ask(
+        tx,
+        Request::LoopActivity {
+            id,
+            filter: fallow::run::activity::Filter::default(),
+        },
+    )
+    .unwrap()
+    .to_string();
+    assert_eq!(
+        a.matches("build T001 did not start, it goes again").count(),
+        3,
+        "{a}"
+    );
+    assert!(!a.contains("T001 not accepted"), "{a}");
+    drop(e);
+    let _ = std::fs::remove_dir_all(&root);
+}
