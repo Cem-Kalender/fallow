@@ -115,11 +115,12 @@
       const open = state.open.has(p.n) || (p.n === v.current_phase && !state.closed.has(p.n)) || (state.task && p.tasks.some((t) => t.id === state.task));
       const head = h`<button class="phase ${cls}" data-act="phase" data-n="${p.n}" aria-expanded="${open ? "true" : "false"}">Phase ${p.label || p.n} · ${fmt(p.title)} <span class="count">${p.done}/${p.tasks.length}</span></button>`;
       if (!open) return head;
-      // One line per task, cut off; the chosen task shows all of its text (the engineer,
-      // 2026-11-02: the whole text of every task crowded the page).
+      // One line per task, cut off, the chosen one too: its whole text is in the task's card
+      // beside the list (the engineer, 2026-11-02: the whole text of every task crowded the
+      // page, and the chosen one's showed twice).
       const tile = (t, cls, mark, sub) => {
         const on = state.task === t.id;
-        return h`<button class="task${cls}${on ? " sel" : ""}" data-act="task" data-task="${t.id}" aria-expanded="${on ? "true" : "false"}"${raw(on ? "" : ` title="${Fallow.esc(`${t.id} ${bare(t.text)}`)}"`)}>${mark}<span class="tt${on ? "" : " one"}"><span class="mono tiny">${t.id}</span> ${fmt(t.text)}${sub ? h`<span class="sub">${sub}</span>` : ""}</span></button>`;
+        return h`<button class="task${cls}${on ? " sel" : ""}" data-act="task" data-task="${t.id}" aria-pressed="${on ? "true" : "false"}" title="${`${t.id} ${bare(t.text)}`}">${mark}<span class="tt one"><span class="mono tiny">${t.id}</span> ${fmt(t.text)}${sub ? h`<span class="sub">${sub}</span>` : ""}</span></button>`;
       };
       const tasks = p.tasks.map((t) => {
         if (t.state === "accepted") return tile(t, "", h`<span class="tick">✓</span>`);
@@ -507,6 +508,8 @@
     const focusKey = focused ? focused.dataset.key : null;
     const old = document.getElementById("feed");
     const keep = old ? old.scrollTop : 0;
+    // A scroll back the engineer made just before this update, not yet reported: taken now.
+    if (old && state.follow && !atEnd(old)) setFollow(false);
     // A live update leaves the page as the engineer has it (the engineer, 2026-11-02: an open
     // diff closed and the page jumped up at every agent action): the window's scroll, the open
     // diffs and where they are scrolled.
@@ -557,7 +560,7 @@
     if (state.follow) scrollFeed();
     else {
       const f = document.getElementById("feed");
-      if (f) f.scrollTop = keep;
+      if (f) { f.scrollTop = keep; state.feedTop = f.scrollTop; }
     }
     if (focusKey) {
       const again = document.querySelector(`.lg-graph [data-key="${CSS.escape(focusKey)}"]`);
@@ -600,7 +603,26 @@
   function scrollFeed() {
     if (!state.follow) return;
     const f = document.getElementById("feed");
-    if (f) f.scrollTop = f.scrollHeight;
+    if (f) { f.scrollTop = f.scrollHeight; state.feedTop = f.scrollTop; }
+  }
+
+  const atEnd = (f) => f.scrollHeight - f.scrollTop - f.clientHeight < 24;
+
+  function setFollow(on) {
+    state.follow = on;
+    const box = document.querySelector('#app [data-change="follow"]');
+    if (box) box.checked = on;
+  }
+
+  // The engineer scrolls the feed back to read: it stops following, so new lines no longer
+  // pull it to the end (the engineer, 2026-11-02: the feed jumped at every agent line); back at
+  // the end, it follows again. The box shows which. Where the page put the feed itself (drawn
+  // again, or kept where it was) is not the engineer's scroll, and changes nothing.
+  function feedScrolled(e) {
+    const f = e.target;
+    if (!state || !f || f.id !== "feed" || f.scrollTop === state.feedTop) return;
+    state.feedTop = null;
+    if (atEnd(f) !== state.follow) setFollow(atEnd(f));
   }
 
   // One refresh at a time, and at most a few a second: a burst of agent lines asks for one
@@ -639,6 +661,8 @@
   async function enter(app, r) {
     if (stop) stop();
     state = { project: r.project, feature: r.feature, id: null, view: null, feed: [], next: 0, tab: "all", follow: true, task: null, detail: null, open: new Set(), closed: new Set(), vopen: null, vlast: {} };
+    // Scrolling does not bubble: caught on the way down, for the feed drawn again at every update.
+    app.addEventListener("scroll", feedScrolled, true);
     app.innerHTML = h`<div class="page"><div class="card empty">Loading the loop…</div></div>`.s;
     try {
       const f = await get(`/api/features/${encodeURIComponent(r.project)}/${encodeURIComponent(r.feature)}`);
@@ -693,7 +717,7 @@
         state.follow = el.checked;
         return scrollFeed();
       case "task":
-        // The chosen task again folds it back to one line.
+        // The chosen task again closes its card.
         state.task = el.dataset.task && el.dataset.task !== state.task ? el.dataset.task : null;
         state.detail = null;
         render(app);
