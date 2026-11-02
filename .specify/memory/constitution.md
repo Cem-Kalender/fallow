@@ -1,29 +1,28 @@
 <!--
 Sync Impact Report
 ==================
-Version change: 6.0.0 → 6.1.0
-Bump rationale: MINOR. Guidance materially expanded for feature 007 (Fallow Studio): the lead's
-answers, agents the engineer defines, chat modes, and what Fallow may write in a project. No
-principle removed or loosened; budgets unchanged. Approved by the project owner on 2026-10-30.
-Source: specs/007-fallow-studio/constitution-proposal.md.
+Version change: 6.1.0 → 6.2.0
+Bump rationale: MINOR. A principle added (IX. Runtime-Agnostic); no principle removed, redefined
+or loosened; budgets unchanged. Approved by the project owner on 2026-11-02, after a fix whose
+first version relied on how Claude Code behaves (a step's agent "begun" judged from what that
+runtime streams); the fix now uses a fact Fallow records itself (the runtime contract's
+`launched` event).
 
-Modified principles:
-  - I. Verified, Not Trusted: one bullet added (verified vs. not verified results)
-  - II. The Engineer Decides: the autonomy bullet rewritten (the lead's answers)
-  - III. Coordination in Code, Decisions in the Repo: the messaging bullet rewritten (ask)
-  - V. Local and Private by Construction: one bullet added (notifications)
-  - VI. Least Privilege: rights by kind, skip-permission options, and where Fallow writes
+Modified principles: none.
 
-Added sections: none. Removed sections: none.
+Added sections:
+  - IX. Runtime-Agnostic (after VIII. Small and Measured)
+
+Removed sections: none.
 
 Templates requiring updates: none. plan-template.md, spec-template.md and tasks-template.md read
-the constitution at runtime.
+the constitution at runtime; every Constitution Check now includes IX.
 
-Follow-up TODOs: 006's per-run `unrestricted` option (--dangerously-skip-permissions) is no
-longer allowed by VI and is removed in 007.
+Follow-up TODOs: none.
 
-Previous amendment (6.0.0): MAJOR. The constitution replaced for Fallow as the headless
-orchestrator. Source: specs/006-headless-orchestrator/constitution-proposal.md.
+Previous amendment (6.1.0): MINOR. Guidance expanded for feature 007 (Fallow Studio). Source:
+specs/007-fallow-studio/constitution-proposal.md. Before it (6.0.0): MAJOR, the constitution
+replaced for Fallow as the headless orchestrator.
 -->
 
 # Fallow Constitution
@@ -174,6 +173,21 @@ back into watching.
 Rationale: Fallow runs next to memory-hungry agents and must stay cheap, and claims about agent
 orchestration are easy to make and hard to earn.
 
+### IX. Runtime-Agnostic
+
+- Fallow's rules (the loop, the studio, the page) MUST hold for every runtime that implements the
+  runtime contract. They are decided from what Fallow observes itself (its own records of what it
+  started and received, git, the gates), never from how one runtime or model is known to behave.
+- What is particular to one runtime (its command line, output format, how it is installed) lives
+  only in that runtime's adapter. Anything Fallow needs from a runtime is part of the contract
+  every runtime implements.
+- Instructions to agents are plain text any model can follow: no runtime's built-in commands,
+  tools or file conventions are relied on.
+- Fallow's behaviour is tested on the fake runtime, through the same contract.
+
+Rationale: Fallow is meant to run any supplier's agents. A rule that only holds for one runtime
+breaks silently on the next, and ties the engineer to one supplier.
+
 ## Budgets & Measurement
 
 | Metric | Budget | Measured as |
@@ -217,4 +231,4 @@ orchestration are easy to make and hard to earn.
   section; unjustified violations block merge.
 - Compliance is reviewed at every pull request and at every release.
 
-**Version**: 6.1.0 | **Ratified**: 2026-10-13 | **Last Amended**: 2026-10-30
+**Version**: 6.2.0 | **Ratified**: 2026-10-13 | **Last Amended**: 2026-11-02
