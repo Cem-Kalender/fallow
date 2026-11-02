@@ -127,12 +127,35 @@ survey of the repository on 2026-11-02 (file references as of commit bc77490).
   along. No amendment needed.
 - **Alternatives**: keeping the blanket ban with an exemption list of lines (brittle).
 
-## R-11 Timeouts for external programs
+## R-11 Timeouts and prompts for external programs
 
 - **Decision**: A small runner in `src/publish/` that runs git or the hosting tool with a time limit
   (60 s for push and pull request creation, 20 s for reads), killing the process on expiry, and
   reports "timed out" as the failed step. Network work only ever runs on a thread, never on the
-  engine thread.
+  engine thread. No prompt may ever wait (only for the commands Fallow runs; the engineer's own
+  terminal is untouched):
+  - `GIT_TERMINAL_PROMPT=0` and `GH_PROMPT_DISABLED=1`;
+  - `GCM_INTERACTIVE=never`, so Git Credential Manager fails instead of opening a sign-in window;
+  - for SSH addresses, `GIT_SSH_COMMAND="ssh -o BatchMode=yes"` only when the engineer has set
+    neither `GIT_SSH_COMMAND` nor `core.sshCommand` (theirs is used as it is otherwise), so a key
+    with a passphrase and no agent fails instead of asking.
+  A failure for want of a sign-in says "sign in to <service> (git or gh), then try again".
 - **Why**: `verify::git::git()` has no time limit; a hanging `gh` (no network, a prompt) must not
   stall the engine (VII, VIII). `GH_PROMPT_DISABLED=1` and `GIT_TERMINAL_PROMPT=0` keep both from
   ever waiting for input.
+
+## R-12 Whose credentials: by construction, and the account shown
+
+- **Decision**: Fallow handles no credential. It runs `git` and `gh` as programs under the
+  engineer's own account (it never runs elevated, VI), inheriting their environment; each uses its
+  own sign-in: git its credential helper (on Windows usually Git Credential Manager), the SSH key
+  or agent for SSH addresses, or `gh` when set up as git's helper; `gh` its stored login. Fallow
+  passes no password or token, reads none, and does not look for any in git's configuration
+  (`user.name`/`user.email` are authorship, not sign-in). The publish confirmation names the account
+  `gh` is signed in as (`gh auth status` prints the login: a username, not a secret), since the pull
+  request is opened as that account; the account git pushes with cannot be seen without touching
+  credentials, and is not shown.
+- **Why**: V ("with the engineer's credentials", "never reads secret values"); the engineer asked
+  how this is ensured (2026-11-02): it is, because Fallow never chooses or holds a credential.
+- **Alternatives**: reading `credential.helper` or tokens to check them (reads credential setup, and
+  proves nothing a failed push would not show).

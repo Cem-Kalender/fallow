@@ -101,20 +101,22 @@ After the pull request is opened, the engineer reviews and merges it on the remo
 **Recognizing the remote**
 
 - **FR-001**: For each project, Fallow MUST determine whether its repository has a remote for the target branch (the branch a feature is started from), which remote it is (hosting service and repository), the target branch's name there, and whether that branch is protected so that changes reach it only through a pull request.
-- **FR-002**: The project MUST show this next to its branch: "no remote"; the remote with its target branch and "protected" or "not protected"; "protection unknown" with the reason; or "Fallow cannot publish to this service yet". It MUST never present a guess as a fact.
+- **FR-002**: The project MUST show this next to its branch: "no remote"; the remote with its target branch and "protected" or "not protected"; "protection unknown" with the reason; or "<host>: Fallow can only merge locally there". It MUST never present a guess as a fact.
 - **FR-003**: Fallow MUST check again when the project is opened and when a loop of it reaches "ready to merge", and MUST show the time of the last check when it could not check now.
-- **FR-004**: Fallow MUST learn all of this only through git and the engineer's own command-line tool for the hosting service, run with the engineer's own sign-in. It MUST NOT read, store or show credentials or tokens.
+- **FR-004**: Fallow MUST learn all of this only through git and the engineer's own command-line tool for the hosting service, run as the engineer with their own sign-in. It MUST NOT read, store or show credentials or tokens. When a sign-in is missing, the tools MUST fail at once with what to do; Fallow MUST NOT wait on a sign-in prompt or window.
 
 **Publishing a finished loop**
 
 - **FR-005**: Without a remote for the target branch, or on a service Fallow cannot publish to, the loop's publishing MUST stay as today: the engineer's local Merge of the verified commit, which pushes nothing.
 - **FR-006**: With a remote whose target branch is protected, the loop page MUST offer "Push and open a pull request" as the only way to publish, and MUST say why.
-- **FR-007**: With a remote whose target branch is not protected, the loop page MUST offer "Push and open a pull request" first, and the local Merge as an alternative; the local Merge MUST push nothing. With the protection unknown, the loop page MUST offer both and say that the protection is unknown.
-- **FR-008**: Publishing MUST be confirmed by the engineer, naming the remote, the branch to push, the target branch and the commit.
+- **FR-007**: With a remote whose target branch is not protected, the loop page MUST offer "Push and open a pull request" first, and the local Merge as an alternative; the local Merge MUST push nothing. With the protection unknown, the loop page MUST offer both and say that the protection is unknown and that a local merge may not be pushable. When the target branch is not on the remote (never pushed), the loop page MUST offer only the local merge and say why ("<branch> is not on <owner/repo> yet").
+- **FR-008**: Publishing MUST be confirmed by the engineer, naming the remote, the branch to push, the target branch, the commit, and the account the hosting tool is signed in as (the pull request is opened as that account).
 - **FR-009**: Publishing MUST push the loop's own branch at exactly the verified commit, and MUST open a pull request from it into the target branch. Fallow MUST NOT push to the target branch, force-push, bypass protection, approve or merge its own pull request.
 - **FR-010**: The pull request's title MUST be the feature's name, and its description MUST be the loop's summary: the feature, every acceptance criterion with its evidence and verdict, the gates and their results against the baseline, the decisions with who took them, the repairs, the steps' agents and models, and the cost. It MUST state that it was verified by Fallow and that the merge is the engineer's.
 - **FR-011**: A loop MUST have at most one open pull request; publishing again while one is open MUST show it instead.
 - **FR-012**: When pushing or opening the pull request fails, the loop page MUST say which step failed and why in plain words, MUST leave nothing pushed that it does not report, and MUST let the engineer try again. A branch name taken on the remote by other commits MUST NOT be overwritten.
+
+(FR-019 to FR-021, added at clarification, follow below.)
 
 **Publishing when verified**
 
@@ -131,7 +133,7 @@ After the pull request is opened, the engineer reviews and merges it on the remo
 
 **Not tied to one hosting service**
 
-- **FR-017**: What is particular to one hosting service (how protection is read, how a pull request is opened and followed) MUST live in that service's adapter; the rules above MUST hold for every adapter. The first version MUST support GitHub, and MUST say plainly for any other service that Fallow merges locally there.
+- **FR-017**: What is particular to one hosting service (how protection is read, how a pull request is opened and followed) MUST live in that service's adapter; the rules above MUST hold for every adapter. The first version MUST support GitHub, and MUST say plainly for any other service: "<host>: Fallow can only merge locally there".
 
 **Activity and record**
 
@@ -149,7 +151,7 @@ After the pull request is opened, the engineer reviews and merges it on the remo
 
 - **SC-001**: In 100% of the test projects (no remote, protected target, unprotected target, unsupported service, remote unreachable), the project shows the remote state correctly, and never "protected" or "not protected" as a guess.
 - **SC-002**: Across all tests, zero pushes to a target branch, force-pushes, self-approvals or merges by Fallow.
-- **SC-003**: For a protected target, a finished loop is published as a pull request with the loop's summary in at most 2 actions of the engineer (the action and its confirmation), within 30 seconds on a normal connection.
+- **SC-003**: For a protected target, a finished loop is published as a pull request with the loop's summary in at most 2 actions of the engineer (the action and its confirmation), within 30 seconds on a normal connection (timed by hand on a real repository, quickstart Q7).
 - **SC-004**: The pushed branch on the remote is at exactly the verified commit in 100% of publications.
 - **SC-005**: A pull request merged on the remote shows as merged on the loop within 2 minutes in 95% of cases, and at once when the loop page is opened.
 - **SC-006**: Every failed publication names the failed step and a next step for the engineer; none leaves something on the remote that the page does not show.

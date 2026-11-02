@@ -8,8 +8,9 @@ outside the adapter, and hold for every adapter.
 pub trait Host: Send + Sync {
     /// "github". Shown with the remote.
     fn service(&self) -> &str;
-    /// Whether the engineer is signed in to the service's tool; Err with what to do when not.
-    fn signed_in(&self) -> Result<(), String>;
+    /// The account the engineer is signed in as with the service's tool (a username, shown in the
+    /// publish confirmation); Err with what to do when not signed in.
+    fn signed_in(&self) -> Result<String, String>;
     /// Whether changes reach `branch` of `repo` only through a pull request.
     fn protected(&self, repo: &Repo, branch: &str) -> Result<bool, String>;
     /// Opens a pull request from `head` into `base`; returns its number and address.
@@ -22,7 +23,7 @@ pub trait Host: Send + Sync {
 }
 ```
 
-Every method runs the engineer's own tool with a time limit (R-11), without prompts, and returns
+Every method runs the engineer's own tool with a time limit and no prompt or sign-in window (R-11), and returns
 an error in plain words naming the step. No method merges, approves, reviews, closes or edits a
 pull request, or changes a branch: there is no such method to call.
 
@@ -30,7 +31,7 @@ pull request, or changes a branch: there is no such method to call.
 
 | Method | Command (`gh`, with `GH_PROMPT_DISABLED=1`) |
 |---|---|
-| `signed_in` | `gh auth status --hostname github.com` (exit code only; never `--show-token`, never `gh auth token`) |
+| `signed_in` | `gh auth status --hostname github.com`: the exit code, and the login from its "Logged in to github.com account <login>" line; never `--show-token`, never `gh auth token` |
 | `protected` | `gh api repos/{o}/{r}/rules/branches/{b}` (a rule of type `pull_request` → yes); else `gh api repos/{o}/{r}/branches/{b}` (`protected: true` → yes); 404 for the branch → Err "the branch is not on the remote yet" |
 | `open` | `gh pr create --repo {o}/{r} --base {base} --head {head} --title {title} --body-file {body}`; the address printed; the number from it |
 | `state` | `gh pr view {n} --repo {o}/{r} --json state,mergedAt,url,statusCheckRollup` |

@@ -68,7 +68,7 @@ also Linux and macOS.
 - Fallow's own process opens no connection; only the engineer's git and `gh`, run by Fallow, reach
   the network, and only to publish and to read protection and pull request state (V).
 - No credential is read, stored or shown; never `gh auth token` or `--show-token`.
-- Prompts disabled for both tools (`GH_PROMPT_DISABLED=1`, `GIT_TERMINAL_PROMPT=0`).
+- No prompt or sign-in window ever waits: `GH_PROMPT_DISABLED=1`, `GIT_TERMINAL_PROMPT=0`, `GCM_INTERACTIVE=never`, SSH in batch mode unless the engineer set their own SSH command (R-11).
 - The rules live outside the GitHub adapter (FR-017; IX by analogy).
 
 **Scale/Scope**: one remote per project; a handful of loops publishing at once; pull requests
@@ -78,7 +78,7 @@ followed until merged or closed.
 
 *GATE: Must pass before Phase 0 research. Re-checked after Phase 1 design.*
 
-Checked against v6.3.0.
+Checked against v6.3.1 (V clarified on 2026-11-02 to cover reading the target's protection to show it on a project, finding D1 of /speckit-analyze).
 
 | Principle | How the design meets it | Status |
 |---|---|---|
@@ -86,7 +86,7 @@ Checked against v6.3.0.
 | II. The Engineer Decides | Publishing is the engineer's action, confirmed, or the engineer's choice at the lock ("when verified"); the merge of the pull request is always the engineer's, on the remote. Never a push to the target, a force, an approval or a merge by Fallow; a guard and a CI test hold it. With a protected remote target, only a pull request is offered. | PASS |
 | III. Coordination in Code | Publishing, following and restarts are the engine's code and the loop's record; no agent takes part. | PASS |
 | IV. Simplest Setup First | One adapter (GitHub), no waiting for checks or repairs in this version (clarified); a project without a remote works exactly as today. | PASS |
-| V. Local and Private | Fallow's process opens no connection: the engineer's own git and `gh` publish, read branch rules and pull request state, exactly the traffic V lists. No credential is read; no token is requested. Nothing is sent but the branch and the pull request the engineer asked for. | PASS |
+| V. Local and Private | Fallow's process opens no connection: the engineer's own git and `gh` publish, read branch rules and pull request state, and read the target's protection to show it on the project, exactly the traffic V lists (6.3.1). They run as the engineer with their own sign-in; no credential is read, no token requested, no prompt waited on (R-11, R-12). Nothing is sent but the branch and the pull request the engineer asked for. | PASS |
 | VI. Least Privilege | The tools run with the engineer's rights; Fallow asks them for no more than reading protection, pushing one new branch and opening one pull request. | PASS |
 | VII. Runs Survive | Stage Publishing and the new events are in the log; a restart mid-publication reconciles from the remote, never opening a second pull request (R-8). | PASS |
 | VIII. Small and Measured | No dependencies; one poll a minute per publishing loop; timed claims (SC-003, SC-005) have tests with the fake (polling interval, time limits). The idle memory benchmark still runs. | PASS |
@@ -106,7 +106,7 @@ reads, and three events; the only network is the engineer's tools, as V lists.
 ```text
 specs/010-publish-remote/
 ├── plan.md              # this file
-├── research.md          # R-1 to R-11
+├── research.md          # R-1 to R-12
 ├── data-model.md
 ├── quickstart.md        # Q1 to Q7
 ├── contracts/

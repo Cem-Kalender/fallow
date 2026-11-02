@@ -1,27 +1,23 @@
 <!--
 Sync Impact Report
 ==================
-Version change: 6.2.0 → 6.3.0
-Bump rationale: MINOR. Guidance materially expanded for solo sessions (a feature to come): the
-assistant acts on the engineer's word in a solo session, and its web and git-remote traffic is
-part of a run's allowed traffic. Nothing removed or loosened for loops: their merge, pull request
-and no-push rules are unchanged. Approved by the project owner on 2026-11-02.
+Version change: 6.3.0 → 6.3.1
+Bump rationale: PATCH. A clarification of V: the engineer's own git and remote tools may also be
+run to show on a project what publishing would do (reading the target branch's protection), a read
+the publishing of a run already needed. No principle added, removed or loosened. Approved by the
+project owner on 2026-11-02 (finding D1 of /speckit-analyze for feature 010).
 
 Modified principles:
-  - II. The Engineer Decides: one bullet added (the assistant acts on the engineer's word; Fallow
-    shows every change to branches and remotes it observes)
-  - V. Local and Private by Construction: one item added to the traffic of a run (the assistant's
-    web and git-remote requests, on by default for the assistant only)
+  - V. Local and Private by Construction: the second item of the traffic of a run clarified
 
 Added sections: none. Removed sections: none.
 
-Templates requiring updates: none. plan-template.md, spec-template.md and tasks-template.md read
-the constitution at runtime.
+Templates requiring updates: none.
 
 Follow-up TODOs: none.
 
-Previous amendments: 6.2.0 (MINOR) added IX. Runtime-Agnostic; 6.1.0 (MINOR) expanded guidance
-for feature 007; 6.0.0 (MAJOR) replaced the constitution for Fallow as the headless orchestrator.
+Previous amendments: 6.3.0 (MINOR) solo sessions in II and V; 6.2.0 (MINOR) IX. Runtime-Agnostic;
+6.1.0 (MINOR) feature 007; 6.0.0 (MAJOR) the constitution replaced for the headless orchestrator.
 -->
 
 # Fallow Constitution
@@ -117,7 +113,8 @@ the work divides cleanly and measurement says it pays.
 - Fallow itself MUST NOT make network requests. The traffic of a run is:
   - the agents' own traffic to their providers;
   - the engineer's own git and remote tools, which Fallow runs with the engineer's credentials only
-    to publish a run (push its branch, open its pull request, read branch rules and check results).
+    to publish a run (push its branch, open its pull request, read branch rules and check results),
+    and to show on a project what publishing would do (read the target branch's protection);
   - the assistant's own requests to the web and to the project's git remotes, in a solo session;
     on by default for the assistant, and off for every other kind unless its definition allows it.
     Each request shows in the activity like any other tool call.
@@ -236,4 +233,4 @@ breaks silently on the next, and ties the engineer to one supplier.
   section; unjustified violations block merge.
 - Compliance is reviewed at every pull request and at every release.
 
-**Version**: 6.3.0 | **Ratified**: 2026-10-13 | **Last Amended**: 2026-11-02
+**Version**: 6.3.1 | **Ratified**: 2026-10-13 | **Last Amended**: 2026-11-02

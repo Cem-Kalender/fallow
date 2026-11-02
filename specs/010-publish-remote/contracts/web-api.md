@@ -17,7 +17,7 @@ Additions to the page API of 007 to 009 (same secret, same origin rules, JSON).
 ```
 
 The page shows it next to "git · main": `github · acme/shop · main · protected`, `no remote`,
-`protection unknown: <why>`, or `gitlab.com: Fallow merges locally there`.
+`protection unknown: <why>`, or `gitlab.com: Fallow can only merge locally there`.
 
 ## The loop
 
@@ -26,9 +26,10 @@ The page shows it next to "git · main": `github · acme/shop · main · protect
 ```json
 "when_verified": "pull_request",          // wait | pull_request
 "publish": {
-  "offer": ["pull_request"],              // what the page may offer now: pull_request, local_merge
+  "offer": ["pull_request"],              // what the page may offer now: pull_request, local_merge (only local_merge when the target is not on the remote)
   "why": "main is protected on github.com: changes reach it only through a pull request",
   "remote": { ...as above... },
+  "account": "Cem-Kalender",              // who the pull request will be opened as (gh's login); null when not signed in
   "publication": {                        // null until published
     "branch": "fallow/011-order-history/build", "commit": "deec0cf…",
     "pr_number": 42, "pr_url": "https://github.com/acme/shop/pull/42",
