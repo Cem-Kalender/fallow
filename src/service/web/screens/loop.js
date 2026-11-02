@@ -509,7 +509,9 @@
     const old = document.getElementById("feed");
     const keep = old ? old.scrollTop : 0;
     // A scroll back the engineer made just before this update, not yet reported: taken now.
-    if (old && state.follow && !atEnd(old)) setFollow(false);
+    // Only a scroll: the feed moved from where the page put it (a smaller window moves its end
+    // away, not the feed).
+    if (old && state.follow && old.scrollTop !== state.feedTop && !atEnd(old)) setFollow(false);
     // A live update leaves the page as the engineer has it (the engineer, 2026-11-02: an open
     // diff closed and the page jumped up at every agent action): the window's scroll, the open
     // diffs and where they are scrolled.
@@ -614,6 +616,15 @@
     if (box) box.checked = on;
   }
 
+  // The window resized: a following feed shows its end again; one kept in place stays where the
+  // engineer reads, and a scroll the browser makes to fit it is not the engineer's.
+  function feedResized() {
+    const f = state && document.getElementById("feed");
+    if (!f) return;
+    if (state.follow) scrollFeed();
+    else state.feedTop = f.scrollTop;
+  }
+
   // The engineer scrolls the feed back to read: it stops following, so new lines no longer
   // pull it to the end (the engineer, 2026-11-02: the feed jumped at every agent line); back at
   // the end, it follows again. The box shows which. Where the page put the feed itself (drawn
@@ -663,6 +674,7 @@
     state = { project: r.project, feature: r.feature, id: null, view: null, feed: [], next: 0, tab: "all", follow: true, task: null, detail: null, open: new Set(), closed: new Set(), vopen: null, vlast: {} };
     // Scrolling does not bubble: caught on the way down, for the feed drawn again at every update.
     app.addEventListener("scroll", feedScrolled, true);
+    window.addEventListener("resize", feedResized);
     app.innerHTML = h`<div class="page"><div class="card empty">Loading the loop…</div></div>`.s;
     try {
       const f = await get(`/api/features/${encodeURIComponent(r.project)}/${encodeURIComponent(r.feature)}`);
@@ -827,6 +839,7 @@
     leave() {
       if (stop) stop();
       stop = null;
+      window.removeEventListener("resize", feedResized);
       if (state && state.files) state.files.stop();
       Fallow.files.active = null;
       state = null;
