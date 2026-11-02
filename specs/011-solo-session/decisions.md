@@ -45,14 +45,17 @@ writing code by hand belongs in the engineer's editor (VS Code).
 - **Files.** In the assistant's tab, the Files tab shows the open session's worktree with its
   changes marked (M, A, counts on folders, "only changed"). A file opens in the middle and the
   conversation moves beside it on the right. Read-only, as in 009; "Open in my editor".
+- **Closing a session** is Fallow's own action, `/close` in the `/` menu and "Close session" in
+  the session's header (a runtime's own `/exit` means nothing in Fallow, IX). A closed session
+  leaves the dropdown; its worktree is removed, and its branch too when its work is merged;
+  with unmerged work Fallow asks first (keep the branch, or discard the work). Its conversation
+  stays readable under "Closed sessions…" at the bottom of the dropdown.
 - **Not in the first version:** switching models within a session, a terminal in Fallow, "turn
   this into a feature".
 
 ## Open (see the mockup's "To settle")
 
 - The tab names: "Plan with the lead" / "Code with the assistant", or "Lead" / "Assistant".
-- A session's end: closing removes its worktree, and its branch once merged (asked first
-  otherwise); its conversation stays readable.
 - Setup in a new worktree (no installed dependencies): the assistant installs them when asked;
   later a per-project setup command.
 - A file beside the lead's conversation too, so both tabs behave alike.
