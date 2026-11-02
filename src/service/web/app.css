@@ -297,6 +297,9 @@ dialog.confirm ul { margin: 10px 0 0; padding-left: 20px; color: var(--body); li
 .tab { font: 600 13px var(--sans); padding: 10px 14px; border: 0; background: transparent; color: var(--muted); border-bottom: 2px solid transparent; cursor: pointer; }
 .tab.on { color: var(--ink); border-bottom-color: var(--ink); }
 .tab .later { color: var(--faint); font-weight: 500; }
+/* The open document fills the rest of the column and scrolls while it is read, not only while
+   it is edited (the engineer, 2026-11-02). */
+#docs, #doc-pane { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .doc { display: flex; flex: 1; min-height: 0; overflow: auto; }
 .doc .nums { padding: 20px 10px 20px 16px; color: var(--faint); font: 13px/1.75 var(--mono); text-align: right; user-select: none; }
 .doc .text { flex: 1; min-width: 0; padding: 20px 20px 20px 8px; font: 13px/1.75 var(--mono); white-space: pre-wrap; color: var(--ink-2); overflow-x: auto; }
@@ -511,6 +514,25 @@ fieldset.field.along legend { padding: 0; margin-bottom: 4px; }
 }
 .studio.chat-wide > :not(.chat-col) { display: none; }
 .studio.chat-wide > .chat-col { flex: 1 1 100%; max-width: none; border-right: 0; }
+/* Expanded, the conversation uses the whole width (the engineer, 2026-11-02). */
+.studio.chat-wide .chat, .studio.chat-wide .cbox { max-width: none; }
+/* A message the engineer withdrew by cancelling the answer (008 T047). */
+.you.withdrawn { background: var(--chip); color: var(--muted); text-decoration: line-through; text-decoration-color: var(--faint); }
+.withdrawn-note { align-self: flex-end; max-width: 85%; text-align: right; margin-top: -10px; }
+.send-btn.stop { background: var(--ink); }
+/* A suggested option answers at once; the pencil beside it edits it first. */
+.opt-row { display: flex; gap: 6px; align-items: stretch; }
+.opt-row .opt { flex: 1; min-width: 0; }
+.opt-edit { flex: none; width: 36px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: var(--muted); cursor: pointer; }
+.opt-edit:hover { border-color: var(--accent); color: var(--accent); }
+.opt-edit:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.opt .none code, .opt span code { font-family: var(--mono); font-size: 12px; background: var(--chip); padding: 1px 4px; border-radius: 4px; }
+/* The Lock step: a button once the spec is ready; before, it says why not. */
+.step.lock-step[aria-disabled=true] { color: var(--faint); }
+/* The task tree: a task is one line until it is chosen (the engineer, 2026-11-02). */
+.task .tt { min-width: 0; flex: 1; }
+.task .tt.one { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.task code, .task-card code, .vpill code, .evidence code, .qrow code, .banner-text code, .feed .ev code, .phase code { font-family: var(--mono); font-size: .92em; background: var(--chip); padding: 0 3px; border-radius: 4px; }
 /* Adding a project is one "+" (008 T044). */
 .plus-btn { width: 30px; height: 30px; padding: 0; font-size: 18px; line-height: 1; display: grid; place-items: center; }
 /* The loop page's live graph (008 T043; mockup/loop-graph.html): the Pipelines tab's drawing

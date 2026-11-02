@@ -16,6 +16,22 @@ pub enum Kind {
     Spec,
 }
 
+/// A document as the engineer left it before a turn, kept to be put back if the turn is
+/// withdrawn (008 T047).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KeptDoc {
+    pub path: String,
+    pub text: String,
+}
+
+/// What undoing a cancelled turn needs, recorded when the engineer cancels so that a restart
+/// before the turn has ended still undoes it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Cancel {
+    pub head: Option<String>,
+    pub kept: Vec<KeptDoc>,
+}
+
 /// A document the engineer edited on the page since the lead's last turn.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DocEdit {
@@ -63,6 +79,17 @@ pub enum Event {
         discarded: Vec<String>,
         cost_usd: Option<f64>,
         failure: Option<String>,
+        /// The engineer cancelled the turn while the lead answered (008 T047): its message is
+        /// withdrawn and what the lead did for it is undone.
+        #[serde(default)]
+        withdrawn: bool,
+    },
+    /// The engineer cancelled turn `n` (008 T047): where the lead's working copy stood when the
+    /// turn began, and the engineer's edited documents as they were then.
+    CancelAsked {
+        n: u32,
+        head: Option<String>,
+        kept: Vec<KeptDoc>,
     },
     ApprovalAsked {
         id: String,
@@ -110,6 +137,11 @@ pub struct Turn {
     pub cost_usd: Option<f64>,
     pub failure: Option<String>,
     pub approvals: Vec<Approval>,
+    /// Cancelled by the engineer: the message was withdrawn.
+    pub withdrawn: bool,
+    /// The cancel asked while the turn ran, until it ends.
+    #[serde(skip)]
+    pub cancel: Option<Cancel>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -208,6 +240,8 @@ impl State {
                     cost_usd: None,
                     failure: None,
                     approvals: Vec::new(),
+                    withdrawn: false,
+                    cancel: None,
                 });
             }
             Event::TurnFinished {
@@ -220,6 +254,7 @@ impl State {
                 discarded,
                 cost_usd,
                 failure,
+                withdrawn,
             } => {
                 self.busy = false;
                 if let Some(s) = session {
@@ -234,6 +269,24 @@ impl State {
                     t.discarded = discarded.clone();
                     t.cost_usd = *cost_usd;
                     t.failure = failure.clone();
+                    t.withdrawn = *withdrawn;
+                    t.cancel = None;
+                    // The edits that went with a withdrawn message go with the next one.
+                    if *withdrawn {
+                        for e in &t.edits {
+                            if !self.pending_edits.iter().any(|p| p.path == e.path) {
+                                self.pending_edits.push(e.clone());
+                            }
+                        }
+                    }
+                }
+            }
+            Event::CancelAsked { n, head, kept } => {
+                if let Some(t) = self.turns.iter_mut().find(|t| t.n == *n) {
+                    t.cancel = Some(Cancel {
+                        head: head.clone(),
+                        kept: kept.clone(),
+                    });
                 }
             }
             Event::ApprovalAsked { id, command } => {
@@ -270,6 +323,14 @@ impl State {
             }
             Event::WorkdirSet { workdir } => self.workdir = workdir.clone(),
         }
+    }
+
+    /// The running turn's cancel, if the engineer asked for one.
+    pub fn cancelling(&self) -> Option<&Cancel> {
+        if !self.busy {
+            return None;
+        }
+        self.turns.last().and_then(|t| t.cancel.as_ref())
     }
 
     /// The approval the lead waits for, if any.
@@ -345,6 +406,7 @@ mod tests {
                     discarded: vec!["shop/cart.py".into()],
                     cost_usd: Some(0.2),
                     failure: None,
+                    withdrawn: false,
                 },
             ),
             logged(

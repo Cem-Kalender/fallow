@@ -335,7 +335,7 @@ const Fallow = (() => {
     return h`<div class="card question mt-8"><div class="k">QUESTION</div>
       <div class="b lh">${q.text}</div>
       ${q.why ? h`<div class="small muted mt-6 lh">${q.why}</div>` : ""}
-      <div class="col gap-8 mt-12">${q.options.map((o) => h`<button class="opt${o.recommended ? " rec" : ""}" data-act="choose" data-text="${`${o.label}: ${o.text}`}"><b class="none">${o.label}</b><span>${o.text}${o.recommended ? h` <span class="pill blue">recommended</span>` : ""}</span></button>`)}</div></div>`;
+      <div class="col gap-8 mt-12">${q.options.map((o) => h`<div class="opt-row"><button class="opt${o.recommended ? " rec" : ""}" data-act="choose" data-text="${`${o.label}: ${o.text}`}" title="Send this answer"><b class="none">${o.label}</b><span>${raw(inline(o.text))}${o.recommended ? h` <span class="pill blue">recommended</span>` : ""}</span></button><button class="opt-edit" data-act="choose-edit" data-text="${`${o.label}: ${o.text}`}" title="Edit this answer before sending" aria-label="${`Edit option ${o.label} before sending`}">${icon.edit}</button></div>`)}</div></div>`;
   }
 
   function proposal(p) {
@@ -350,7 +350,16 @@ const Fallow = (() => {
   function messages(c) {
     const out = [];
     const turns = c.turns || [];
+    // The question of the last answer the lead gave: after a withdrawn message its options are
+    // still there to pick another (008 T047).
+    let asked = -1;
+    turns.forEach((t, i) => { if (!t.withdrawn && t.reply !== null && t.reply !== undefined) asked = i; });
     turns.forEach((t, i) => {
+      if (t.withdrawn) {
+        out.push(h`<div class="you withdrawn" title="You cancelled the lead's answer">${t.said}</div>`);
+        out.push(h`<div class="tiny muted withdrawn-note">Withdrawn: you cancelled the answer${t.failure ? h`. ${t.failure}` : ", and what the lead changed for it was undone."}</div>`);
+        return;
+      }
       out.push(h`<div class="you">${t.said}</div>`);
       if ((t.edits || []).length) {
         out.push(h`<div class="tiny muted">Your edits went with it: ${t.edits.map((e) => e.path).join(", ")}</div>`);
@@ -371,7 +380,7 @@ const Fallow = (() => {
       if ((t.documents_changed || []).length) extras.push(h`<div class="row wrap gap-6 mt-8">${t.documents_changed.map((d) => h`<span class="pill grey">${d}</span>`)}</div>`);
       if ((t.discarded || []).length) extras.push(h`<div class="notice-line">Thrown away, outside the spec documents: ${t.discarded.join(", ")}</div>`);
       if (t.failure) extras.push(h`<div class="notice-line">${t.failure}</div>`);
-      if (last && r.question) extras.push(question(r.question));
+      if (i === asked && !c.busy && r.question) extras.push(question(r.question));
       if (r.proposed_feature) extras.push(proposal(r.proposed_feature));
       if (r.proposed_pipeline) extras.push(h`<div class="card pad-12 mt-8"><div class="row between"><span class="pill blue">proposed pipeline</span><button class="btn btn2 sm" data-draft="${r.proposed_pipeline}">Open in the designer</button></div><pre class="term">${r.proposed_pipeline}</pre></div>`);
       out.push(leadMsg(meta, md(t.reply), extras));
@@ -401,8 +410,24 @@ const Fallow = (() => {
       chip.dataset.mode = c.mode;
       chip.setAttribute("aria-label", `Mode: ${MODE_LABEL[c.mode]}. Shift+Tab switches it.`);
     }
-    const send = document.querySelector(".composer [type=submit]");
-    if (send) send.disabled = !!c.busy;
+    const send = document.querySelector(".composer .send-btn");
+    const want = sendKind(c);
+    if (send && send.dataset.kind !== want) {
+      const had = document.activeElement === send;
+      send.outerHTML = sendBtn(c).s;
+      if (had) { const now = document.querySelector(".composer .send-btn"); if (now) now.focus(); }
+    }
+  }
+
+  // The composer's one button: the send arrow, or Stop while the lead answers (VS Code's chat).
+  const sendKind = (c) => (c && c.busy ? (c.cancelling ? "stopping" : "stop") : "send");
+  function sendBtn(c) {
+    const kind = sendKind(c);
+    if (kind === "send") {
+      return h`<button class="send-btn" type="submit" data-kind="send" aria-label="Send" title="Send (Enter)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg></button>`;
+    }
+    const label = kind === "stopping" ? "Stopping the lead…" : "Stop the lead and edit your message";
+    return h`<button class="send-btn stop" type="button" data-kind="${kind}" data-act="cancel-turn" aria-label="${label}" title="${label}"${raw(kind === "stopping" ? " disabled" : "")}><svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><rect width="12" height="12" rx="2" fill="currentColor"/></svg></button>`;
   }
 
   function composer(c, placeholder) {
@@ -416,7 +441,7 @@ const Fallow = (() => {
         <div class="cbar">
           <button type="button" class="mode-chip" data-act="mode" data-mode="${mode}" title="Shift+Tab switches the mode" aria-label="${`Mode: ${MODE_LABEL[mode]}. Shift+Tab switches it.`}">${chipInner(mode)}</button>
           <span class="grow"></span>
-          <button class="send-btn" type="submit" aria-label="Send" title="Send"${raw(c && c.busy ? " disabled" : "")}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg></button>
+          ${sendBtn(c)}
         </div>
       </div></form>`;
   }
@@ -482,9 +507,36 @@ const Fallow = (() => {
       after();
       return true;
     }
+    // A suggested option answers at once; its pencil puts it in the box to edit first.
     if (name === "choose") {
+      el.disabled = true;
+      try { await post(`/api/conversations/${conv}/say`, { text: el.dataset.text }); } catch (e) { alertLine(e.message); }
+      after();
+      return true;
+    }
+    if (name === "choose-edit") {
+      // Before anything already typed, which stays.
       const box = document.getElementById("say");
-      if (box) { box.value = el.dataset.text; box.focus(); }
+      if (box) {
+        box.value = box.value.trim() ? `${el.dataset.text}\n${box.value}` : el.dataset.text;
+        box.focus();
+        box.dispatchEvent(new Event("input", { bubbles: true }));
+      }
+      return true;
+    }
+    // Stop the lead's answer; the message comes back to the box, before anything typed since.
+    if (name === "cancel-turn") {
+      el.disabled = true;
+      try {
+        const out = await post(`/api/conversations/${conv}/cancel`, {});
+        const box = document.getElementById("say");
+        if (box && out && out.said) {
+          box.value = box.value.trim() ? `${out.said}\n${box.value}` : out.said;
+          box.focus();
+          box.dispatchEvent(new Event("input", { bubbles: true }));
+        }
+      } catch (e) { alertLine(e.message); }
+      after();
       return true;
     }
     return false;
@@ -593,7 +645,7 @@ const Fallow = (() => {
     return () => w.stop();
   }
 
-  return { deleteSession, chatWide, expandBtn, saveFor, scopeOf, esc, h, raw, md, LOGO, icon, api, get, post, watch, live, here, confirm, register, route, show, start, money,
+  return { deleteSession, chatWide, expandBtn, saveFor, scopeOf, esc, h, raw, md, inline, LOGO, icon, api, get, post, watch, live, here, confirm, register, route, show, start, money,
     MODE_LABEL, messages, composer, syncComposer, chatAct, sendSay, alertLine, atEnd, stagePill, filesRead,
     get headerWatch() { return headerWatch; } };
 

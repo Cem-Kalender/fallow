@@ -279,6 +279,19 @@ The engineer used the built 008 and reported these points, part of 008. Decided 
 - [X] T046 The composer becomes one box, as in VS Code's chat (the engineer, 2026-11-01): the message on top, growing with what is typed up to a limit; under it, inside the box, the mode on the left (Shift+Tab as before) and a send arrow on the right.
 - [X] T045 A fresh-context review of T038–T044 and T046, its findings fixed; the visual check's README updated for the loop page.
 
+## Phase 10: The engineer's first full run (2026-11-02)
+
+The engineer ran a feature from spec to merge with real agents and reported these points, part of 008. Decided with the engineer on 2026-11-02: a task in the tree is one line (its ID and the start of its text) until it is chosen; cancelling the lead puts the message back in the box and tells the lead it was withdrawn; a suggested option answers with one click, with a pencil to edit it first.
+
+- [X] T047 Cancel the lead's answer (`POST /api/conversations/<c>/cancel`): the send arrow becomes Stop while the lead answers; the call is stopped, the turn ends withdrawn, what the lead changed for it in its working copy is undone (its own commits too), the engineer's uncommitted document edits stay and go with the next message, the message comes back to the box, and the next turn tells the lead the message was withdrawn. In a plain folder the lead's changes cannot be told apart and stay; the chat says so. Test: `tests/us8_cancel.rs`.
+- [X] T048 A suggested option answers with one click; a pencil beside it puts it in the box to edit first.
+- [X] T049 The open document scrolls while it is read, not only while it is edited, so the lock bar under it stays in view; the Lock step in the stepper is a button: when the spec is ready it opens the lock form, before that it says why not (the lock check's first problem) and shows the lock bar.
+- [X] T050 Expand gives the conversation the whole width of the window.
+- [X] T051 The loop page's task tree shows each task as one line, its ID and the start of its text; the chosen task shows all of it.
+- [X] T052 A live update of the loop page keeps the page where the engineer has it: the window's scroll, an open diff and where it is scrolled, the graph's scroll, and the focus without scrolling to it.
+- [X] T053 Task, story, criterion, question and commit text, and the agents' words in the feed, are formatted as in the chat (code, bold, italics), escaped.
+- [X] T054 A fresh-context review of T047–T053, its findings fixed.
+
 ---
 
 ## Dependencies & Execution Order

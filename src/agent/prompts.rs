@@ -40,6 +40,9 @@ pub struct LeadTurn<'a> {
     pub edits: &'a [Edit<'a>],
     /// A plain folder: Fallow cannot check what commands write.
     pub plain_folder: bool,
+    /// Messages the engineer withdrew since the lead's last answer (008 T047), each with
+    /// whether Fallow undid what the lead changed for it.
+    pub withdrawn: &'a [(String, bool)],
 }
 
 /// The instruction of a lead's turn (header `Fallow step: lead_turn`).
@@ -72,6 +75,18 @@ pub fn lead_turn(t: &LeadTurn) -> String {
         s.push_str("The engineer edited these documents on the page since your last turn; take the edits as decisions:\n");
         for e in t.edits {
             s.push_str(&format!("\n`{}`:\n```diff\n{}```\n", e.path, e.diff));
+        }
+        s.push('\n');
+    }
+    if !t.withdrawn.is_empty() {
+        let undone = t.withdrawn.iter().all(|(_, u)| *u);
+        s.push_str(if undone {
+            "The engineer cancelled your answer to their last message and withdrew it; Fallow undid what you changed for it. Do not act on it: the message after it replaces it.\n"
+        } else {
+            "The engineer cancelled your answer to their last message and withdrew it. Fallow could not undo everything you changed for it: check the files before you go on. Do not act on the withdrawn message: the message after it replaces it.\n"
+        });
+        for (w, _) in t.withdrawn {
+            s.push_str(&format!("\n> {}\n", w.replace('\n', "\n> ")));
         }
         s.push('\n');
     }

@@ -4,7 +4,7 @@
 // every agent's work and Fallow's checks, filterable and following live; the checks column.
 "use strict";
 (() => {
-  const { h, raw, get, post, live, confirm, alertLine, icon, money } = Fallow;
+  const { h, raw, get, post, live, confirm, alertLine, icon, money, inline } = Fallow;
   let stop = null;
   let state = null; // { id, project, feature, view, feed[], next, tab, follow, task, detail }
 
@@ -16,6 +16,10 @@
   const short = (c) => (c ? String(c).slice(0, 7) : "");
   // Markdown emphasis in a scenario, shown as plain text; "(must fail)" has its own label.
   const plain = (t) => String(t || "").replace(/\*\*/g, "").replace(/\s*\(must fail\)\s*$/i, "");
+  // Task, story and question text as the chat shows it: code, bold and italics (the engineer,
+  // 2026-11-02: it read raw); `fmt` for an attribute, without the marks.
+  const fmt = (t) => raw(inline(String(t || "")));
+  const bare = (t) => String(t || "").replace(/[`*]/g, "");
 
   const STAGE = {
     building: h`<span class="pill blue">Building</span>`,
@@ -75,9 +79,9 @@
       return h`<div class="card needs pad-16 row wrap top gap-16" role="region" aria-label="A question for you">
         <div class="grow min0 banner-text">
           <div class="row wrap gap-8"><span class="pill orange">${q.agent || "builder"} asks · ${q.task || q.id}</span><span class="tiny muted">the loop waits for your answer; other loops go on</span></div>
-          <div class="b mt-8 lh">${q.text}</div>
-          ${q.recommended ? h`<div class="small muted mt-6">The lead recommends: ${q.recommended}</div>` : ""}
-          ${q.why ? h`<div class="tiny muted mt-6">Relayed to you because ${q.why}.</div>` : ""}
+          <div class="b mt-8 lh">${fmt(q.text)}</div>
+          ${q.recommended ? h`<div class="small muted mt-6">The lead recommends: ${fmt(q.recommended)}</div>` : ""}
+          ${q.why ? h`<div class="tiny muted mt-6">Relayed to you because ${fmt(q.why)}.</div>` : ""}
         </div>
         <div class="row wrap gap-8">
           ${opts.map((o, i) => h`<button class="btn${i ? " btn2" : ""}" data-act="qanswer" data-q="${q.id}" data-answer="${o}">${o}${o === q.recommended ? h` <span class="pill blue rec-pill">recommended</span>` : ""}</button>`)}
@@ -96,7 +100,7 @@
     return h`<div class="card needs pad-16 row wrap top gap-16" role="region" aria-label="The loop asks you">
       <div class="grow min0 banner-text">
         <div class="row wrap gap-8"><span class="pill orange">the loop asks you</span><span class="tiny muted">this loop waits; other loops go on</span></div>
-        <div class="b mt-8 lh">${n.why}</div>
+        <div class="b mt-8 lh">${fmt(n.why)}</div>
       </div>
       <div class="row wrap gap-8">${(n.options || []).map((o, i) => h`<button class="btn${i ? " btn2" : ""}" data-act="option" data-option="${o}">${label(o)}</button>`)}</div>
     </div>`;
@@ -109,14 +113,19 @@
     const rows = (v.phases || []).map((p) => {
       const cls = p.state === "done" ? "ok" : p.n === v.current_phase ? "now" : "later";
       const open = state.open.has(p.n) || (p.n === v.current_phase && !state.closed.has(p.n)) || (state.task && p.tasks.some((t) => t.id === state.task));
-      const head = h`<button class="phase ${cls}" data-act="phase" data-n="${p.n}" aria-expanded="${open ? "true" : "false"}">Phase ${p.label || p.n} · ${p.title} <span class="count">${p.done}/${p.tasks.length}</span></button>`;
+      const head = h`<button class="phase ${cls}" data-act="phase" data-n="${p.n}" aria-expanded="${open ? "true" : "false"}">Phase ${p.label || p.n} · ${fmt(p.title)} <span class="count">${p.done}/${p.tasks.length}</span></button>`;
       if (!open) return head;
+      // One line per task, cut off; the chosen task shows all of its text (the engineer,
+      // 2026-11-02: the whole text of every task crowded the page).
+      const tile = (t, cls, mark, sub) => {
+        const on = state.task === t.id;
+        return h`<button class="task${cls}${on ? " sel" : ""}" data-act="task" data-task="${t.id}" aria-expanded="${on ? "true" : "false"}"${raw(on ? "" : ` title="${Fallow.esc(`${t.id} ${bare(t.text)}`)}"`)}>${mark}<span class="tt${on ? "" : " one"}"><span class="mono tiny">${t.id}</span> ${fmt(t.text)}${sub ? h`<span class="sub">${sub}</span>` : ""}</span></button>`;
+      };
       const tasks = p.tasks.map((t) => {
-        const sel = state.task === t.id ? " sel" : "";
-        if (t.state === "accepted") return h`<button class="task${sel}" data-act="task" data-task="${t.id}"><span class="tick">✓</span><span><span class="mono tiny">${t.id}</span> ${t.text}</span></button>`;
-        if (waitingTask && waitingTask.id === t.id) return h`<button class="task waiting${sel}" data-act="task" data-task="${t.id}"><span class="ask">?</span><span><span class="mono tiny">${t.id}</span> ${t.text}<span class="sub">${t.state === "failed" ? "failed: see the question" : "waiting for your answer"}</span></span></button>`;
-        if (t.state === "current") return h`<button class="task current${sel}" data-act="task" data-task="${t.id}"><span class="now-dot">●</span><span><span class="mono tiny">${t.id}</span> ${t.text}${t.repairs ? h`<span class="sub">repair ${t.repairs}</span>` : ""}</span></button>`;
-        return h`<button class="task pending${sel}" data-act="task" data-task="${t.id}"><span>○</span><span><span class="mono tiny">${t.id}</span> ${t.text}</span></button>`;
+        if (t.state === "accepted") return tile(t, "", h`<span class="tick">✓</span>`);
+        if (waitingTask && waitingTask.id === t.id) return tile(t, " waiting", h`<span class="ask">?</span>`, t.state === "failed" ? "failed: see the question" : "waiting for your answer");
+        if (t.state === "current") return tile(t, " current", h`<span class="now-dot">●</span>`, t.repairs ? `repair ${t.repairs}` : "");
+        return tile(t, " pending", h`<span>○</span>`);
       });
       for (const s of p.checkpoints || []) tasks.push(h`<div class="task pending ital"><span>◇</span><span>checkpoint: review ${s}</span></div>`);
       return h`${head}<div class="subtasks">${tasks}</div>`;
@@ -207,7 +216,7 @@
         ${n.st && n.st.on_fail === "engineer" && !g.nodes.some((m) => m.col === n.col && m.y > n.y) ? h`<text class="you" x="${n.x + 14}" y="${n.y + n.h + 14}">fails → you</text>` : ""}
       </g>`;
     };
-    return h`<div><div class="lg-graph" role="group" aria-label="${`The loop's pipeline, ${pl.name}, live`}"><svg viewBox="0 0 ${g.w} ${g.h}" preserveAspectRatio="xMidYMid meet">
+    return h`<div><div class="lg-graph" data-keep-scroll="graph" role="group" aria-label="${`The loop's pipeline, ${pl.name}, live`}"><svg viewBox="0 0 ${g.w} ${g.h}" preserveAspectRatio="xMidYMid meet">
       <defs><marker id="lg-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0L10,5L0,10z" class="ah"></path></marker>
         <marker id="lg-r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0L10,5L0,10z" class="ah-r"></path></marker></defs>
       ${g.groups.map((b) => h`<rect class="grp ${b.group}" x="${b.x}" y="${b.y}" width="${b.w}" height="${b.h}" rx="12"></rect><text class="gl ${b.group}" x="${b.x + 14}" y="${b.y + 18}">${b.label}</text>`)}
@@ -238,9 +247,9 @@
   }
 
   // ---- The feed ------------------------------------------------------------------------------
-  function diffBlock(text) {
+  function diffBlock(text, keep) {
     const lines = String(text || "").split("\n").slice(0, 400);
-    return h`<div class="diff">${lines.map((l) => {
+    return h`<div class="diff"${raw(keep ? ` data-keep-scroll="${Fallow.esc(keep)}"` : "")}>${lines.map((l) => {
       const cls = l.startsWith("@@") ? "hunk" : l.startsWith("+") && !l.startsWith("+++") ? "add" : l.startsWith("-") && !l.startsWith("---") ? "del" : "";
       return h`<div class="${cls}">${l || " "}</div>`;
     })}</div>`;
@@ -273,7 +282,7 @@
     let body;
     switch (e.kind) {
       case "say":
-        body = h`<span class="grow min0">${e.text}</span>`;
+        body = h`<span class="grow min0">${fmt(e.text)}</span>`;
         break;
       case "read":
       case "search":
@@ -292,19 +301,19 @@
           ${e.output ? h`<div class="term">${String(e.output).slice(0, 4000)}</div>` : ""}</div>`;
         break;
       case "check":
-        body = h`<div class="grow min0"><span>${e.text}</span> ${resultPill(e.result)}${e.detail ? h`<div class="term">${e.detail}</div>` : ""}</div>`;
+        body = h`<div class="grow min0"><span>${fmt(e.text)}</span> ${resultPill(e.result)}${e.detail ? h`<div class="term">${e.detail}</div>` : ""}</div>`;
         break;
       case "ask":
         // The agent's `ask` call (with the tool's answer), or the step that ended blocked.
         body = e.output
-          ? h`<span class="grow min0">${task}<b>${e.text}</b> <span class="tiny muted">asked through Fallow, which asks the lead</span></span>`
-          : h`<span class="grow min0">${task}<b>${e.text}</b> <span class="tiny muted">The builder's session is kept and resumes with your answer.</span></span>`;
+          ? h`<span class="grow min0">${task}<b>${fmt(e.text)}</b> <span class="tiny muted">asked through Fallow, which asks the lead</span></span>`
+          : h`<span class="grow min0">${task}<b>${fmt(e.text)}</b> <span class="tiny muted">The builder's session is kept and resumes with your answer.</span></span>`;
         break;
       case "answer":
-        body = h`<span class="grow min0">${task}${e.text}${e.commit ? h` <span class="mono tiny muted">${e.commit}</span>` : ""}</span>`;
+        body = h`<span class="grow min0">${task}${fmt(e.text)}${e.commit ? h` <span class="mono tiny muted">${e.commit}</span>` : ""}</span>`;
         break;
       default:
-        body = h`<div class="grow min0">${task}<span>${e.text}</span> ${resultPill(e.result)}${e.output ? h`<div class="term">${e.output}</div>` : ""}</div>`;
+        body = h`<div class="grow min0">${task}<span>${fmt(e.text)}</span> ${resultPill(e.result)}${e.output ? h`<div class="term">${e.output}</div>` : ""}</div>`;
     }
     return h`<div class="ev">${t}${who}${body}</div>`;
   }
@@ -351,14 +360,14 @@
     const gate = (d.gates || []).length ? d.gates[d.gates.length - 1] : null;
     const steps = (d.steps || []).map((s) => h`<div class="kv"><span>${s.kind} · ${s.agent || "?"} · ${s.model || ""}${s.resumed ? " · resumed" : ""}</span><span>${stepPill(s)}</span></div>`);
     return h`<div class="card pad-14 task-card">
-      <div class="row between wrap"><div><span class="mono b">${d.id}</span> <span class="small">${d.text}</span></div><button class="btn btn2 xs" data-act="task" data-task="">Close</button></div>
+      <div class="row between wrap"><div class="min0"><span class="mono b">${d.id}</span> <span class="small">${fmt(d.text)}</span></div><button class="btn btn2 xs" data-act="task" data-task="">Close</button></div>
       <div class="row wrap gap-16 small mt-8">
         <span>Commit: ${d.commit ? h`<span class="mono">${short(d.commit)}</span>` : "none yet"}</span>
         <span>Gates: ${gate ? h`${gate.result.gate} ${gate.result.outcome.state}${gate.class ? ` (${gate.class})` : ""}` : "not run yet"}</span>
         <span>Repairs: ${d.repairs}</span>
       </div>
       <div class="mt-8">${steps}</div>
-      ${d.diff ? h`<details class="mt-8"><summary class="small b">The task's diff</summary>${diffBlock(d.diff)}</details>` : ""}
+      ${d.diff ? h`<details class="mt-8" data-keep="${`diff-${d.id}`}"><summary class="small b">The task's diff</summary>${diffBlock(d.diff, `diff-${d.id}`)}</details>` : ""}
     </div>`;
   }
 
@@ -391,9 +400,9 @@
       ? `checked by ${s.reviewer || "the reviewer"}, by running each one`
       : "no checker in this pipeline verifies these criteria";
     return h`<div class="evidence" id="evidence-${where}-${s.id}">
-      <div class="row wrap gap-8"><b>${s.id} · ${s.title}</b><span class="grow"></span><span class="tiny muted">${by}${s.rechecking ? " · being repaired or checked again" : ""}</span></div>
+      <div class="row wrap gap-8"><b>${s.id} · ${fmt(s.title)}</b><span class="grow"></span><span class="tiny muted">${by}${s.rechecking ? " · being repaired or checked again" : ""}</span></div>
       ${s.criteria.map((c) => h`<div class="crit${c.state === "failed" ? " bad" : ""}">${pill(c)}<div class="min0">
-        <div>${plain(c.text)}${c.must_fail ? h` <span class="must">must fail</span>` : ""}</div>
+        <div>${fmt(String(c.text || "").replace(/\s*\(must fail\)\s*$/i, ""))}${c.must_fail ? h` <span class="must">must fail</span>` : ""}</div>
         ${c.ran ? h`<div class="evl"><span class="evk">ran</span> <span class="mono">${c.ran}</span></div>` : ""}
         ${c.result ? h`<div class="evl${c.state === "failed" ? " got" : ""}"><span class="evk">got</span> ${c.result}</div>` : ""}
         ${c.expected ? h`<div class="evl"><span class="evk">expected</span> ${c.expected}</div>` : ""}</div></div>`)}
@@ -411,7 +420,7 @@
         ${list.map((s) => {
           const x = VSTATE[s.state] ? VSTATE[s.state](s) : VSTATE.progress(s);
           const on = !!open && open.id === s.id;
-          return h`<button class="vpill ${x.cls}${on ? " on" : ""}" data-act="vstory" data-story="${s.id}" aria-expanded="${on ? "true" : "false"}" aria-controls="evidence-row-${s.id}" aria-label="${`${s.id}, ${s.title}: ${x.say}. ${on ? "Close" : "Open"} the evidence`}"><b>${s.id} ${x.label}</b><span class="vt">${s.title}</span></button>`;
+          return h`<button class="vpill ${x.cls}${on ? " on" : ""}" data-act="vstory" data-story="${s.id}" aria-expanded="${on ? "true" : "false"}" aria-controls="evidence-row-${s.id}" aria-label="${`${s.id}, ${bare(s.title)}: ${x.say}. ${on ? "Close" : "Open"} the evidence`}"><b>${s.id} ${x.label}</b><span class="vt">${fmt(s.title)}</span></button>`;
         })}
       </div>
       ${open ? evidence(open) : ""}
@@ -457,8 +466,8 @@
       : q.by === "lead" ? h`<span class="pill green">lead answered</span>` : h`<span class="pill green">you answered</span>`);
     const questions = (v.questions || []).map((q) => h`<div class="qrow">
       <div class="kv"><span><span class="mono tiny">${q.id}</span> <span class="mono tiny muted">${q.task || ""}</span></span>${qpill(q)}</div>
-      <div class="small lh">${q.text}</div>
-      ${q.answer ? h`<div class="small lh body-ink">→ ${q.answer}${q.commit ? h` <span class="mono tiny muted">${short(q.commit)}</span>` : ""}</div>` : ""}
+      <div class="small lh">${fmt(q.text)}</div>
+      ${q.answer ? h`<div class="small lh body-ink">→ ${fmt(q.answer)}${q.commit ? h` <span class="mono tiny muted">${short(q.commit)}</span>` : ""}</div>` : ""}
       ${q.reopened && q.reopened.length ? h`<div class="tiny muted">Reopened ${q.reopened.join(", ")}</div>` : ""}
       ${q.confirmable || q.overrulable ? h`<div class="row gap-8 mt-6">${q.confirmable ? h`<button class="btn btn2 sm" data-act="qconfirm" data-q="${q.id}">Confirm</button>` : ""}${q.overrulable ? h`<button class="btn btn2 sm" data-act="overrule" data-q="${q.id}">Overrule…</button>` : ""}</div>` : ""}
     </div>`);
@@ -467,7 +476,7 @@
       <div class="card pad-14"><h2 class="th mb-8">Gates vs baseline</h2>${gates}</div>
       ${questions.length ? h`<div class="card pad-14"><h2 class="th mb-8">Questions <span class="tiny muted">· ${v.level || "normal"}</span></h2>${questions}</div>` : ""}
       <div class="card pad-14"><h2 class="th mb-8">Commits on ${v.build_branch}</h2>
-        ${commits.length ? commits.slice(0, 6).map((c) => h`<div class="kv commit-row"><span class="mono tiny">${short(c.commit)}</span><span class="small" title="${`${c.task} ${c.text}`}">${c.task} ${c.text}</span></div>`) : h`<div class="small muted">None yet.</div>`}
+        ${commits.length ? commits.slice(0, 6).map((c) => h`<div class="kv commit-row"><span class="mono tiny">${short(c.commit)}</span><span class="small" title="${`${c.task} ${bare(c.text)}`}">${c.task} ${fmt(c.text)}</span></div>`) : h`<div class="small muted">None yet.</div>`}
         ${commits.length > 6 ? h`<div class="kv"><span class="muted">+ ${commits.length - 6} earlier</span><span></span></div>` : ""}</div>
     </aside>`;
   }
@@ -498,6 +507,13 @@
     const focusKey = focused ? focused.dataset.key : null;
     const old = document.getElementById("feed");
     const keep = old ? old.scrollTop : 0;
+    // A live update leaves the page as the engineer has it (the engineer, 2026-11-02: an open
+    // diff closed and the page jumped up at every agent action): the window's scroll, the open
+    // diffs and where they are scrolled.
+    const pageX = window.scrollX;
+    const pageY = window.scrollY;
+    const opened = new Set([...app.querySelectorAll("details[data-keep]")].filter((d) => d.open).map((d) => d.dataset.keep));
+    const scrolled = [...app.querySelectorAll("[data-keep-scroll]")].map((e) => [e.dataset.keepScroll, e.scrollTop, e.scrollLeft]);
     const paused = v.paused_by_engineer;
     const over = ["done", "stopped"].includes(v.stage);
     const merge = ["ready", "done_unverified"].includes(v.stage);
@@ -528,6 +544,11 @@
         </section>
         ${checks(v)}
       </div></div>`.s;
+    for (const d of app.querySelectorAll("details[data-keep]")) if (opened.has(d.dataset.keep)) d.open = true;
+    for (const [k, top, left] of scrolled) {
+      const e = app.querySelector(`[data-keep-scroll="${CSS.escape(k)}"]`);
+      if (e) { e.scrollTop = top; e.scrollLeft = left; }
+    }
     if (state.follow) scrollFeed();
     else {
       const f = document.getElementById("feed");
@@ -535,8 +556,9 @@
     }
     if (focusKey) {
       const again = document.querySelector(`.lg-graph [data-key="${CSS.escape(focusKey)}"]`);
-      if (again) again.focus();
+      if (again) again.focus({ preventScroll: true });
     }
+    window.scrollTo(pageX, pageY);
   }
 
   function scrollFeed() {
@@ -633,7 +655,8 @@
         state.follow = el.checked;
         return scrollFeed();
       case "task":
-        state.task = el.dataset.task || null;
+        // The chosen task again folds it back to one line.
+        state.task = el.dataset.task && el.dataset.task !== state.task ? el.dataset.task : null;
         state.detail = null;
         render(app);
         return refresh(app);

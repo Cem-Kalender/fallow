@@ -17,6 +17,7 @@
 //! output = { status = "done", commit = "$HEAD", summary = "..." }
 //! cost = 0.05
 //! sleep_ms = 0
+//! linger_ms = 0                  # waits after its files and commit, before its result
 //! exit = 3                       # crash with this exit code instead of a result
 //! denied = ["git push"]          # reported as permission denials
 //! is_error = false
@@ -66,6 +67,8 @@ struct Step {
     cost: f64,
     #[serde(default)]
     sleep_ms: u64,
+    #[serde(default)]
+    linger_ms: u64,
     exit: Option<i32>,
     #[serde(default)]
     denied: Vec<String>,
@@ -487,6 +490,9 @@ fn main() -> ExitCode {
     }
     if let Some(code) = step.exit {
         return ExitCode::from(code as u8);
+    }
+    if step.linger_ms > 0 {
+        std::thread::sleep(std::time::Duration::from_millis(step.linger_ms));
     }
     let head = git(&cwd, &["rev-parse", "HEAD"]);
     let output = step

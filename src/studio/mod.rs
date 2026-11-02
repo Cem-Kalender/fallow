@@ -16,7 +16,7 @@ use serde_json::{Value, json};
 
 use crate::agent::rights::{self, Mode};
 use crate::agent::{self, Call, Session, prompts};
-use crate::conversation::events::{ApprovalAnswer, DocEdit, Event as CEvent, Kind, State};
+use crate::conversation::events::{ApprovalAnswer, DocEdit, Event as CEvent, KeptDoc, Kind, State};
 use crate::defs::Library;
 use crate::platform::job::Group;
 use crate::project::{self, Feature, LockRec, Project, Store};
@@ -100,6 +100,10 @@ pub enum Req {
     Say {
         conv: String,
         text: String,
+    },
+    /// Cancels the lead's running turn; the message is withdrawn (008 T047).
+    Cancel {
+        conv: String,
     },
     SetMode {
         conv: String,
@@ -215,6 +219,55 @@ fn conv_dir(data: &Path, id: &str) -> PathBuf {
     data.join("conversations").join(id)
 }
 
+/// Undoes what the lead did in a cancelled turn (008 T047): its working copy goes back to where
+/// it stood when the turn began (the lead's own commits too, and every file it wrote), and the
+/// engineer's edited documents, not committed yet, are put back. Best effort: answers what could
+/// not be undone, for the chat and the lead's next turn. In a plain folder (or a repository with
+/// no commit yet) the lead works in the engineer's own files, so nothing is undone.
+fn undo(
+    p: &Project,
+    workdir: &Path,
+    cancel: &crate::conversation::events::Cancel,
+) -> Option<String> {
+    if p.kind() != project::Kind::Git || workdir == p.path {
+        return Some(
+            "Fallow cannot undo the lead's changes here (a plain folder, or a repository without a commit yet): what it changed before you cancelled stays".into(),
+        );
+    }
+    let mut failed = Vec::new();
+    if let Some(b) = &cancel.head {
+        if git::head(workdir).ok().as_deref() != Some(b.as_str()) {
+            if let Err(e) = git::reset_mixed(workdir, b) {
+                failed.push(e);
+            }
+        }
+    }
+    let feature_json = workdir.join(".specify/feature.json");
+    let keep = std::fs::read(&feature_json).ok();
+    if let Err(e) = git::discard_changes(workdir) {
+        failed.push(e);
+    }
+    if let Some(k) = keep {
+        let _ = std::fs::write(&feature_json, k);
+    }
+    let _ = project::install::scaffold(workdir);
+    for d in &cancel.kept {
+        let path = workdir.join(&d.path);
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        if let Err(e) = std::fs::write(&path, &d.text) {
+            failed.push(format!("{}: {e}", d.path));
+        }
+    }
+    (!failed.is_empty()).then(|| {
+        format!(
+            "Fallow could not undo everything the lead changed: {}",
+            failed.join("; ")
+        )
+    })
+}
+
 impl Studio {
     /// Loads the projects and every conversation. A conversation whose turn was cut off by a
     /// stop or a crash gets that turn closed, so it can go on (constitution VII).
@@ -242,7 +295,25 @@ impl Studio {
                 Ok((log, state, notes)) => {
                     s.console.extend(notes);
                     let mut c = Conv::new(e.path(), log, state);
-                    if c.state.busy {
+                    if let Some(cancel) = c.state.cancelling().cloned() {
+                        let n = c.state.turns.last().map_or(0, |t| t.n);
+                        let failure = match s.store.get(&c.state.project) {
+                            Some(p) => undo(p, &c.state.workdir, &cancel),
+                            None => Some("the project is gone: nothing was undone".into()),
+                        };
+                        let _ = c.append(CEvent::TurnFinished {
+                            n,
+                            reply: String::new(),
+                            result: None,
+                            session: None,
+                            documents_changed: Vec::new(),
+                            commit: None,
+                            discarded: Vec::new(),
+                            cost_usd: None,
+                            failure,
+                            withdrawn: true,
+                        });
+                    } else if c.state.busy {
                         if let Some(t) = c.state.turns.last() {
                             let n = t.n;
                             let _ = c.append(CEvent::TurnFinished {
@@ -257,6 +328,7 @@ impl Studio {
                                 failure: Some(
                                     "Fallow stopped during this turn; say it again to go on".into(),
                                 ),
+                                withdrawn: false,
                             });
                         }
                     }
@@ -612,7 +684,24 @@ impl Studio {
         }
         let c = self.convs.get(conv).expect("checked");
         let mode = c.state.mode;
-        let first = c.state.turns.is_empty();
+        let first = c.state.turns.iter().all(|t| t.withdrawn) && c.state.session.is_none();
+        // The messages the engineer withdrew since the lead last answered (008 T047): a resumed
+        // session may still hold them.
+        let mut withdrawn: Vec<(String, bool)> = c
+            .state
+            .turns
+            .iter()
+            .rev()
+            .take_while(|t| t.withdrawn)
+            .map(|t| (t.said.clone(), t.failure.is_none()))
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect();
+        // A new session never saw them: nothing to withdraw there.
+        if c.state.session.is_none() {
+            withdrawn.clear();
+        }
         let n = c.state.turns.len() as u32 + 1;
         let edits: Vec<DocEdit> = c.state.pending_edits.clone();
         let session = match &c.state.session {
@@ -648,6 +737,7 @@ impl Studio {
             said: text,
             edits: &prompt_edits,
             plain_folder: !git_project,
+            withdrawn: &withdrawn,
         });
         // The MCP bridge for the approval tool, checked against the turn's own processes.
         let token = crate::mcp::identity::Token::new()
@@ -709,6 +799,22 @@ impl Studio {
         };
         c.activity.clear();
         c.token = Some(token);
+        c.kept = c
+            .state
+            .turns
+            .last()
+            .map(|t| t.edits.clone())
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|e| {
+                std::fs::read_to_string(c.state.workdir.join(&e.path))
+                    .ok()
+                    .map(|text| KeptDoc {
+                        path: e.path.clone(),
+                        text,
+                    })
+            })
+            .collect();
         c.stop = Arc::new(AtomicBool::new(false));
         let stop = Arc::clone(&c.stop);
         let tx = ctx.tx.clone();
@@ -751,6 +857,35 @@ impl Studio {
         Ok(json!({ "turn": n }))
     }
 
+    /// Cancels the running turn (008 T047): the lead's call is stopped, and when it has ended
+    /// the turn is withdrawn and its changes undone. Answers with the message, for the page to
+    /// put back in the box.
+    pub fn cancel(&mut self, conv: &str) -> Result<Value, String> {
+        let c = self.conv_mut(conv)?;
+        if !c.state.busy {
+            return Err("the lead is not answering".into());
+        }
+        if c.state.cancelling().is_none() {
+            let n = c.state.turns.last().map_or(0, |t| t.n);
+            let (head, kept) = (c.head_before.clone(), c.kept.clone());
+            c.append(CEvent::CancelAsked { n, head, kept })?;
+        }
+        c.stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        if let Some(p) = c.pending.take() {
+            let _ = p.reply.send(Reply::Ok(
+                json!({ "behavior": "deny", "message": "The engineer cancelled this turn." }),
+            ));
+        }
+        let said = c
+            .state
+            .turns
+            .last()
+            .map(|t| t.said.clone())
+            .unwrap_or_default();
+        c.tick();
+        Ok(json!({ "said": said }))
+    }
+
     /// A turn's event or its end.
     pub fn note(&mut self, note: Note) {
         match note {
@@ -790,7 +925,11 @@ impl Studio {
         let workdir = c.state.workdir.clone();
         let project_id = c.state.project.clone();
         let feature_name = c.state.feature.clone();
+        let cancel = c.state.cancelling().cloned();
         let p = self.project(&project_id)?.clone();
+        if let Some(cancel) = cancel {
+            return self.withdraw(conv, n, &p, &workdir, &cancel, outcome);
+        }
         let result = outcome.result.clone();
         let step_ran = result
             .as_ref()
@@ -909,6 +1048,38 @@ impl Studio {
             discarded,
             cost_usd: outcome.cost_usd,
             failure: outcome.failure.clone(),
+            withdrawn: false,
+        })?;
+        c.live.clear();
+        Ok(())
+    }
+
+    /// The end of a cancelled turn: what the lead did for it is undone (see `undo`) and the turn
+    /// is recorded as withdrawn. Its session is not recorded: a call stopped early may not have
+    /// saved one, and the session the conversation had before stays.
+    fn withdraw(
+        &mut self,
+        conv: &str,
+        n: u32,
+        p: &Project,
+        workdir: &Path,
+        cancel: &crate::conversation::events::Cancel,
+        outcome: agent::Outcome,
+    ) -> Result<(), String> {
+        let failure = undo(p, workdir, cancel);
+        let c = self.conv_mut(conv)?;
+        c.kept.clear();
+        c.append(CEvent::TurnFinished {
+            n,
+            reply: String::new(),
+            result: None,
+            session: None,
+            documents_changed: Vec::new(),
+            commit: None,
+            discarded: Vec::new(),
+            cost_usd: outcome.cost_usd,
+            failure,
+            withdrawn: true,
         })?;
         c.live.clear();
         Ok(())
@@ -1356,6 +1527,11 @@ impl Studio {
             let _ = reply.send(deny("the conversation is gone"));
             return;
         };
+        if c.state.cancelling().is_some() {
+            // Stopping: nothing more runs for a withdrawn message (008 T047 review).
+            let _ = reply.send(deny("The engineer cancelled this turn."));
+            return;
+        }
         if c.state.mode != Mode::Ask {
             let _ = reply.send(deny("Only Ask mode asks the engineer."));
             return;

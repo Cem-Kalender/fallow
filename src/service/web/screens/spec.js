@@ -26,7 +26,10 @@
       return h`<li><button class="step${done ? " done" : ""}${now ? " now" : ""}" data-act="step" data-to="${s}" aria-current="${now ? "step" : "false"}"${raw(locked ? " disabled" : "")}>${done ? icon.check : now ? raw('<span class="dot blue"></span>') : ""}${STEP_LABEL[s]}</button></li>`;
     });
     const ready = f.lock_check && f.lock_check.ok;
-    items.push(h`<li><span class="step${ready ? " now" : ""}">${icon.lock}Lock</span></li>`);
+    const why = ready ? "Lock the spec and start the loop" : `Not ready to lock: ${((f.lock_check && f.lock_check.problems) || ["after Tasks and Analyze"])[0]}`;
+    items.push(locked
+      ? h`<li><span class="step">${icon.lock}Lock</span></li>`
+      : h`<li><button class="step lock-step${ready ? " now" : ""}" data-act="lock-step" title="${why}" aria-label="${why}"${raw(ready ? "" : ' aria-disabled="true"')}>${icon.lock}Lock</button></li>`);
     return h`<ol aria-label="Spec Kit steps" class="stepper">${items}</ol>`;
   }
 
@@ -229,6 +232,16 @@
         if (name === "keep-theirs") { conflict = null; await openDoc(tab); return render(appEl); }
         if (name === "step") { await post(`${base()}/step`, { to: el.dataset.to }); return again(); }
         if (name === "lock-open") { lockForm = true; return render(appEl); }
+        if (name === "lock-step") {
+          if (state.lock_check && state.lock_check.ok) { lockForm = true; render(appEl); }
+          const bar = document.getElementById("lock");
+          if (bar) {
+            bar.scrollIntoView({ block: "nearest" });
+            const first = bar.querySelector("select, button:not([disabled])");
+            if (first) first.focus({ preventScroll: true });
+          }
+          return;
+        }
         if (name === "lock-cancel") { lockForm = false; return render(appEl); }
         if (name === "dismiss") {
           const crit = state.findings.map((x, i) => [x, i]).filter(([x]) => x.severity.toUpperCase() === "CRITICAL" && !x.dismissed);

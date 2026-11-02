@@ -42,6 +42,9 @@ pub struct Conv {
     pub head_before: Option<String>,
     /// The token of the running turn's MCP bridge.
     pub token: Option<String>,
+    /// The engineer's edited documents as the turn began, put back if it is withdrawn: they
+    /// are not committed until a turn ends.
+    pub kept: Vec<crate::conversation::events::KeptDoc>,
 }
 
 impl Conv {
@@ -58,6 +61,7 @@ impl Conv {
             pending: None,
             head_before: None,
             token: None,
+            kept: Vec::new(),
         }
     }
 
@@ -106,6 +110,7 @@ impl Conv {
         v["live"] = json!(self.live);
         v["activity"] = json!(self.activity);
         v["mark"] = json!(self.mark());
+        v["cancelling"] = json!(self.state.cancelling().is_some());
         v["pending_edits"] = json!(
             self.state
                 .pending_edits

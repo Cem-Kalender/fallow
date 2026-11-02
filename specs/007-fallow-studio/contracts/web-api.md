@@ -44,6 +44,7 @@ The global events are `project`, `feature`, `loop_progress`, `needs_you` and `ne
 | `POST /api/projects/<p>/conversation` | | `{conversation}`: the project conversation, created on first use (FR-034) |
 | `GET /api/conversations/<c>` | | `{kind, mode, turns[], busy, pending_approval?}` |
 | `POST /api/conversations/<c>/say` | `{text}` | `{turn}`. The reply streams through the `conv:<c>` events |
+| `POST /api/conversations/<c>/cancel` | | `{said}`: stops the lead's running turn, which ends withdrawn (008 T047); 409 when the lead is not answering. The view's `cancelling` is true until the turn has ended |
 | `POST /api/conversations/<c>/mode` | `{mode}` | The new mode (FR-007a) |
 | `POST /api/conversations/<c>/approve` | `{id, answer: once\|always\|deny, prefix?}` | Answers the lead's pending command (S-7) |
 | `POST /api/projects/<p>/features` | `{title}` | A new feature, and its spec session forked from the project conversation (FR-034) |

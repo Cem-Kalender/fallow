@@ -394,6 +394,9 @@ fn studio_route(
             }),
             Err(e) => Some(Err(e)),
         },
+        ("POST", ["api", "conversations", c, "cancel"]) => r(Req::Cancel {
+            conv: c.to_string(),
+        }),
         ("POST", ["api", "conversations", c, "mode"]) => {
             match s("mode")
                 .as_deref()

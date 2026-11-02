@@ -1192,6 +1192,7 @@ impl Engine {
                 .project_conversation(&project)
                 .map(|id| json!({ "conversation": id })),
             Req::Say { conv, text } => self.studio.say(&self.ctx, &conv, &text),
+            Req::Cancel { conv } => self.studio.cancel(&conv),
             Req::SetMode { conv, mode } => self.studio.set_mode(&conv, mode),
             Req::Approve {
                 conv,
