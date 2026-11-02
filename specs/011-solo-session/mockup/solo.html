@@ -1,0 +1,293 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Solo session (mockup)</title>
+<link rel="stylesheet" href="../../008-studio-redesign/mockup/mockup.css">
+<style>
+  .label { font: 700 11px var(--sans); letter-spacing: .08em; text-transform: uppercase; color: var(--accent); margin: 10px 0 -6px; }
+  .label + h2 { margin: 0; font-size: 18px; }
+  .why { max-width: 1040px; color: var(--body); font-size: 13px; margin: 0; line-height: 1.5; }
+  .frame { border: 1px solid var(--line); border-radius: 14px; overflow: hidden; background: var(--ground); height: 660px; display: flex; flex-direction: column; }
+  .sub { display: flex; align-items: center; gap: 12px; padding: 14px 20px; background: var(--panel); border-bottom: 1px solid var(--line); }
+  .sub h1 { margin: 0; font-size: 20px; }
+  .grow { flex: 1; }
+  .input { border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; font-size: 13px; color: var(--muted); background: var(--panel); }
+  .pbody { flex: 1; display: flex; min-height: 0; position: relative; }
+  .left { width: 300px; flex: none; background: var(--panel); border-right: 1px solid var(--line); padding: 16px; display: flex; flex-direction: column; gap: 4px; overflow: hidden; }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; align-self: flex-start; margin-bottom: 8px; }
+  .seg span { padding: 5px 14px; font-size: 13px; font-weight: 600; color: var(--muted); }
+  .seg span.on { background: var(--ink); color: #fff; }
+  .gt { font: 600 11px var(--sans); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin: 8px 0 4px; }
+  .feat { display: flex; justify-content: space-between; align-items: center; font-size: 14px; padding: 7px 8px; border-radius: 8px; }
+  .feat .n { font: 12px var(--mono); color: var(--muted); margin-right: 4px; }
+  .chat { flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--panel-2); }
+  /* The two tabs over the middle column */
+  .ctabs { display: flex; gap: 4px; padding: 10px 20px 0; background: var(--panel); border-bottom: 1px solid var(--line); }
+  .ctab { display: flex; align-items: center; gap: 8px; padding: 8px 14px 10px; font: 600 14px var(--sans); color: var(--muted); border-bottom: 2px solid transparent; margin-bottom: -1px; }
+  .ctab.on { color: var(--ink); border-bottom-color: var(--ink); }
+  .ctab .wk { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
+  .chead { display: flex; align-items: center; gap: 10px; padding: 12px 20px; border-bottom: 1px solid var(--line); background: var(--panel); }
+  .av { width: 26px; height: 26px; border-radius: 8px; background: var(--accent-bg); color: var(--accent); display: grid; place-items: center; font: 700 12px var(--sans); flex: none; }
+  .av.as { background: #E6F3EA; color: #226640; }
+  .msgs { flex: 1; padding: 18px 24px; display: flex; flex-direction: column; gap: 12px; overflow: hidden; }
+  .mine { align-self: flex-end; background: var(--ink); color: #fff; padding: 10px 14px; border-radius: 12px 12px 2px 12px; font-size: 14px; max-width: 70%; line-height: 1.45; }
+  .leadm { display: flex; gap: 10px; font-size: 14px; color: var(--body); max-width: 760px; line-height: 1.5; }
+  .act { margin-left: 36px; font-size: 13px; color: var(--muted); display: flex; align-items: center; gap: 8px; }
+  .act .ok { color: #226640; font-weight: 600; }
+  .act .add { color: #226640; font-weight: 600; } .act .del { color: #8F1D14; font-weight: 600; }
+  .diff { margin-left: 36px; max-width: 700px; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; font: 12.5px/1.6 var(--mono); }
+  .diff div { padding: 0 10px; } .diff .d { background: #FDECEA; } .diff .a { background: #E9F5EC; }
+  .composer { padding: 12px 20px 16px; border-top: 1px solid var(--line); }
+  .box { border: 1px solid var(--line); border-radius: 12px; background: var(--panel); padding: 12px 14px; color: var(--muted); font-size: 13px; }
+  .box .modes { margin-top: 18px; font-size: 12px; color: var(--muted); }
+  .box .modes b { color: var(--ink); }
+  .rail { width: 52px; flex: none; background: var(--panel); border-left: 1px solid var(--line); display: flex; flex-direction: column; align-items: center; gap: 8px; padding-top: 12px; }
+  .ricon { width: 36px; height: 36px; border-radius: 10px; display: grid; place-items: center; color: var(--muted); border: 1px solid transparent; position: relative; }
+  .ricon.on { color: var(--accent); background: var(--accent-bg); border-color: var(--accent-line); }
+  .ricon .dot { position: absolute; top: 3px; right: 3px; min-width: 14px; height: 14px; border-radius: 7px; background: #6E4BD8; color: #fff; font: 700 9px/14px var(--sans); text-align: center; }
+  .ricon .dot.chg { background: #B4470F; }
+  svg.i { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  .card2 { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; box-shadow: 0 10px 28px rgba(0,0,0,.12); }
+  .slide { position: absolute; right: 60px; top: 126px; width: 330px; }
+  .th { font: 700 12px var(--sans); letter-spacing: .04em; text-transform: uppercase; color: var(--muted); margin-bottom: 8px; }
+  .file { display: flex; align-items: center; gap: 8px; font: 13px var(--mono); padding: 5px 0; border-bottom: 1px solid var(--line-2); }
+  .file .st { font: 700 11px var(--sans); width: 16px; color: #B4470F; }
+  .file .add { color: #226640; font-weight: 600; } .file .del { color: #8F1D14; font-weight: 600; }
+  .pnote { font-size: 12px; color: var(--muted); line-height: 1.45; margin-top: 10px; }
+  .notver { display: inline-block; font: 600 11.5px var(--sans); color: #7A5300; background: #FFF4D6; border-radius: 999px; padding: 2px 9px; }
+  .ver { display: inline-block; font: 600 11.5px var(--sans); color: #226640; background: #E6F3EA; border-radius: 999px; padding: 2px 9px; }
+  .kvs { font-size: 13px; display: grid; grid-template-columns: 1fr auto; gap: 6px 10px; margin: 8px 0; }
+  /* 4: the Files tab while coding with the assistant */
+  .tree { font: 13px/1.25 var(--mono); }
+  .tree div { display: flex; align-items: center; gap: 6px; padding: 4px 6px; border-radius: 6px; white-space: nowrap; }
+  .tree .d { color: var(--ink); font-weight: 600; }
+  .tree .sel { background: var(--accent-bg); outline: 1px solid var(--accent-line); }
+  .tree .dim { color: var(--muted); }
+  .tree .m { margin-left: auto; font: 700 10px var(--sans); padding: 1px 6px; border-radius: 4px; }
+  .tree .cnt { margin-left: auto; font: 700 10px var(--sans); color: var(--needs); }
+  .m.mod { background: var(--needs-bg); color: var(--needs); } .m.add { background: var(--ok-bg); color: var(--ok); }
+  .i1 { padding-left: 22px !important; }
+  .filter { border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; font-size: 12.5px; color: var(--muted); margin-bottom: 6px; }
+  .fview { flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--panel); border-right: 1px solid var(--line); }
+  .fhead { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; padding: 12px 18px; border-bottom: 1px solid var(--line-2); }
+  .fhead .path { font: 600 14px var(--mono); }
+  .seg2 { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .seg2 span { padding: 4px 10px; font-size: 12.5px; font-weight: 600; color: var(--muted); }
+  .seg2 span.on { background: var(--accent-bg); color: var(--accent); }
+  .code { padding: 10px 18px; font: 12.5px/1.65 var(--mono); counter-reset: ln; overflow: hidden; }
+  .code div { min-height: 1.65em; white-space: pre; padding-left: 44px; position: relative; }
+  .code div::before { counter-increment: ln; content: counter(ln); position: absolute; left: 0; width: 30px; text-align: right; color: #A8A7A0; }
+  .code .add { background: #EEF8F1; } .code .add::after { content: ""; position: absolute; left: 36px; top: 0; bottom: 0; width: 3px; background: #226640; }
+  .code .del { background: #FDECEA; color: #8F1D14; } .code .del::before { content: ""; }
+  .kw { color: var(--accent); } .stx { color: #226640; } .cmx { color: var(--muted); font-style: italic; }
+  .side-chat { width: 400px; flex: none; display: flex; flex-direction: column; background: var(--panel-2); }
+  .side-chat .msgs { padding: 14px 16px; gap: 10px; }
+  .side-chat .act { margin-left: 0; }
+  .side-chat .composer { padding: 10px 14px 14px; }
+  .choices { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; max-width: 1180px; }
+  .choice { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; font-size: 13px; line-height: 1.5; }
+  /* Sessions, turns, git lines */
+  .sessions { display: flex; align-items: center; gap: 6px; padding: 8px 20px; background: var(--panel); border-bottom: 1px solid var(--line); overflow: hidden; }
+  .sess { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--line); font-size: 12.5px; color: var(--body); white-space: nowrap; }
+  .sess.on { border-color: var(--ink); color: var(--ink); font-weight: 600; }
+  .sess .wk { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
+  .sess .n { font: 700 10px var(--sans); color: var(--needs); }
+  .sess.add { border-style: dashed; color: var(--muted); }
+  .turnfoot { margin-left: 36px; display: flex; gap: 14px; font-size: 12px; color: var(--muted); }
+  .turnfoot a { color: var(--accent); text-decoration: underline; }
+  .shot { display: block; margin-top: 8px; width: 170px; height: 96px; border-radius: 8px; background: linear-gradient(135deg, #3b3a36, #5a5852); position: relative; }
+  .shot::after { content: "screenshot.png"; position: absolute; left: 8px; bottom: 6px; font: 600 10.5px var(--sans); color: #fff; opacity: .85; }
+  .gitline { margin-left: 36px; max-width: 700px; border: 1px solid var(--accent-line); background: var(--accent-bg-2); border-radius: 8px; padding: 7px 10px; font-size: 13px; color: var(--ink); display: flex; gap: 8px; align-items: center; }
+  .gitline .by { font: 700 11px var(--sans); color: var(--accent); letter-spacing: .03em; text-transform: uppercase; }
+  .queued { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--body); background: var(--chip); border-radius: 8px; padding: 6px 10px; margin-bottom: 8px; }
+  .queued b { color: var(--ink); }
+  .attach { display: inline-flex; gap: 10px; color: var(--muted); }
+  .web { color: var(--teal); }
+  .caret { font-size: 11px; color: var(--muted); }
+  .dd { position: absolute; top: 46px; left: 172px; width: 380px; z-index: 5; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 10px 28px rgba(0,0,0,.14); padding: 6px 0; }
+  .ddh { font: 700 11px var(--sans); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); padding: 6px 14px; }
+  .ddi { display: flex; align-items: center; gap: 10px; padding: 8px 14px; font-size: 14px; color: var(--ink); }
+  .ddi.on { background: var(--accent-bg); }
+  .ddi .wk { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); flex: none; }
+  .ddi .nowk { width: 7px; flex: none; }
+  .ddi .n { font: 600 12px var(--sans); color: var(--needs); } .ddi .n0 { font-size: 12px; color: var(--muted); }
+  .ddi .ck { color: var(--accent); font-weight: 700; }
+  .ddi.new { color: var(--accent); font-weight: 600; }
+  .ddsep { border-top: 1px solid var(--line-2); margin: 6px 0; }
+</style></head>
+<body>
+<main class="page">
+
+  <p class="why"><b>The project page with solo sessions</b> (revised after the decisions of 2026-11-02). The left column and the top bar stay as they are. The middle column gets two tabs: <b>Plan with the lead</b> and <b>Code with the assistant</b>. Each solo session works in <b>its own worktree, on its own branch</b> started from your branch, so several can be open at once; your project folder is not touched. Fallow commits every turn on the session's branch, so a turn can be undone. Merging, pushing or opening a pull request: you ask the assistant, and Fallow shows what it sees happen to your branches.</p>
+
+  <!-- 1 -->
+  <div class="label">1 · Plan with the lead</div>
+  <h2>As today, with the two tabs on top</h2>
+  <p class="why">Nothing changes in the lead's conversation. The dot on "Code with the assistant" says an assistant is at work in one of the solo sessions.</p>
+  <div class="frame" style="height:520px">
+    <div class="sub"><div><div class="small muted">Projects ›</div><h1>FallowSandbox</h1></div><span class="small muted mono">C:\Repos\FallowSandbox</span><span class="pill blue">git · master</span><span class="pill green">Spec Kit 1.0.12</span><span class="grow"></span><span class="input">New feature's name</span><span class="input">lead ▾</span><button class="btn">+ New feature</button></div>
+    <div class="pbody">
+      <aside class="left">
+        <div class="seg"><span class="on">Features</span><span>Files</span></div>
+        <div class="gt">Features</div>
+        <div class="feat"><span><span class="n">011</span>Order history and sales report</span><span class="pill green">ready</span></div>
+        <div class="feat"><span><span class="n">010</span>Receipt printout</span><span class="pill grey">merged</span></div>
+        <div class="feat"><span><span class="n">009</span>Read-only web page</span><span class="pill grey">merged</span></div>
+        <div class="feat"><span><span class="n">008</span>Checkout</span><span class="pill grey">merged</span></div>
+      </aside>
+      <section class="chat">
+        <div class="ctabs"><span class="ctab on">Plan with the lead</span><span class="ctab">Code with the assistant <span class="wk" title="At work"></span></span></div>
+        <div class="chead"><div class="av">L</div><div><b>Project conversation</b> <span class="small muted">· reads the code, never edits it</span><div class="small">Lead: <b>lead</b> <span class="muted">· claude · sonnet</span></div></div><span class="grow"></span><button class="btn btn2" style="min-height:32px">Expand</button></div>
+        <div class="msgs">
+          <div class="mine">What would fit after the sales report?</div>
+          <div class="leadm"><div class="av">L</div><div><b>lead</b><br>Two ideas: e-mailing a receipt, and a warning when stock runs low. Both are small and independent of each other.</div></div>
+        </div>
+        <div class="composer"><div class="box">Ask about the code, plan features, or design a pipeline…<div class="modes"><b>Ask</b> · Shift+Tab</div></div></div>
+      </section>
+      <nav class="rail" aria-label="Side panels">
+        <span class="ricon" title="Proposed features"><svg class="i" viewBox="0 0 24 24"><path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3.5 10.9c.5.4.5 1 .5 1.6V16h6v-.5c0-.6 0-1.2.5-1.6A6 6 0 0 0 12 3z"/></svg><span class="dot">2</span></span>
+        <span class="ricon" title="What the lead knows"><svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg></span>
+      </nav>
+    </div>
+  </div>
+
+  <!-- 2 -->
+  <div class="label" style="margin-top:18px">2 · Code with the assistant</div>
+  <h2>The assistant's tab opens a list of sessions; each turn its own commit, with "Undo this turn"; a screenshot, the web, a message waiting</h2>
+  <p class="why">Clicking <b>Code with the assistant</b> (shown open here) lists the project's solo sessions: the open one ticked, each named after its first message (renamed in its header), a dot while its assistant works, the number of its changes; <b>+ New session</b> starts one from your branch as it is now. Picking one opens it; the tab then shows that session. The header names the session's branch and where it started. In the conversation: a pasted screenshot goes to the assistant with the message; its work shows as in a loop, also what it looks up on the web; under each turn, what it changed and <b>Undo this turn</b>. A message typed while it works waits above the box and is sent when the turn ends.</p>
+  <div class="frame" style="height:920px">
+    <div class="sub"><div><div class="small muted">Projects ›</div><h1>FallowSandbox</h1></div><span class="small muted mono">C:\Repos\FallowSandbox</span><span class="pill blue">git · master</span><span class="pill green">Spec Kit 1.0.12</span><span class="grow"></span><span class="input">New feature's name</span><span class="input">lead ▾</span><button class="btn">+ New feature</button></div>
+    <div class="pbody">
+      <aside class="left">
+        <div class="seg"><span class="on">Features</span><span>Files</span></div>
+        <div class="gt">Features</div>
+        <div class="feat"><span><span class="n">011</span>Order history and sales report</span><span class="pill green">ready</span></div>
+        <div class="feat"><span><span class="n">010</span>Receipt printout</span><span class="pill grey">merged</span></div>
+        <div class="feat"><span><span class="n">009</span>Read-only web page</span><span class="pill grey">merged</span></div>
+        <div class="feat"><span><span class="n">008</span>Checkout</span><span class="pill grey">merged</span></div>
+      </aside>
+      <section class="chat" style="position:relative">
+        <div class="ctabs"><span class="ctab">Plan with the lead</span><span class="ctab on">Code with the assistant <span class="caret">▾</span></span></div>
+        <div class="dd" role="menu" aria-label="Solo sessions"><div class="ddh">Solo sessions</div><div class="ddi on"><span class="wk"></span><span class="grow">Receipt prints negative amounts</span><span class="n">2 changes</span><span class="ck">✓</span></div><div class="ddi"><span class="nowk"></span><span class="grow">Faster catalog load</span><span class="n">5 changes</span></div><div class="ddi"><span class="nowk"></span><span class="grow">Try a CSV export</span><span class="n0">no changes</span></div><div class="ddsep"></div><div class="ddi new">+ New session <span class="small muted">from <span class="mono">master</span> as it is now</span></div></div>
+        <div class="chead"><div class="av as">A</div><div><b>Receipt prints negative amounts</b> <span class="small muted">· branch <span class="mono">fallow/solo-receipt-negative</span>, from <span class="mono">master</span> at a1c09e2</span><div class="small">Assistant: <b>assistant</b> <span class="muted">· claude · sonnet · web on</span></div></div><span class="grow"></span><button class="btn btn2" style="min-height:32px">Open in my editor</button><button class="btn btn2" style="min-height:32px">Expand</button></div>
+        <div class="msgs">
+          <div class="mine">The discount line prints like this, fix it.<span class="shot"></span></div>
+          <div class="act">📄 Read shop/receipt.py</div>
+          <div class="act web">🌐 Looked up "python format negative cents" · docs.python.org</div>
+          <div class="act">✎ Edited shop/receipt.py <span class="add">+3</span> <span class="del">−1</span> · ✎ Edited tests/test_receipt.py <span class="add">+12</span></div>
+          <div class="act">▶ Ran <span class="mono">python -m unittest</span> <span class="ok">239 tests OK</span></div>
+          <div class="leadm"><div class="av as">A</div><div><b>assistant</b><br>Fixed: negative amounts print with the sign in front ("-0.50"), with a test for a discount line.</div></div>
+          <div class="turnfoot"><span>Turn 1 · 2 files · commit 7f3e1b0</span><a>Undo this turn</a></div>
+          <div class="mine">Merge this into master.</div>
+          <div class="act">▶ Ran <span class="mono">git merge fallow/solo-receipt-negative</span> (in your project folder)</div>
+          <div class="gitline"><span class="by">Fallow saw</span> <span><span class="mono">master</span> moved: 1 commit merged from this session (7f3e1b0). Not pushed.</span></div>
+        </div>
+        <div class="composer">
+          <div class="queued">Waiting to send when the turn ends: <b>"and show the discount code on the receipt"</b> <span class="grow"></span><a style="color:var(--accent)">Edit</a> <a style="color:var(--accent)">Remove</a></div>
+          <div class="box">Ask the assistant to change the code…<div class="modes"><b>Run anything</b> · Shift+Tab <span class="grow"></span> <span class="attach" style="float:right">📎 Attach · paste a screenshot</span></div></div>
+        </div>
+      </section>
+      <nav class="rail" aria-label="Side panels">
+        <span class="ricon" title="Changes"><svg class="i" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg><span class="dot chg">2</span></span>
+        <span class="ricon" title="Gates"><svg class="i" viewBox="0 0 24 24"><path d="M9 12l2 2 4-4"/><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/></svg></span>
+      </nav>
+    </div>
+  </div>
+
+  <!-- 3 -->
+  <div class="label" style="margin-top:18px">3 · Changes and Gates</div>
+  <h2>What this session changed since it started, turn by turn; the gates on the session's branch</h2>
+  <p class="why"><b>Changes</b> lists the files this session changed against where it started (its branch against <span class="mono">master</span> at a1c09e2), and its turns, each with Undo. A file opens with its diff. Until the gates run they are "Not verified by Fallow". <b>Gates</b> runs the project's gates on the session's branch and compares them with where it started; "Gates passed" holds until the next change.</p>
+  <div class="row top" style="gap:16px;align-items:flex-start;flex-wrap:wrap">
+    <div class="card2" style="width:360px;box-shadow:none">
+      <div class="th">Changes · this session</div>
+      <div class="small muted" style="margin-bottom:6px">Branch <span class="mono">fallow/solo-receipt-negative</span> against <span class="mono">master</span> at a1c09e2</div>
+      <div class="file"><span class="st">M</span><span class="grow">shop/receipt.py</span><span class="add">+3</span><span class="del">−1</span></div>
+      <div class="file"><span class="st">M</span><span class="grow">tests/test_receipt.py</span><span class="add">+12</span></div>
+      <div class="th" style="margin-top:12px">Turns</div>
+      <div class="file" style="font-family:var(--sans)"><span class="grow">1 · fix negative amounts</span><span class="small muted mono">7f3e1b0</span><a style="color:var(--accent);font-size:12px">Undo</a></div>
+      <div class="pnote"><span class="notver">Not verified by Fallow</span> · the gates did not run on these changes.</div>
+    </div>
+    <div class="card2" style="width:360px;box-shadow:none">
+      <div class="th">Gates · this session's branch</div>
+      <div class="kvs"><span>tests <span class="mono small muted">python -m unittest</span></span><b style="color:#226640">passed</b><span>where it started (a1c09e2)</span><span class="muted">passed</span><span>newly failing</span><b style="color:#226640">none</b></div>
+      <div class="row" style="gap:10px"><span class="ver">Gates passed</span><span class="small muted">at 21:14, on turn 1</span></div>
+      <div style="margin-top:12px"><button class="btn btn2" style="min-height:32px">Run the gates again</button></div>
+      <div class="pnote">A change after this run sets it back to "not verified".</div>
+    </div>
+  </div>
+
+  <!-- 4 -->
+  <div class="label" style="margin-top:18px">4 · Files, while coding with the assistant</div>
+  <h2>The tree is the session's worktree, its changes marked; a file opens beside the conversation</h2>
+  <p class="why">With the assistant's tab on, the Files tab shows the open session's worktree and marks what the session changed: <b>M</b> changed, <b>A</b> new, the number of changes on a folder. A file opens in the middle and the conversation moves beside it on the right, so you see the file and the assistant at work together. A changed file opens on its changes; "Whole file" shows all of it. Read-only, as in 009: the code is changed by the assistant, or by you in your editor.</p>
+  <div class="frame">
+    <div class="sub"><div><div class="small muted">Projects ›</div><h1>FallowSandbox</h1></div><span class="small muted mono">C:\Repos\FallowSandbox</span><span class="pill blue">git · master</span><span class="pill green">Spec Kit 1.0.12</span><span class="grow"></span><span class="input">New feature's name</span><span class="input">lead ▾</span><button class="btn">+ New feature</button></div>
+    <div class="pbody">
+      <aside class="left">
+        <div class="seg"><span>Features</span><span class="on">Files</span></div>
+        <div class="small muted" style="margin-bottom:6px">Session <b>Receipt prints negative…</b> · <span class="mono">fallow/solo-receipt-negative</span></div>
+        <div class="filter">Filter files…</div>
+        <div class="row small" style="margin-bottom:6px"><span class="muted">2 changed in this session</span><span class="grow"></span><span style="color:var(--accent);text-decoration:underline">only changed</span></div>
+        <div class="tree">
+          <div class="d">▸ .fallow</div>
+          <div class="d">▸ .specify</div>
+          <div class="d">▾ shop <span class="cnt">1</span></div>
+          <div class="i1">__init__.py</div>
+          <div class="i1">cart.py</div>
+          <div class="i1">checkout.py</div>
+          <div class="i1">orders.py</div>
+          <div class="i1 sel">receipt.py <span class="m mod">M</span></div>
+          <div class="i1 dim">catalog.json</div>
+          <div class="d">▸ specs</div>
+          <div class="d">▾ tests <span class="cnt">1</span></div>
+          <div class="i1">test_checkout.py</div>
+          <div class="i1">test_receipt.py <span class="m mod">M</span></div>
+          <div>README.md</div>
+        </div>
+      </aside>
+      <section class="fview">
+        <div class="fhead"><span class="path">shop/receipt.py</span><span class="pill orange">changed</span><span class="small muted">in turn 1, by the assistant</span><span class="grow"></span><span class="seg2"><span class="on">Changes</span><span>Whole file</span></span><button class="btn btn2" style="min-height:30px">Open in my editor</button><button class="btn btn2" style="min-height:30px">✕</button></div>
+        <div class="code">
+<div><span class="kw">def</span> format_price(cents):</div>
+<div>    <span class="cmx">"""Cents as euros and cents: 498 → "4.98"."""</span></div>
+<div class="del">    <span class="kw">return</span> f<span class="stx">"{cents // 100}.{cents % 100:02d}"</span></div>
+<div class="add">    sign = <span class="stx">"-"</span> <span class="kw">if</span> cents &lt; 0 <span class="kw">else</span> <span class="stx">""</span></div>
+<div class="add">    cents = abs(cents)</div>
+<div class="add">    <span class="kw">return</span> f<span class="stx">"{sign}{cents // 100}.{cents % 100:02d}"</span></div>
+<div></div>
+<div></div>
+<div><span class="kw">def</span> receipt_lines(order):</div>
+<div>    lines = []</div>
+<div>    <span class="kw">for</span> line <span class="kw">in</span> order[<span class="stx">"lines"</span>]:</div>
+<div>        lines.append(f<span class="stx">"{line['quantity']} x {line['product']}"</span>)</div>
+        </div>
+      </section>
+      <section class="side-chat">
+        <div class="ctabs" style="padding:8px 14px 0"><span class="ctab" style="font-size:13px">Lead</span><span class="ctab on" style="font-size:13px">Assistant</span></div>
+        <div class="chead" style="padding:10px 14px"><div class="av as">A</div><div><b>Receipt prints negative…</b><div class="small muted">assistant · claude · sonnet</div></div></div>
+        <div class="msgs">
+          <div class="mine" style="max-width:85%">Also show the discount code on the receipt.</div>
+          <div class="act">📄 Read shop/receipt.py</div>
+          <div class="act">📄 Read shop/orders.py</div>
+          <div class="act" style="color:var(--accent)">● Editing shop/receipt.py · 12 s</div>
+        </div>
+        <div class="composer"><div class="box">Ask the assistant…<div class="modes"><b>Run anything</b> · Shift+Tab</div></div></div>
+      </section>
+      <nav class="rail" aria-label="Side panels">
+        <span class="ricon" title="Changes"><svg class="i" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg><span class="dot chg">2</span></span>
+        <span class="ricon" title="Gates"><svg class="i" viewBox="0 0 24 24"><path d="M9 12l2 2 4-4"/><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/></svg></span>
+      </nav>
+    </div>
+  </div>
+
+  <div class="label" style="margin-top:18px">To settle</div>
+  <h2>Five details</h2>
+  <div class="choices">
+    <div class="choice"><b>The tab names.</b> "Plan with the lead" and "Code with the assistant" say what each is for. Shorter: "Lead" and "Assistant".</div>
+    <div class="choice"><b>A session's end.</b> A session stays in the row until you close it; closing removes its worktree, and its branch too once it is merged (asked first when it is not). Its conversation stays readable.</div>
+    <div class="choice"><b>Setup in a new worktree.</b> A fresh worktree has no installed dependencies (node_modules, a virtual environment). First version: the assistant installs them when asked. Later: a setup command per project that Fallow runs when a session starts.</div>
+    <div class="choice"><b>A file beside the lead too?</b> Today a file opened on the project page takes the chat's place. With the conversation beside the file (view 4), the lead's tab could do the same, so both tabs behave alike.</div>
+    <div class="choice"><b>The top bar's lead picker.</b> "lead ▾" next to "+ New feature" stays the lead's: it picks who leads a new feature. The assistant is picked when a session starts.</div>
+  </div>
+</main>
+</body></html>

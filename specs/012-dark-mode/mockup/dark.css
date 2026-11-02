@@ -1,0 +1,72 @@
+/* Draft dark palette (mockup): the same tokens as app.css's :root, darker; the colours app.css
+   writes as literals are overridden by selector below. Warm, like the light theme. */
+:root {
+  color-scheme: dark;
+  --ground: #161614;
+  --panel: #1E1E1B;
+  --panel-2: #23231F;
+  --line: #34332E;
+  --line-2: #2A2925;
+  --line-3: #45443E;
+  --ink: #ECEBE5;
+  --ink-2: #DDDCD5;
+  --body: #C4C3BB;
+  --muted: #A9A8A0;
+  --faint: #95948C;
+  --hover: #2A2925;
+  --chip: #2A2925;
+  --accent: #8AA4F2;
+  --accent-hover: #AFC1F7;
+  --accent-bg: #1F2640;
+  --accent-bg-2: #1B2036;
+  --accent-line: #3A4A80;
+  --needs: #F0A070;
+  --needs-ink: #F4B48C;
+  --needs-bg: #3A2416;
+  --needs-line: #7A4A2A;
+  --needs-panel: #241D18;
+  --ok: #7FCB9A;
+  --ok-dot: #4FAE74;
+  --ok-bg: #18301F;
+  --ok-panel: #1A241D;
+  --ok-line: #2F5A3E;
+  --spec: #B9A2F0;
+  --spec-bg: #2A2140;
+  --spec-line: #4A3A78;
+  --bad: #F2A098;
+  --bad-bg: #3A1C19;
+  --bad-line: #7A3530;
+  --warn: #E8C46A;
+  --warn-bg: #352A12;
+  --teal: #7CC6D4;
+  --teal-bg: #16303A;
+  --diff-del: #3A1C19;
+  --diff-del-ink: #F2A098;
+  --diff-add: #18301F;
+  --diff-add-ink: #8FD3A8;
+  --term: #0F0F0E;
+  --term-ink: #E8E7E1;
+  /* New: what sits on the solid (ink) surfaces, which turn light in dark mode. */
+  --on-ink: #161614;
+  --solid-hover: #FFFFFF;
+}
+
+/* The solid surfaces: light, with dark text. */
+.nav.on, .nav.on:hover, .btn:not(.btn2), .you, .send-btn, .ptab.on { color: var(--on-ink); }
+.btn:not(.btn2):hover { background: var(--solid-hover); color: var(--on-ink); }
+.ricon .dot { color: var(--on-ink); }
+
+/* Literal colours in app.css. */
+.dot.grey, .link { background: #55544D; }
+.arrow { color: #6E6D66; }
+dialog.confirm::backdrop { background: rgba(0, 0, 0, .6); }
+.doc .marker { background: #3A2F18; }
+.minus { color: #F2A098; }
+.bar.now { background: linear-gradient(90deg, var(--accent) var(--share, 0%), #2A3358 var(--share, 0%)); }
+.phase-box { background: #1B2036; }
+.pl-graph, .lg-graph { background-image: radial-gradient(#2E2D29 1px, transparent 1px) !important; }
+.pl-graph .e, .lg-graph .e { stroke: #6E6D66; }
+.pl-graph .ah, .lg-graph .ah { fill: #6E6D66; }
+.pl-graph .gplus circle, .lg-graph .gplus circle { stroke: #6E6D66; }
+.cmd-menu { box-shadow: 0 8px 24px rgba(0, 0, 0, .5); }
+.side-panel { box-shadow: 0 10px 28px rgba(0, 0, 0, .55); }

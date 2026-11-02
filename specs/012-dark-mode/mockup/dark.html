@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fallow dark mode</title>
+<style>
+  :root { --bg: #F6F6F3; --ink: #1C1C1A; --muted: #5E5D58; --line: #E3E2DC; --panel: #fff; --accent: #2F52C9; }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg: #161614; --ink: #ECEBE5; --muted: #A9A8A0; --line: #34332E; --panel: #1E1E1B; --accent: #8AA4F2; } }
+  :root[data-theme="dark"] { --bg: #161614; --ink: #ECEBE5; --muted: #A9A8A0; --line: #34332E; --panel: #1E1E1B; --accent: #8AA4F2; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.5 Inter, system-ui, sans-serif; }
+  main { max-width: 1500px; margin: 0 auto; padding: 24px 16px 60px; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  p.lead { color: var(--muted); margin: 0 0 20px; max-width: 900px; }
+  .bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 18px; position: sticky; top: 0; background: var(--bg); padding: 10px 0; z-index: 2; }
+  .bar button { font: 600 14px Inter, system-ui, sans-serif; padding: 8px 14px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); cursor: pointer; }
+  .bar button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+  .bar .sep { width: 1px; height: 24px; background: var(--line); margin: 0 6px; }
+  section { margin-bottom: 36px; }
+  h2 { font-size: 16px; margin: 0 0 10px; }
+  .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .pair.one { grid-template-columns: 1fr; }
+  figure { margin: 0; }
+  figcaption { font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+  img { width: 100%; display: block; border: 1px solid var(--line); border-radius: 8px; }
+  .hide { display: none; }
+  @media (max-width: 800px) { .pair { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<main>
+  <h1>Fallow in dark mode: a draft</h1>
+  <p class="lead">Your own Fallow, the same screens taken twice: as it is now, and with the draft dark palette
+    (<code>dark.css</code>) laid over it. Nothing in Fallow was changed. The dark theme keeps the warm, paper-like
+    tone of the light one; the solid black buttons and your chat bubbles turn light with dark text.</p>
+  <div class="bar" role="group" aria-label="Show">
+    <button data-show="both" aria-pressed="true">Side by side</button>
+    <button data-show="light" aria-pressed="false">Light only</button>
+    <button data-show="dark" aria-pressed="false">Dark only</button>
+  </div>
+  <div id="list"></div>
+</main>
+<script>
+  const screens = [
+    ["project", "Project page: the conversation with the lead"],
+    ["spec", "Spec session: the documents and the lead"],
+    ["loop", "A loop: the pipeline graph and the activity"],
+    ["dashboard", "Dashboard"],
+    ["pipelines", "Pipelines"],
+    ["agents", "Agents"],
+  ];
+  const list = document.getElementById("list");
+  for (const [n, t] of screens) {
+    const s = document.createElement("section");
+    s.innerHTML = `<h2>${t}</h2><div class="pair">
+      <figure class="light"><figcaption>Light (now)</figcaption><img src="dark/${n}-light.png" alt="${t}, light" loading="lazy"></figure>
+      <figure class="dark"><figcaption>Dark (draft)</figcaption><img src="dark/${n}-dark.png" alt="${t}, dark" loading="lazy"></figure></div>`;
+    list.appendChild(s);
+  }
+  for (const b of document.querySelectorAll("[data-show]")) b.addEventListener("click", () => {
+    const v = b.dataset.show;
+    for (const x of document.querySelectorAll("[data-show]")) x.setAttribute("aria-pressed", String(x === b));
+    for (const p of document.querySelectorAll(".pair")) p.classList.toggle("one", v !== "both");
+    for (const f of document.querySelectorAll("figure.light")) f.classList.toggle("hide", v === "dark");
+    for (const f of document.querySelectorAll("figure.dark")) f.classList.toggle("hide", v === "light");
+  });
+</script>
+</body>
+</html>
