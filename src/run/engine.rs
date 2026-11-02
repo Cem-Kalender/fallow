@@ -190,6 +190,11 @@ pub enum Msg {
     },
     Tick,
     Shutdown,
+    /// 010: a project's protection, as the hosting tool read it (research R-3).
+    Remote {
+        project: String,
+        read: crate::publish::Read,
+    },
 }
 
 /// What Fallow itself runs for a run right now: its gates or a merge (never persisted: a restart
@@ -369,7 +374,14 @@ pub struct Engine {
     notifier: crate::service::notify::Notifier,
     /// The ended loops whose record was written or tried: each is tried once per start.
     recorded: std::collections::BTreeSet<u64>,
+    /// 010: each project's remote as last read, and when a read was last started.
+    remotes: BTreeMap<String, (crate::publish::Remote, Option<Instant>)>,
 }
+
+/// 010: how often a project's protection is read again: a known value once a minute, an unknown
+/// or stale one sooner (research R-6; FR-003).
+const REMOTE_KNOWN: Duration = Duration::from_secs(60);
+const REMOTE_UNKNOWN: Duration = Duration::from_secs(10);
 
 pub fn runs_dir(data: &Path) -> PathBuf {
     data.join("runs")
@@ -390,6 +402,7 @@ impl Engine {
         let mut e = Engine {
             notifier,
             recorded: std::collections::BTreeSet::new(),
+            remotes: BTreeMap::new(),
             data,
             runs: BTreeMap::new(),
             ctx,
@@ -552,6 +565,7 @@ impl Engine {
                     }
                     break;
                 }
+                Msg::Remote { project, read } => self.remote_read(&project, read),
             }
             self.publish_changes();
             self.notify_changes();
@@ -1040,6 +1054,83 @@ impl Engine {
     }
 
     /// A project as its screen shows it (mockup screen 5).
+    /// 010: the project's remote (FR-001 to FR-003): its git part at once, its protection as last
+    /// read; a new read is started on a thread when the last is old enough. `None` when the
+    /// project is not on a branch of a git repository.
+    pub fn remote_of(&mut self, p: &crate::project::Project) -> Option<crate::publish::Remote> {
+        let target = git::branch(&p.path)?;
+        let now = Instant::now();
+        let slot = self
+            .remotes
+            .entry(p.id.clone())
+            .or_insert_with(|| (p.remote_seen.clone().unwrap_or_else(|| crate::publish::remote::find(&p.path, &target)), None));
+        let wait = if slot.0.known() && !slot.0.stale {
+            REMOTE_KNOWN
+        } else {
+            REMOTE_UNKNOWN
+        };
+        let due = !slot.0.checking && slot.1.is_none_or(|t| now.duration_since(t) >= wait);
+        if due {
+            slot.1 = Some(now);
+            let mut found = crate::publish::remote::find(&p.path, &target);
+            // The last value stays shown while it is read again, for the same remote branch.
+            if found.same_place(&slot.0) {
+                found.protected = slot.0.protected.clone();
+                found.account = slot.0.account.clone();
+                found.checked_at = slot.0.checked_at.clone();
+                found.stale = slot.0.stale;
+                found.why = slot.0.why.clone();
+            }
+            if found.state == "known" {
+                found.checking = true;
+                if !found.known() {
+                    found.protected = "checking".into();
+                }
+                let (tx, dir, settings, id, ask) = (
+                    self.ctx.tx.clone(),
+                    p.path.clone(),
+                    self.ctx.settings.clone(),
+                    p.id.clone(),
+                    found.clone(),
+                );
+                let _ = std::thread::Builder::new()
+                    .name(format!("remote-{id}"))
+                    .spawn(move || {
+                        let read = crate::publish::read_protection(&dir, &ask, &settings);
+                        let _ = tx.send(Msg::Remote { project: id, read });
+                    });
+            }
+            slot.0 = found;
+            let seen = slot.0.clone();
+            if !seen.checking {
+                self.remember_remote(&p.id, seen);
+            }
+        }
+        self.remotes.get(&p.id).map(|s| s.0.clone())
+    }
+
+    /// A read of the protection came back: kept, shown, and remembered for a restart.
+    fn remote_read(&mut self, project: &str, read: crate::publish::Read) {
+        let Some(slot) = self.remotes.get_mut(project) else {
+            return;
+        };
+        slot.0.apply(read, super::time::rfc3339(super::time::unix_now()));
+        let seen = slot.0.clone();
+        self.remember_remote(project, seen);
+        self.bus.publish(json!({ "type": "studio" }));
+    }
+
+    fn remember_remote(&mut self, project: &str, seen: crate::publish::Remote) {
+        if let Some(p) = self.studio.store.get_mut(project) {
+            if p.remote_seen.as_ref() != Some(&seen) {
+                p.remote_seen = Some(seen);
+                if let Err(e) = self.studio.store.save() {
+                    self.console.push(format!("project {project}: {e}"));
+                }
+            }
+        }
+    }
+
     fn project_view(&mut self, id: &str) -> Result<Value, String> {
         let p = self
             .studio
@@ -1068,6 +1159,7 @@ impl Engine {
             None => json!({ "name": lead }),
         };
         v["branch"] = json!(git::branch(&p.path));
+        v["remote"] = json!(self.remote_of(&p));
         v["feature_list"] = Value::Array(
             p.features
                 .iter()

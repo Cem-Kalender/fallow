@@ -427,6 +427,7 @@ mod tests {
             account: None,
             checked_at: Some("t".into()),
             stale: false,
+            checking: false,
         });
         let back: Project = serde_json::from_str(&serde_json::to_string(&p).unwrap()).unwrap();
         assert_eq!(back.remote_seen, p.remote_seen);

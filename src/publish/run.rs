@@ -5,6 +5,7 @@
 use std::io::Read;
 use std::path::Path;
 use std::process::Stdio;
+use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 /// Reads: protection, a pull request's state.
@@ -15,6 +16,16 @@ pub const WRITE: Duration = Duration::from_secs(60);
 /// Runs `program args` in `dir` within `limit`; stdout on success, otherwise the last lines of
 /// what it said (stderr, else stdout), or that it took too long.
 pub fn run(program: &str, args: &[String], dir: &Path, limit: Duration) -> Result<String, String> {
+    run_full(program, args, dir, limit).map(|(out, _)| out)
+}
+
+/// As `run`, with stderr too on success (some tools report there).
+pub fn run_full(
+    program: &str,
+    args: &[String],
+    dir: &Path,
+    limit: Duration,
+) -> Result<(String, String), String> {
     let mut cmd = crate::platform::command(program);
     cmd.args(args)
         .current_dir(dir)
@@ -24,52 +35,78 @@ pub fn run(program: &str, args: &[String], dir: &Path, limit: Duration) -> Resul
         .env("GIT_TERMINAL_PROMPT", "0")
         .env("GH_PROMPT_DISABLED", "1")
         .env("GCM_INTERACTIVE", "never");
-    // SSH without a terminal must not ask for a passphrase; the engineer's own SSH command, when
-    // set, is used as it is.
-    if is_git(program) && std::env::var_os("GIT_SSH_COMMAND").is_none() && !ssh_command_set(dir) {
+    // SSH without a terminal must not ask for a passphrase; the engineer's own SSH program
+    // (GIT_SSH_COMMAND, GIT_SSH such as plink, core.sshCommand, ssh.variant) is used as it is.
+    if is_git(program)
+        && std::env::var_os("GIT_SSH_COMMAND").is_none()
+        && std::env::var_os("GIT_SSH").is_none()
+        && !config_set(dir, "core.sshCommand")
+        && !config_set(dir, "ssh.variant")
+    {
         cmd.env("GIT_SSH_COMMAND", "ssh -o BatchMode=yes");
     }
     let name = Path::new(program)
         .file_stem()
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_else(|| program.to_string());
+    // Its own process group: a time-out ends what it started too (git-remote-https, ssh, a
+    // credential helper), so nothing finishes a push after it was reported stopped.
+    let group = crate::platform::job::Group::new().map_err(|e| format!("{name}: {e}"))?;
     let mut child = cmd
         .spawn()
         .map_err(|e| format!("cannot start {name}: {e}"))?;
-    // Read both pipes on threads, so a chatty program never blocks on a full pipe.
-    let drain = |p: Option<Box<dyn Read + Send>>| {
+    let _ = group.adopt(child.id());
+    // Both pipes are read on threads, so a chatty program never blocks on a full pipe; a
+    // grandchild holding them open cannot hold Fallow past the limit.
+    let (tx, rx) = mpsc::channel::<(bool, String)>();
+    for (is_out, pipe) in [
+        (true, child.stdout.take().map(|p| Box::new(p) as Box<dyn Read + Send>)),
+        (false, child.stderr.take().map(|p| Box::new(p) as Box<dyn Read + Send>)),
+    ] {
+        let tx = tx.clone();
         std::thread::spawn(move || {
-            let mut s = String::new();
-            if let Some(mut p) = p {
-                let mut b = Vec::new();
+            let mut b = Vec::new();
+            if let Some(mut p) = pipe {
                 let _ = p.read_to_end(&mut b);
-                s = String::from_utf8_lossy(&b).into_owned();
             }
-            s
-        })
-    };
-    let out = drain(child.stdout.take().map(|p| Box::new(p) as Box<dyn Read + Send>));
-    let err = drain(child.stderr.take().map(|p| Box::new(p) as Box<dyn Read + Send>));
+            let _ = tx.send((is_out, String::from_utf8_lossy(&b).into_owned()));
+        });
+    }
+    drop(tx);
     let started = Instant::now();
+    let too_long = || {
+        format!(
+            "{name} took longer than {} s and was stopped",
+            limit.as_secs()
+        )
+    };
     let status = loop {
         match child.try_wait() {
             Ok(Some(s)) => break s,
             Ok(None) if started.elapsed() >= limit => {
+                group.kill();
                 let _ = child.kill();
                 let _ = child.wait();
-                return Err(format!(
-                    "{name} took longer than {} s and was stopped",
-                    limit.as_secs()
-                ));
+                return Err(too_long());
             }
             Ok(None) => std::thread::sleep(Duration::from_millis(25)),
-            Err(e) => return Err(format!("{name}: {e}")),
+            Err(e) => {
+                group.kill();
+                return Err(format!("{name}: {e}"));
+            }
         }
     };
-    let out = out.join().unwrap_or_default();
-    let err = err.join().unwrap_or_default();
+    let (mut out, mut err) = (String::new(), String::new());
+    for _ in 0..2 {
+        let left = limit.saturating_sub(started.elapsed()).max(Duration::from_secs(2));
+        match rx.recv_timeout(left) {
+            Ok((true, s)) => out = s,
+            Ok((false, s)) => err = s,
+            Err(_) => break,
+        }
+    }
     if status.success() {
-        return Ok(out);
+        return Ok((out, err));
     }
     let said = if err.trim().is_empty() { &out } else { &err };
     let tail: Vec<&str> = said.lines().filter(|l| !l.trim().is_empty()).collect();
@@ -87,10 +124,10 @@ fn is_git(program: &str) -> bool {
         .is_some_and(|s| s.eq_ignore_ascii_case("git"))
 }
 
-/// Whether the repository (or the engineer's git configuration) names its own SSH command.
-fn ssh_command_set(dir: &Path) -> bool {
+/// Whether git's configuration (the repository's or the engineer's) sets `key`.
+fn config_set(dir: &Path, key: &str) -> bool {
     crate::platform::command("git")
-        .args(["config", "--get", "core.sshCommand"])
+        .args(["config", "--get", key])
         .current_dir(dir)
         .stdin(Stdio::null())
         .output()

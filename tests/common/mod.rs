@@ -461,10 +461,15 @@ pub fn fake_editor(root: &Path) -> (String, Vec<String>, PathBuf) {
 /// research R-1): `origin` is `address` as written, every push goes to the bare repository, and
 /// `main` is pushed with its upstream set.
 pub fn bare_remote(root: &Path, repo: &Path, address: &str) -> PathBuf {
-    let bare = root.join("remote.git");
+    bare_remote_in(root, repo, address, "remote.git")
+}
+
+/// `bare_remote` in the folder `folder` under `root` (several remotes in one test).
+pub fn bare_remote_in(root: &Path, repo: &Path, address: &str, folder: &str) -> PathBuf {
+    let bare = root.join(folder);
     std::fs::create_dir_all(&bare).unwrap();
     git(&bare, &["init", "-q", "--bare", "-b", "main"]);
-    let local = bare.display().to_string().replace('\', "/");
+    let local = bare.display().to_string().replace('\\', "/");
     git(repo, &["remote", "add", "origin", address]);
     git(repo, &["config", &format!("url.{local}.insteadOf"), address]);
     git(repo, &["push", "-q", "-u", "origin", "main"]);
@@ -490,6 +495,9 @@ pub fn fake_host(root: &Path, state: Value) -> PathBuf {
     std::fs::write(&path, serde_json::to_string_pretty(&state).unwrap()).unwrap();
     let extra = root.join("settings.extra.toml");
     let before = std::fs::read_to_string(&extra).unwrap_or_default();
+    if before.contains("[hosting.github]") {
+        return path;
+    }
     let exe = env!("CARGO_BIN_EXE_fallow-fake-host");
     std::fs::write(
         &extra,

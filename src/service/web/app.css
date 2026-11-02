@@ -693,3 +693,6 @@ fieldset.field.along legend { padding: 0; margin-bottom: 4px; }
   .side-panel { order: 2; position: static; flex: 1 1 100%; width: auto; max-width: none; margin: 12px 16px 0; box-shadow: none; }
   .studio.with-rail > .chat-col, .studio.with-rail > .file-col { order: 3; }
 }
+
+/* 010: the project's remote; its longer states wrap on a narrow screen. */
+#remote-pill { white-space: normal; }

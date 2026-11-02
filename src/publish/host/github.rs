@@ -7,7 +7,7 @@ use std::path::Path;
 use serde_json::Value;
 
 use super::{Check, CheckState, Host, PrState, PrStatus, PullRequest, Repo};
-use crate::publish::run::{READ, WRITE, run};
+use crate::publish::run::{READ, WRITE, run, run_full};
 
 pub struct GitHub {
     program: String,
@@ -38,44 +38,62 @@ impl Host for GitHub {
     }
 
     fn signed_in(&self, dir: &Path) -> Result<String, String> {
-        let out = self
-            .gh(dir, &["auth", "status", "--hostname", "github.com"], READ)
-            .map_err(|e| {
-                if e.contains("cannot start") {
-                    "GitHub's command-line tool gh is not installed: install it, run `gh auth login`, then try again".to_string()
-                } else {
-                    "not signed in to github.com: run `gh auth login` in a terminal (it opens your browser), then try again".to_string()
-                }
-            })?;
-        Ok(login_of(&out).unwrap_or_default())
+        let (out, err) = run_full(
+            &self.program,
+            &self.args(&["auth", "status", "--hostname", "github.com"]),
+            dir,
+            READ,
+        )
+        .map_err(|e| {
+            let l = e.to_lowercase();
+            if l.contains("cannot start") {
+                "GitHub's command-line tool gh is not installed: install it, run `gh auth login`, then try again".to_string()
+            } else if l.contains("not logged in") || l.contains("gh auth login") || l.contains("is invalid") {
+                "not signed in to github.com: run `gh auth login` in a terminal (it opens your browser), then try again".to_string()
+            } else {
+                e
+            }
+        })?;
+        // gh 2.40 and later write to stdout ("account <login>"), older ones to stderr ("as
+        // <login>").
+        Ok(login_of(&out).or_else(|| login_of(&err)).unwrap_or_default())
     }
 
+    /// Protected only when it can tell: an error or an answer it cannot read is never "not
+    /// protected" (research R-3).
     fn protected(&self, dir: &Path, repo: &Repo, branch: &str) -> Result<bool, String> {
-        let rules = self.gh(
-            dir,
-            &["api", &format!("repos/{}/rules/branches/{branch}", repo.slug())],
-            READ,
-        );
-        if let Ok(text) = &rules {
-            let v: Value = serde_json::from_str(text).unwrap_or(Value::Null);
-            if v.as_array().is_some_and(|a| {
-                a.iter().any(|r| r["type"].as_str() == Some("pull_request"))
-            }) {
-                return Ok(true);
+        let slug = repo.slug();
+        // The branch first: a 404 tells a branch not pushed yet from a repository out of reach.
+        let flag = match self.gh(dir, &["api", &format!("repos/{slug}/branches/{branch}")], READ) {
+            Ok(text) => serde_json::from_str::<Value>(&text)
+                .ok()
+                .and_then(|v| v["protected"].as_bool())
+                .ok_or_else(|| format!("could not read whether {branch} is protected on {slug}"))?,
+            Err(e) if e.contains("Branch not found") => {
+                return Err(format!("{branch} is not on {slug} yet"));
             }
-        }
-        match self.gh(
-            dir,
-            &["api", &format!("repos/{}/branches/{branch}", repo.slug())],
-            READ,
-        ) {
-            Ok(text) => {
-                let v: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
-                Ok(v["protected"].as_bool().unwrap_or(false))
+            Err(e) if e.contains("404") => {
+                return Err(format!(
+                    "{slug} cannot be read with your GitHub account (it does not exist, or you have no access)"
+                ));
             }
-            Err(e) if e.contains("404") => Err(format!("{branch} is not on {} yet", repo.slug())),
-            Err(e) => Err(rules.err().unwrap_or(e)),
+            Err(e) => return Err(e),
+        };
+        // A classic protection: the details need admin rights, so it counts as requiring a pull
+        // request (the safe side).
+        if flag {
+            return Ok(true);
         }
+        // Rulesets: a rule requiring a pull request, or restricting updates.
+        let text = self.gh(dir, &["api", &format!("repos/{slug}/rules/branches/{branch}")], READ)?;
+        let rules: Value = serde_json::from_str(&text)
+            .map_err(|_| format!("could not read the rules of {branch} on {slug}"))?;
+        let rules = rules
+            .as_array()
+            .ok_or_else(|| format!("could not read the rules of {branch} on {slug}"))?;
+        Ok(rules.iter().any(|r| {
+            matches!(r["type"].as_str(), Some("pull_request" | "update"))
+        }))
     }
 
     fn open(
@@ -135,14 +153,20 @@ impl Host for GitHub {
                 "--state",
                 "all",
                 "--json",
-                "number,url,state",
+                "number,url,state,headRepositoryOwner",
                 "--limit",
-                "1",
+                "10",
             ],
             READ,
         )?;
         let v: Value = serde_json::from_str(&out).map_err(|e| format!("gh pr list: {e}"))?;
-        Ok(v.as_array().and_then(|a| a.first()).and_then(|p| {
+        // `--head` matches the branch name only: a fork's branch of the same name is not ours.
+        let ours = |p: &&Value| {
+            p["headRepositoryOwner"]["login"]
+                .as_str()
+                .is_none_or(|o| o.eq_ignore_ascii_case(&repo.owner))
+        };
+        Ok(v.as_array().and_then(|a| a.iter().find(ours)).and_then(|p| {
             Some((
                 PullRequest {
                     number: p["number"].as_u64()?,
@@ -154,10 +178,14 @@ impl Host for GitHub {
     }
 }
 
-/// The login in `gh auth status`'s "Logged in to github.com account <login>" line.
+/// The login in `gh auth status`'s "Logged in to github.com account <login>" line (or "as
+/// <login>" before gh 2.40).
 fn login_of(out: &str) -> Option<String> {
     out.lines().find_map(|l| {
-        let rest = l.split("Logged in to github.com account ").nth(1)?;
+        let rest = l
+            .split("Logged in to github.com account ")
+            .nth(1)
+            .or_else(|| l.split("Logged in to github.com as ").nth(1))?;
         rest.split_whitespace().next().map(str::to_string)
     })
 }
@@ -235,6 +263,10 @@ mod tests {
         let status = "github.com\n  ✓ Logged in to github.com account Cem-Kalender (keyring)\n  - Active account: true\n";
         assert_eq!(login_of(status).as_deref(), Some("Cem-Kalender"));
         assert_eq!(login_of("You are not logged into any GitHub hosts."), None);
+        assert_eq!(
+            login_of("github.com\n  ✓ Logged in to github.com as octo (oauth_token)\n").as_deref(),
+            Some("octo")
+        );
         let pr = pull_request_of("\nCreating pull request…\nhttps://github.com/acme/shop/pull/42\n").unwrap();
         assert_eq!((pr.number, pr.url.as_str()), (42, "https://github.com/acme/shop/pull/42"));
     }

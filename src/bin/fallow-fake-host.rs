@@ -7,7 +7,7 @@
 //! ```json
 //! {
 //!   "login": "octo", "signed_in": true,
-//!   "rules": { "main": ["pull_request"] },          // per branch: rule types
+//!   "rules": { "main": ["pull_request"] },          // per branch (or "owner/repo:branch")
 //!   "protected": { "main": true, "dev": false },    // classic flag; a branch in neither → 404
 //!   "prs": [{ "number": 1, "head": "h", "base": "main", "title": "t", "body": "…",
 //!             "state": "open", "merged_at": null,
@@ -87,7 +87,9 @@ fn main() {
                 "checks": [],
             }));
             state["prs"] = Value::from(prs);
-            let _ = std::fs::write(&path, serde_json::to_string_pretty(&state).unwrap());
+            let tmp = format!("{path}.tmp");
+            let _ = std::fs::write(&tmp, serde_json::to_string_pretty(&state).unwrap());
+            let _ = std::fs::rename(&tmp, &path);
             Ok(format!("https://github.com/{repo}/pull/{number}\n"))
         }
         "pr view" => {
@@ -107,6 +109,7 @@ fn main() {
         "pr list" => {
             let head = opt("--head").unwrap_or_default();
             let repo = opt("--repo").unwrap_or_default();
+            let owner = repo.split('/').next().unwrap_or("").to_string();
             let found: Vec<Value> = state["prs"]
                 .as_array()
                 .cloned()
@@ -119,10 +122,10 @@ fn main() {
                         "number": n,
                         "url": format!("https://github.com/{repo}/pull/{n}"),
                         "state": p["state"].as_str().unwrap_or("open").to_uppercase(),
+                        "headRepositoryOwner": { "login": p["owner"].as_str().unwrap_or(&owner) },
                     })
                 })
                 .rev()
-                .take(1)
                 .collect();
             Ok(Value::from(found).to_string())
         }
@@ -145,8 +148,10 @@ fn pr(state: &Value, pick: impl Fn(&Value) -> bool) -> Option<Value> {
 fn api(state: &Value, endpoint: &str) -> Result<String, String> {
     let parts: Vec<&str> = endpoint.split('/').collect();
     match parts.as_slice() {
-        ["repos", _, _, "rules", "branches", b] => {
-            let rules: Vec<Value> = state["rules"][*b]
+        ["repos", o, r, "rules", "branches", b] => {
+            let key = format!("{o}/{r}:{b}");
+            let pick = if state["rules"][&key].is_null() { *b } else { key.as_str() };
+            let rules: Vec<Value> = state["rules"][pick]
                 .as_array()
                 .cloned()
                 .unwrap_or_default()
@@ -155,7 +160,10 @@ fn api(state: &Value, endpoint: &str) -> Result<String, String> {
                 .collect();
             Ok(Value::from(rules).to_string())
         }
-        ["repos", _, _, "branches", b] => match state["protected"][*b].as_bool() {
+        ["repos", o, r, "branches", b] => match state["protected"][format!("{o}/{r}:{b}")]
+            .as_bool()
+            .or(state["protected"][*b].as_bool())
+        {
             Some(p) => Ok(json!({ "name": b, "protected": p }).to_string()),
             None => Err("gh: Branch not found (HTTP 404)".into()),
         },

@@ -9,12 +9,58 @@
 
   function kindPills(p) {
     const pills = [];
-    if (p.kind === "git") pills.push(h`<span class="pill blue">git${p.branch ? ` · ${p.branch}` : ""}</span>`);
+    if (p.kind === "git") pills.push(h`<span class="pill blue">git${p.branch ? ` · ${p.branch}` : ""}</span>`, remotePill(p.remote));
     else if (p.kind === "folder") pills.push(h`<span class="pill grey">folder, no git</span>`);
     else pills.push(h`<span class="pill orange">folder missing</span>`);
     if (p.spec_kit) pills.push(h`<span class="pill green">Spec Kit ${p.spec_kit}</span>`);
     pills.push(h`<a class="pill grey" href="#/pipelines/${encodeURIComponent(p.id)}">pipeline ${p.pipeline}</a>`);
     return pills;
+  }
+
+  // 010: the project's remote (FR-001 to FR-003): where it is, its target branch there and
+  // whether that branch is protected; never a guess.
+  function remotePill(r) {
+    if (!r) return raw("");
+    const at = (iso) => {
+      const d = new Date(iso);
+      return isNaN(d) ? iso : d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    };
+    let text;
+    let cls = "grey";
+    let title = "";
+    if (r.state === "none") text = "no remote";
+    else if (r.state === "no_target") { text = "remote: no target"; title = r.why || ""; }
+    else if (r.state === "unsupported") { text = `${r.service}: Fallow can only merge locally there`; }
+    else {
+      const where = `${r.service} · ${r.repo ? `${r.repo.owner}/${r.repo.name}` : "?"} · ${r.target}`;
+      if (r.protected === "yes") { text = `${where} · protected`; cls = "orange"; title = "Changes reach this branch only through a pull request"; }
+      else if (r.protected === "no") { text = `${where} · not protected`; }
+      else if (r.protected === "checking") { text = `${where} · checking…`; }
+      else { text = `${where} · protection unknown`; cls = "yellow"; title = r.why || ""; }
+      if (r.checking && r.protected !== "checking") text += " · checking…";
+      else if (r.stale) { text += ` · could not check now (last at ${at(r.checked_at)})`; title = r.why || title; }
+    }
+    return h`<span class="pill ${cls}" id="remote-pill"${raw(title ? ` title="${Fallow.esc(title)}"` : "")}>${text}${r.protected === "unknown" && r.state === "known" ? h` <span aria-hidden="true">?</span>` : ""}</span>`;
+  }
+
+  // While the protection is read, the pill alone is brought up to date (the chat is not drawn
+  // again).
+  let following = null;
+  function followRemote(app, id) {
+    if (following === app) return;
+    following = app;
+    setTimeout(async () => {
+      following = null;
+      if (!Fallow.here(app) || !state || state.id !== id) return;
+      try {
+        const s = await get(`/api/projects/${encodeURIComponent(id)}`);
+        if (!Fallow.here(app) || !state || state.id !== id) return;
+        state.remote = s.remote;
+        const el = document.getElementById("remote-pill");
+        if (el) el.outerHTML = remotePill(s.remote).s;
+        if (s.remote && s.remote.checking) followRemote(app, id);
+      } catch (_) { /* the next load shows it */ }
+    }, 1500);
   }
 
   function featureHref(p, f) {
@@ -197,6 +243,7 @@
       }
       state = s;
       render(app);
+      if (s.remote && s.remote.checking) followRemote(app, id);
     } catch (e) {
       if (Fallow.here(app)) app.innerHTML = h`<div class="page"><div class="card empty">${e.message}</div></div>`.s;
     }
