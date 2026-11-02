@@ -607,7 +607,7 @@ fieldset.field.along legend { padding: 0; margin-bottom: 4px; }
 @keyframes fallow-dot { 0%, 80%, 100% { transform: translateY(0); opacity: .35; } 40% { transform: translateY(-4px); opacity: 1; } }
 
 /* 009 US5: the project's files, read-only (mockup/files.html). */
-.ptabs { display: inline-flex; align-self: flex-start; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; margin-bottom: 8px; }
+.ptabs { display: inline-flex; align-self: flex-start; flex: none; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; margin-bottom: 8px; }
 .ptab { border: 0; background: var(--panel); padding: 6px 14px; font: 600 13px var(--sans); color: var(--muted); cursor: pointer; }
 .ptab.on { background: var(--ink); color: #fff; }
 #files-pane, #features-pane { display: flex; flex-direction: column; gap: 6px; min-height: 0; }
