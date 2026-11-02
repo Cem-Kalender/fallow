@@ -492,6 +492,16 @@ pub fn run(agent: &Agent, c: &Call, sink: &mut dyn FnMut(Event), stop: &AtomicBo
     // the step fails.
     let mut tries = 0;
     let mut child = loop {
+        // Ended while it waited: no agent is started after that, also if its program is back.
+        if stop.load(Ordering::Relaxed) {
+            return fail(
+                format!(
+                    "cannot start {}: the step was ended before its program ran",
+                    agent.command
+                ),
+                started,
+            );
+        }
         let program = crate::platform::program_to_run(&agent.command)
             .map(|p| p.display().to_string())
             .unwrap_or_else(|| agent.command.clone());
@@ -529,6 +539,7 @@ pub fn run(agent: &Agent, c: &Call, sink: &mut dyn FnMut(Event), stop: &AtomicBo
     // The step's time limit counts from the agent's start, not from the waits before it.
     started = Instant::now();
     let _ = group.adopt(child.id());
+    sink(Event::Launched);
     if let Some(mut stdin) = child.stdin.take() {
         let text = c.instruction.clone();
         std::thread::spawn(move || {

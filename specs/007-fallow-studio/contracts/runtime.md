@@ -41,6 +41,7 @@ Commands Claude Code classifies as read-only run in every mode but Read only. A 
 | `message_delta` | text | Partial text, for the chat's live reply only |
 | `tool_call` | id, kind (`read`, `edit`, `write`, `run`, `search`, `mcp`, `other`), summary, detail | A feed line. For edits, `detail` is the diff (old and new text); for runs, the command |
 | `tool_result` | id, ok, refused, output | The command's output and result: ok, failed, or refused by the rights. The page keeps up to 64 KB |
+| `launched` | (none) | Nothing. Sent once, as soon as the agent's program runs (2026-11-02). Every runtime sends it: it is how Fallow knows that an agent stopped before it ran never saw its instruction, whatever the runtime reports afterwards |
 
 The step's claim, its cost and how it ended come in the `Outcome`, not as events.
 

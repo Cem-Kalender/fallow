@@ -103,6 +103,10 @@ impl ToolKind {
 /// passed up.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Event {
+    /// The agent's program runs: sent once by every runtime, as soon as it has started it, before
+    /// anything else. Fallow keeps it as the fact that the agent was given its instruction,
+    /// whatever the runtime reports afterwards. Never shown.
+    Launched,
     /// What the agent says, a whole message.
     Message { text: String },
     /// Part of a message as it is written, for a chat's live reply only.
@@ -195,7 +199,7 @@ pub fn activity_of(e: &Event, t: u64) -> Option<Activity> {
             },
             "",
         )),
-        Event::Message { .. } | Event::MessageDelta { .. } => None,
+        Event::Launched | Event::Message { .. } | Event::MessageDelta { .. } => None,
         Event::ToolCall {
             id,
             kind,

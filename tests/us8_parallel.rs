@@ -6,7 +6,7 @@
 mod common;
 
 use common::*;
-use fallow::run::engine::Msg;
+use fallow::run::engine::{Msg, Request};
 use serde_json::Value;
 use std::path::Path;
 
@@ -235,8 +235,10 @@ fn a_restart_while_both_run_resumes_each_in_its_own_session() {
     let again = "when = \"You were interrupted\"";
     let steps = [
         us1_build(),
-        reviewer("US1", true, "sleep_ms = 30000"),
-        security("US1", "low", "sleep_ms = 30000"),
+        // At work when Fallow stops: each has said something, so its program surely ran (one
+        // whose program had not run yet is given its instruction again instead).
+        reviewer("US1", true, "say = \"Checking\"\nsleep_ms = 30000"),
+        security("US1", "low", "say = \"Checking\"\nsleep_ms = 30000"),
         // Either checker may take either resumed step: each answers both ways.
         check_step("US1", true, again).replace(
             "summary = \"checked\"",
@@ -250,9 +252,21 @@ fn a_restart_while_both_run_resumes_each_in_its_own_session() {
     ]
     .concat();
     let (e, _repo, id) = locked_calc(&root, &steps, Some("parallel"));
-    wait_for(&e.tx, id, "both checkers running", |v| {
+    let v = wait_for(&e.tx, id, "both checkers running", |v| {
         v["busy"].as_str().is_some_and(|b| b.starts_with("steps "))
     });
+    for s in reviews(&v, "US1") {
+        let n = s["n"].as_u64().unwrap() as u32;
+        let end = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        while ask(&e.tx, Request::Activity { id, n })
+            .ok()
+            .and_then(|a| a.as_array().map(|a| a.is_empty()))
+            .unwrap_or(true)
+        {
+            assert!(std::time::Instant::now() < end, "step {n} never got to work");
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+    }
     e.tx.send(Msg::Shutdown).unwrap();
     let fallow::service::ToolEngine { handle, .. } = e;
     handle.join().unwrap();

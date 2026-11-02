@@ -57,6 +57,36 @@ pub(crate) fn instruction_of(run: &Run, n: u32) -> String {
     std::fs::read_to_string(run.steps_dir().join(format!("{n}.prompt"))).unwrap_or_default()
 }
 
+/// The instruction of `last`'s work: a step queued to go on after Fallow stopped was given only
+/// "you were interrupted, go on" (in the session that had the work); its work's instruction is
+/// that of the step it went on from, of the same kind, part and agent.
+pub(crate) fn own_instruction(run: &Run, last: &Step) -> String {
+    let mut n = last.n;
+    loop {
+        let text = instruction_of(run, n);
+        if !text.contains(crate::agent::prompts::LOOP_INTERRUPTED) {
+            return text;
+        }
+        let before = run
+            .state
+            .steps
+            .values()
+            .filter(|x| x.n < n && x.kind == last.kind && x.part == last.part && x.def == last.def)
+            .map(|x| x.n)
+            .max();
+        match before {
+            Some(p) => n = p,
+            None => return text,
+        }
+    }
+}
+
+/// Whether step `n`'s agent program ran: the runtime said so (`Event::Launched`), and Fallow
+/// kept it beside the step.
+pub(crate) fn launched(run: &Run, n: u32) -> bool {
+    run.steps_dir().join(format!("{n}.launched")).is_file()
+}
+
 pub(crate) fn activity_lines(run: &Run, n: u32) -> usize {
     std::fs::read_to_string(run.steps_dir().join(format!("{n}.jsonl")))
         .map(|t| t.lines().count())

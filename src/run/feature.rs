@@ -636,7 +636,7 @@ fn extra(
         .cloned();
     let builder = builder_of(pl);
     let ask_again = |run: &mut Run, last: &Step| -> Result<bool, String> {
-        let text = machine::instruction_of(run, last.n);
+        let text = machine::own_instruction(run, last);
         queue(
             run,
             kind,
@@ -830,12 +830,17 @@ fn requeue_one(run: &mut Run, last: &Step) -> Result<bool, String> {
     }
     let def = last.def.clone().unwrap_or_else(|| "builder".into());
     if reason.starts_with(INTERRUPTED) {
-        let session = last
-            .session
+        // An agent whose program never ran (Fallow stopped while it waited for it to start) is
+        // not told to go on with work it never began: it is given its instruction again, in the
+        // session it was to resume, if any. Fallow knows it from its own record of the launch
+        // (every runtime reports it), whatever the runtime streams afterwards. Activity also
+        // shows that it ran (a step recorded by an earlier Fallow has no record of the launch).
+        let begun = machine::launched(run, last.n) || machine::activity_lines(run, last.n) > 0;
+        let session = if begun { &last.session } else { &last.resume }
             .clone()
             .filter(|s| !run.state.lost_sessions.contains(s));
         let text = match &session {
-            Some(_) => format!(
+            Some(_) if begun => format!(
                 "Fallow step: {}{}\n\n{}",
                 last.kind.label(),
                 last.part
@@ -844,7 +849,7 @@ fn requeue_one(run: &mut Run, last: &Step) -> Result<bool, String> {
                     .unwrap_or_default(),
                 prompts::LOOP_INTERRUPTED
             ),
-            None => machine::instruction_of(run, last.n),
+            _ => machine::own_instruction(run, last),
         };
         queue(
             run,
@@ -875,7 +880,7 @@ fn requeue_one(run: &mut Run, last: &Step) -> Result<bool, String> {
             &def,
             session,
             "again: the agent could not be started",
-            machine::instruction_of(run, last.n),
+            machine::own_instruction(run, last),
         )?;
         // Starts that fail one after the other are not tried for ever: every third, the
         // engineer is asked (retry starts the step queued here).
@@ -896,7 +901,7 @@ fn requeue_one(run: &mut Run, last: &Step) -> Result<bool, String> {
         return Ok(true);
     }
     if reason.starts_with(SESSION_LOST) {
-        let text = machine::instruction_of(run, last.n);
+        let text = machine::own_instruction(run, last);
         queue(
             run,
             last.kind,
@@ -2385,7 +2390,13 @@ fn start(run: &mut Run, ctx: &Ctx, n: u32) -> Result<(), String> {
                 .ok();
             let tx2 = tx.clone();
             let started = std::time::Instant::now();
+            let launched_path = activity_path.with_extension("launched");
             let mut on = |e: agent::Event| {
+                // Kept beside the step: its agent was given its instruction (restarts read it).
+                if e == agent::Event::Launched {
+                    let _ = std::fs::write(&launched_path, "");
+                    return;
+                }
                 let Some(mut a) = agent::activity_of(&e, started.elapsed().as_millis() as u64)
                 else {
                     return;
@@ -2525,7 +2536,7 @@ pub fn answered(run: &mut Run, last: &Step, text: &str) -> Result<(), String> {
         ),
         None => format!(
             "{}\n\nThe engineer answered a question about this:\n\n{text}",
-            machine::instruction_of(run, last.n)
+            machine::own_instruction(run, last)
         ),
     };
     let def = last.def.clone().unwrap_or_else(|| "builder".into());
