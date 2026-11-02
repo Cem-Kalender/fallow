@@ -441,7 +441,7 @@ const Fallow = (() => {
 
   function proposal(p) {
     if (!p) return raw("");
-    return h`<div class="card proposal"><div class="row between wrap"><span class="pill purple">proposed feature</span>${p.after ? h`<span class="tiny muted">after ${p.after}</span>` : ""}</div>
+    return h`<div class="card proposal" data-proposal="${p.title}"><div class="row between wrap"><span class="pill purple">proposed feature</span>${p.after ? h`<span class="tiny muted">after ${p.after}</span>` : ""}</div>
       <div class="b mt-8">${p.title}</div><div class="small body-ink mt-4 lh">${p.summary}</div>
       <div class="tiny muted mt-10">Carried into the spec session: this conversation and the files read.</div>
       <div class="row wrap gap-8 mt-12"><button class="btn" data-act="start-feature" data-title="${p.title}">Start spec session</button></div></div>`;

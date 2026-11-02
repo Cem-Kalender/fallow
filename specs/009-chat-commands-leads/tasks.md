@@ -417,6 +417,12 @@ After every phase, an independent fresh-context reviewer verifies it, and the im
 
 ---
 
+## Phase 9: Follow-up - the project page's side rail (the engineer, 2026-11-02)
+
+- [X] T041 The rail in `src/service/web/screens/project.js` and `src/service/web/app.css`: the right column and "Ask the lead to" removed; the Features/Files column 340 px; "Proposed features" (unstarted proposals with summary, Start spec session, Where it was proposed; count on the icon) and "What the lead knows"; open, close, Escape, click elsewhere, focus, live updates, the message box kept in sight, the narrow layout, and both panels in the `/` menu (FR-039–FR-041). The chat's proposal card carries its title (`data-proposal`) in `src/service/web/app.js`.
+- [X] T042 Demo proposals in `tests/visual_009.rs` (two unstarted, one with an existing feature's name) and the behaviour check `checks/rail-flow.json` (run with `checks/flow.js`): 16 steps, one per behaviour of FR-039–FR-041; results in `checks/rail.md`, screenshots in `checks/rail/`.
+- [X] T043 Fresh-context review of T041–T042, findings fixed, approved.
+
 ## Dependencies & Execution Order
 
 ### Phase dependencies

@@ -1,4 +1,4 @@
-//! 009's page checks (T012, T020, T022, T025, T035, T038): a demo project on the fake runtime,
+//! 009's page checks (T012, T020, T022, T025, T035, T038, T041): a demo project on the fake runtime,
 //! served on a port of its own, so the checks never touch the engineer's Fallow. Not a test: run
 //! it by hand with `FALLOW_VISUAL_ROOT=<empty folder> cargo test --test visual_009 -- --ignored
 //! --nocapture`; it writes the page's address to `<root>/url.txt` and serves for
@@ -61,6 +61,21 @@ output = { reply = "Reviewed the copy.", step = "none" }
 kind = "lead_turn"
 when = "refers to these files"
 output = { reply = "About that file: it adds two numbers.", step = "none" }
+
+[[step]]
+kind = "lead_turn"
+when = "Propose e-mail"
+output = { reply = "Here is one.", step = "none", proposed_feature = { title = "Receipt by e-mail", summary = "Send the printed receipt to an address given at checkout; the order is unchanged." } }
+
+[[step]]
+kind = "lead_turn"
+when = "Propose stock"
+output = { reply = "And another.", step = "none", proposed_feature = { title = "Low-stock warning", summary = "Warn when a product's stock falls under a threshold set per product.", after = "Receipt by e-mail" } }
+
+[[step]]
+kind = "lead_turn"
+when = "Propose receipts"
+output = { reply = "This one exists already.", step = "none", proposed_feature = { title = "Receipts", summary = "Already a feature." } }
 "##;
     let catch_all =
         "[[step]]\nkind = \"lead_turn\"\noutput = { reply = \"OK.\", step = \"none\" }\n\n"

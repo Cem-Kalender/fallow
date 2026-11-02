@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Project page side panels (mockup)</title>
+<link rel="stylesheet" href="../../008-studio-redesign/mockup/mockup.css">
+<style>
+  .label { font: 700 11px var(--sans); letter-spacing: .08em; text-transform: uppercase; color: var(--accent); margin: 10px 0 -6px; }
+  .label + h2 { margin: 0; font-size: 18px; }
+  .why { max-width: 1000px; color: var(--body); font-size: 13px; margin: 0; }
+  .frame { border: 1px solid var(--line); border-radius: 14px; overflow: hidden; background: var(--ground); height: 600px; display: flex; flex-direction: column; }
+  .sub { display: flex; align-items: center; gap: 12px; padding: 14px 20px; background: var(--panel); border-bottom: 1px solid var(--line); }
+  .sub h1 { margin: 0; font-size: 20px; }
+  .grow { flex: 1; }
+  .input { border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; font-size: 13px; color: var(--muted); background: var(--panel); }
+  .pbody { flex: 1; display: flex; min-height: 0; position: relative; }
+  .left { width: 300px; flex: none; background: var(--panel); border-right: 1px solid var(--line); padding: 16px; display: flex; flex-direction: column; gap: 6px; }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; align-self: flex-start; margin-bottom: 6px; }
+  .seg span { padding: 5px 14px; font-size: 13px; font-weight: 600; color: var(--muted); }
+  .seg span.on { background: var(--ink); color: #fff; }
+  .feat { display: flex; justify-content: space-between; align-items: center; font-size: 14px; padding: 7px 8px; border-radius: 8px; }
+  .feat .n { font: 12px var(--mono); color: var(--muted); margin-right: 4px; }
+  .chat { flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--panel-2); }
+  .chead { display: flex; align-items: center; gap: 10px; padding: 12px 20px; border-bottom: 1px solid var(--line); background: var(--panel); }
+  .av { width: 26px; height: 26px; border-radius: 8px; background: var(--accent-bg); color: var(--accent); display: grid; place-items: center; font: 700 12px var(--sans); }
+  .msgs { flex: 1; padding: 18px 24px; display: flex; flex-direction: column; gap: 14px; overflow: hidden; }
+  .mine { align-self: flex-end; background: var(--ink); color: #fff; padding: 10px 14px; border-radius: 12px 12px 2px 12px; font-size: 14px; max-width: 70%; }
+  .lead { display: flex; gap: 10px; font-size: 14px; color: var(--body); max-width: 760px; }
+  .composer { padding: 12px 20px 16px; border-top: 1px solid var(--line); }
+  .box { border: 1px solid var(--line); border-radius: 12px; background: var(--panel); padding: 12px 14px; color: var(--muted); font-size: 13px; }
+  .chips { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+  .chip { border: 1px solid var(--line); border-radius: 999px; padding: 5px 12px; font-size: 12.5px; background: var(--panel); color: var(--ink); }
+  .chip.k { color: var(--muted); border-style: dashed; }
+  .hbtn { border: 1px solid var(--line); border-radius: 8px; padding: 5px 10px; font-size: 12.5px; font-weight: 600; background: var(--panel); color: var(--ink); display: inline-flex; gap: 6px; align-items: center; }
+  .hbtn.on { border-color: var(--accent); color: var(--accent); background: var(--accent-bg); }
+  .count { background: var(--accent); color: #fff; border-radius: 999px; font-size: 11px; padding: 0 6px; }
+  .card2 { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; box-shadow: 0 10px 28px rgba(0,0,0,.12); }
+  .card2 .th { margin-bottom: 6px; }
+  .kv { font-size: 13px; }
+  .pill.purple { background: #F1ECFB; color: #5B3BA8; }
+  /* A: the rail */
+  .rail { width: 52px; flex: none; background: var(--panel); border-left: 1px solid var(--line); display: flex; flex-direction: column; align-items: center; gap: 8px; padding-top: 12px; }
+  .ricon { width: 36px; height: 36px; border-radius: 10px; display: grid; place-items: center; color: var(--muted); border: 1px solid transparent; position: relative; }
+  .ricon.on { color: var(--accent); background: var(--accent-bg); border-color: var(--accent-line); }
+  .ricon .dot { position: absolute; top: 4px; right: 4px; min-width: 14px; height: 14px; border-radius: 7px; background: var(--accent); color: #fff; font: 700 9px/14px var(--sans); text-align: center; }
+  .slide { position: absolute; right: 60px; top: 12px; width: 300px; }
+  /* B: pop-over */
+  .pop { position: absolute; top: 52px; right: 20px; width: 300px; }
+  .tag { display: inline-block; background: var(--accent); color: #fff; font: 700 10px var(--sans); padding: 2px 7px; border-radius: 999px; margin-left: 6px; vertical-align: middle; }
+  .choices { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; max-width: 1000px; }
+  .choice { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; font-size: 13px; }
+  svg.i { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+</style></head>
+<body>
+<main class="page">
+
+  <div class="label">Option A with chips · the rail for information, chips for actions</div>
+  <h2>What the lead knows and its ideas behind the rail; "Ask the lead to" as chips at the message box</h2>
+  <p class="why">The rail keeps two icons: what the lead knows, and ideas (with their number); a click slides that card in over the edge of the chat, another click, Escape or a click elsewhere closes it. "Ask the lead to" leaves the rail: its three suggestions are chips just above the message box, one click puts the text in the box. Later panels (costs, the project's agents, approved commands) can join the rail without touching the chat. Here the ideas are open.</p>
+  <div class="frame">
+    <div class="sub"><div><div class="small muted">Projects ›</div><h1>FallowSandbox</h1></div><span class="pill blue">git · master</span><span class="pill green">Spec Kit 1.0.12</span><span class="grow"></span><span class="input">New feature's name</span><span class="input">lead ▾</span><button class="btn">+ New feature</button></div>
+    <div class="pbody">
+      <aside class="left">
+        <div class="seg"><span class="on">Features</span><span>Files</span></div>
+        <div class="th">Features</div>
+        <div class="feat"><span><span class="n">010</span>Receipt printout</span><span class="pill" style="background:#F1ECFB;color:#5B3BA8">spec</span></div>
+        <div class="feat"><span><span class="n">009</span>Read-only web page</span><span class="pill grey">merged</span></div>
+        <div class="feat"><span><span class="n">008</span>Checkout</span><span class="pill grey">merged</span></div>
+        <div class="feat"><span><span class="n">007</span>Catalog and stock report</span><span class="pill grey">merged</span></div>
+        <div class="feat"><span><span class="n">005</span>Discount codes</span><span class="pill grey">merged</span></div>
+      </aside>
+      <section class="chat">
+        <div class="chead"><div class="av">L</div><div><b>Project conversation</b> <span class="small muted">· reads the code, never edits it here</span><div class="small">Lead: <b>lead</b> <span class="muted">· claude · sonnet</span></div></div><span class="grow"></span><button class="btn btn2" style="min-height:32px">Expand</button></div>
+        <div class="msgs">
+          <div class="mine">nice. you can kill it again</div>
+          <div class="lead"><div class="av">L</div><div><b>lead</b><br>The server is already stopped. I checked http://127.0.0.1:8000/, and nothing answers there.</div></div>
+        </div>
+        <div class="composer"><div class="chips"><span class="chip">Explain a part of the code</span><span class="chip">Propose the next feature</span><span class="chip">Design a pipeline with me</span></div><div class="box">Ask about the code, plan features, or design a pipeline…</div></div>
+      </section>
+      <nav class="rail" aria-label="Side panels">
+        <span class="ricon" title="What the lead knows"><svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg></span>
+        <span class="ricon on" title="Ideas from this conversation"><svg class="i" viewBox="0 0 24 24"><path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3.5 10.9c.5.4.5 1 .5 1.6V16h6v-.5c0-.6 0-1.2.5-1.6A6 6 0 0 0 12 3z"/></svg><span class="dot">4</span></span>
+        
+      </nav>
+      <div class="card2 slide">
+        <div class="th">Ideas from this conversation</div>
+        <div class="kv"><span>Shopping cart with total</span><span class="pill purple">proposed</span></div>
+        <div class="kv"><span>Catalog and stock report</span><span class="pill purple">proposed</span></div>
+        <div class="kv"><span>Checkout</span><span class="pill purple">proposed</span></div>
+        <div class="kv"><span>Read-only web page</span><span class="pill purple">proposed</span></div>
+      </div>
+    </div>
+  </div>
+
+
+  <div class="label">Option A · a side rail</div>
+  <h2>The three cards behind icons on the right, opened at will</h2>
+  <p class="why">The right column becomes a 52 px rail with three icons: what the lead knows, ideas (with their number), and things to ask the lead. A click slides that card in over the edge of the chat; another click, Escape or a click elsewhere closes it. The Features/Files column grows from 240 to 300 px, and the chat takes the rest.</p>
+  <div class="frame">
+    <div class="sub"><div><div class="small muted">Projects ›</div><h1>FallowSandbox</h1></div><span class="pill blue">git · master</span><span class="pill green">Spec Kit 1.0.12</span><span class="grow"></span><span class="input">New feature's name</span><span class="input">lead ▾</span><button class="btn">+ New feature</button></div>
+    <div class="pbody">
+      <aside class="left">
+        <div class="seg"><span class="on">Features</span><span>Files</span></div>
+        <div class="th">Features</div>
+        <div class="feat"><span><span class="n">010</span>Receipt printout</span><span class="pill" style="background:#F1ECFB;color:#5B3BA8">spec</span></div>
+        <div class="feat"><span><span class="n">009</span>Read-only web page</span><span class="pill grey">merged</span></div>
+        <div class="feat"><span><span class="n">008</span>Checkout</span><span class="pill grey">merged</span></div>
+        <div class="feat"><span><span class="n">007</span>Catalog and stock report</span><span class="pill grey">merged</span></div>
+        <div class="feat"><span><span class="n">005</span>Discount codes</span><span class="pill grey">merged</span></div>
+      </aside>
+      <section class="chat">
+        <div class="chead"><div class="av">L</div><div><b>Project conversation</b> <span class="small muted">· reads the code, never edits it here</span><div class="small">Lead: <b>lead</b> <span class="muted">· claude · sonnet</span></div></div><span class="grow"></span><button class="btn btn2" style="min-height:32px">Expand</button></div>
+        <div class="msgs">
+          <div class="mine">nice. you can kill it again</div>
+          <div class="lead"><div class="av">L</div><div><b>lead</b><br>The server is already stopped. I checked http://127.0.0.1:8000/, and nothing answers there.</div></div>
+        </div>
+        <div class="composer"><div class="box">Ask about the code, plan features, or design a pipeline…</div></div>
+      </section>
+      <nav class="rail" aria-label="Side panels">
+        <span class="ricon on" title="What the lead knows"><svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg></span>
+        <span class="ricon" title="Ideas from this conversation"><svg class="i" viewBox="0 0 24 24"><path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3.5 10.9c.5.4.5 1 .5 1.6V16h6v-.5c0-.6 0-1.2.5-1.6A6 6 0 0 0 12 3z"/></svg><span class="dot">4</span></span>
+        <span class="ricon" title="Ask the lead to"><svg class="i" viewBox="0 0 24 24"><path d="M4 5h16v11H8l-4 4z"/><path d="M9 10h6"/></svg></span>
+      </nav>
+      <div class="card2 slide">
+        <div class="th">The lead knows</div>
+        <div class="kv"><span>constitution.md</span><b>in the project</b></div>
+        <div class="kv"><span>specs of 9 features</span><b>readable</b></div>
+        <div class="kv"><span>files read here</span><span>17</span></div>
+        <div class="kv"><span>turns with you</span><span>21</span></div>
+        <div class="small muted mt-6" style="margin-top:6px">It uses this when it answers builders' questions during a loop.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="label" style="margin-top:18px">Option B · in the chat itself</div>
+  <h2>Header buttons for what the lead knows and the ideas; "Ask the lead to" as suggestions</h2>
+  <p class="why">Nothing on the right at all: the chat runs to the window's edge. "What it knows" and "Ideas · 4" are small buttons in the chat's header, each opening a pop-over. "Ask the lead to" becomes suggestion chips just above the message box (a click puts the text in the box), where they are used. The Features/Files column grows to 300 px.</p>
+  <div class="frame">
+    <div class="sub"><div><div class="small muted">Projects ›</div><h1>FallowSandbox</h1></div><span class="pill blue">git · master</span><span class="pill green">Spec Kit 1.0.12</span><span class="grow"></span><span class="input">New feature's name</span><span class="input">lead ▾</span><button class="btn">+ New feature</button></div>
+    <div class="pbody">
+      <aside class="left">
+        <div class="seg"><span class="on">Features</span><span>Files</span></div>
+        <div class="th">Features</div>
+        <div class="feat"><span><span class="n">010</span>Receipt printout</span><span class="pill" style="background:#F1ECFB;color:#5B3BA8">spec</span></div>
+        <div class="feat"><span><span class="n">009</span>Read-only web page</span><span class="pill grey">merged</span></div>
+        <div class="feat"><span><span class="n">008</span>Checkout</span><span class="pill grey">merged</span></div>
+        <div class="feat"><span><span class="n">007</span>Catalog and stock report</span><span class="pill grey">merged</span></div>
+        <div class="feat"><span><span class="n">005</span>Discount codes</span><span class="pill grey">merged</span></div>
+      </aside>
+      <section class="chat">
+        <div class="chead"><div class="av">L</div><div><b>Project conversation</b> <span class="small muted">· reads the code, never edits it here</span><div class="small">Lead: <b>lead</b> <span class="muted">· claude · sonnet</span></div></div><span class="grow"></span>
+          <span class="hbtn">ⓘ What it knows</span><span class="hbtn on">Ideas <span class="count">4</span></span><button class="btn btn2" style="min-height:32px">Expand</button></div>
+        <div class="msgs">
+          <div class="mine">nice. you can kill it again</div>
+          <div class="lead"><div class="av">L</div><div><b>lead</b><br>The server is already stopped. I checked http://127.0.0.1:8000/, and nothing answers there.</div></div>
+        </div>
+        <div class="composer">
+          <div class="chips"><span class="chip">Explain a part of the code</span><span class="chip">Propose the next feature</span><span class="chip">Design a pipeline with me</span></div>
+          <div class="box">Ask about the code, plan features, or design a pipeline…</div>
+        </div>
+      </section>
+      <div class="card2 pop">
+        <div class="th">Ideas from this conversation</div>
+        <div class="kv"><span>Shopping cart with total</span><span class="pill purple">proposed</span></div>
+        <div class="kv"><span>Catalog and stock report</span><span class="pill purple">proposed</span></div>
+        <div class="kv"><span>Checkout</span><span class="pill purple">proposed</span></div>
+        <div class="kv"><span>Read-only web page</span><span class="pill purple">proposed</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="label" style="margin-top:18px">To choose</div>
+  <h2>A with chips, A or B</h2>
+  <div class="choices">
+    <div class="choice"><b>A · side rail.</b> Everything stays one click away in a fixed place, as in an editor's side bar; the rail costs 52 px.</div>
+    <div class="choice"><b>B · in the chat (recommended).</b> The information sits where it belongs: what the lead knows and its ideas with the conversation, the suggestions at the message box. The most room for the chat; nothing is fixed on the right.</div>
+  </div>
+</main>
+</body></html>

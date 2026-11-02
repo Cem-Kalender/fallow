@@ -211,6 +211,12 @@ On the project page, the left column has two tabs, Features and Files. Files sho
 - **FR-037**: Binary files MUST show their kind and size, not their content; text files over a size limit MUST show their beginning with a note that the rest is in the editor.
 - **FR-038**: The Files tab, the tree and the drawer MUST be usable by keyboard alone (move, fold, open) and announced to screen readers, as every control in Fallow.
 
+#### Follow-up: the project page's side rail (the engineer, 2026-11-02; mockup/project-proposals.html, option 1)
+
+- **FR-039**: The project page MUST NOT have a fixed right column. A rail on its right edge MUST offer two panels, opened at will: "Proposed features" and "What the lead knows". The "Ask the lead to" shortcuts MUST be removed. The Features/Files column MUST take the room freed (340 px on a wide window).
+- **FR-040**: "Proposed features" MUST list the features the lead proposed in the project conversation that are not started (no feature of the project has that name), the latest proposal of a name only, each with the lead's summary, "Start spec session" and "Where it was proposed" (which brings the proposal in the chat into view). A started proposal MUST leave the list. The rail's icon MUST show how many there are.
+- **FR-041**: A panel MUST open and close by its icon, close by Close, by Escape while the keyboard is in the panel or on the rail, and by a click elsewhere; the keyboard's focus MUST go to the panel's heading when it opens and back to its icon when it is closed from the keyboard. On a wide window the panel MUST float over the chat and end above the message box, however tall it grows; on a narrow one it MUST sit in the page above the chat. An open panel and the icon's count MUST follow the conversation without closing or moving the focus. Both panels MUST also be reachable from the `/` menu.
+
 ### Key Entities
 
 - **Command**: an entry of the `/` menu: its name, its group (Spec Kit step, Fallow action, agent, project command), one line of description, where it came from (for project commands), whether it is available now and, if not, why.
