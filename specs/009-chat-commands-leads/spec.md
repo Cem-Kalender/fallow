@@ -6,20 +6,21 @@
 
 **Status**: Draft
 
-**Input**: User description: "The engineer's second round of remarks on Fallow Studio (008), as a feature of its own, built on 008 as it is: a '/' menu in the chat with the lead, Fallow's own and model-agnostic, with Spec Kit steps, Fallow actions, the project's agents and the project's own commands and skills; choosing the lead (a default per project, another per spec session, a session keeps its lead, the loop's lead is the spec session's); a loading animation while the lead answers; every way of leaving an agent or pipeline with unsaved changes asks first. Out of scope: supplier adapters for other runtimes, the standalone app, changes to the loop engine beyond using the session's lead." (The full description is kept in the conversation of 2026-11-02.)
+**Input**: User description: "The engineer's second round of remarks on Fallow Studio (008), as a feature of its own, built on 008 as it is: a '/' menu in the chat with the lead, Fallow's own and model-agnostic, with Spec Kit steps, Fallow actions, the project's agents and the project's own commands and skills; choosing the lead (a default per project, another per spec session, a session keeps its lead, the loop's lead is the spec session's); a loading animation while the lead answers; every way of leaving an agent or pipeline with unsaved changes asks first; and (added the same day) a read-only view of the project's files: a Files tab on the project page and a Files drawer on a feature's loop page and spec session. Out of scope: supplier adapters for other runtimes, the standalone app, changes to the loop engine beyond using the session's lead." (The full description is kept in the conversation of 2026-11-02.)
 
 ## Context
 
-The engineer ran a full feature through Fallow Studio (008) and came back with four remarks:
+The engineer ran a full feature through Fallow Studio (008) and came back with four remarks, and a fifth wish the same day:
 
 - **No commands.** In Claude Code, typing `/` lists the commands, skills and agents at hand. In Fallow's chat with the lead, `/` does nothing: the engineer has to know the Spec Kit steps by name and write them out, and Fallow's own actions are only buttons. Fallow is model-agnostic, so the list cannot be one runtime's built-in slash commands: it has to be Fallow's own, and work with any lead.
 - **The lead cannot be chosen.** The Agents tab lets the engineer create an agent of kind Lead, but Fallow always talks to the agent named `lead`. A second lead is saved and never used.
 - **A waiting chat looks stuck.** While the lead answers, the chat shows only the italic text "The lead is answering…".
 - **Unsaved work is lost.** Fallow asks "Leave your changes?" when the engineer picks another agent or pipeline, or presses Back or Forward, but not when the engineer goes to another tab or screen, or closes or reloads the window: the edits are lost without a word.
+- **The project's files are out of sight.** Everything is built by agents, but the engineer still wants to see the project's files and folders, and what the agents changed in them. Fallow shows the spec documents and diffs per task, but no tree of the project.
 
-The engineer agreed the answers on 2026-11-02: a lead per project with another choice per session, and all four groups in the `/` menu.
+The engineer agreed the answers on 2026-11-02: a lead per project with another choice per session, and all four groups in the `/` menu. For the files, from a mockup (`mockup/files.html`): a Files tab on the project page and a Files drawer on a feature's loop page and spec session, both read-only.
 
-**What does not change**: the spec session's steps and documents, the loop and its verification, the pipelines, and the agent definitions' format (a lead is an agent of kind Lead, as today).
+**What does not change**: how files are changed (by agents, the lead, or the engineer's own editor; Fallow's file views only read), the spec session's steps and documents, the loop and its verification, the pipelines, and the agent definitions' format (a lead is an agent of kind Lead, as today).
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -100,6 +101,27 @@ The engineer edits an agent or a pipeline and, without saving, goes elsewhere: a
 
 ---
 
+---
+
+### User Story 5 - The project's files, read-only (Priority: P3)
+
+On the project page, the left column has two tabs, Features and Files. Files shows the project's tree for a version the engineer chooses: the project folder as it is, or a feature's branch as its agents leave it (a running loop's work included). Files the chosen feature changed are marked (changed, added, deleted), and a filter narrows the tree by name or to the changed files only. A file opens in the middle of the page, in place of the chat, read-only, with the lines added on that branch highlighted and who changed it in which task. From there the engineer can see its changes against the base, ask the lead about it, open it in their own editor, or go back to the conversation. On a feature's loop page and in its spec session, a Files button opens the same view as a drawer, scoped to that feature: changed files first, a short preview, and "Open full" to the project page with that file and version chosen.
+
+**Why this priority**: The engineer wants to keep an eye on the code agents write, but the loop already verifies the work and shows diffs per task; this is for orientation, not for the loop to function.
+
+**Independent Test**: With a loop running on `001-shopping-cart`, open the project page's Files tab and choose that feature's version: `shop/cart.py` is marked changed; open it: the builder's lines are highlighted with the task that added them. On the loop page, Files lists the changed files first; "Open full" shows the same file on the project page. Nothing in either view can change a file.
+
+**Acceptance Scenarios**:
+
+1. **Given** the project page, **When** the engineer chooses the Files tab, **Then** the project's tree shows for the project folder as it is, with folders folded except the top level, and files the project ignores (its ignore rules, version-control internals) left out.
+2. **Given** a feature with a branch, **When** the engineer chooses it as the version, **Then** the tree is that branch as its agents leave it, files it changed are marked changed, added or deleted against the version it started from, and "only changed" narrows the tree to them.
+3. **Given** a file in the tree, **When** the engineer opens it, **Then** it shows in place of the chat, read-only, with line numbers; on a feature's version the lines it added are highlighted, and the file's header says who last changed it on that branch and in which task.
+4. **Given** an open file, **When** the engineer chooses "Ask the lead about it", **Then** the chat comes back with a reference to the file in the message box; when sent, the lead is told which file (and version) the engineer means.
+5. **Given** an open file, **When** the engineer chooses "Open in my editor", **Then** the file opens in the editor set in Fallow's settings; without one, Fallow shows the file's full path to copy, and never runs the file.
+6. **Given** a running loop, **When** its builder changes a file, **Then** the tree and an open file update within a few seconds, without closing the open file or moving the reading position.
+7. **Given** a feature's loop page or spec session, **When** the engineer chooses Files, **Then** a drawer opens in place of the side column listing that feature's changed files first, with who changed each and in which task, and a preview of the chosen file's changes; "Open full" opens the project page's Files tab with that file and version.
+8. **Given** any file view, **When** the engineer tries to type in it, **Then** nothing changes: there is no way to edit, save, rename or delete a file there. (must fail)
+
 ### Edge Cases
 
 - **A step's instruction file is missing** (Spec Kit not installed in the project, or a file deleted): the step is listed with "Spec Kit is not installed here" and cannot be sent; the lead is never pointed at a file that is not there.
@@ -115,6 +137,11 @@ The engineer edits an agent or a pipeline and, without saving, goes elsewhere: a
 - **A loop whose feature has no recorded session lead** (locked before this feature): its questions go to `lead`, as today.
 - **Several unsaved editors** (an agent and, in another window, a pipeline): each window asks for its own changes.
 - **Leaving during a save**: the save completes or fails first; Fallow does not ask about changes that were saved.
+- **A binary or very large file**: a binary file shows its kind and size, not its bytes; a large text file shows its beginning with a note and "Open in my editor".
+- **A path outside the project** (a link pointing out of the folder, `..` in an address): not shown and not opened; the file views never read outside the project and Fallow's copies of it.
+- **A feature whose copy is gone** (merged and cleaned up, or deleted): it is no longer a version to choose; an open file of it says so and offers the project folder's version.
+- **A plain folder without git**: only "the project folder as it is" is offered, with no marks.
+- **A file deleted on the chosen branch**: listed with a deleted mark when "only changed" is on; opening it shows its last content before the deletion.
 
 ## Requirements *(mandatory)*
 
@@ -159,11 +186,27 @@ The engineer edits an agent or a pipeline and, without saving, goes elsewhere: a
 - **FR-025**: With unsaved changes, closing or reloading the window MUST bring up the browser's leave prompt.
 - **FR-026**: Without unsaved changes, nothing MUST be asked.
 
+**The project's files**
+
+- **FR-027**: The project page's left column MUST offer two tabs, Features and Files; Files MUST show the project's tree, leaving out what the project ignores and version-control internals.
+- **FR-028**: The engineer MUST be able to choose the version shown: the project folder as it is, or any feature with a branch or a working copy of its own, including one whose loop is running.
+- **FR-029**: On a feature's version, files MUST be marked changed, added or deleted against the version the feature started from, and the engineer MUST be able to narrow the tree to changed files and filter it by name.
+- **FR-030**: Opening a file MUST show it in place of the chat, read-only, with line numbers; on a feature's version the lines it added MUST be highlighted, and the view MUST say who last changed the file on that branch and in which task, when Fallow knows.
+- **FR-031**: An open file MUST offer: its changes against the base, "Ask the lead about it" (a reference to the file and version in the message box, which the lead receives as such), "Open in my editor", and the way back to the conversation.
+- **FR-032**: "Open in my editor" MUST open the file in the editor set in Fallow's settings, and without one show the file's full path to copy; it MUST NOT run the file or open it with whatever program the system associates with it.
+- **FR-033**: A feature's loop page and spec session MUST offer a Files drawer in place of the side column, scoped to that feature: changed files first, with who changed each and in which task, a preview of the chosen file's changes, and "Open full" to the project page's Files tab with that file and version chosen.
+- **FR-034**: The tree and an open file MUST follow changes made while they are shown (a running loop's included) within 5 seconds, keeping the open file, the folded folders and the reading position.
+- **FR-035**: The file views MUST NOT change any file: no editing, saving, renaming, creating or deleting.
+- **FR-036**: The file views MUST NOT read or show anything outside the project folder and Fallow's copies of it for its features; links that lead outside MUST NOT be followed.
+- **FR-037**: Binary files MUST show their kind and size, not their content; text files over a size limit MUST show their beginning with a note that the rest is in the editor.
+- **FR-038**: The Files tab, the tree and the drawer MUST be usable by keyboard alone (move, fold, open) and announced to screen readers, as every control in Fallow.
+
 ### Key Entities
 
 - **Command**: an entry of the `/` menu: its name, its group (Spec Kit step, Fallow action, agent, project command), one line of description, where it came from (for project commands), whether it is available now and, if not, why.
 - **Session lead**: the lead agent a spec session talks to, recorded when the session starts and fixed from its first message: the agent's name, with its runtime and model as they were at the first message.
 - **Project's default lead**: the lead a project's new sessions start with; `lead` unless chosen.
+- **File view**: a read-only look at the project's tree and files for a version (the project folder as it is, or a feature's branch), with each file's mark against the feature's base and, when known, who changed it in which task.
 - **Unsaved change**: an edit of an agent, a pipeline or a spec document not yet saved.
 
 ## Success Criteria *(mandatory)*
@@ -176,6 +219,9 @@ The engineer edits an agent or a pipeline and, without saving, goes elsewhere: a
 - **SC-004**: In a project with two leads, every session and every loop question is answered by the lead the session shows, in 100% of the checked cases.
 - **SC-005**: In every way of leaving an unsaved agent, pipeline or document listed in Story 4, no edit is lost without the engineer confirming (0 silent losses in the checked cases).
 - **SC-006**: The engineer sees that the lead is working within 1 second of sending, every time.
+- **SC-007**: From a loop page, the engineer reaches the content of a file the builder just changed in at most 2 clicks.
+- **SC-008**: The tree of a project of up to 5,000 files shows within 2 seconds of choosing the Files tab or another version.
+- **SC-009**: No file is changed through the file views in any checked case (they only read).
 
 ## Assumptions
 
@@ -186,3 +232,6 @@ The engineer edits an agent or a pipeline and, without saving, goes elsewhere: a
 - A session's lead is fixed by the first message because the agent session Fallow resumes belongs to one runtime and model; changing the lead's instructions does not need a new session.
 - The loading indicator replaces nothing else: Stop, the live text and the cancel behaviour of 008 stay as they are.
 - The leave prompt on closing or reloading is the browser's own, whose text Fallow cannot set.
+- The file views are for reading because agents build and Fallow verifies: the engineer's own changes go through the lead or their own editor, where Fallow's lock and loop already account for them.
+- "The editor set in Fallow's settings" is a command the engineer sets once (for example their code editor's command line); Fallow passes it the file's path only.
+- The mockup `mockup/files.html` (with `files-1440.png`) shows both places; it is the reference for the look, and the visual check compares against it at 1440 px and 390 px.

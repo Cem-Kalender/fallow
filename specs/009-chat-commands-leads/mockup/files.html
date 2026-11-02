@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Project files (009 mockup)</title>
+<link rel="stylesheet" href="../../008-studio-redesign/mockup/mockup.css">
+<style>
+  .label { font: 700 11px var(--sans); letter-spacing: .08em; text-transform: uppercase; color: var(--accent); margin: 8px 0 -6px; }
+  .label + h2 { margin: 0; font-size: 18px; }
+  .why { max-width: 980px; color: var(--body); font-size: 13px; margin: 0; }
+  .frame { border: 1px solid var(--line); border-radius: 14px; overflow: hidden; background: var(--ground); box-shadow: 0 1px 0 var(--line-2); }
+  .subbar { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px 14px; padding: 16px 24px; }
+  .subbar h1 { margin: 0; font-size: 22px; }
+  .crumb { font-size: 12px; color: var(--muted); }
+  .studio { display: grid; grid-template-columns: 280px minmax(0, 1fr) 280px; gap: 16px; padding: 0 24px 24px; align-items: start; }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; margin-bottom: 10px; }
+  .seg span { padding: 5px 14px; font-size: 13px; font-weight: 600; color: var(--muted); }
+  .seg span.on { background: var(--ink); color: #fff; }
+  .ver { display: flex; align-items: center; gap: 8px; border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; font-size: 13px; background: var(--panel); margin-bottom: 8px; }
+  .ver .mono { font-size: 12px; }
+  .filter { border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; font-size: 13px; color: var(--muted); background: var(--panel); margin-bottom: 8px; }
+  .tree { font: 13px/1.25 var(--mono); }
+  .tree div { display: flex; align-items: center; gap: 6px; padding: 4px 6px; border-radius: 6px; white-space: nowrap; }
+  .tree .d { color: var(--ink); font-weight: 600; }
+  .tree .sel { background: var(--accent-bg); outline: 1px solid var(--accent-line); }
+  .tree .dim { color: var(--muted); }
+  .tree .m { margin-left: auto; font: 700 10px var(--sans); padding: 1px 6px; border-radius: 4px; }
+  .m.mod { background: var(--needs-bg); color: var(--needs); } .m.add { background: var(--ok-bg); color: var(--ok); }
+  .m.spec { background: var(--accent-bg); color: var(--accent); }
+  .i1 { padding-left: 22px !important; } .i2 { padding-left: 38px !important; }
+  .viewer-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; padding-bottom: 10px; border-bottom: 1px solid var(--line-2); }
+  .viewer-head .path { font: 600 14px var(--mono); }
+  .code { margin: 10px 0 0; font: 12.5px/1.65 var(--mono); counter-reset: ln; overflow-x: auto; }
+  .code div { min-height: 1.65em; white-space: pre; padding-left: 44px; position: relative; }
+  .code div::before { counter-increment: ln; content: counter(ln); position: absolute; left: 0; width: 30px; text-align: right; color: #A8A7A0; }
+  .code .add { background: #EEF8F1; } .code .add::after { content: ""; position: absolute; left: 36px; top: 0; bottom: 0; width: 3px; background: var(--ok); }
+  .kw { color: var(--accent); } .st { color: var(--ok); } .cm { color: var(--muted); font-style: italic; }
+  .tabs-line { display: flex; gap: 4px; margin-bottom: 10px; }
+  .tabs-line span { font-size: 13px; padding: 5px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); }
+  .tabs-line span.on { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+  .callout { position: relative; border: 2px dashed var(--accent); border-radius: 12px; }
+  .tag { position: absolute; top: -11px; left: 12px; background: var(--accent); color: #fff; font: 700 11px var(--sans); padding: 2px 8px; border-radius: 999px; letter-spacing: .03em; }
+  .loopbody { display: grid; grid-template-columns: 220px minmax(0, 1fr) 330px; gap: 16px; padding: 0 24px 24px; align-items: start; }
+  .drawer { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
+  .who { font: 11px var(--sans); color: var(--muted); margin-left: auto; }
+  .peek { margin-top: 10px; border-top: 1px solid var(--line-2); padding-top: 10px; }
+  .choices { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+  .choice { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; font-size: 13px; }
+  .choice b { display: block; margin-bottom: 4px; }
+  @media (max-width: 900px) {
+    .studio, .loopbody, .choices { grid-template-columns: minmax(0, 1fr); padding-left: 16px; padding-right: 16px; }
+    .subbar { padding-left: 16px; padding-right: 16px; }
+  }
+</style></head>
+<body>
+<header class="top">
+  <span class="logo"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke-width="2"><path d="M4 20c4-1 6-5 8-9s4-7 8-7"/><path d="M4 14c3 0 5-2 6-4"/><path d="M12 20c3-1 5-3 6-6"/></svg>Fallow</span>
+  <nav class="nav"><a class="on">Dashboard</a><a>Spec sessions</a><a>Loops</a><a>Pipelines</a><a>Agents</a></nav>
+  <span class="grow"></span><span class="small muted">mockup · where the project's files could go</span>
+</header>
+<main class="page">
+
+  <div class="label">Place A · the project page</div>
+  <h2>Files beside Features, and a file opens where the chat is</h2>
+  <p class="why">The project page's left column already has "Project files" (constitution, agents, approved commands). It becomes two tabs, <b>Features</b> and <b>Files</b>. Files shows the project's tree for a version you choose: <b>main</b>, or a feature's branch while its agents work on it, with what they changed marked. A file opens in the middle, in place of the chat (which comes back with one click). It is for reading: changes go through the lead, or your own editor.</p>
+
+  <div class="frame">
+    <div class="subbar">
+      <div><div class="crumb">Projects ›</div><h1>fallowsandbox</h1></div>
+      <span class="mono muted">C:\Repos\fallowsandbox</span>
+      <span class="pill blue">git · main</span><span class="pill green">Spec Kit 1.0.12</span><span class="pill grey">pipeline standard</span>
+      <span style="flex:1"></span><button class="btn">+ New feature</button>
+    </div>
+    <div class="studio">
+      <aside class="card callout"><span class="tag">NEW: FILES TAB</span>
+        <div class="seg" style="margin-top:6px"><span>Features</span><span class="on">Files</span></div>
+        <div class="small muted" style="margin-bottom:4px">Version</div><div class="ver"><span class="mono"><b>001-shopping-cart</b></span><span style="flex:1"></span><span class="pill orange" style="padding:1px 7px">loop</span><span>▾</span></div>
+        <div class="small muted" style="margin:-2px 0 8px">Other choices: <span class="mono">main</span> · <span class="mono">002-receipts</span> (spec session)</div>
+        <div class="filter">Filter files…</div>
+        <div class="row small" style="margin-bottom:6px"><span class="muted">3 changed on this branch</span><span style="flex:1"></span><span class="link">only changed</span></div>
+        <div class="tree">
+          <div class="d">▸ .fallow</div>
+          <div class="d">▸ .specify</div>
+          <div class="d">▾ shop</div>
+          <div class="i1">__init__.py</div>
+          <div class="i1 sel">cart.py <span class="m mod">M</span></div>
+          <div class="i1">cli.py <span class="m mod">M</span></div>
+          <div class="i1 dim">catalog.json</div>
+          <div class="d">▾ specs</div>
+          <div class="i1 d">▸ 001-shopping-cart… <span class="m spec">spec</span></div>
+          <div class="d">▾ tests</div>
+          <div class="i1">test_cart.py <span class="m add">A</span></div>
+          <div>pyproject.toml</div>
+          <div>README.md</div>
+        </div>
+      </aside>
+
+      <section class="card callout"><span class="tag">A FILE OPENS HERE, IN PLACE OF THE CHAT</span>
+        <div class="viewer-head" style="margin-top:6px">
+          <span class="path">shop/cart.py</span><span class="pill orange">changed</span>
+          <span class="small muted">on 001-shopping-cart · by builder in T009, 3 min ago</span>
+          <span style="flex:1"></span>
+          <button class="btn btn2">Changes vs main</button><button class="btn btn2">Ask the lead about it</button><button class="btn btn2">Open in my editor</button><button class="btn btn2">← Conversation</button>
+        </div>
+        <div class="code">
+<div><span class="cm">"""The cart: lines of products, kept in cart.json."""</span></div>
+<div><span class="kw">import</span> json</div>
+<div><span class="kw">from</span> pathlib <span class="kw">import</span> Path</div>
+<div></div>
+<div>CART = Path(<span class="st">"cart.json"</span>)</div>
+<div></div>
+<div></div>
+<div><span class="kw">def</span> load():</div>
+<div class="add">    <span class="kw">if not</span> CART.exists():</div>
+<div class="add">        <span class="kw">return</span> {}</div>
+<div class="add">    <span class="kw">try</span>:</div>
+<div class="add">        <span class="kw">return</span> json.loads(CART.read_text())</div>
+<div class="add">    <span class="kw">except</span> json.JSONDecodeError:</div>
+<div class="add">        <span class="kw">raise</span> SystemExit(<span class="st">"cart.json is not valid; it was left as it is."</span>)</div>
+<div></div>
+<div></div>
+<div><span class="kw">def</span> total(cart, catalog):</div>
+<div>    <span class="kw">return</span> sum(catalog[name] * n <span class="kw">for</span> name, n <span class="kw">in</span> cart.items())</div>
+        </div>
+        <div class="note" style="margin-top:12px">Read-only. Lines in green were added on this branch. "Ask the lead about it" puts <span class="mono">@shop/cart.py</span> in the message box and brings the chat back.</div>
+      </section>
+
+      <aside style="display:flex;flex-direction:column;gap:12px">
+        <div class="card"><h2 class="th">The lead knows</h2>
+          <div class="kv"><span>constitution.md</span><span>in the project</span></div>
+          <div class="kv"><span>features</span><span>2</span></div>
+          <div class="kv"><span>open now</span><span class="mono">shop/cart.py</span></div></div>
+        <div class="card"><h2 class="th">Ask the lead to</h2>
+          <div style="display:flex;flex-direction:column;gap:8px"><button class="btn btn2">Explain a part of the code</button><button class="btn btn2">Propose the next feature</button></div></div>
+      </aside>
+    </div>
+  </div>
+
+  <div class="label" style="margin-top:18px">Place B · a feature's loop page (and spec session)</div>
+  <h2>A Files drawer for what this feature's agents are building</h2>
+  <p class="why">On a loop page you mostly want to see what the agents changed. A <b>Files</b> button in the header opens a drawer in place of the side column. It shows this feature's branch, changed files first, each with who changed it and in which task. A file opens in the drawer; "Open full" goes to Place A with this file and version chosen. The spec session gets the same drawer, next to its documents.</p>
+
+  <div class="frame">
+    <div class="subbar" style="align-items:flex-start">
+      <div><div class="crumb">fallowsandbox · pipeline standard</div><h1>001-shopping-cart-with-total <span class="pill orange">Repairing</span></h1></div>
+      <span style="flex:1"></span>
+      <div class="row"><button class="btn btn2">Note for next step</button><button class="btn btn2">Limits</button><button class="btn btn2">Pause</button><button class="btn btn2">Stop</button><button class="btn" style="background:var(--accent);border-color:var(--accent)">Files ✕</button></div>
+    </div>
+    <div class="loopbody">
+      <aside class="card"><h2 class="th">tasks.md · 11/14</h2>
+        <div class="task">Phase 1 · Foundation 2/2</div><div class="task">Phase 2 · US1 Add products 3/3</div>
+        <div class="task cur">Phase 3 · US2 See the cart 3/3</div><div class="task">Phase 4 · US3 Remove 0/3</div></aside>
+      <section style="display:flex;flex-direction:column;gap:12px;min-width:0">
+        <div class="cards">
+          <div class="card"><div class="row"><b>builder</b><span style="flex:1"></span><span class="pill blue">repairing</span></div><div class="small muted">claude · sonnet</div></div>
+          <div class="card"><div class="row"><b>reviewer</b><span style="flex:1"></span><span class="pill grey">waiting</span></div><div class="small muted">claude · sonnet</div></div>
+          <div class="card"><div class="row"><b>security-reviewer</b><span style="flex:1"></span><span class="pill grey">waiting</span></div><div class="small muted">claude · sonnet</div></div>
+        </div>
+        <div class="card feed"><div class="row"><b>All</b><span class="muted">builder</span><span class="muted">reviewer</span></div>
+          <div class="line"><span class="muted">17:21</span><span style="color:var(--needs)">Fallow</span><span>US2 review: 1 criterion failed → repair 1 of 3</span></div>
+          <div class="line"><span class="muted">17:24</span><span style="color:var(--accent)">builder</span><span>cart.py: an invalid cart.json now stops with a message</span></div>
+          <div class="line"><span class="muted">17:25</span><span style="color:var(--accent)">builder</span><span>tests/test_cart.py: a test for the invalid file</span></div></div>
+      </section>
+      <aside class="drawer callout"><span class="tag">NEW: FILES DRAWER</span>
+        <div class="row" style="margin-top:6px"><b>Files</b><span class="mono muted">fallow/001-…/build</span><span style="flex:1"></span><span class="link">Open full</span></div>
+        <div class="tabs-line" style="margin-top:8px"><span class="on">Changed · 3</span><span>All files</span></div>
+        <div class="tree">
+          <div class="sel">shop/cart.py <span class="who">builder · T009</span><span class="m mod">M</span></div>
+          <div>shop/cli.py <span class="who">builder · T008</span><span class="m mod">M</span></div>
+          <div>tests/test_cart.py <span class="who">builder · T009</span><span class="m add">A</span></div>
+        </div>
+        <div class="peek">
+          <div class="row"><span class="mono"><b>shop/cart.py</b></span><span style="flex:1"></span><span class="link">Changes</span><span class="small muted">· whole file</span></div>
+          <div class="code" style="font-size:11.5px">
+<div class="add">    <span class="kw">try</span>:</div>
+<div class="add">        <span class="kw">return</span> json.loads(CART.read_text())</div>
+<div class="add">    <span class="kw">except</span> json.JSONDecodeError:</div>
+<div class="add">        <span class="kw">raise</span> SystemExit(<span class="st">"cart.json is not valid…"</span>)</div>
+          </div>
+        </div>
+      </aside>
+    </div>
+  </div>
+
+  <div class="label" style="margin-top:18px">To decide</div>
+  <h2>Three choices for you</h2>
+  <div class="choices">
+    <div class="choice"><b>1. Where</b>A and B together (recommended): A to look around the project, B to follow what one feature's agents change. Or only one of them.</div>
+    <div class="choice"><b>2. Read-only?</b>Read-only (recommended): agents build and Fallow verifies, so your edits go through the lead or your own editor ("Open in my editor"). Or allow small edits here, committed by Fallow.</div>
+    <div class="choice"><b>3. In 009 or later?</b>It fits 009 as a fifth story (P3), after the / menu and lead choice. "Ask the lead about it" also uses 009's chat. Or a feature of its own.</div>
+  </div>
+</main>
+</body></html>
