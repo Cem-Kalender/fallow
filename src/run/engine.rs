@@ -396,6 +396,8 @@ pub struct Engine {
     remotes: BTreeMap<String, (crate::publish::Remote, Option<Instant>, u32)>,
     /// 010: when each publishing loop's pull request was last read, and whether a read runs.
     pr_reads: BTreeMap<u64, (Instant, bool)>,
+    /// 010: per loop, when its pull request was last read well, and why the last read failed.
+    pr_checked: BTreeMap<u64, (Option<String>, Option<String>)>,
     /// 010: why a loop did not publish itself when it ended verified (shown on its page).
     auto_waits: BTreeMap<u64, String>,
 }
@@ -439,6 +441,7 @@ impl Engine {
             recorded: std::collections::BTreeSet::new(),
             remotes: BTreeMap::new(),
             pr_reads: BTreeMap::new(),
+            pr_checked: BTreeMap::new(),
             auto_waits: BTreeMap::new(),
             data,
             runs: BTreeMap::new(),
@@ -566,8 +569,13 @@ impl Engine {
                     let _ = reply.send(out);
                 }
                 Msg::Done { run, done } => {
-                    if matches!(done, Done::PrState(_)) {
+                    if let Done::PrState(r) = &done {
                         self.pr_reads.insert(run, (Instant::now(), false));
+                        let e = self.pr_checked.entry(run).or_default();
+                        match r {
+                            Ok(_) => *e = (Some(super::time::rfc3339(super::time::unix_now())), None),
+                            Err(why) => e.1 = Some(why.clone()),
+                        }
                     }
                     if let Some(r) = self.runs.get_mut(&run) {
                         // A step's tools end with it; a question it asked is still answered.
@@ -1361,7 +1369,8 @@ impl Engine {
             "publication": l.publication, "failed": l.publish_failed,
             "pending": l.publish_pending,
             "waits": self.auto_waits.get(&id),
-            "pr_checked": read.map(|(t, _)| t.elapsed().as_secs()),
+            "pr_read": self.pr_checked.get(&id).map(|(ok, err)| json!({ "ok_at": ok, "failed": err })),
+            "pr_checking": read.is_some_and(|(_, running)| *running),
         }))
     }
 

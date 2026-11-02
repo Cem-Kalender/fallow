@@ -57,6 +57,8 @@
           : h`<span class="pill ${CHECK[c.state] || "grey"}">${c.name} · ${c.state}</span>`)}</div>`);
       }
       if (pb.state === "open") lines.push(h`<div class="small muted">The merge is yours, on ${pb.repo}. Fallow follows the pull request and shows when it is merged; it does not change your local ${pb.target}.</div>`);
+      // A read of the remote that failed: the last state stays, with when it was read (FR-013).
+      if (pb.state === "open" && p.pr_read && p.pr_read.failed) lines.push(h`<div class="small notice">Could not check the pull request now${p.pr_read.ok_at ? ` (last at ${at(p.pr_read.ok_at)})` : ""}: ${p.pr_read.failed}</div>`);
       if (pb.state === "merged") lines.push(h`<div class="small muted">Merged on the remote; your local ${pb.target} is as it was: pull it to bring the merge in.</div>`);
       if (pb.state === "closed") lines.push(h`<div class="small muted">Closed without merging: publish again, or stop the loop.</div>`);
     }

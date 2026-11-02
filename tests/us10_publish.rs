@@ -334,3 +334,128 @@ fn a_publication_cut_short_by_a_restart_never_opens_a_second_pull_request() {
     drop(e);
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// Publishes a loop on a protected remote; its engine, repository and the fake host's state.
+fn published(name: &str) -> (fallow::service::ToolEngine, std::path::PathBuf, u64, std::path::PathBuf) {
+    let root = scratch(name);
+    let (e, repo, id) = locked_calc_prepared(
+        &root,
+        &calc_loop_ok(),
+        None,
+        None,
+        hosted(json!({ "login": "octo", "protected": { "main": true } })),
+    );
+    ready(&e.tx, id);
+    settled(&e.tx, id);
+    ask(&e.tx, Request::Publish { id }).unwrap();
+    wait_loop(&e.tx, id, "publishing", |v| v["stage"] == "publishing");
+    let _ = repo;
+    (e, root.clone(), id, root.join("host.json"))
+}
+
+fn set_pr(state: &Path, change: impl FnOnce(&mut Value)) {
+    let mut s = host_state(state);
+    change(&mut s["prs"][0]);
+    set_host_state(state, &s);
+}
+
+fn check_lines(tx: &Sender<Msg>, id: u64) -> Vec<String> {
+    let a = ask(
+        tx,
+        Request::LoopActivity {
+            id,
+            filter: fallow::run::activity::Filter::default(),
+        },
+    )
+    .unwrap();
+    a["entries"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|e| e["text"].as_str())
+        .filter(|t| t.starts_with("Pull request #1"))
+        .map(str::to_string)
+        .collect()
+}
+
+#[test]
+fn the_pull_request_is_followed_to_its_merge_on_the_remote() {
+    let (e, root, id, state) = published("p-follow");
+    let tx = &e.tx;
+    let repo = root.join("repo");
+    let local_main = git(&repo, &["rev-parse", "main"]);
+    // Checks appear on the remote: shown as they are, recorded once per change.
+    set_pr(&state, |pr| {
+        pr["checks"] = json!([
+            { "name": "test", "status": "IN_PROGRESS", "conclusion": "", "detailsUrl": "https://github.com/acme/calc/actions/runs/1" },
+            { "name": "lint", "status": "COMPLETED", "conclusion": "FAILURE", "detailsUrl": "" }
+        ])
+    });
+    let l = wait_loop(tx, id, "the checks", |v| {
+        v["publish"]["publication"]["checks"].as_array().is_some_and(|c| c.len() == 2)
+    });
+    let checks = &l["publish"]["publication"]["checks"];
+    assert_eq!(checks[0], json!({ "name": "test", "state": "waiting", "url": "https://github.com/acme/calc/actions/runs/1" }));
+    assert_eq!(checks[1]["state"], "failed", "a failing check is shown, nothing more: {checks}");
+    assert_eq!(l["stage"], "publishing", "a failed check starts nothing");
+    // Read again and again without a change: no new record.
+    std::thread::sleep(Duration::from_secs(12));
+    loop_view_twice(tx, id);
+    assert_eq!(check_lines(tx, id).len(), 1, "{:?}", check_lines(tx, id));
+    // The remote cannot be read for a moment: the last state stays, saying so.
+    let mut s = host_state(&state);
+    s["fail"] = json!({ "pr view": "gh: could not resolve host api.github.com" });
+    set_host_state(&state, &s);
+    let l = wait_loop(tx, id, "the failed read", |v| v["publish"]["pr_read"]["failed"].is_string());
+    assert_eq!(l["publish"]["publication"]["state"], "open");
+    assert!(l["publish"]["pr_read"]["ok_at"].is_string(), "{}", l["publish"]);
+    s["fail"] = json!({});
+    set_host_state(&state, &s);
+    // Merged on the remote: the loop ends merged; the local target is not touched.
+    set_pr(&state, |pr| {
+        pr["state"] = json!("merged");
+        pr["merged_at"] = json!("2026-11-03T08:00:00Z");
+    });
+    let l = wait_loop(tx, id, "merged", |v| v["stage"] == "done");
+    assert_eq!(l["publish"]["publication"]["state"], "merged");
+    assert_eq!(l["publish"]["publication"]["merged_at"], "2026-11-03T08:00:00Z");
+    let v = wait_for(tx, id, "the record", |v| !v["merged"].is_null());
+    assert_eq!(v["merged"], l["publish"]["publication"]["commit"]);
+    assert_eq!(git(&repo, &["rev-parse", "main"]), local_main, "Fallow pulls nothing");
+    let d = ask(tx, Request::Dashboard).unwrap();
+    let f = d["features"].as_array().unwrap().iter().find(|f| f["name"] == "001-calc").unwrap().clone();
+    assert_eq!(f["stage"], "merged", "{f}");
+    assert!(!d["needs_you"].to_string().contains("pr_open"), "nothing left to do: {}", d["needs_you"]);
+    assert!(check_lines(tx, id).iter().any(|l| l.contains("was merged on acme/calc")));
+    // One notice for the merge, kept as seen.
+    let seen = std::fs::read_to_string(root.join("data/notified.json")).unwrap_or_default();
+    assert!(seen.contains(&format!("{id}:pr:1:merged")), "{seen}");
+    drop(e);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+fn loop_view_twice(tx: &Sender<Msg>, id: u64) {
+    for _ in 0..2 {
+        ask(tx, Request::Loop { id }).unwrap();
+        std::thread::sleep(Duration::from_millis(300));
+    }
+}
+
+#[test]
+fn a_pull_request_closed_without_merging_puts_the_loop_back_to_ready() {
+    let (e, root, id, state) = published("p-closed");
+    let tx = &e.tx;
+    set_pr(&state, |pr| pr["state"] = json!("closed"));
+    let l = wait_loop(tx, id, "closed", |v| v["stage"] == "ready");
+    assert_eq!(l["publish"]["publication"]["state"], "closed");
+    assert_eq!(l["publish"]["offer"], json!(["pull_request"]), "publish again: {}", l["publish"]);
+    // Published again: a new pull request from the same branch, at the same commit.
+    ask(tx, Request::Publish { id }).unwrap();
+    let l = wait_loop(tx, id, "published again", |v| {
+        v["stage"] == "publishing" && v["publish"]["publication"]["pr_number"] == 2
+    });
+    assert_eq!(l["publish"]["publication"]["branch"], BRANCH);
+    assert_eq!(host_state(&state)["prs"].as_array().unwrap().len(), 2);
+    drop(e);
+    let _ = std::fs::remove_dir_all(&root);
+}
