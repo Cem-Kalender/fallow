@@ -596,18 +596,25 @@ fieldset.field.along legend { padding: 0; margin-bottom: 4px; }
 .lead-picker { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
 .lead-picker .btn.on { border-color: var(--accent); background: var(--accent-bg); }
 
-/* 009 US3: the lead is answering. Still for anyone who asked for less motion. */
-.working { display: flex; align-items: center; gap: 8px; padding: 2px 0 10px 40px; font-size: 13px; color: var(--muted); }
+/* 009 US3 (mockup/working.html): while the lead answers, Fallow's logo draws itself over a faint
+   copy of itself, beside what the lead does and for how long. Still for anyone who asked for
+   less motion. */
+.working { display: flex; align-items: center; gap: 10px; padding: 2px 0 10px 40px; font-size: 13px; color: var(--muted); min-width: 0; }
 .working:not(.on) { padding: 0; }
-.working:not(.on) .dots { display: none; }
-.working .dots { display: inline-flex; gap: 4px; }
-.working .dots span { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); opacity: .55; }
+.working:not(.on) .mark { display: none; }
+.working .what { color: var(--ink); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.working .what code { font: 12px var(--mono); background: var(--chip); padding: 1px 5px; border-radius: 4px; }
+.working .time { color: var(--muted); font-variant-numeric: tabular-nums; flex: none; }
+.working .mark { width: 22px; height: 22px; flex: none; }
+.working .mark path { stroke-width: 2.2; stroke-linecap: round; fill: none; }
+.working .mark .base path { stroke: var(--accent-line, #BFCBF0); }
+.working .mark .ink path { stroke: var(--accent); }
 @media (prefers-reduced-motion: no-preference) {
-  .working .dots span { animation: fallow-dot 1.2s ease-in-out infinite; }
-  .working .dots span:nth-child(2) { animation-delay: .15s; }
-  .working .dots span:nth-child(3) { animation-delay: .3s; }
+  .working .mark .ink path { stroke-dasharray: 30; stroke-dashoffset: 30; animation: fallow-draw 2.4s ease-in-out infinite; }
+  .working .mark .ink path:nth-child(2) { animation-delay: .25s; }
+  .working .mark .ink path:nth-child(3) { animation-delay: .5s; }
 }
-@keyframes fallow-dot { 0%, 80%, 100% { transform: translateY(0); opacity: .35; } 40% { transform: translateY(-4px); opacity: 1; } }
+@keyframes fallow-draw { 0% { stroke-dashoffset: 30; opacity: 1; } 45% { stroke-dashoffset: 0; opacity: 1; } 75% { stroke-dashoffset: 0; opacity: 1; } 100% { stroke-dashoffset: 0; opacity: 0; } }
 
 /* 009 US5: the project's files, read-only (mockup/files.html). */
 .ptabs { display: inline-flex; align-self: flex-start; flex: none; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; margin-bottom: 8px; }

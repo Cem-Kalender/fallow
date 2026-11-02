@@ -527,19 +527,62 @@ const Fallow = (() => {
 
   // 009 US3: the moving dots while the lead answers. They sit after the message list, which is
   // drawn again on every update, so they are never re-created and their motion never restarts.
+  // While the lead answers (009 US3, mockup/working.html): Fallow's logo drawing itself, what
+  // the lead is doing right now (from its own activity), and how long it has been at it.
+  const MARK = '<svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><g class="base"><path d="M4 20c4-1 6-5 8-9s4-7 8-7"></path><path d="M4 14c3 0 5-2 6-4"></path><path d="M12 20c3-1 5-3 6-6"></path></g><g class="ink"><path d="M4 20c4-1 6-5 8-9s4-7 8-7"></path><path d="M4 14c3 0 5-2 6-4"></path><path d="M12 20c3-1 5-3 6-6"></path></g></svg>';
+  const DOING = { read: "Reading", edit: "Editing", write: "Writing", run: "Running", search: "Searching for", tool: "Using" };
+
+  // What the lead does now: its last action, or thinking once that action has its result.
+  function doing(c) {
+    if (c && c.pending_approval) return h`Waiting for you to allow a command`;
+    const last = ((c && c.activity) || []).filter((a) => a.kind !== "say" && a.kind !== "progress").slice(-1)[0];
+    if (last && DOING[last.kind] && last.text) return h`${DOING[last.kind]} <code>${last.text}</code>…`;
+    return h`Thinking…`;
+  }
+
+  const ago = (ms) => {
+    const s = Math.max(0, Math.floor(ms / 1000));
+    return s < 60 ? `${s} s` : `${Math.floor(s / 60)} min ${String(s % 60).padStart(2, "0")} s`;
+  };
+
+  // When the running turn began: its start, or the moment the message was sent.
+  let workingSince = 0;
+  let workingTick = null;
+  function tickWorking() {
+    const t = document.querySelector("#working .time");
+    if (t) t.textContent = `· ${ago(Date.now() - workingSince)}`;
+  }
+
   function working(c) {
     const busy = !!(c && c.busy);
-    return h`<div id="working" class="working${busy ? " on" : ""}" role="status"><span class="dots" aria-hidden="true"><span></span><span></span><span></span></span><span class="wtext">${busy ? "The lead is answering…" : ""}</span></div>`;
+    return h`<div id="working" class="working${busy ? " on" : ""}" role="status">${raw(MARK)}<span class="what">${busy ? doing(c) : ""}</span><span class="time" aria-hidden="true"></span></div>`;
   }
+
   // The live region stays in the page, so a screen reader hears it when its text comes.
-  function showWorking(on) {
+  function showWorking(on, c) {
     const w = document.getElementById("working");
-    if (!w || w.classList.contains("on") === on) return;
+    if (!w) return;
+    const was = w.classList.contains("on");
     w.classList.toggle("on", on);
-    // The text changes as it shows, so a screen reader says it once.
-    w.querySelector(".wtext").textContent = on ? "The lead is answering…" : "";
-    const chat = document.getElementById("chat");
-    if (on && chat && atEnd(chat)) chat.scrollTop = chat.scrollHeight;
+    if (on) {
+      const turn = c && (c.turns || []).slice(-1)[0];
+      const started = turn && turn.started && !turn.reply ? Date.parse(turn.started) : NaN;
+      if (!was) workingSince = Date.now();
+      if (Number.isFinite(started)) workingSince = Math.min(workingSince || started, started);
+      const what = (c ? doing(c) : h`Thinking…`).s;
+      const el = w.querySelector(".what");
+      if (el.innerHTML !== what) el.innerHTML = what;
+      tickWorking();
+      if (!workingTick) workingTick = setInterval(tickWorking, 1000);
+      const chat = document.getElementById("chat");
+      if (!was && chat && atEnd(chat)) chat.scrollTop = chat.scrollHeight;
+    } else {
+      w.querySelector(".what").textContent = "";
+      w.querySelector(".time").textContent = "";
+      if (workingTick) clearInterval(workingTick);
+      workingTick = null;
+      workingSince = 0;
+    }
   }
 
   const chipInner = (mode) => h`${icon.shield}${MODE_LABEL[mode]}<span class="hint">· Shift+Tab</span>`;
@@ -559,7 +602,7 @@ const Fallow = (() => {
     if (notice) notice.innerHTML = leadNotice(c).s;
     const say = document.getElementById("say");
     if (say) say.disabled = !!(c.lead && c.lead.problem);
-    showWorking(!!c.busy);
+    showWorking(!!c.busy, c);
     const send = document.querySelector(".composer .send-btn");
     const want = sendKind(c);
     if (send && send.dataset.kind !== want) {
