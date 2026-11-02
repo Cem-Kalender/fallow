@@ -150,6 +150,7 @@ On the project page, the left column has two tabs, Features and Files. Files sho
 - **A binary or very large file**: a binary file shows its kind and size, not its bytes; a large text file shows its beginning with a note and "Open in my editor".
 - **A path outside the project** (a link pointing out of the folder, `..` in an address): not shown and not opened; the file views never read outside the project and Fallow's copies of it.
 - **A feature whose copy is gone** (merged and cleaned up, or deleted): it is no longer a version to choose; an open file of it says so and offers the project folder's version.
+- **A file that may hold secrets** (`.env`, private keys, credential files): listed with a lock mark, never opened, previewed or sent to the lead; the view says Fallow does not read files that may hold secrets and offers "Open in my editor" (constitution V).
 - **A plain folder without git**: only "the project folder as it is" is offered, with no marks.
 - **A file deleted on the chosen branch**: listed with a deleted mark when "only changed" is on; opening it shows its last content before the deletion.
 
@@ -208,6 +209,7 @@ On the project page, the left column has two tabs, Features and Files. Files sho
 - **FR-034**: The tree and an open file MUST follow changes made while they are shown (a running loop's included) within 5 seconds, keeping the open file, the folded folders and the reading position.
 - **FR-035**: The file views MUST NOT change any file: no editing, saving, renaming, creating or deleting.
 - **FR-036**: The file views MUST NOT read or show anything outside the project folder and Fallow's copies of it for its features; links that lead outside MUST NOT be followed.
+- **FR-036a**: Files that may hold secrets (environment files such as `.env`, private keys and certificates, credential and token files) MUST NOT be read: the tree lists them with a mark, and opening one, its changes or a reference to it for the lead MUST say that Fallow does not read files that may hold secrets, offering only "Open in my editor".
 - **FR-037**: Binary files MUST show their kind and size, not their content; text files over a size limit MUST show their beginning with a note that the rest is in the editor.
 - **FR-038**: The Files tab, the tree and the drawer MUST be usable by keyboard alone (move, fold, open) and announced to screen readers, as every control in Fallow.
 
