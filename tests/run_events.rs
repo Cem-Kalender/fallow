@@ -215,6 +215,7 @@ fn a_loop_folds_its_phases_tasks_questions_and_outcome() {
                     tasks: vec![task("T010", Some("US1")), task("T011", Some("US1"))],
                 },
             ],
+            when_verified: Default::default(),
         },
         Event::Phase {
             n: 1,

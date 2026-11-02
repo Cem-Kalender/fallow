@@ -49,6 +49,7 @@ New events:
 ```toml
 [hosting.github]
 command = "gh"   # the default; tests name a fake here
+args = []         # leading arguments (tests: ["--state", "<file>"])
 ```
 
 ## Validation rules

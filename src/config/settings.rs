@@ -112,12 +112,24 @@ fn claude() -> String {
     "claude".into()
 }
 
+/// The engineer's own tool for a hosting service (010 research R-2): `[hosting.github]`. Fallow
+/// runs it to read a branch's protection and to open and follow pull requests; never with a
+/// credential of its own.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HostTool {
+    pub command: String,
+    #[serde(default)]
+    pub args: Vec<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Deserialize, Default)]
 #[serde(default)]
 struct Raw {
     defaults: Defaults,
     roles: BTreeMap<String, RoleChoice>,
     agents: BTreeMap<String, AgentDef>,
+    hosting: BTreeMap<String, HostTool>,
 }
 
 /// The settings in force.
@@ -127,6 +139,9 @@ pub struct Settings {
     /// planner, builder, reviewer.
     pub roles: BTreeMap<String, RoleChoice>,
     pub agents: BTreeMap<String, AgentDef>,
+    /// 010: the hosting services' tools named in the settings; the built-in one otherwise
+    /// (`host_tool`).
+    pub hosting: BTreeMap<String, HostTool>,
 }
 
 pub const ROLES: [&str; 3] = ["planner", "builder", "reviewer"];
@@ -158,16 +173,35 @@ impl Default for Settings {
             defaults: Defaults::default(),
             roles,
             agents,
+            hosting: BTreeMap::new(),
         }
     }
 }
 
 impl Settings {
+    /// The program and leading arguments of a hosting service's tool: the settings' own, or the
+    /// service's usual tool on the PATH (`gh` for GitHub).
+    pub fn host_tool(&self, service: &str) -> Option<HostTool> {
+        if let Some(t) = self.hosting.get(service) {
+            return Some(t.clone());
+        }
+        (service == "github").then(|| HostTool {
+            command: "gh".into(),
+            args: Vec::new(),
+        })
+    }
+
     /// Parses a settings file over the built-in settings.
     pub fn parse(file: &str, text: &str, notices: &mut Vec<Notice>) -> Settings {
         let mut s = Settings::default();
         let Some(raw) =
-            super::merge::parse::<Raw>(file, text, &["defaults", "roles", "agents"], &[], notices)
+            super::merge::parse::<Raw>(
+                file,
+                text,
+                &["defaults", "roles", "agents", "hosting"],
+                &[],
+                notices,
+            )
         else {
             return s;
         };
@@ -199,6 +233,18 @@ impl Settings {
                 continue;
             }
             s.agents.insert(name, def);
+        }
+        for (name, tool) in raw.hosting {
+            if name != "github" {
+                notices.push(Notice {
+                    file: file.into(),
+                    line: None,
+                    level: Level::Warning,
+                    message: format!("hosting.{name}: only \"github\" is supported so far"),
+                });
+                continue;
+            }
+            s.hosting.insert(name, tool);
         }
         let d = &s.defaults;
         let bad = [
@@ -255,6 +301,28 @@ impl Settings {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_hosting_tool_is_named_in_the_settings_or_is_gh() {
+        let mut n = Vec::new();
+        let s = Settings::parse("s.toml", "", &mut n);
+        assert_eq!(s.host_tool("github").unwrap().command, "gh");
+        assert!(s.host_tool("gitlab").is_none());
+        let s = Settings::parse(
+            "s.toml",
+            "[hosting.github]
+command = \"fake\"
+args = [\"--state\", \"x\"]
+[hosting.gitlab]
+command = \"glab\"
+",
+            &mut n,
+        );
+        let t = s.host_tool("github").unwrap();
+        assert_eq!((t.command.as_str(), t.args.len()), ("fake", 2));
+        assert_eq!(n.len(), 1, "{n:?}");
+        assert!(n[0].message.contains("hosting.gitlab"));
+    }
+
     use super::*;
 
     #[test]

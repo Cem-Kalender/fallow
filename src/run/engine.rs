@@ -1791,6 +1791,7 @@ impl Engine {
             budget_usd: usd,
             budget_minutes: minutes,
             phases: prep.phases.clone(),
+            when_verified: crate::run::events::WhenVerified::preset(level),
         })?;
         run.append(Event::Stage {
             to: Stage::Building,
@@ -1810,6 +1811,7 @@ impl Engine {
             budget_usd: usd,
             budget_minutes: minutes,
             affected: Vec::new(),
+            when_verified: crate::run::events::WhenVerified::preset(level),
         };
         let lock_n = prep.lock;
         let commit = prep.commit.clone();

@@ -211,6 +211,39 @@ pub struct LoopState {
     pub relocked_seq: u64,
     /// How the loop ended: verified, and what was not checked.
     pub outcome: Option<(bool, Vec<String>)>,
+    /// 010: what happens when the loop ends verified.
+    pub when_verified: WhenVerified,
+    /// 010: the loop's pull request, with its latest state.
+    pub publication: Option<Publication>,
+    /// 010: the last failed publication, until the next try (step, reason, what was pushed).
+    pub publish_failed: Option<PublishFailure>,
+}
+
+/// 010: a loop's pull request (`Published`) and its latest state (`PullRequestState`).
+#[derive(Debug, Clone, Serialize)]
+pub struct Publication {
+    pub remote: String,
+    pub service: String,
+    pub repo: String,
+    pub branch: String,
+    pub commit: String,
+    pub target: String,
+    pub pr_number: u64,
+    pub pr_url: String,
+    pub by: String,
+    pub state: crate::publish::host::PrStatus,
+    pub checks: Vec<crate::publish::host::Check>,
+    pub merged_at: Option<String>,
+    /// When it was published.
+    pub at: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PublishFailure {
+    pub step: String,
+    pub why: String,
+    pub pushed: Option<(String, String)>,
+    pub at: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -645,6 +678,7 @@ impl RunState {
                 budget_usd,
                 budget_minutes,
                 phases,
+                when_verified,
             } => {
                 let mut tasks = BTreeMap::new();
                 for p in phases {
@@ -689,6 +723,9 @@ impl RunState {
                     prev_lock_commit: None,
                     relocked_seq: 0,
                     outcome: None,
+                    when_verified: *when_verified,
+                    publication: None,
+                    publish_failed: None,
                 });
             }
             Event::Task {
@@ -901,6 +938,57 @@ impl RunState {
             Event::Outcome { verified, missing } => {
                 if let Some(f) = self.feature_loop.as_mut() {
                     f.outcome = Some((*verified, missing.clone()));
+                }
+            }
+            Event::Published {
+                remote,
+                service,
+                repo,
+                branch,
+                commit,
+                target,
+                pr_number,
+                pr_url,
+                by,
+            } => {
+                if let Some(f) = self.feature_loop.as_mut() {
+                    f.publication = Some(Publication {
+                        remote: remote.clone(),
+                        service: service.clone(),
+                        repo: repo.clone(),
+                        branch: branch.clone(),
+                        commit: commit.clone(),
+                        target: target.clone(),
+                        pr_number: *pr_number,
+                        pr_url: pr_url.clone(),
+                        by: by.clone(),
+                        state: crate::publish::host::PrStatus::Open,
+                        checks: Vec::new(),
+                        merged_at: None,
+                        at: l.at.clone(),
+                    });
+                    f.publish_failed = None;
+                }
+            }
+            Event::PublishFailed { step, why, pushed } => {
+                if let Some(f) = self.feature_loop.as_mut() {
+                    f.publish_failed = Some(PublishFailure {
+                        step: step.clone(),
+                        why: why.clone(),
+                        pushed: pushed.clone(),
+                        at: l.at.clone(),
+                    });
+                }
+            }
+            Event::PullRequestState {
+                state,
+                checks,
+                merged_at,
+            } => {
+                if let Some(p) = self.feature_loop.as_mut().and_then(|f| f.publication.as_mut()) {
+                    p.state = *state;
+                    p.checks = checks.clone();
+                    p.merged_at = merged_at.clone();
                 }
             }
         }

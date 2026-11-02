@@ -46,6 +46,9 @@ pub struct LockRec {
     pub budget_minutes: u64,
     #[serde(default)]
     pub affected: Vec<String>,
+    /// 010: what the loop does when it ends verified.
+    #[serde(default)]
+    pub when_verified: crate::run::events::WhenVerified,
 }
 
 /// A feature of a project, as Fallow knows it (data-model.md, Feature). Its stage is derived.
@@ -123,6 +126,9 @@ pub struct Project {
     /// The lead new sessions start with (009); none is the agent named `lead`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lead: Option<String>,
+    /// 010: the remote as last seen, shown at once after a restart, with its time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote_seen: Option<crate::publish::Remote>,
 }
 
 fn standard() -> String {
@@ -327,6 +333,7 @@ impl Store {
             conversation: None,
             features: Vec::new(),
             lead: None,
+            remote_seen: None,
         };
         self.projects.push(p.clone());
         self.save()?;
@@ -394,5 +401,34 @@ mod tests {
             OLD_DEFAULT
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_project_and_a_lock_from_before_010_still_read() {
+        let p: Project = serde_json::from_str(
+            r#"{"id":"shop","path":"C:/x","name":"shop","added":"2026-10-30T00:00:00Z","conversation":null}"#,
+        )
+        .unwrap();
+        assert!(p.remote_seen.is_none());
+        let l: LockRec = serde_json::from_str(
+            r#"{"n":1,"commit":"c","at":"t","pipeline":"standard","level":"free","budget_usd":1.0,"budget_minutes":10}"#,
+        )
+        .unwrap();
+        assert_eq!(l.when_verified, crate::run::events::WhenVerified::Wait);
+        let mut p = p;
+        p.remote_seen = Some(crate::publish::Remote {
+            state: "known".into(),
+            remote: Some("origin".into()),
+            service: Some("github".into()),
+            repo: Some(crate::publish::host::Repo { owner: "acme".into(), name: "shop".into() }),
+            target: Some("main".into()),
+            protected: "yes".into(),
+            why: None,
+            account: None,
+            checked_at: Some("t".into()),
+            stale: false,
+        });
+        let back: Project = serde_json::from_str(&serde_json::to_string(&p).unwrap()).unwrap();
+        assert_eq!(back.remote_seen, p.remote_seen);
     }
 }

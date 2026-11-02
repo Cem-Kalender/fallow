@@ -454,3 +454,86 @@ pub fn fake_editor(root: &Path) -> (String, Vec<String>, PathBuf) {
         log,
     )
 }
+
+// ---- 010: a remote and a hosting service, without network --------------------------------
+
+/// A bare repository at `<root>/remote.git` standing in for `address` (git's `insteadOf`, 010
+/// research R-1): `origin` is `address` as written, every push goes to the bare repository, and
+/// `main` is pushed with its upstream set.
+pub fn bare_remote(root: &Path, repo: &Path, address: &str) -> PathBuf {
+    let bare = root.join("remote.git");
+    std::fs::create_dir_all(&bare).unwrap();
+    git(&bare, &["init", "-q", "--bare", "-b", "main"]);
+    let local = bare.display().to_string().replace('\', "/");
+    git(repo, &["remote", "add", "origin", address]);
+    git(repo, &["config", &format!("url.{local}.insteadOf"), address]);
+    git(repo, &["push", "-q", "-u", "origin", "main"]);
+    bare
+}
+
+/// The commit `branch` is at in the bare remote of `bare_remote`, if it is there.
+pub fn remote_head(root: &Path, branch: &str) -> Option<String> {
+    let out = std::process::Command::new("git")
+        .current_dir(root.join("remote.git"))
+        .args(["rev-parse", "--verify", "-q", &format!("refs/heads/{branch}")])
+        .output()
+        .ok()?;
+    out.status
+        .success()
+        .then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+/// `fallow-fake-host` in place of `gh` (010 contracts/host-adapter.md): writes its state file
+/// at `<root>/host.json` and adds `[hosting.github]` to the settings `start_studio` reads.
+pub fn fake_host(root: &Path, state: Value) -> PathBuf {
+    let path = root.join("host.json");
+    std::fs::write(&path, serde_json::to_string_pretty(&state).unwrap()).unwrap();
+    let extra = root.join("settings.extra.toml");
+    let before = std::fs::read_to_string(&extra).unwrap_or_default();
+    let exe = env!("CARGO_BIN_EXE_fallow-fake-host");
+    std::fs::write(
+        &extra,
+        format!(
+            "{before}\n[hosting.github]\ncommand = {exe:?}\nargs = [\"--state\", {:?}]\n",
+            path.display().to_string()
+        ),
+    )
+    .unwrap();
+    path
+}
+
+/// The fake host's state, to read or change between calls.
+pub fn host_state(state: &Path) -> Value {
+    serde_json::from_str(&std::fs::read_to_string(state).unwrap()).unwrap()
+}
+
+pub fn set_host_state(state: &Path, v: &Value) {
+    std::fs::write(state, serde_json::to_string_pretty(v).unwrap()).unwrap();
+}
+
+/// Every command line the fake host was given, in order.
+pub fn fake_host_log(state: &Path) -> Vec<Vec<String>> {
+    std::fs::read_to_string(format!("{}.log", state.display()))
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|l| serde_json::from_str(l).ok())
+        .collect()
+}
+
+/// `locked_calc` with `prepare(root, repo)` run before Fallow starts (a remote, a fake host),
+/// and the level given at the lock.
+pub fn locked_calc_prepared(
+    root: &Path,
+    loop_steps: &str,
+    pipeline: Option<&str>,
+    level: Option<fallow::run::events::Level>,
+    prepare: impl FnOnce(&Path, &Path),
+) -> (fallow::service::ToolEngine, PathBuf, u64) {
+    let repo = repo(root);
+    prepare(root, &repo);
+    let scenario = root.join("scenario.toml");
+    std::fs::write(&scenario, format!("{}{loop_steps}", lead_writes_calc())).unwrap();
+    let e = start_studio(root, &scenario, None);
+    let id = lock_calc_in(&e.tx, &repo, pipeline, Some((5.0, 60)), level);
+    (e, repo, id)
+}

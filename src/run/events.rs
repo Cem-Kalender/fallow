@@ -75,7 +75,8 @@ impl Stage {
             (Gating, Reviewing | Building) => true,
             (Reviewing, Ready | Building) => true,
             (Ready, Done | Publishing | Building) => true,
-            (Publishing, Done | Building) => true,
+            // 010: a pull request closed without merging puts the loop back to ready.
+            (Publishing, Done | Building | Ready) => true,
             _ => false,
         }
     }
@@ -214,13 +215,18 @@ pub enum SteeringKind {
     Reject,
     /// 007: the engineer unlocked the feature (FR-009).
     Unlock,
+    /// 010: publishing as a pull request, by the engineer or when verified as chosen at the lock.
+    Publish,
 }
 
 impl SteeringKind {
     /// Whether it counts as an intervention (FR-020): everything except approving the plan and
     /// merging, which the success criteria count apart.
     pub fn intervention(self) -> bool {
-        !matches!(self, SteeringKind::ApprovePlan | SteeringKind::Merge)
+        !matches!(
+            self,
+            SteeringKind::ApprovePlan | SteeringKind::Merge | SteeringKind::Publish
+        )
     }
 }
 
@@ -382,6 +388,9 @@ pub enum Event {
         budget_usd: f64,
         budget_minutes: u64,
         phases: Vec<PhaseSpec>,
+        /// 010: what happens when the loop ends verified.
+        #[serde(default)]
+        when_verified: WhenVerified,
     },
     Task {
         id: String,
@@ -435,6 +444,64 @@ pub enum Event {
         verified: bool,
         missing: Vec<String>,
     },
+    /// 010: the loop's branch pushed at the verified commit, and a pull request opened from it
+    /// (FR-009). `by` is `engineer` or `when_verified`.
+    Published {
+        remote: String,
+        service: String,
+        repo: String,
+        branch: String,
+        commit: String,
+        target: String,
+        pr_number: u64,
+        pr_url: String,
+        by: String,
+    },
+    /// 010: publishing failed at `step` (`check`, `push`, `pull_request`); what was pushed, if
+    /// anything, is named (FR-012).
+    PublishFailed {
+        step: String,
+        why: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pushed: Option<(String, String)>,
+    },
+    /// 010: the pull request's state and checks, as the remote reports them; recorded when
+    /// something changed (FR-013).
+    PullRequestState {
+        state: crate::publish::host::PrStatus,
+        #[serde(default)]
+        checks: Vec<crate::publish::host::Check>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        merged_at: Option<String>,
+    },
+}
+
+/// 010: what a loop does when it ends verified (FR-019): wait for the engineer, or open a pull
+/// request on its own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum WhenVerified {
+    #[default]
+    Wait,
+    PullRequest,
+}
+
+impl WhenVerified {
+    /// The preset for a level: Free opens a pull request (agreed 2026-11-02).
+    pub fn preset(level: Level) -> WhenVerified {
+        match level {
+            Level::Free => WhenVerified::PullRequest,
+            _ => WhenVerified::Wait,
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<WhenVerified> {
+        match s {
+            "wait" => Some(WhenVerified::Wait),
+            "pull_request" => Some(WhenVerified::PullRequest),
+            _ => None,
+        }
+    }
 }
 
 /// How much the lead decides without the engineer (FR-020a).
@@ -539,6 +606,9 @@ impl Event {
             Event::Unlocked => "unlocked",
             Event::Relocked { .. } => "relocked",
             Event::Outcome { .. } => "outcome",
+            Event::Published { .. } => "published",
+            Event::PublishFailed { .. } => "publish_failed",
+            Event::PullRequestState { .. } => "pull_request_state",
         }
     }
 }

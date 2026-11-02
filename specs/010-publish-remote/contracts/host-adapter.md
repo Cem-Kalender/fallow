@@ -43,7 +43,7 @@ pull request, or changes a branch: there is no such method to call.
 ## The fake (tests)
 
 `fallow-fake-host` (a test binary beside `fallow-fake-agent`) answers the `gh` command lines above
-from a JSON state file named by `FALLOW_FAKE_HOST` (protection per branch, signed in or not, pull
+from a JSON state file given as its leading `--state <file>` arguments (protection per branch, signed in or not, pull
 requests with their states and checks, failures to inject), and records every command line it was
 given, so tests check what Fallow asked and that it never asked for a merge, an approval or a
-token. Tests point `[hosting.github] command` at it.
+token. Tests point `[hosting.github] command` at it, with `args = ["--state", "<file>"]` (leading arguments, as an agent profile has).
