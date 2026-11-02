@@ -140,7 +140,7 @@ impl Host for GitHub {
         dir: &Path,
         repo: &Repo,
         head: &str,
-    ) -> Result<Option<(PullRequest, PrStatus)>, String> {
+    ) -> Result<Option<(PullRequest, PrStatus, Option<String>)>, String> {
         let out = self.gh(
             dir,
             &[
@@ -153,7 +153,7 @@ impl Host for GitHub {
                 "--state",
                 "all",
                 "--json",
-                "number,url,state,headRepositoryOwner",
+                "number,url,state,headRepositoryOwner,headRefOid",
                 "--limit",
                 "10",
             ],
@@ -173,6 +173,7 @@ impl Host for GitHub {
                     url: p["url"].as_str()?.to_string(),
                 },
                 status_of(p["state"].as_str()?),
+                p["headRefOid"].as_str().map(str::to_string),
             ))
         }))
     }

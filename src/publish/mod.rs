@@ -322,19 +322,23 @@ pub fn publish(job: &Job, settings: &crate::config::Settings) -> Result<Done, Fa
     };
     let host = host::host_for(service, settings)
         .ok_or_else(|| fail("check", format!("{service}: Fallow can only merge locally there"), None))?;
+    // The protection read again: a target not on the remote takes no pull request. Otherwise
+    // a protection that cannot be read only informs (FR-007): the pull request is tried.
     let read = read_protection(&job.repo, r, settings);
-    if let Err(why) = read.protected {
-        // A branch not pushed yet takes no pull request; anything else that cannot be read stops
-        // here (a sign-in problem, the network).
-        return Err(fail("check", why, None));
+    if let Err(why) = &read.protected {
+        if why.contains(" is not on ") && why.ends_with(" yet") {
+            return Err(fail("check", why.clone(), None));
+        }
     }
     let branch = push::push(&job.repo, name, &job.commit, &job.branch, target)
         .map_err(|why| fail("push", why, None))?;
     let pushed = Some((branch.clone(), job.commit.clone()));
     let pr = match host.open(&job.repo, repo, &branch, target, &job.title, &job.body) {
         Ok(pr) => pr,
+        // Opened all the same (a time-out, an answer lost): an open one from this branch at
+        // exactly this commit counts, never another (FR-011).
         Err(why) => match host.find(&job.repo, repo, &branch) {
-            Ok(Some((pr, host::PrStatus::Open))) => pr,
+            Ok(Some((pr, host::PrStatus::Open, Some(head)))) if head == job.commit => pr,
             _ => return Err(fail("pull_request", why, pushed)),
         },
     };

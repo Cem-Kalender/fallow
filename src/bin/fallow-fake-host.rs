@@ -55,6 +55,8 @@ fn main() {
         eprintln!("{msg}");
         std::process::exit(1);
     }
+    // Does the work, then reports a failure all the same (an answer lost on the way back).
+    let fail_after = state["fail_after"][&sub].as_str().map(str::to_string);
     let opt = |name: &str| -> Option<String> {
         args.iter()
             .position(|a| a == name)
@@ -80,11 +82,18 @@ fn main() {
             let body = opt("--body-file")
                 .and_then(|f| std::fs::read_to_string(f).ok())
                 .unwrap_or_default();
+            // The commit the head branch is at on the remote, as GitHub knows it.
+            let head = opt("--head").unwrap_or_default();
+            let oid = std::process::Command::new("git")
+                .args(["ls-remote", "origin", &format!("refs/heads/{head}")])
+                .output()
+                .ok()
+                .and_then(|o| String::from_utf8_lossy(&o.stdout).split_whitespace().next().map(str::to_string));
             let mut prs = prs;
             prs.push(json!({
-                "number": number, "head": opt("--head"), "base": opt("--base"),
+                "number": number, "head": head, "base": opt("--base"),
                 "title": opt("--title"), "body": body, "state": "open", "merged_at": null,
-                "checks": [],
+                "checks": [], "head_oid": oid,
             }));
             state["prs"] = Value::from(prs);
             let tmp = format!("{path}.tmp");
@@ -123,6 +132,7 @@ fn main() {
                         "url": format!("https://github.com/{repo}/pull/{n}"),
                         "state": p["state"].as_str().unwrap_or("open").to_uppercase(),
                         "headRepositoryOwner": { "login": p["owner"].as_str().unwrap_or(&owner) },
+                        "headRefOid": p["head_oid"],
                     })
                 })
                 .rev()
@@ -131,6 +141,10 @@ fn main() {
         }
         _ => Err(format!("unknown command: {}", args.join(" "))),
     };
+    if let (Ok(_), Some(msg)) = (&out, &fail_after) {
+        eprintln!("{msg}");
+        std::process::exit(1);
+    }
     match out {
         Ok(text) => print!("{text}"),
         Err(e) => {

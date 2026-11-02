@@ -85,8 +85,14 @@ pub trait Host: Send + Sync {
     ) -> Result<PullRequest, String>;
     /// The pull request's state and checks.
     fn state(&self, dir: &Path, repo: &Repo, number: u64) -> Result<PrState, String>;
-    /// The latest pull request from `head`, in any state (after a restart, research R-8).
-    fn find(&self, dir: &Path, repo: &Repo, head: &str) -> Result<Option<(PullRequest, PrStatus)>, String>;
+    /// The latest pull request from `head` of `repo`'s own branches, in any state, with the
+    /// commit it is at (after a restart, research R-8; after a failed opening, FR-011).
+    fn find(
+        &self,
+        dir: &Path,
+        repo: &Repo,
+        head: &str,
+    ) -> Result<Option<(PullRequest, PrStatus, Option<String>)>, String>;
 }
 
 /// The adapter of `service`, with the engineer's tool from the settings; `None` for a service

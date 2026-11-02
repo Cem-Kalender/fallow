@@ -224,6 +224,8 @@ pub struct LoopState {
     /// 010: each publishing step, for the activity (FR-018): when, what, and whether it went
     /// through.
     pub publish_steps: Vec<(String, String, bool)>,
+    /// 010: why the loop did not publish itself when verified (it waits for the engineer).
+    pub publish_waited: Option<String>,
 }
 
 /// 010: a loop's pull request (`Published`) and its latest state (`PullRequestState`).
@@ -743,6 +745,7 @@ impl RunState {
                     publish_pending: false,
                     publish_tried: false,
                     publish_steps: Vec::new(),
+                    publish_waited: None,
                 });
             }
             Event::Task {
@@ -1028,6 +1031,12 @@ impl RunState {
                         ),
                         false,
                     ));
+                }
+            }
+            Event::PublishWaited { why } => {
+                if let Some(f) = self.feature_loop.as_mut() {
+                    f.publish_tried = true;
+                    f.publish_waited = Some(why.clone());
                 }
             }
             Event::PullRequestState {

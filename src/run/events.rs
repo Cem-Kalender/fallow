@@ -468,6 +468,11 @@ pub enum Event {
         #[serde(default = "engineer")]
         by: String,
     },
+    /// 010: a loop chosen to publish itself when verified did not, and why (FR-020): final, it
+    /// waits for the engineer from then on.
+    PublishWaited {
+        why: String,
+    },
     /// 010: the pull request's state and checks, as the remote reports them; recorded when
     /// something changed (FR-013).
     PullRequestState {
@@ -616,6 +621,7 @@ impl Event {
             Event::Published { .. } => "published",
             Event::PublishFailed { .. } => "publish_failed",
             Event::PullRequestState { .. } => "pull_request_state",
+            Event::PublishWaited { .. } => "publish_waited",
         }
     }
 }

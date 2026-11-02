@@ -459,3 +459,82 @@ fn a_pull_request_closed_without_merging_puts_the_loop_back_to_ready() {
     drop(e);
     let _ = std::fs::remove_dir_all(&root);
 }
+
+#[test]
+fn the_loop_publishes_to_its_own_target_whatever_is_checked_out() {
+    let root = scratch("p-checked-out");
+    let (e, repo, id) = locked_calc_prepared(
+        &root,
+        &calc_loop_ok(),
+        None,
+        None,
+        hosted(json!({ "login": "octo", "protected": { "main": true, "dev": false } })),
+    );
+    // The engineer works on another branch meanwhile.
+    git(&repo, &["checkout", "-q", "-b", "dev"]);
+    let tx = &e.tx;
+    ready(tx, id);
+    let l = settled(tx, id);
+    assert_eq!(l["publish"]["remote"]["target"], "main", "{}", l["publish"]);
+    assert_eq!(l["publish"]["offer"], json!(["pull_request"]), "main is protected: {}", l["publish"]);
+    assert!(ask(tx, Request::Merge { id }).unwrap_err().contains("protected"));
+    ask(tx, Request::Publish { id }).unwrap();
+    wait_loop(tx, id, "publishing", |v| v["stage"] == "publishing");
+    let creates = pr_creates(&root);
+    assert_eq!(arg(&creates[0], "--base"), Some("main"), "{creates:?}");
+    drop(e);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_pull_request_opened_despite_an_error_counts_once() {
+    let root = scratch("p-lost-answer");
+    let (e, _repo, id) = locked_calc_prepared(
+        &root,
+        &calc_loop_ok(),
+        None,
+        None,
+        hosted(json!({ "login": "octo", "protected": { "main": true }, "fail_after": { "pr create": "gh: timeout awaiting response headers" } })),
+    );
+    let tx = &e.tx;
+    ready(tx, id);
+    settled(tx, id);
+    ask(tx, Request::Publish { id }).unwrap();
+    let l = wait_loop(tx, id, "published", |v| v["stage"] == "publishing" || !v["publish"]["failed"].is_null());
+    assert_eq!(l["stage"], "publishing", "the one opened counts: {}", l["publish"]);
+    assert_eq!(l["publish"]["publication"]["pr_number"], 1);
+    assert_eq!(host_state(&root.join("host.json"))["prs"].as_array().unwrap().len(), 1);
+    drop(e);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_loop_being_published_or_with_its_pull_request_open_is_not_stopped_paused_or_unlocked() {
+    let root = scratch("p-busy");
+    let (e, _repo, id) = locked_calc_prepared(
+        &root,
+        &calc_loop_ok(),
+        None,
+        None,
+        hosted(json!({ "login": "octo", "protected": { "main": true }, "sleep_ms": { "pr create": 3000 } })),
+    );
+    let tx = &e.tx;
+    ready(tx, id);
+    settled(tx, id);
+    ask(tx, Request::Publish { id }).unwrap();
+    let e1 = ask(tx, Request::Stop { id, reason: None }).unwrap_err();
+    assert!(e1.contains("being published"), "{e1}");
+    assert!(ask(tx, Request::Pause { id }).is_err());
+    wait_loop(tx, id, "publishing", |v| v["stage"] == "publishing");
+    let e2 = ask(
+        tx,
+        Request::Unlock {
+            project: "repo".into(),
+            feature: "001-calc".into(),
+        },
+    )
+    .unwrap_err();
+    assert!(e2.contains("pull request is open"), "{e2}");
+    drop(e);
+    let _ = std::fs::remove_dir_all(&root);
+}

@@ -391,8 +391,9 @@ pub struct Engine {
     notifier: crate::service::notify::Notifier,
     /// The ended loops whose record was written or tried: each is tried once per start.
     recorded: std::collections::BTreeSet<u64>,
-    /// 010: each project's remote as last read, when a read was last started, and how many
-    /// reads failed in a row (they are spaced out).
+    /// 010: the remote of each project's branch (the one checked out, and each loop's target)
+    /// as last read, when a read was last started, and how many reads failed in a row (they are
+    /// spaced out). Keyed `<project>\n<branch>`.
     remotes: BTreeMap<String, (crate::publish::Remote, Option<Instant>, u32)>,
     /// 010: when each publishing loop's pull request was last read, and whether a read runs.
     pr_reads: BTreeMap<u64, (Instant, bool)>,
@@ -1140,9 +1141,24 @@ impl Engine {
         now: bool,
     ) -> Option<crate::publish::Remote> {
         let target = git::branch(&p.path)?;
+        Some(self.remote_at(p, &target, now, true))
+    }
+
+    /// The remote of `target` in the project (a loop's own target, whatever is checked out:
+    /// review of US2); `shown` for the project page's own branch, remembered in projects.json.
+    fn remote_at(
+        &mut self,
+        p: &crate::project::Project,
+        target: &str,
+        now: bool,
+        shown: bool,
+    ) -> crate::publish::Remote {
+        let key = format!("{}\n{target}", p.id);
+        let target = target.to_string();
         let at = Instant::now();
-        let slot = self.remotes.entry(p.id.clone()).or_insert_with(|| {
-            let mut r = p.remote_seen.clone().unwrap_or_else(|| crate::publish::Remote {
+        let seen = if shown { p.remote_seen.clone() } else { None };
+        let slot = self.remotes.entry(key.clone()).or_insert_with(|| {
+            let mut r = seen.unwrap_or_else(|| crate::publish::Remote {
                 state: "checking".into(),
                 remote: None,
                 service: None,
@@ -1174,7 +1190,7 @@ impl Engine {
                 self.ctx.tx.clone(),
                 p.path.clone(),
                 self.ctx.settings.clone(),
-                p.id.clone(),
+                key.clone(),
             );
             let spawned = std::thread::Builder::new()
                 .name(format!("remote-{id}"))
@@ -1198,7 +1214,7 @@ impl Engine {
             if let Err(e) = spawned {
                 let found = slot.0.clone();
                 self.remote_read(
-                    &p.id,
+                    &key,
                     found,
                     Some(crate::publish::Read {
                         account: None,
@@ -1207,7 +1223,22 @@ impl Engine {
                 );
             }
         }
-        self.remotes.get(&p.id).map(|s| s.0.clone())
+        self.remotes
+            .get(&key)
+            .map(|s| s.0.clone())
+            .unwrap_or_else(|| crate::publish::Remote {
+                state: "checking".into(),
+                remote: None,
+                service: None,
+                repo: None,
+                target: None,
+                protected: "checking".into(),
+                why: None,
+                account: None,
+                checked_at: None,
+                stale: false,
+                checking: true,
+            })
     }
 
     /// A read came back: the git part as found, the protection as read (the last value kept,
@@ -1243,7 +1274,18 @@ impl Engine {
         found.checking = false;
         slot.0 = found;
         let seen = slot.0.clone();
-        self.remember_remote(project, seen);
+        // Only the project's own branch is remembered (the key's branch is the checked-out one).
+        if let Some((id, branch)) = project.split_once('\n') {
+            let shown = self
+                .studio
+                .store
+                .get(id)
+                .is_some_and(|p| git::branch(&p.path).as_deref() == Some(branch));
+            if shown {
+                let id = id.to_string();
+                self.remember_remote(&id, seen);
+            }
+        }
         self.bus.publish(json!({ "type": "studio" }));
     }
 
@@ -1284,19 +1326,17 @@ impl Engine {
             let Some(p) = self.loop_project(id) else {
                 continue;
             };
-            let Some(target) = git::branch(&p.path) else {
-                continue;
-            };
             let Some(r) = self.runs.get_mut(&id) else {
                 continue;
             };
+            let target = r.state.target.clone();
             let (branch, commit) = (
                 r.state.feature_loop.as_ref().map(|l| l.build_branch.clone()).unwrap_or_default(),
                 r.state.integrated.clone().unwrap_or_default(),
             );
             r.busy = Some(Busy::Publish);
             let (tx, settings, dir) = (self.ctx.tx.clone(), self.ctx.settings.clone(), p.path.clone());
-            let _ = std::thread::Builder::new()
+            let spawned = std::thread::Builder::new()
                 .name(format!("reconcile-{id}"))
                 .spawn(move || {
                     let interrupted = || crate::publish::Failed {
@@ -1314,9 +1354,13 @@ impl Engine {
                         let host = crate::publish::host::host_for(service, &settings).ok_or_else(interrupted)?;
                         for n in 1..=9 {
                             let b = if n == 1 { branch.clone() } else { format!("{branch}-{n}") };
-                            if let Ok(Some((pr, crate::publish::host::PrStatus::Open | crate::publish::host::PrStatus::Merged))) =
+                            // Only this loop's: its head at exactly the verified commit.
+                            if let Ok(Some((pr, crate::publish::host::PrStatus::Open | crate::publish::host::PrStatus::Merged, Some(head)))) =
                                 host.find(&dir, repo, &b)
                             {
+                                if head != commit {
+                                    continue;
+                                }
                                 return Ok(crate::publish::Done {
                                     remote: name.clone(),
                                     service: service.clone(),
@@ -1328,7 +1372,11 @@ impl Engine {
                                 });
                             }
                         }
-                        Err(interrupted())
+                        // What the push left on the remote, named (FR-012).
+                        let mut f = interrupted();
+                        f.pushed = crate::publish::push::pushed_at(&dir, name, &branch, &commit)
+                            .map(|b| (b, commit.clone()));
+                        Err(f)
                     })();
                     let _ = tx.send(Msg::Done {
                         run: id,
@@ -1338,6 +1386,11 @@ impl Engine {
                         },
                     });
                 });
+            if spawned.is_err() {
+                if let Some(r) = self.runs.get_mut(&id) {
+                    r.busy = None;
+                }
+            }
         }
     }
 
@@ -1348,11 +1401,17 @@ impl Engine {
         self.studio.store.get(&l.project).cloned()
     }
 
+    /// 010: the remote of a loop's own target (never merely the branch checked out).
+    fn loop_remote(&mut self, id: u64, now: bool) -> Option<crate::publish::Remote> {
+        let p = self.loop_project(id)?;
+        let target = self.runs.get(&id)?.state.target.clone();
+        Some(self.remote_at(&p, &target, now, false))
+    }
+
     /// 010: what publishing a loop offers, why, the remote, the account, the pull request and
     /// the last failure (contracts/web-api.md). `None` for a run that is no feature loop.
     fn publish_view(&mut self, id: u64) -> Option<Value> {
-        let p = self.loop_project(id)?;
-        let remote = self.remote_of(&p, false);
+        let remote = self.loop_remote(id, false);
         let r = self.runs.get(&id)?;
         let l = r.state.feature_loop.as_ref()?;
         let (offer, why) = crate::publish::offer(remote.as_ref());
@@ -1368,7 +1427,7 @@ impl Engine {
             "when_verified": l.when_verified,
             "publication": l.publication, "failed": l.publish_failed,
             "pending": l.publish_pending,
-            "waits": self.auto_waits.get(&id),
+            "waits": l.publish_waited.clone().or_else(|| self.auto_waits.get(&id).cloned()),
             "pr_read": self.pr_checked.get(&id).map(|(ok, err)| json!({ "ok_at": ok, "failed": err })),
             "pr_checking": read.is_some_and(|(_, running)| *running),
         }))
@@ -1377,12 +1436,9 @@ impl Engine {
     /// 010: pushes the loop's verified commit and opens a pull request, on a thread (FR-008 to
     /// FR-012); `by` is `engineer` or `when_verified`.
     fn publish(&mut self, id: u64, by: &str) -> Result<(), String> {
-        let p = self
-            .loop_project(id)
-            .ok_or_else(|| format!("there is no loop {id}"))?;
         let remote = self
-            .remote_of(&p, false)
-            .ok_or("the project is not on a git branch")?;
+            .loop_remote(id, false)
+            .ok_or_else(|| format!("there is no loop {id}"))?;
         let (offer, why) = crate::publish::offer(Some(&remote));
         if !offer.contains(&"pull_request") {
             return Err(format!("no pull request here: {why}"));
@@ -1420,29 +1476,30 @@ impl Engine {
         let verified = l.outcome.as_ref().is_some_and(|o| o.0);
         let choice = l.when_verified;
         if !verified {
-            self.auto_waits
-                .insert(id, "not verified by Fallow: it waits for you".into());
+            if let Some(r) = self.runs.get_mut(&id) {
+                let _ = r.append(Event::PublishWaited {
+                    why: "not verified by Fallow: it waits for you".into(),
+                });
+            }
             return;
         }
-        let Some(p) = self.loop_project(id) else {
-            return;
-        };
         // Read again when the loop has just become ready (FR-003).
         let first = !self.auto_waits.contains_key(&id);
-        let remote = self.remote_of(&p, first);
+        let remote = self.loop_remote(id, first);
         if remote.as_ref().is_some_and(|x| x.checking || x.state == "checking") {
             self.auto_waits.insert(id, "reading the remote first".into());
             return;
         }
-        match crate::publish::when_verified(choice, verified, remote.as_ref()) {
-            Ok(()) => {
-                self.auto_waits.remove(&id);
-                if let Err(e) = self.publish(id, "when_verified") {
-                    self.auto_waits.insert(id, e);
-                }
-            }
-            Err(why) => {
-                self.auto_waits.insert(id, why);
+        self.auto_waits.remove(&id);
+        let decided = match crate::publish::when_verified(choice, verified, remote.as_ref()) {
+            Ok(()) => self.publish(id, "when_verified").err(),
+            Err(why) => Some(why),
+        };
+        // Decided once (FR-020): a loop that did not publish itself waits for the engineer from
+        // then on, also after a later sign-in or a restart.
+        if let Some(why) = decided {
+            if let Some(r) = self.runs.get_mut(&id) {
+                let _ = r.append(Event::PublishWaited { why });
             }
         }
     }
@@ -2029,6 +2086,13 @@ impl Engine {
         if r.state.stage.is_final() {
             return Err("the loop has ended: changes go in a new feature".into());
         }
+        // 010: its pull request is the verified work as locked; it ends first (merged or closed).
+        if r.busy == Some(Busy::Publish) {
+            return Err("the loop is being published; unlock it after that".into());
+        }
+        if r.state.stage == Stage::Publishing {
+            return Err("its pull request is open: close it on the remote first, then unlock".into());
+        }
         r.append(Event::Steering {
             kind: SteeringKind::Unlock,
             target: None,
@@ -2139,6 +2203,7 @@ impl Engine {
     }
 
     /// Locks a feature and creates its loop (FR-008, FR-016a; research S-9).
+    #[allow(clippy::too_many_arguments)]
     fn lock(
         &mut self,
         project: &str,

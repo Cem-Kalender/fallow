@@ -45,6 +45,26 @@ pub fn push(
     ))
 }
 
+/// The branch among `branch`, `branch-2` … `branch-9` that is at `commit` on `remote`, if any
+/// (what a push cut short left there, FR-012).
+pub fn pushed_at(repo: &Path, remote: &str, branch: &str, commit: &str) -> Option<String> {
+    (1..=9).find_map(|n| {
+        let name = if n == 1 {
+            branch.to_string()
+        } else {
+            format!("{branch}-{n}")
+        };
+        let there = run(
+            "git",
+            &args(&["ls-remote", remote, &format!("refs/heads/{name}")]),
+            repo,
+            READ,
+        )
+        .ok()?;
+        (there.split_whitespace().next() == Some(commit)).then_some(name)
+    })
+}
+
 /// `<commit>:refs/heads/<branch>`: one commit to one new branch, never `+` (forced), never the
 /// target branch.
 pub fn refspec(commit: &str, branch: &str, target: &str) -> Result<String, String> {

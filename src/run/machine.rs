@@ -579,6 +579,9 @@ pub fn pause(run: &mut Run) -> Result<(), String> {
     if super::feature::paused_by_engineer(run) {
         return Err("the loop is already paused".into());
     }
+    if run.busy == Some(Busy::Publish) || run.state.stage == Stage::Publishing {
+        return Err("a loop being published or with its pull request open has nothing to pause".into());
+    }
     run.append(Event::Steering {
         kind: SteeringKind::Pause,
         target: None,
@@ -770,17 +773,25 @@ pub fn publish(
         title,
         body: body_file,
     };
-    let (tx, settings, id, by) = (ctx.tx.clone(), ctx.settings.clone(), run.id(), by.to_string());
-    std::thread::Builder::new()
+    let (tx, settings, id, who) = (ctx.tx.clone(), ctx.settings.clone(), run.id(), by.to_string());
+    let spawned = std::thread::Builder::new()
         .name(format!("publish-{id}"))
         .spawn(move || {
             let result = crate::publish::publish(&job, &settings);
             let _ = tx.send(Msg::Done {
                 run: id,
-                done: Done::Publish { by, result },
+                done: Done::Publish { by: who, result },
             });
-        })
-        .map_err(|e| format!("cannot start a thread: {e}"))?;
+        });
+    if let Err(e) = spawned {
+        run.busy = None;
+        run.append(Event::PublishFailed {
+            step: "check".into(),
+            why: format!("cannot start a thread: {e}"),
+            pushed: None,
+            by: by.to_string(),
+        })?;
+    }
     Ok(())
 }
 
@@ -807,6 +818,9 @@ pub fn stop(run: &mut Run, reason: Option<String>) -> Result<(), String> {
     }
     if run.busy == Some(Busy::Merge) {
         return Err("a merge is running; stop the run after it".into());
+    }
+    if run.busy == Some(Busy::Publish) {
+        return Err("the loop is being published; stop it after that".into());
     }
     // Every running step ends, and the lead's calls for their questions too.
     run.stop_all();
