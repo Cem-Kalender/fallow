@@ -42,11 +42,13 @@
   .drawer { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
   .who { font: 11px var(--sans); color: var(--muted); margin-left: auto; }
   .peek { margin-top: 10px; border-top: 1px solid var(--line-2); padding-top: 10px; }
+  .widebody { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 16px; padding: 0 24px 24px; align-items: start; }
+  .split { display: grid; grid-template-columns: 170px minmax(0, 1fr); gap: 14px; }
   .choices { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
   .choice { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; font-size: 13px; }
   .choice b { display: block; margin-bottom: 4px; }
   @media (max-width: 900px) {
-    .studio, .loopbody, .choices { grid-template-columns: minmax(0, 1fr); padding-left: 16px; padding-right: 16px; }
+    .studio, .loopbody, .widebody, .split, .choices { grid-template-columns: minmax(0, 1fr); padding-left: 16px; padding-right: 16px; }
     .subbar { padding-left: 16px; padding-right: 16px; }
   }
 </style></head>
@@ -136,7 +138,7 @@
 
   <div class="label" style="margin-top:18px">Place B · a feature's loop page (and spec session)</div>
   <h2>A Files drawer for what this feature's agents are building</h2>
-  <p class="why">On a loop page you mostly want to see what the agents changed. A <b>Files</b> button in the header opens a drawer in place of the side column. It shows this feature's branch, changed files first, each with who changed it and in which task. A file opens in the drawer; "Open full" goes to Place A with this file and version chosen. The spec session gets the same drawer, next to its documents.</p>
+  <p class="why">On a loop page you mostly want to see what the agents changed. A <b>Files</b> button in the header opens a drawer in place of the side column. It shows this feature's branch, changed files first, each with who changed it and in which task. The list is narrow; <b>opening a file widens the drawer</b> over the agent cards and the feed (B2), so code is read at full width while the header, its buttons and the task tree stay in view. "Open full" goes to Place A with this file and version chosen. The spec session gets the same drawer, next to its documents.</p>
 
   <div class="frame">
     <div class="subbar" style="align-items:flex-start">
@@ -159,7 +161,7 @@
           <div class="line"><span class="muted">17:24</span><span style="color:var(--accent)">builder</span><span>cart.py: an invalid cart.json now stops with a message</span></div>
           <div class="line"><span class="muted">17:25</span><span style="color:var(--accent)">builder</span><span>tests/test_cart.py: a test for the invalid file</span></div></div>
       </section>
-      <aside class="drawer callout"><span class="tag">NEW: FILES DRAWER</span>
+      <aside class="drawer callout"><span class="tag">B1 · FILES DRAWER: THE LIST</span>
         <div class="row" style="margin-top:6px"><b>Files</b><span class="mono muted">fallow/001-…/build</span><span style="flex:1"></span><span class="link">Open full</span></div>
         <div class="tabs-line" style="margin-top:8px"><span class="on">Changed · 3</span><span>All files</span></div>
         <div class="tree">
@@ -167,25 +169,60 @@
           <div>shop/cli.py <span class="who">builder · T008</span><span class="m mod">M</span></div>
           <div>tests/test_cart.py <span class="who">builder · T009</span><span class="m add">A</span></div>
         </div>
-        <div class="peek">
-          <div class="row"><span class="mono"><b>shop/cart.py</b></span><span style="flex:1"></span><span class="link">Changes</span><span class="small muted">· whole file</span></div>
-          <div class="code" style="font-size:11.5px">
-<div class="add">    <span class="kw">try</span>:</div>
-<div class="add">        <span class="kw">return</span> json.loads(CART.read_text())</div>
-<div class="add">    <span class="kw">except</span> json.JSONDecodeError:</div>
-<div class="add">        <span class="kw">raise</span> SystemExit(<span class="st">"cart.json is not valid…"</span>)</div>
-          </div>
-        </div>
+        <div class="small muted" style="margin-top:10px">Choose a file: the drawer widens to read it (B2).</div>
       </aside>
     </div>
   </div>
 
-  <div class="label" style="margin-top:18px">To decide</div>
-  <h2>Three choices for you</h2>
-  <div class="choices">
-    <div class="choice"><b>1. Where</b>A and B together (recommended): A to look around the project, B to follow what one feature's agents change. Or only one of them.</div>
-    <div class="choice"><b>2. Read-only?</b>Read-only (recommended): agents build and Fallow verifies, so your edits go through the lead or your own editor ("Open in my editor"). Or allow small edits here, committed by Fallow.</div>
-    <div class="choice"><b>3. In 009 or later?</b>It fits 009 as a fifth story (P3), after the / menu and lead choice. "Ask the lead about it" also uses 009's chat. Or a feature of its own.</div>
+  <div class="frame" style="margin-top:4px">
+    <div class="subbar" style="align-items:flex-start">
+      <div><div class="crumb">fallowsandbox · pipeline standard</div><h1>001-shopping-cart-with-total <span class="pill orange">Repairing</span></h1></div>
+      <span style="flex:1"></span>
+      <div class="row"><button class="btn btn2">Note for next step</button><button class="btn btn2">Limits</button><button class="btn btn2">Pause</button><button class="btn btn2">Stop</button><button class="btn" style="background:var(--accent);border-color:var(--accent)">Files ✕</button></div>
+    </div>
+    <div class="widebody">
+      <aside class="card"><h2 class="th">tasks.md · 11/14</h2>
+        <div class="task">Phase 1 · Foundation 2/2</div><div class="task">Phase 2 · US1 Add products 3/3</div>
+        <div class="task cur">Phase 3 · US2 See the cart 3/3</div><div class="task">Phase 4 · US3 Remove 0/3</div>
+        <div class="small muted" style="margin-top:10px">The agents keep working; the cards and the feed come back when you close the file.</div></aside>
+      <section class="drawer callout"><span class="tag">B2 · A FILE OPEN: THE DRAWER WIDENS</span>
+        <div class="split">
+          <div class="tree" style="border-right:1px solid var(--line-2);padding-right:10px;margin-top:6px">
+            <div class="small muted" style="font-family:var(--sans);padding-left:6px">Changed · 3</div>
+            <div class="sel">cart.py <span class="m mod">M</span></div>
+            <div>cli.py <span class="m mod">M</span></div>
+            <div>test_cart.py <span class="m add">A</span></div>
+            <div class="small" style="font-family:var(--sans);padding-left:6px;margin-top:6px"><span class="link">All files</span></div>
+          </div>
+          <div style="min-width:0">
+            <div class="viewer-head" style="margin-top:6px">
+              <span class="path">shop/cart.py</span><span class="pill orange">changed</span>
+              <span class="small muted">by builder in T009 (repair 1), 2 min ago</span>
+              <span style="flex:1"></span>
+              <span class="tabs-line" style="margin:0"><span class="on">Changes</span><span>Whole file</span></span>
+              <button class="btn btn2">Ask the lead</button><button class="btn btn2">Open full</button><button class="btn btn2">← Back to the loop</button>
+            </div>
+            <div class="code" style="counter-reset: ln 7">
+<div><span class="kw">def</span> load():</div>
+<div class="add">    <span class="kw">if not</span> CART.exists():</div>
+<div class="add">        <span class="kw">return</span> {}</div>
+<div class="add">    <span class="kw">try</span>:</div>
+<div class="add">        <span class="kw">return</span> json.loads(CART.read_text())</div>
+<div class="add">    <span class="kw">except</span> json.JSONDecodeError:</div>
+<div class="add">        <span class="kw">raise</span> SystemExit(<span class="st">"cart.json is not valid; it was left as it is."</span>)</div>
+<div></div>
+<div></div>
+<div><span class="kw">def</span> total(cart, catalog):</div>
+<div>    <span class="kw">return</span> sum(catalog[name] * n <span class="kw">for</span> name, n <span class="kw">in</span> cart.items())</div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
   </div>
+
+  <div class="label" style="margin-top:18px">Decided 2026-11-02</div>
+  <h2>Both places, read-only, in 009</h2>
+  <p class="why">A and B together; the views only read (changes go through the lead or your own editor); User Story 5 of 009. B's drawer lists files narrow and widens to read one (the engineer's remark: the narrow drawer was too small for code).</p>
 </main>
 </body></html>

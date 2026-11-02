@@ -5,7 +5,8 @@
 | Place | Shows |
 |---|---|
 | A · the project page | The left column's tabs Features / Files; the version chosen (a feature's branch with its loop running; the project folder and other features as choices); a filter and "only changed"; the tree with changed / added / spec marks; `shop/cart.py` open in place of the chat, read-only, the lines added on the branch in green, who changed it in which task, and Changes vs main, Ask the lead about it, Open in my editor, ← Conversation |
-| B · a feature's loop page | A Files button in the header opening a drawer in place of the side column: the feature's changed files first, who changed each in which task, a preview of the chosen file's changes, and "Open full" (to place A) |
+| B1 · a feature's loop page | A Files button in the header opening a narrow drawer in place of the side column: the feature's changed files first, who changed each in which task, and "Open full" (to place A) |
+| B2 · a file open from the drawer | The drawer widened over the agent cards and the feed (the header and the task tree stay): the changed files beside `shop/cart.py`'s changes at full width, Changes / Whole file, Ask the lead, Open full, ← Back to the loop. The engineer found the narrow drawer too small for code (2026-11-02) |
 
 **Status**: approved by the engineer on 2026-11-02: both places, read-only, part of 009.
 
