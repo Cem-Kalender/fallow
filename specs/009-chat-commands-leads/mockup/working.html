@@ -7,15 +7,19 @@
   .you { align-self: flex-end; max-width: 85%; background: var(--ink); color: #fff; padding: 12px 14px; border-radius: 12px 12px 2px 12px; font-size: 14px; }
   .lead { display: flex; gap: 12px; }
   .avatar { width: 26px; height: 26px; border-radius: 8px; background: var(--accent-bg); color: var(--accent); display: grid; place-items: center; font: 700 12px var(--sans); flex: none; }
-  .meta { font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+  .meta { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; font-size: 12px; color: var(--muted); margin-bottom: 4px; min-height: 22px; }
+  .meta b { color: var(--ink); }
   .live { font-size: 14px; color: var(--body); }
-  /* The working line: Fallow's logo drawing itself, what the lead does, and the time. */
-  .working { display: flex; align-items: center; gap: 10px; padding-left: 38px; font-size: 13px; color: var(--muted); }
+  .act { font-size: 12px; color: var(--muted); margin-top: 6px; }
+  .done { font-size: 14px; color: var(--body); }
+  /* The working line, next to the lead's name: Fallow's logo drawing itself, what the lead
+     does, and the time. */
+  .working { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); min-width: 0; }
   .working .what { color: var(--ink); }
-  .working .what code { font: 12px var(--mono); background: var(--chip); padding: 1px 5px; border-radius: 4px; }
-  .working .time { color: var(--muted); font-variant-numeric: tabular-nums; }
-  .mark { width: 22px; height: 22px; flex: none; }
-  .mark path { stroke-width: 2.2; stroke-linecap: round; fill: none; }
+  .working .what code { font: 11.5px var(--mono); background: var(--chip); padding: 1px 5px; border-radius: 4px; }
+  .working .time { font-variant-numeric: tabular-nums; }
+  .mark { width: 18px; height: 18px; flex: none; }
+  .mark path { stroke-width: 2.4; stroke-linecap: round; fill: none; }
   .mark .base path { stroke: var(--accent-line); }
   .mark .ink path { stroke: var(--accent); }
   @media (prefers-reduced-motion: no-preference) {
@@ -29,44 +33,45 @@
     75% { stroke-dashoffset: 0; opacity: 1; }
     100% { stroke-dashoffset: 0; opacity: 0; }
   }
-  .label { font: 700 11px var(--sans); letter-spacing: .08em; text-transform: uppercase; color: var(--accent); margin: 18px 0 6px; }
-  .states { display: grid; gap: 10px; max-width: 760px; margin: 0 auto; }
-  .state { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
-  .state .working { padding-left: 0; }
+  .label { font: 700 11px var(--sans); letter-spacing: .08em; text-transform: uppercase; color: var(--accent); margin: 18px auto 6px; max-width: 760px; }
   .why { max-width: 760px; margin: 0 auto 12px; color: var(--body); font-size: 13px; }
+  h2 { max-width: 760px; margin: 0 auto; }
 </style></head>
 <body>
 <main class="page">
-  <h2 style="margin:0">While the lead answers</h2>
-  <p class="why">Fallow's logo draws itself in a slow loop over a faint copy of itself, so it never looks empty; beside it, what the lead is doing right now (from its own activity) and how long it has been at it. Before the lead's first action it says "Thinking…". With reduced motion asked for, the logo stands still. Below: the line live in the chat, then each kind of line.</p>
+  <h2>While the lead answers: next to its name</h2>
+  <p class="why">The working line moves into the lead's own header, after its name: Fallow's logo draws itself, then what the lead does right now and for how long. When the answer is complete, the line goes and the header is the name alone, as for every answer. With reduced motion asked for, the logo stands still.</p>
 
   <div class="label">Live, in the chat</div>
   <div class="chat">
     <div class="you">/plan keep it small: one module, no new dependencies</div>
-    <div class="lead"><div class="avatar">L</div><div><div class="meta"><b>sonnet-lead</b> · working</div><div class="live" id="live"></div></div></div>
-    <div class="working" role="status">
-      <svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><g class="base"><path d="M4 20c4-1 6-5 8-9s4-7 8-7"/><path d="M4 14c3 0 5-2 6-4"/><path d="M12 20c3-1 5-3 6-6"/></g><g class="ink"><path d="M4 20c4-1 6-5 8-9s4-7 8-7"/><path d="M4 14c3 0 5-2 6-4"/><path d="M12 20c3-1 5-3 6-6"/></g></svg>
-      <span class="what" id="what">Thinking…</span><span class="time" id="time">· 0 s</span>
-    </div>
+    <div class="lead"><div class="avatar">L</div><div style="min-width:0">
+      <div class="meta"><b>sonnet-lead</b><span class="working" id="working">
+        <svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><g class="base"><path d="M4 20c4-1 6-5 8-9s4-7 8-7"/><path d="M4 14c3 0 5-2 6-4"/><path d="M12 20c3-1 5-3 6-6"/></g><g class="ink"><path d="M4 20c4-1 6-5 8-9s4-7 8-7"/><path d="M4 14c3 0 5-2 6-4"/><path d="M12 20c3-1 5-3 6-6"/></g></svg>
+        <span class="what" id="what">Thinking…</span><span class="time" id="time">· 0 s</span></span></div>
+      <div class="live" id="live"></div>
+      <div class="act" id="reads"></div>
+    </div></div>
   </div>
 
-  <div class="label">Each kind of line</div>
-  <div class="states">
-    <div class="state"><div class="working"><svg class="mark" viewBox="0 0 24 24"><g class="base"><path d="M4 20c4-1 6-5 8-9s4-7 8-7"/><path d="M4 14c3 0 5-2 6-4"/><path d="M12 20c3-1 5-3 6-6"/></g><g class="ink"><path d="M4 20c4-1 6-5 8-9s4-7 8-7"/><path d="M4 14c3 0 5-2 6-4"/><path d="M12 20c3-1 5-3 6-6"/></g></svg><span class="what">Thinking…</span><span class="time">· 3 s</span></div></div>
-    <div class="state"><div class="working"><svg class="mark" viewBox="0 0 24 24"><g class="base"><path d="M4 20c4-1 6-5 8-9s4-7 8-7"/><path d="M4 14c3 0 5-2 6-4"/><path d="M12 20c3-1 5-3 6-6"/></g><g class="ink"><path d="M4 20c4-1 6-5 8-9s4-7 8-7"/><path d="M4 14c3 0 5-2 6-4"/><path d="M12 20c3-1 5-3 6-6"/></g></svg><span class="what">Reading <code>shop/cart.py</code>…</span><span class="time">· 14 s</span></div></div>
-    <div class="state"><div class="working"><svg class="mark" viewBox="0 0 24 24"><g class="base"><path d="M4 20c4-1 6-5 8-9s4-7 8-7"/><path d="M4 14c3 0 5-2 6-4"/><path d="M12 20c3-1 5-3 6-6"/></g><g class="ink"><path d="M4 20c4-1 6-5 8-9s4-7 8-7"/><path d="M4 14c3 0 5-2 6-4"/><path d="M12 20c3-1 5-3 6-6"/></g></svg><span class="what">Writing <code>specs/010-receipt-printout/plan.md</code>…</span><span class="time">· 41 s</span></div></div>
-    <div class="state"><div class="working"><svg class="mark" viewBox="0 0 24 24"><g class="base"><path d="M4 20c4-1 6-5 8-9s4-7 8-7"/><path d="M4 14c3 0 5-2 6-4"/><path d="M12 20c3-1 5-3 6-6"/></g><g class="ink"><path d="M4 20c4-1 6-5 8-9s4-7 8-7"/><path d="M4 14c3 0 5-2 6-4"/><path d="M12 20c3-1 5-3 6-6"/></g></svg><span class="what">Running <code>python -m unittest</code>…</span><span class="time">· 1 min 05 s</span></div></div>
-    <div class="state"><div class="working"><svg class="mark" viewBox="0 0 24 24"><g class="base"><path d="M4 20c4-1 6-5 8-9s4-7 8-7"/><path d="M4 14c3 0 5-2 6-4"/><path d="M12 20c3-1 5-3 6-6"/></g><g class="ink"><path d="M4 20c4-1 6-5 8-9s4-7 8-7"/><path d="M4 14c3 0 5-2 6-4"/><path d="M12 20c3-1 5-3 6-6"/></g></svg><span class="what">Waiting for you to allow a command</span><span class="time">· 1 min 12 s</span></div></div>
+  <div class="label">When the answer is complete</div>
+  <div class="chat">
+    <div class="you">/plan keep it small: one module, no new dependencies</div>
+    <div class="lead"><div class="avatar">L</div><div>
+      <div class="meta"><b>sonnet-lead</b> · ran /speckit-plan</div>
+      <div class="done">I ran <b>plan</b> and wrote <code>specs/010-receipt-printout/plan.md</code>: one module, <code>shop/receipt.py</code>, and no new dependencies.</div>
+      <div class="act">Read specs/010-receipt-printout/spec.md · specs/008-checkout/plan.md</div>
+    </div></div>
   </div>
 </main>
 <script>
   // A made-up turn, to show the line changing as the lead works.
   const steps = [
-    [0, "Thinking…", ""],
-    [3, "Reading <code>specs/010-receipt-printout/spec.md</code>…", ""],
-    [6, "Reading <code>specs/008-checkout/plan.md</code>…", ""],
-    [9, "Writing <code>specs/010-receipt-printout/plan.md</code>…", "I'm writing the plan: one module, <code>shop/receipt.py</code>…"],
-    [14, "Thinking…", "I'm writing the plan: one module, <code>shop/receipt.py</code>, and a <code>receipt</code> command…"],
+    [0, "Thinking…", "", ""],
+    [3, "Reading <code>specs/010-receipt-printout/spec.md</code>…", "", "Read specs/010-receipt-printout/spec.md"],
+    [6, "Reading <code>specs/008-checkout/plan.md</code>…", "", "Read specs/010-receipt-printout/spec.md · specs/008-checkout/plan.md"],
+    [9, "Writing <code>specs/010-receipt-printout/plan.md</code>…", "I'm writing the plan: one module, <code>shop/receipt.py</code>…", "Read specs/010-receipt-printout/spec.md · specs/008-checkout/plan.md"],
+    [14, "Thinking…", "I'm writing the plan: one module, <code>shop/receipt.py</code>, and a <code>receipt</code> command…", "Read specs/010-receipt-printout/spec.md · specs/008-checkout/plan.md"],
   ];
   let t = 0;
   setInterval(() => {
@@ -75,6 +80,7 @@
     for (const s of steps) if (t >= s[0]) cur = s;
     document.getElementById("what").innerHTML = cur[1];
     document.getElementById("live").innerHTML = cur[2];
+    document.getElementById("reads").textContent = cur[3];
     document.getElementById("time").textContent = `· ${t} s`;
   }, 1000);
 </script>

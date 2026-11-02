@@ -599,14 +599,12 @@ fieldset.field.along legend { padding: 0; margin-bottom: 4px; }
 /* 009 US3 (mockup/working.html): while the lead answers, Fallow's logo draws itself over a faint
    copy of itself, beside what the lead does and for how long. Still for anyone who asked for
    less motion. */
-.working { display: flex; align-items: center; gap: 10px; padding: 2px 0 10px 40px; font-size: 13px; color: var(--muted); min-width: 0; }
-.working:not(.on) { padding: 0; }
-.working:not(.on) .mark { display: none; }
+.working { display: inline-flex; align-items: center; gap: 6px; margin-left: 8px; vertical-align: middle; font-size: 12px; color: var(--muted); max-width: 100%; min-width: 0; }
 .working .what { color: var(--ink); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.working .what code { font: 12px var(--mono); background: var(--chip); padding: 1px 5px; border-radius: 4px; }
+.working .what code { font: 11.5px var(--mono); background: var(--chip); padding: 1px 5px; border-radius: 4px; }
 .working .time { color: var(--muted); font-variant-numeric: tabular-nums; flex: none; }
-.working .mark { width: 22px; height: 22px; flex: none; }
-.working .mark path { stroke-width: 2.2; stroke-linecap: round; fill: none; }
+.working .mark { width: 18px; height: 18px; flex: none; }
+.working .mark path { stroke-width: 2.4; stroke-linecap: round; fill: none; }
 .working .mark .base path { stroke: var(--accent-line, #BFCBF0); }
 .working .mark .ink path { stroke: var(--accent); }
 @media (prefers-reduced-motion: no-preference) {

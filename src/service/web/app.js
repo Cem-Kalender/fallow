@@ -469,7 +469,7 @@ const Fallow = (() => {
       const r = t.result || {};
       if (t.reply === null || t.reply === undefined) {
         const reads = filesRead(c.activity);
-        out.push(leadMsg(h`<b>${leadName(c)}</b> · working`, c.live ? md(c.live) : raw(""),
+        out.push(leadMsg(h`<b>${leadName(c)}</b>${workingInline(c)}`, c.live ? md(c.live) : raw(""),
           reads.length ? h`<div class="act small mt-6">${icon.file} Read ${reads.slice(0, 6).join(" · ")}</div>` : ""));
         return;
       }
@@ -551,34 +551,56 @@ const Fallow = (() => {
   function tickWorking() {
     const t = document.querySelector("#working .time");
     if (t) t.textContent = `· ${ago(Date.now() - workingSince)}`;
+    phase();
   }
 
-  function working(c) {
-    const busy = !!(c && c.busy);
-    return h`<div id="working" class="working${busy ? " on" : ""}" role="status">${raw(MARK)}<span class="what">${busy ? doing(c) : ""}</span><span class="time" aria-hidden="true"></span></div>`;
+  // The line itself, in the answering turn's header after the lead's name (mockup/working.html).
+  // A screen reader hears it through the live region below instead.
+  function workingInline(c) {
+    const turn = c && (c.turns || []).slice(-1)[0];
+    const started = turn && turn.started ? Date.parse(turn.started) : NaN;
+    const since = workingSince || (Number.isFinite(started) ? started : Date.now());
+    return h`<span id="working" class="working" aria-hidden="true">${raw(MARK)}<span class="what">${c && c.busy !== false ? doing(c) : h`Thinking…`}</span><span class="time">· ${ago(Date.now() - since)}</span></span>`;
   }
 
-  // The live region stays in the page, so a screen reader hears it when its text comes.
+  // The live region, which stays in the page while the chat is drawn again around it.
+  function working() {
+    return h`<div id="working-sr" class="sr" role="status"></div>`;
+  }
+
+  // The logo is drawn again with the lead's message at every update: each new one takes up the
+  // loop where the page's clock is, so the drawing goes on smoothly instead of starting over.
+  const DRAW_MS = 2400;
+  function phase() {
+    const off = -((Date.now() % DRAW_MS) / 1000);
+    document.querySelectorAll("#working .ink path").forEach((p, i) => {
+      if (p.dataset.phased) return;
+      p.style.animationDelay = `${(off + i * 0.25).toFixed(3)}s`;
+      p.dataset.phased = "1";
+    });
+  }
+
   function showWorking(on, c) {
-    const w = document.getElementById("working");
-    if (!w) return;
-    const was = w.classList.contains("on");
-    w.classList.toggle("on", on);
+    const sr = document.getElementById("working-sr");
+    const was = !!workingTick;
     if (on) {
       const turn = c && (c.turns || []).slice(-1)[0];
       const started = turn && turn.started && !turn.reply ? Date.parse(turn.started) : NaN;
       if (!was) workingSince = Date.now();
       if (Number.isFinite(started)) workingSince = Math.min(workingSince || started, started);
-      const what = (c ? doing(c) : h`Thinking…`).s;
-      const el = w.querySelector(".what");
-      if (el.innerHTML !== what) el.innerHTML = what;
+      const what = c ? doing(c) : h`Thinking…`;
+      const el = document.querySelector("#working .what");
+      if (el && el.innerHTML !== what.s) el.innerHTML = what.s;
+      // Said once as it begins, and again when what the lead does changes.
+      if (sr) {
+        const said = el ? el.textContent : "Thinking…";
+        if (sr.textContent !== said) sr.textContent = said;
+      }
+      phase();
       tickWorking();
       if (!workingTick) workingTick = setInterval(tickWorking, 1000);
-      const chat = document.getElementById("chat");
-      if (!was && chat && atEnd(chat)) chat.scrollTop = chat.scrollHeight;
     } else {
-      w.querySelector(".what").textContent = "";
-      w.querySelector(".time").textContent = "";
+      if (sr) sr.textContent = "";
       if (workingTick) clearInterval(workingTick);
       workingTick = null;
       workingSince = 0;
@@ -775,7 +797,8 @@ const Fallow = (() => {
       const named = document.querySelector("#lead-head b, #lead-head [data-act=lead-pick]");
       const name = named ? named.textContent : "lead";
       const tmp = document.createElement("div");
-      tmp.innerHTML = h`<div class="you">${text}</div>${leadMsg(h`<b>${name}</b> · working`, raw(""), "")}`.s;
+      workingSince = Date.now();
+      tmp.innerHTML = h`<div class="you">${text}</div>${leadMsg(h`<b>${name}</b>${workingInline(null)}`, raw(""), "")}`.s;
       pending = [...tmp.children];
       for (const n of pending) list.appendChild(n);
     }
