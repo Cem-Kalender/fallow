@@ -408,7 +408,7 @@ After every phase, an independent fresh-context reviewer verifies it, and the im
 
   Fix what differs.
 - [X] T039 Whole-change review by an independent fresh-context reviewer against the spec, plan, contracts and constitution, especially V (secrets, nothing outside the project) and VI (no rights from project commands, the editor never "opens by type"). Fix the confirmed findings and run the suite again.
-- [ ] T040 Real-agent validation with `claude` (Sonnet) in `C:\Repos\FallowSandbox`, with the budget agreed with the engineer before starting:
+- [X] T040 Real-agent validation with `claude` (Sonnet) in `C:\Repos\FallowSandbox`, with the budget agreed with the engineer before starting:
   - quickstart Q1 steps 2 and 5 (a `/plan` and a project command);
   - Q2 steps 1 and 5 (a second lead answering in its session and a loop question);
   - Q5 step 3 (Ask the lead about a file).
