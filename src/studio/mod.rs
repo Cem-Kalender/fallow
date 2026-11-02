@@ -92,6 +92,10 @@ pub enum Req {
     Project {
         id: String,
     },
+    /// 010: read the project's remote again now (the engineer opened the project).
+    CheckRemote {
+        id: String,
+    },
     Conversation {
         id: String,
     },

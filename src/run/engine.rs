@@ -190,10 +190,12 @@ pub enum Msg {
     },
     Tick,
     Shutdown,
-    /// 010: a project's protection, as the hosting tool read it (research R-3).
+    /// 010: a project's remote (git) and its protection (the hosting tool), read on a thread
+    /// (research R-1, R-3).
     Remote {
         project: String,
-        read: crate::publish::Read,
+        found: crate::publish::Remote,
+        read: Option<crate::publish::Read>,
     },
 }
 
@@ -565,7 +567,11 @@ impl Engine {
                     }
                     break;
                 }
-                Msg::Remote { project, read } => self.remote_read(&project, read),
+                Msg::Remote {
+                    project,
+                    found,
+                    read,
+                } => self.remote_read(&project, found, read),
             }
             self.publish_changes();
             self.notify_changes();
@@ -1054,79 +1060,133 @@ impl Engine {
     }
 
     /// A project as its screen shows it (mockup screen 5).
-    /// 010: the project's remote (FR-001 to FR-003): its git part at once, its protection as last
-    /// read; a new read is started on a thread when the last is old enough. `None` when the
-    /// project is not on a branch of a git repository.
-    pub fn remote_of(&mut self, p: &crate::project::Project) -> Option<crate::publish::Remote> {
+    /// 010: the project's remote (FR-001 to FR-003), as last read; a new read (git, then the
+    /// hosting tool) is started on a thread when the last one is old enough, or at once with
+    /// `now` (the engineer opened the project). The engine thread never runs git or the tool for
+    /// it. `None` when the project is not on a branch of a git repository.
+    pub fn remote_of(
+        &mut self,
+        p: &crate::project::Project,
+        now: bool,
+    ) -> Option<crate::publish::Remote> {
         let target = git::branch(&p.path)?;
-        let now = Instant::now();
-        let slot = self
-            .remotes
-            .entry(p.id.clone())
-            .or_insert_with(|| (p.remote_seen.clone().unwrap_or_else(|| crate::publish::remote::find(&p.path, &target)), None));
+        let at = Instant::now();
+        let slot = self.remotes.entry(p.id.clone()).or_insert_with(|| {
+            let mut r = p.remote_seen.clone().unwrap_or_else(|| crate::publish::Remote {
+                state: "checking".into(),
+                remote: None,
+                service: None,
+                repo: None,
+                target: None,
+                protected: "checking".into(),
+                why: None,
+                account: None,
+                checked_at: None,
+                stale: false,
+                checking: false,
+            });
+            r.checking = false;
+            (r, None)
+        });
         let wait = if slot.0.known() && !slot.0.stale {
             REMOTE_KNOWN
         } else {
             REMOTE_UNKNOWN
         };
-        let due = !slot.0.checking && slot.1.is_none_or(|t| now.duration_since(t) >= wait);
+        let fresh = slot.1.is_some_and(|t| at.duration_since(t) < Duration::from_secs(5));
+        let due = !slot.0.checking
+            && (slot.1.is_none_or(|t| at.duration_since(t) >= wait) || (now && !fresh));
         if due {
-            slot.1 = Some(now);
-            let mut found = crate::publish::remote::find(&p.path, &target);
-            // The last value stays shown while it is read again, for the same remote branch.
-            if found.same_place(&slot.0) {
-                found.protected = slot.0.protected.clone();
-                found.account = slot.0.account.clone();
-                found.checked_at = slot.0.checked_at.clone();
-                found.stale = slot.0.stale;
-                found.why = slot.0.why.clone();
-            }
-            if found.state == "known" {
-                found.checking = true;
-                if !found.known() {
-                    found.protected = "checking".into();
-                }
-                let (tx, dir, settings, id, ask) = (
-                    self.ctx.tx.clone(),
-                    p.path.clone(),
-                    self.ctx.settings.clone(),
-                    p.id.clone(),
-                    found.clone(),
-                );
-                let _ = std::thread::Builder::new()
-                    .name(format!("remote-{id}"))
-                    .spawn(move || {
-                        let read = crate::publish::read_protection(&dir, &ask, &settings);
-                        let _ = tx.send(Msg::Remote { project: id, read });
+            slot.1 = Some(at);
+            slot.0.checking = true;
+            let (tx, dir, settings, id) = (
+                self.ctx.tx.clone(),
+                p.path.clone(),
+                self.ctx.settings.clone(),
+                p.id.clone(),
+            );
+            let spawned = std::thread::Builder::new()
+                .name(format!("remote-{id}"))
+                .spawn(move || {
+                    let found = crate::publish::remote::find(&dir, &target);
+                    let read = (found.state == "known").then(|| {
+                        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            crate::publish::read_protection(&dir, &found, &settings)
+                        }))
+                        .unwrap_or_else(|_| crate::publish::Read {
+                            account: None,
+                            protected: Err("reading the protection failed".into()),
+                        })
                     });
-            }
-            slot.0 = found;
-            let seen = slot.0.clone();
-            if !seen.checking {
-                self.remember_remote(&p.id, seen);
+                    let _ = tx.send(Msg::Remote {
+                        project: id,
+                        found,
+                        read,
+                    });
+                });
+            if let Err(e) = spawned {
+                let found = slot.0.clone();
+                self.remote_read(
+                    &p.id,
+                    found,
+                    Some(crate::publish::Read {
+                        account: None,
+                        protected: Err(format!("cannot start a thread: {e}")),
+                    }),
+                );
             }
         }
         self.remotes.get(&p.id).map(|s| s.0.clone())
     }
 
-    /// A read of the protection came back: kept, shown, and remembered for a restart.
-    fn remote_read(&mut self, project: &str, read: crate::publish::Read) {
+    /// A read came back: the git part as found, the protection as read (the last value kept,
+    /// marked stale, when it could not be read again for the same remote branch); shown, and
+    /// remembered for a restart.
+    fn remote_read(
+        &mut self,
+        project: &str,
+        mut found: crate::publish::Remote,
+        read: Option<crate::publish::Read>,
+    ) {
         let Some(slot) = self.remotes.get_mut(project) else {
             return;
         };
-        slot.0.apply(read, super::time::rfc3339(super::time::unix_now()));
+        if found.same_place(&slot.0) {
+            found.protected = slot.0.protected.clone();
+            found.account = slot.0.account.clone();
+            found.checked_at = slot.0.checked_at.clone();
+            found.stale = slot.0.stale;
+            found.why = slot.0.why.clone();
+        }
+        if let Some(read) = read {
+            if !found.known() {
+                found.protected = "unknown".into();
+            }
+            found.apply(read, super::time::rfc3339(super::time::unix_now()));
+        }
+        found.checking = false;
+        slot.0 = found;
         let seen = slot.0.clone();
         self.remember_remote(project, seen);
         self.bus.publish(json!({ "type": "studio" }));
     }
 
+    /// Kept in projects.json when what it says changed (not merely when it was read again).
     fn remember_remote(&mut self, project: &str, seen: crate::publish::Remote) {
-        if let Some(p) = self.studio.store.get_mut(project) {
-            if p.remote_seen.as_ref() != Some(&seen) {
-                p.remote_seen = Some(seen);
-                if let Err(e) = self.studio.store.save() {
-                    self.console.push(format!("project {project}: {e}"));
-                }
+        let Some(p) = self.studio.store.get_mut(project) else {
+            return;
+        };
+        let same = p.remote_seen.as_ref().is_some_and(|old| {
+            old.same_place(&seen)
+                && old.protected == seen.protected
+                && old.why == seen.why
+                && old.stale == seen.stale
+                && old.account == seen.account
+        });
+        if !same {
+            p.remote_seen = Some(seen);
+            if let Err(e) = self.studio.store.save() {
+                self.console.push(format!("project {project}: {e}"));
             }
         }
     }
@@ -1159,7 +1219,7 @@ impl Engine {
             None => json!({ "name": lead }),
         };
         v["branch"] = json!(git::branch(&p.path));
-        v["remote"] = json!(self.remote_of(&p));
+        v["remote"] = json!(self.remote_of(&p, false));
         v["feature_list"] = Value::Array(
             p.features
                 .iter()
@@ -1464,6 +1524,16 @@ impl Engine {
             Req::SetCommands { id, commands } => self.studio.set_commands(&id, commands),
             Req::GitInit { id } => self.studio.git_init(&id),
             Req::Project { id } => self.project_view(&id),
+            // 010: the engineer opened the project: its remote is read again now (FR-003).
+            Req::CheckRemote { id } => {
+                let p = self
+                    .studio
+                    .store
+                    .get(&id)
+                    .cloned()
+                    .ok_or_else(|| format!("there is no project {id}"))?;
+                Ok(json!({ "remote": self.remote_of(&p, true) }))
+            }
             Req::Conversation { id } => self
                 .studio
                 .conv_view(&id)
@@ -2051,6 +2121,7 @@ impl Engine {
                 let reads = matches!(
                     req,
                     Req::Project { .. }
+                        | Req::CheckRemote { .. }
                         | Req::Conversation { .. }
                         | Req::Feature { .. }
                         | Req::Doc { .. }

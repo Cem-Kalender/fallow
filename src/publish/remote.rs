@@ -100,8 +100,13 @@ pub fn parse_address(address: &str) -> Option<(String, String, String)> {
         let host = authority.rsplit('@').next()?;
         let host = host.split(':').next()?;
         (host.to_string(), path.to_string())
-    } else if !a.contains("://") && a.contains('@') && a.contains(':') {
-        // `git@github.com:acme/shop.git`; not a Windows path (`C:/…` has no `@`).
+    } else if !a.contains("://")
+        && a.split_once(':').is_some_and(|(h, _)| {
+            h.contains('@') || (h.contains('.') && !h.contains('/') && !h.contains('\\'))
+        })
+    {
+        // `git@github.com:acme/shop.git` or `github.com:acme/shop.git`; not a Windows path
+        // (`C:/…` has neither an `@` nor a dot before its colon).
         let (user_host, path) = a.split_once(':')?;
         let host = user_host.rsplit('@').next()?;
         (host.to_string(), path.to_string())
@@ -151,6 +156,7 @@ mod tests {
         assert_eq!(p("HTTPS://WWW.GitHub.com/acme/shop.git"), gh("acme", "shop"));
         assert_eq!(p("https://user@github.com/acme/shop.git"), gh("acme", "shop"));
         assert_eq!(p("git@github.com:acme/shop.git"), gh("acme", "shop"));
+        assert_eq!(p("github.com:acme/shop.git"), gh("acme", "shop"));
         assert_eq!(p("ssh://git@github.com/acme/shop.git"), gh("acme", "shop"));
         assert_eq!(p("ssh://git@github.com:22/acme/shop"), gh("acme", "shop"));
         assert_eq!(

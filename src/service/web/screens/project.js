@@ -28,7 +28,8 @@
     let text;
     let cls = "grey";
     let title = "";
-    if (r.state === "none") text = "no remote";
+    if (r.state === "checking") text = "remote: checking…";
+    else if (r.state === "none") text = "no remote";
     else if (r.state === "no_target") { text = "remote: no target"; title = r.why || ""; }
     else if (r.state === "unsupported") { text = `${r.service}: Fallow can only merge locally there`; }
     else {
@@ -37,7 +38,8 @@
       else if (r.protected === "no") { text = `${where} · not protected`; }
       else if (r.protected === "checking") { text = `${where} · checking…`; }
       else { text = `${where} · protection unknown`; cls = "yellow"; title = r.why || ""; }
-      if (r.checking && r.protected !== "checking") text += " · checking…";
+      // A value from an earlier read is never shown as current while it is read again.
+      if (r.checking && r.protected !== "checking") text += r.checked_at ? ` · checking… (last at ${at(r.checked_at)})` : " · checking…";
       else if (r.stale) { text += ` · could not check now (last at ${at(r.checked_at)})`; title = r.why || title; }
     }
     return h`<span class="pill ${cls}" id="remote-pill"${raw(title ? ` title="${Fallow.esc(title)}"` : "")}>${text}${r.protected === "unknown" && r.state === "known" ? h` <span aria-hidden="true">?</span>` : ""}</span>`;
@@ -46,8 +48,9 @@
   // While the protection is read, the pill alone is brought up to date (the chat is not drawn
   // again).
   let following = null;
-  function followRemote(app, id) {
-    if (following === app) return;
+  let checkOnLoad = null;
+  function followRemote(app, id, left = 40) {
+    if (following === app || left <= 0) return;
     following = app;
     setTimeout(async () => {
       following = null;
@@ -58,7 +61,7 @@
         state.remote = s.remote;
         const el = document.getElementById("remote-pill");
         if (el) el.outerHTML = remotePill(s.remote).s;
-        if (s.remote && s.remote.checking) followRemote(app, id);
+        if (s.remote && (s.remote.checking || s.remote.state === "checking")) followRemote(app, id, left - 1);
       } catch (_) { /* the next load shows it */ }
     }, 1500);
   }
@@ -243,7 +246,12 @@
       }
       state = s;
       render(app);
-      if (s.remote && s.remote.checking) followRemote(app, id);
+      // Opening the project reads its remote again now (FR-003); live updates do not.
+      if (checkOnLoad === app) {
+        checkOnLoad = null;
+        await post(`/api/projects/${encodeURIComponent(id)}/remote/check`).catch(() => null);
+      }
+      if (Fallow.here(app)) followRemote(app, id);
     } catch (e) {
       if (Fallow.here(app)) app.innerHTML = h`<div class="page"><div class="card empty">${e.message}</div></div>`.s;
     }
@@ -449,6 +457,7 @@
     },
     enter(app, r) {
       current = { app, id: r.project };
+      checkOnLoad = app;
       if (r.files) {
         tab = "files";
         // Drawn once the project's page is there and the files have come.

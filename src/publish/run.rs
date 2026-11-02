@@ -37,7 +37,11 @@ pub fn run_full(
         .env("GCM_INTERACTIVE", "never");
     // SSH without a terminal must not ask for a passphrase; the engineer's own SSH program
     // (GIT_SSH_COMMAND, GIT_SSH such as plink, core.sshCommand, ssh.variant) is used as it is.
+    let reaches_remote = args
+        .first()
+        .is_some_and(|a| matches!(a.as_str(), "push" | "fetch" | "ls-remote" | "pull"));
     if is_git(program)
+        && reaches_remote
         && std::env::var_os("GIT_SSH_COMMAND").is_none()
         && std::env::var_os("GIT_SSH").is_none()
         && !config_set(dir, "core.sshCommand")
@@ -52,6 +56,11 @@ pub fn run_full(
     // Its own process group: a time-out ends what it started too (git-remote-https, ssh, a
     // credential helper), so nothing finishes a push after it was reported stopped.
     let group = crate::platform::job::Group::new().map_err(|e| format!("{name}: {e}"))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
     let mut child = cmd
         .spawn()
         .map_err(|e| format!("cannot start {name}: {e}"))?;
@@ -97,6 +106,7 @@ pub fn run_full(
         }
     };
     let (mut out, mut err) = (String::new(), String::new());
+    let mut got = 0;
     for _ in 0..2 {
         let left = limit.saturating_sub(started.elapsed()).max(Duration::from_secs(2));
         match rx.recv_timeout(left) {
@@ -104,6 +114,11 @@ pub fn run_full(
             Ok((false, s)) => err = s,
             Err(_) => break,
         }
+        got += 1;
+    }
+    if status.success() && got < 2 {
+        // Something it started still holds its output: what it said is not complete.
+        return Err(format!("{name} finished, but its output could not be read in time"));
     }
     if status.success() {
         return Ok((out, err));

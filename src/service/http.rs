@@ -343,6 +343,7 @@ fn studio_route(
             Err(e) => Some(Err(e)),
         },
         ("GET", ["api", "projects", p]) => r(Req::Project { id: p.to_string() }),
+        ("POST", ["api", "projects", p, "remote", "check"]) => r(Req::CheckRemote { id: p.to_string() }),
         ("DELETE", ["api", "features", p, f]) => {
             Some(confirmed().map(|()| Request::DeleteFeature {
                 project: p.to_string(),

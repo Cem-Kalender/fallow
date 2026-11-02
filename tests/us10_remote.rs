@@ -158,17 +158,30 @@ fn the_project_answers_at_once_and_keeps_the_last_value_when_it_cannot_check() {
     let r = view(&e, &id)["remote"].clone();
     // Not held by the hosting tool (which takes 3 s here): it answers while the read runs.
     assert!(t.elapsed() < Duration::from_millis(2800), "{:?}", t.elapsed());
-    assert_eq!(r["state"], "known", "the git part at once: {r}");
     assert_eq!(r["protected"], "checking", "{r}");
-    assert_eq!(r["checking"], true, "{r}");
+    assert!(r["checking"] == true || r["state"] == "checking", "{r}");
     let r = settled(&e, &id);
     assert_eq!(r["protected"], "yes", "{r}");
     let checked = r["checked_at"].clone();
+    // Opened again while it cannot check: read again at once, the last value kept, with its time.
+    let state = root.join("host.json");
+    let mut s = host_state(&state);
+    s["fail"] = json!({ "api": "gh: HTTP 502 Bad Gateway" });
+    s["sleep_ms"] = json!({});
+    set_host_state(&state, &s);
+    // (Not within 5 s of the last read: opening a project never reads twice in a row.)
+    std::thread::sleep(Duration::from_secs(5));
+    sreq(&e.tx, Req::CheckRemote { id: id.clone() }).unwrap();
+    let r = settled(&e, &id);
+    assert_eq!((r["protected"].as_str(), r["stale"].as_bool()), (Some("yes"), Some(true)), "{r}");
+    assert_eq!(r["checked_at"], checked, "{r}");
+    assert!(r["why"].as_str().unwrap().contains("502"), "{r}");
+    s["fail"] = json!({});
+    set_host_state(&state, &s);
     // Fallow starts again and cannot check now: the last value, with its time.
     let ToolEngine { tx, handle, .. } = e;
     tx.send(fallow::run::engine::Msg::Shutdown).unwrap();
     handle.join().unwrap();
-    let state = root.join("host.json");
     let mut s = host_state(&state);
     s["fail"] = json!({ "api": "gh: could not resolve host api.github.com" });
     s["sleep_ms"] = json!({});
