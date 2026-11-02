@@ -147,6 +147,7 @@ fn a_new_lock_reopens_only_the_affected_story() {
             level: None,
             budget_usd: None,
             budget_minutes: None,
+            when_verified: None,
         },
     )
     .unwrap();
@@ -275,6 +276,7 @@ fn a_new_lock_while_paused_at_ready_is_built_and_checked_before_any_merge() {
             level: None,
             budget_usd: None,
             budget_minutes: None,
+            when_verified: None,
         },
     )
     .unwrap();

@@ -106,8 +106,9 @@
       : f.stage === "merged" ? (f.minutes !== undefined && f.minutes !== null ? `${f.minutes} min · ${money(f.cost_usd || 0)}` : "Merged")
       : f.stage === "ready_to_merge" || f.stage === "done_unverified" ? "Locked · done"
       : f.stage === "stopped" ? "Locked · stopped"
+      : f.stage === "pull_request" ? "Pull request open"
       : loop ? "Locked · implement" : "Locked";
-    const verb = { spec_session: "Continue", locked: "Open", building: "Watch", ready_to_merge: "Review", done_unverified: "Review", stopped: "Open", merged: "History" }[f.stage] || "Open";
+    const verb = { spec_session: "Continue", locked: "Open", building: "Watch", ready_to_merge: "Review", done_unverified: "Review", pull_request: "Follow", stopped: "Open", merged: "History" }[f.stage] || "Open";
     // A spec session can be deleted from here (008 T038); a loop that runs keeps it.
     const del = f.stage === "spec_session" ? h` <button class="btn btn2 xs" data-act="delete-session" data-project="${f.project}" data-feature="${f.name}" data-locked="${f.locked_before ? "1" : ""}" data-plain="${f.plain ? "1" : ""}" aria-label="${`Delete the spec session of ${f.name}`}">Delete…</button>` : "";
     return h`<tr><td class="b">${f.name}</td><td class="muted">${f.project_name}</td><td>${stagePill(f.stage, true)}</td><td class="body-ink">${step}</td><td class="right"><a href="${href}">${verb}</a>${del}</td></tr>`;

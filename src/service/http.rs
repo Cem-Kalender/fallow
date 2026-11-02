@@ -545,7 +545,15 @@ fn studio_route(
                 Some(o) => return Some(Err(format!("autonomy {o:?}: strict, normal or free"))),
             };
             let budget = body.get("budget");
+            let when_verified = match s("when_verified").as_deref() {
+                None => None,
+                Some(w) => match crate::run::events::WhenVerified::parse(w) {
+                    Some(w) => Some(w),
+                    None => return Some(Err(format!("when_verified {w:?}: wait or pull_request"))),
+                },
+            };
             Some(Ok(Request::Lock {
+                when_verified,
                 project: p.to_string(),
                 feature: f.to_string(),
                 pipeline: s("pipeline"),
@@ -745,10 +753,11 @@ fn handle(mut req: tiny_http::Request, tx: &Sender<Msg>, port: u16, secret: &str
                         .map(|r| r.min(u32::MAX as u64) as u32),
                     once: body["once"].as_bool().unwrap_or(false),
                 },
-                ["merge"] | ["stop"] if !confirmed => {
+                ["merge"] | ["stop"] | ["publish"] if !confirmed => {
                     return json_reply(req, Reply::Err("this needs {\"confirm\": true}".into()));
                 }
                 ["merge"] => Request::Merge { id: i },
+                ["publish"] => Request::Publish { id: i },
                 ["questions", q, "answer"] => Request::QuestionAnswer {
                     id: i,
                     q: percent_decode(q),

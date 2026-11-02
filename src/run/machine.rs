@@ -405,6 +405,75 @@ pub fn on_done(run: &mut Run, ctx: &Ctx, done: Done) -> Result<(), String> {
             }
             Ok(())
         }
+        Done::Publish { by, result } => match result {
+            Ok(d) => {
+                run.append(Event::Published {
+                    remote: d.remote,
+                    service: d.service,
+                    repo: d.repo,
+                    branch: d.branch,
+                    commit: d.commit,
+                    target: d.target,
+                    pr_number: d.pr.number,
+                    pr_url: d.pr.url,
+                    by,
+                })?;
+                if run.state.stage == Stage::Ready {
+                    run.append(Event::Stage {
+                        to: Stage::Publishing,
+                        why: "published as a pull request".into(),
+                    })?;
+                }
+                Ok(())
+            }
+            Err(f) => run.append(Event::PublishFailed {
+                step: f.step,
+                why: f.why,
+                pushed: f.pushed,
+                by,
+            }),
+        },
+        Done::PrState(r) => {
+            let Ok(st) = r else {
+                return Ok(());
+            };
+            let Some(pb) = run
+                .state
+                .feature_loop
+                .as_ref()
+                .and_then(|l| l.publication.clone())
+            else {
+                return Ok(());
+            };
+            if run.state.stage != Stage::Publishing {
+                return Ok(());
+            }
+            let changed = st.state != pb.state || st.checks != pb.checks || st.merged_at != pb.merged_at;
+            if changed {
+                run.append(Event::PullRequestState {
+                    state: st.state,
+                    checks: st.checks.clone(),
+                    merged_at: st.merged_at.clone(),
+                })?;
+            }
+            match st.state {
+                crate::publish::host::PrStatus::Merged => {
+                    run.append(Event::Merged {
+                        commit: pb.commit.clone(),
+                        how: "pull request".into(),
+                    })?;
+                    run.append(Event::Stage {
+                        to: Stage::Done,
+                        why: format!("pull request #{} merged on {}", pb.pr_number, pb.repo),
+                    })
+                }
+                crate::publish::host::PrStatus::Closed => run.append(Event::Stage {
+                    to: Stage::Ready,
+                    why: format!("pull request #{} closed without merging", pb.pr_number),
+                }),
+                crate::publish::host::PrStatus::Open => Ok(()),
+            }
+        }
         Done::Merge(r) => match r {
             // A merge that went through is recorded whatever the stage: it happened.
             Ok(commit) => {
@@ -637,6 +706,97 @@ pub fn merge(run: &mut Run, tx: std::sync::mpsc::Sender<Msg>) -> Result<(), Stri
         })
         .map_err(|e| format!("cannot start a thread: {e}"))?;
     Ok(())
+}
+
+/// 010: starts publishing the loop's verified commit as a pull request (FR-008, FR-009), on a
+/// thread; its end comes back as `Done::Publish`.
+pub fn publish(
+    run: &mut Run,
+    ctx: &Ctx,
+    by: &str,
+    remote: &crate::publish::Remote,
+    body: &str,
+) -> Result<(), String> {
+    let l = run
+        .state
+        .feature_loop
+        .as_ref()
+        .ok_or("only a feature's loop is published")?;
+    if let Some(p) = l
+        .publication
+        .as_ref()
+        .filter(|p| p.state == crate::publish::host::PrStatus::Open)
+    {
+        return Err(format!(
+            "this loop's pull request is open already: {}",
+            p.pr_url
+        ));
+    }
+    if run.state.stage != Stage::Ready {
+        return Err("the loop is not ready to publish".into());
+    }
+    if l.unlocked {
+        return Err("the feature is unlocked: lock it again before publishing".into());
+    }
+    // Only what the loop finished and judged (constitution I).
+    if l.outcome.is_none() {
+        return Err("the loop has not finished checking this result".into());
+    }
+    if run.is_busy() {
+        return Err("a merge, a publication or a step is already running".into());
+    }
+    let commit = run
+        .state
+        .integrated
+        .clone()
+        .ok_or("nothing is integrated")?;
+    let title = feature_title(run);
+    let branch = l.build_branch.clone();
+    let dir = run.dir.join("publish");
+    std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let body_file = dir.join("body.md");
+    std::fs::write(&body_file, body).map_err(|e| format!("{}: {e}", body_file.display()))?;
+    run.append(Event::Steering {
+        kind: SteeringKind::Publish,
+        target: remote.target.clone(),
+        detail: Some(format!("{commit} ({by})")),
+    })?;
+    run.busy = Some(Busy::Publish);
+    let job = crate::publish::Job {
+        repo: run.state.repo.clone(),
+        remote: remote.clone(),
+        commit,
+        branch,
+        title,
+        body: body_file,
+    };
+    let (tx, settings, id, by) = (ctx.tx.clone(), ctx.settings.clone(), run.id(), by.to_string());
+    std::thread::Builder::new()
+        .name(format!("publish-{id}"))
+        .spawn(move || {
+            let result = crate::publish::publish(&job, &settings);
+            let _ = tx.send(Msg::Done {
+                run: id,
+                done: Done::Publish { by, result },
+            });
+        })
+        .map_err(|e| format!("cannot start a thread: {e}"))?;
+    Ok(())
+}
+
+/// The feature's title for its pull request: the spec's heading, else the feature's name.
+fn feature_title(run: &Run) -> String {
+    let Some(l) = run.state.feature_loop.as_ref() else {
+        return run.state.task.clone();
+    };
+    super::feature::doc_at(run, &l.lock_commit, "spec.md")
+        .and_then(|t| {
+            t.lines()
+                .find_map(|x| x.strip_prefix("# "))
+                .map(|h| h.trim_start_matches("Feature Specification:").trim().to_string())
+        })
+        .filter(|t| !t.is_empty())
+        .unwrap_or_else(|| l.feature.clone())
 }
 
 /// Stops the run (constitution II: confirmed on the page). Agents and gates end; branches and

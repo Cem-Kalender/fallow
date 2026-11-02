@@ -386,6 +386,7 @@ pub fn lock_calc_in(
             level,
             budget_usd: budget.map(|b| b.0),
             budget_minutes: budget.map(|b| b.1),
+            when_verified: None,
         },
     )
     .unwrap();

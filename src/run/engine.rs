@@ -36,6 +36,13 @@ pub enum Done {
         error: Option<String>,
     },
     Merge(Result<String, String>),
+    /// 010: a publication ended (`by` is `engineer` or `when_verified`).
+    Publish {
+        by: String,
+        result: Result<crate::publish::Done, crate::publish::Failed>,
+    },
+    /// 010: the pull request's state, as the remote reports it.
+    PrState(Result<crate::publish::host::PrState, String>),
 }
 
 /// A request from the page or the command line.
@@ -97,6 +104,12 @@ pub enum Request {
         level: Option<Level>,
         budget_usd: Option<f64>,
         budget_minutes: Option<u64>,
+        /// 010: what the loop does when it ends verified; the level's preset when absent.
+        when_verified: Option<WhenVerified>,
+    },
+    /// 010: push the loop's verified commit and open a pull request (FR-008, FR-009).
+    Publish {
+        id: u64,
     },
     /// 007: a loop's screen, its feed, and one task's story (US3).
     Loop {
@@ -205,6 +218,8 @@ pub enum Msg {
 pub enum Busy {
     Gates,
     Merge,
+    /// 010: pushing and opening a pull request.
+    Publish,
 }
 
 /// An agent step running now (008 US5: checkers marked `parallel_with` run at the same time).
@@ -376,14 +391,32 @@ pub struct Engine {
     notifier: crate::service::notify::Notifier,
     /// The ended loops whose record was written or tried: each is tried once per start.
     recorded: std::collections::BTreeSet<u64>,
-    /// 010: each project's remote as last read, and when a read was last started.
-    remotes: BTreeMap<String, (crate::publish::Remote, Option<Instant>)>,
+    /// 010: each project's remote as last read, when a read was last started, and how many
+    /// reads failed in a row (they are spaced out).
+    remotes: BTreeMap<String, (crate::publish::Remote, Option<Instant>, u32)>,
+    /// 010: when each publishing loop's pull request was last read, and whether a read runs.
+    pr_reads: BTreeMap<u64, (Instant, bool)>,
+    /// 010: why a loop did not publish itself when it ended verified (shown on its page).
+    auto_waits: BTreeMap<u64, String>,
 }
 
 /// 010: how often a project's protection is read again: a known value once a minute, an unknown
 /// or stale one sooner (research R-6; FR-003).
 const REMOTE_KNOWN: Duration = Duration::from_secs(60);
 const REMOTE_UNKNOWN: Duration = Duration::from_secs(10);
+/// 010: how often an open pull request's state is read (research R-6; SC-005: within 2 min).
+const PR_POLL: Duration = Duration::from_secs(60);
+
+/// `PR_POLL`, or `FALLOW_PR_POLL_MS` for tests (a test cannot wait a minute per read).
+fn pr_poll() -> Duration {
+    static P: std::sync::OnceLock<Duration> = std::sync::OnceLock::new();
+    *P.get_or_init(|| {
+        std::env::var("FALLOW_PR_POLL_MS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .map_or(PR_POLL, Duration::from_millis)
+    })
+}
 
 pub fn runs_dir(data: &Path) -> PathBuf {
     data.join("runs")
@@ -405,6 +438,8 @@ impl Engine {
             notifier,
             recorded: std::collections::BTreeSet::new(),
             remotes: BTreeMap::new(),
+            pr_reads: BTreeMap::new(),
+            auto_waits: BTreeMap::new(),
             data,
             runs: BTreeMap::new(),
             ctx,
@@ -461,6 +496,7 @@ impl Engine {
                 }
             }
         }
+        e.reconcile_publications();
         Ok(e)
     }
 
@@ -530,12 +566,16 @@ impl Engine {
                     let _ = reply.send(out);
                 }
                 Msg::Done { run, done } => {
+                    if matches!(done, Done::PrState(_)) {
+                        self.pr_reads.insert(run, (Instant::now(), false));
+                    }
                     if let Some(r) = self.runs.get_mut(&run) {
                         // A step's tools end with it; a question it asked is still answered.
                         match &done {
                             Done::Step { n, .. } => {
                                 r.running.remove(n);
                             }
+                            Done::PrState(_) => {}
                             _ => r.busy = None,
                         }
                         if let Err(e) = super::machine::on_done(r, &self.ctx, done) {
@@ -903,7 +943,25 @@ impl Engine {
 
     /// New "Needs you" items raise a notification each, unless the project turned them off.
     fn notify_changes(&mut self) {
-        let items = self.needs_items();
+        let mut items = self.needs_items();
+        // 010: a pull request merged on the remote, once (not a "needs you" item).
+        for r in self.runs.values() {
+            let Some(l) = r.state.feature_loop.as_ref() else {
+                continue;
+            };
+            if let Some(pb) = l.publication.as_ref().filter(|p| p.state == crate::publish::host::PrStatus::Merged) {
+                let name = self
+                    .studio
+                    .store
+                    .get(&l.project)
+                    .map_or_else(|| l.project.clone(), |p| p.name.clone());
+                items.push(json!({
+                    "kind": "pr_merged", "key": format!("{}:pr:{}:merged", r.id(), pb.pr_number),
+                    "run": r.id(), "project": l.project, "project_name": name, "feature": l.feature,
+                    "at": pb.merged_at,
+                }));
+            }
+        }
         let store = &self.studio.store;
         self.notifier
             .update(&items, |p| store.get(p).is_none_or(|x| x.notifications));
@@ -1006,6 +1064,10 @@ impl Engine {
         if r.state.stage == Stage::Stopped {
             return "stopped";
         }
+        // 010: its pull request waits for the engineer's merge on the remote.
+        if r.state.stage == Stage::Publishing {
+            return "pull_request";
+        }
         match r
             .state
             .feature_loop
@@ -1086,12 +1148,13 @@ impl Engine {
                 checking: false,
             });
             r.checking = false;
-            (r, None)
+            (r, None, 0)
         });
         let wait = if slot.0.known() && !slot.0.stale {
             REMOTE_KNOWN
         } else {
-            REMOTE_UNKNOWN
+            // 10 s, doubled after each read that failed in a row, up to a minute.
+            (REMOTE_UNKNOWN * 2u32.pow(slot.2.min(3))).min(REMOTE_KNOWN)
         };
         let fresh = slot.1.is_some_and(|t| at.duration_since(t) < Duration::from_secs(5));
         let due = !slot.0.checking
@@ -1159,6 +1222,11 @@ impl Engine {
             found.why = slot.0.why.clone();
         }
         if let Some(read) = read {
+            slot.2 = if read.protected.is_ok() { 0 } else { slot.2 + 1 };
+            if found.state == "checking" {
+                // Not even the git part could be read (a thread that could not start).
+                found.state = "unreadable".into();
+            }
             if !found.known() {
                 found.protected = "unknown".into();
             }
@@ -1188,6 +1256,234 @@ impl Engine {
             if let Err(e) = self.studio.store.save() {
                 self.console.push(format!("project {project}: {e}"));
             }
+        }
+    }
+
+    /// 010: a publication that Fallow stopping cut short is settled from the remote (research
+    /// R-8): a pull request from the loop's branch counts, never a second one; none puts the loop
+    /// back to ready, saying so.
+    fn reconcile_publications(&mut self) {
+        let ids: Vec<u64> = self
+            .runs
+            .iter()
+            .filter(|(_, r)| {
+                r.state.stage == Stage::Ready
+                    && r.state.feature_loop.as_ref().is_some_and(|l| l.publish_pending)
+            })
+            .map(|(id, _)| *id)
+            .collect();
+        for id in ids {
+            let Some(p) = self.loop_project(id) else {
+                continue;
+            };
+            let Some(target) = git::branch(&p.path) else {
+                continue;
+            };
+            let Some(r) = self.runs.get_mut(&id) else {
+                continue;
+            };
+            let (branch, commit) = (
+                r.state.feature_loop.as_ref().map(|l| l.build_branch.clone()).unwrap_or_default(),
+                r.state.integrated.clone().unwrap_or_default(),
+            );
+            r.busy = Some(Busy::Publish);
+            let (tx, settings, dir) = (self.ctx.tx.clone(), self.ctx.settings.clone(), p.path.clone());
+            let _ = std::thread::Builder::new()
+                .name(format!("reconcile-{id}"))
+                .spawn(move || {
+                    let interrupted = || crate::publish::Failed {
+                        step: "pull_request".into(),
+                        why: "publishing was interrupted when Fallow stopped; try again".into(),
+                        pushed: None,
+                    };
+                    let found = crate::publish::remote::find(&dir, &target);
+                    let result = (|| {
+                        let (Some(name), Some(service), Some(repo), Some(t)) =
+                            (&found.remote, &found.service, &found.repo, &found.target)
+                        else {
+                            return Err(interrupted());
+                        };
+                        let host = crate::publish::host::host_for(service, &settings).ok_or_else(interrupted)?;
+                        for n in 1..=9 {
+                            let b = if n == 1 { branch.clone() } else { format!("{branch}-{n}") };
+                            if let Ok(Some((pr, crate::publish::host::PrStatus::Open | crate::publish::host::PrStatus::Merged))) =
+                                host.find(&dir, repo, &b)
+                            {
+                                return Ok(crate::publish::Done {
+                                    remote: name.clone(),
+                                    service: service.clone(),
+                                    repo: repo.slug(),
+                                    branch: b,
+                                    commit: commit.clone(),
+                                    target: t.clone(),
+                                    pr,
+                                });
+                            }
+                        }
+                        Err(interrupted())
+                    })();
+                    let _ = tx.send(Msg::Done {
+                        run: id,
+                        done: Done::Publish {
+                            by: "engineer".into(),
+                            result,
+                        },
+                    });
+                });
+        }
+    }
+
+    /// 010: the project of a feature loop.
+    fn loop_project(&self, id: u64) -> Option<crate::project::Project> {
+        let r = self.runs.get(&id)?;
+        let l = r.state.feature_loop.as_ref()?;
+        self.studio.store.get(&l.project).cloned()
+    }
+
+    /// 010: what publishing a loop offers, why, the remote, the account, the pull request and
+    /// the last failure (contracts/web-api.md). `None` for a run that is no feature loop.
+    fn publish_view(&mut self, id: u64) -> Option<Value> {
+        let p = self.loop_project(id)?;
+        let remote = self.remote_of(&p, false);
+        let r = self.runs.get(&id)?;
+        let l = r.state.feature_loop.as_ref()?;
+        let (offer, why) = crate::publish::offer(remote.as_ref());
+        let open = l
+            .publication
+            .as_ref()
+            .is_some_and(|x| x.state == crate::publish::host::PrStatus::Open);
+        let offer: Vec<&str> = if open { Vec::new() } else { offer };
+        let read = self.pr_reads.get(&id);
+        Some(json!({
+            "offer": offer, "why": why, "remote": remote,
+            "account": remote.as_ref().and_then(|x| x.account.clone()),
+            "when_verified": l.when_verified,
+            "publication": l.publication, "failed": l.publish_failed,
+            "pending": l.publish_pending,
+            "waits": self.auto_waits.get(&id),
+            "pr_checked": read.map(|(t, _)| t.elapsed().as_secs()),
+        }))
+    }
+
+    /// 010: pushes the loop's verified commit and opens a pull request, on a thread (FR-008 to
+    /// FR-012); `by` is `engineer` or `when_verified`.
+    fn publish(&mut self, id: u64, by: &str) -> Result<(), String> {
+        let p = self
+            .loop_project(id)
+            .ok_or_else(|| format!("there is no loop {id}"))?;
+        let remote = self
+            .remote_of(&p, false)
+            .ok_or("the project is not on a git branch")?;
+        let (offer, why) = crate::publish::offer(Some(&remote));
+        if !offer.contains(&"pull_request") {
+            return Err(format!("no pull request here: {why}"));
+        }
+        let ctx = &self.ctx;
+        let run = self
+            .runs
+            .get(&id)
+            .ok_or_else(|| format!("there is no loop {id}"))?;
+        let view = super::activity::view(run, ctx)?;
+        let body = crate::publish::body::body(&view);
+        let run = self.runs.get_mut(&id).ok_or("no such loop")?;
+        super::machine::publish(run, &self.ctx, by, &remote, &body)
+    }
+
+    /// 010: a loop that ended verified publishes itself when that was chosen at the lock
+    /// (FR-020): once, and only with a supported remote whose protection was read; otherwise why
+    /// it waits is kept for its page.
+    fn auto_publish(&mut self, id: u64) {
+        let Some(r) = self.runs.get(&id) else {
+            return;
+        };
+        let Some(l) = r.state.feature_loop.as_ref() else {
+            return;
+        };
+        if r.state.stage != Stage::Ready
+            || l.outcome.is_none()
+            || l.publish_tried
+            || l.when_verified != WhenVerified::PullRequest
+            || r.is_busy()
+            || l.unlocked
+        {
+            return;
+        }
+        let verified = l.outcome.as_ref().is_some_and(|o| o.0);
+        let choice = l.when_verified;
+        if !verified {
+            self.auto_waits
+                .insert(id, "not verified by Fallow: it waits for you".into());
+            return;
+        }
+        let Some(p) = self.loop_project(id) else {
+            return;
+        };
+        // Read again when the loop has just become ready (FR-003).
+        let first = !self.auto_waits.contains_key(&id);
+        let remote = self.remote_of(&p, first);
+        if remote.as_ref().is_some_and(|x| x.checking || x.state == "checking") {
+            self.auto_waits.insert(id, "reading the remote first".into());
+            return;
+        }
+        match crate::publish::when_verified(choice, verified, remote.as_ref()) {
+            Ok(()) => {
+                self.auto_waits.remove(&id);
+                if let Err(e) = self.publish(id, "when_verified") {
+                    self.auto_waits.insert(id, e);
+                }
+            }
+            Err(why) => {
+                self.auto_waits.insert(id, why);
+            }
+        }
+    }
+
+    /// 010: reads a publishing loop's pull request on a thread when the last read is older than
+    /// `every` (research R-6).
+    fn poll_pull_request(&mut self, id: u64, every: Duration) {
+        let Some(r) = self.runs.get(&id) else {
+            return;
+        };
+        if r.state.stage != Stage::Publishing {
+            return;
+        }
+        let Some(pb) = r.state.feature_loop.as_ref().and_then(|l| l.publication.clone()) else {
+            return;
+        };
+        let every = every.min(pr_poll());
+        if let Some((at, running)) = self.pr_reads.get(&id) {
+            if *running || at.elapsed() < every {
+                return;
+            }
+        }
+        let Some(p) = self.loop_project(id) else {
+            return;
+        };
+        let Some(host) = crate::publish::host::host_for(&pb.service, &self.ctx.settings) else {
+            return;
+        };
+        let Some((owner, name)) = pb.repo.split_once('/') else {
+            return;
+        };
+        let repo = crate::publish::host::Repo {
+            owner: owner.into(),
+            name: name.into(),
+        };
+        self.pr_reads.insert(id, (Instant::now(), true));
+        let tx = self.ctx.tx.clone();
+        let dir = p.path.clone();
+        let number = pb.pr_number;
+        let spawned = std::thread::Builder::new()
+            .name(format!("pr-{id}"))
+            .spawn(move || {
+                let r = host.state(&dir, &repo, number);
+                let _ = tx.send(Msg::Done {
+                    run: id,
+                    done: Done::PrState(r),
+                });
+            });
+        if spawned.is_err() {
+            self.pr_reads.insert(id, (Instant::now(), false));
         }
     }
 
@@ -1842,6 +2138,7 @@ impl Engine {
         level: Option<Level>,
         budget_usd: Option<f64>,
         budget_minutes: Option<u64>,
+        when_verified: Option<WhenVerified>,
     ) -> Result<Value, String> {
         if let Some(id) = self.live_loop(project, feature) {
             return self.relock(project, feature, id);
@@ -1953,7 +2250,7 @@ impl Engine {
             budget_usd: usd,
             budget_minutes: minutes,
             phases: prep.phases.clone(),
-            when_verified: crate::run::events::WhenVerified::preset(level),
+            when_verified: when_verified.unwrap_or(WhenVerified::preset(level)),
         })?;
         run.append(Event::Stage {
             to: Stage::Building,
@@ -1973,7 +2270,7 @@ impl Engine {
             budget_usd: usd,
             budget_minutes: minutes,
             affected: Vec::new(),
-            when_verified: crate::run::events::WhenVerified::preset(level),
+            when_verified: when_verified.unwrap_or(WhenVerified::preset(level)),
         };
         let lock_n = prep.lock;
         let commit = prep.commit.clone();
@@ -2076,6 +2373,8 @@ impl Engine {
     }
 
     fn drive(&mut self, id: u64) {
+        self.auto_publish(id);
+        self.poll_pull_request(id, PR_POLL);
         self.refresh_slots();
         if let Some(r) = self.runs.get_mut(&id) {
             let before = needs(r);
@@ -2145,6 +2444,7 @@ impl Engine {
                 level,
                 budget_usd,
                 budget_minutes,
+                when_verified,
             } => {
                 let out = self.lock(
                     &project,
@@ -2153,6 +2453,7 @@ impl Engine {
                     level,
                     budget_usd,
                     budget_minutes,
+                    when_verified,
                 );
                 self.bus.publish(json!({ "type": "studio" }));
                 out
@@ -2201,20 +2502,41 @@ impl Engine {
                 .and_then(super::machine::retry)
                 .map(|()| json!({})),
             Request::Merge { id } => {
-                let ctx_tx = self.ctx.tx.clone();
-                run_mut(self, id)
-                    .and_then(|r| super::machine::merge(r, ctx_tx))
-                    .map(|()| json!({}))
+                // 010: a protected target takes a pull request, not a local merge (FR-006).
+                let refused = self.publish_view(id).and_then(|p| {
+                    let offer = p["offer"].as_array().cloned().unwrap_or_default();
+                    (p["remote"].is_object() && !offer.iter().any(|o| o == "local_merge"))
+                        .then(|| p["why"].as_str().unwrap_or("").to_string())
+                });
+                match refused {
+                    Some(why) => Err(format!("no local merge here: {why}")),
+                    None => {
+                        let ctx_tx = self.ctx.tx.clone();
+                        run_mut(self, id)
+                            .and_then(|r| super::machine::merge(r, ctx_tx))
+                            .map(|()| json!({}))
+                    }
+                }
             }
+            Request::Publish { id } => self.publish(id, "engineer").map(|()| json!({})),
             Request::Stop { id, reason } => run_mut(self, id)
                 .and_then(|r| super::machine::stop(r, reason))
                 .map(|()| json!({})),
             Request::Loop { id } => {
                 let ctx = &self.ctx;
-                self.runs
+                let v = self
+                    .runs
                     .get(&id)
                     .ok_or_else(|| format!("there is no loop {id}"))
-                    .and_then(|r| super::activity::view(r, ctx))
+                    .and_then(|r| super::activity::view(r, ctx));
+                v.map(|mut v| {
+                    // 010: what publishing offers, and the pull request (contracts/web-api.md).
+                    if let Some(p) = self.publish_view(id) {
+                        v["publish"] = p;
+                    }
+                    self.poll_pull_request(id, Duration::from_secs(10));
+                    v
+                })
             }
             Request::LoopActivity { id, filter } => self
                 .runs
@@ -2366,6 +2688,7 @@ pub fn view(r: &Run) -> Value {
     v["busy"] = json!(match &r.busy {
         Some(Busy::Gates) => "gates".into(),
         Some(Busy::Merge) => "merge".into(),
+        Some(Busy::Publish) => "publish".into(),
         None if steps.len() == 1 => format!("step {}", steps[0]),
         None if !steps.is_empty() => format!("steps {}", steps.join(", ")),
         None => String::new(),

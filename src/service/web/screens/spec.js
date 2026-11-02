@@ -12,6 +12,9 @@
   let editing = null; // { text } while the engineer edits
   let conflict = null; // { mine, theirs, version }
   let lockForm = false;
+  // 010: the engineer chose "When verified" by hand; until then it follows the autonomy level.
+  let whenTouched = false;
+  const whenPreset = (level) => (level === "free" ? "pull_request" : "wait");
 
   const STEP_LABEL = { constitution: "Constitution", specify: "Specify", clarify: "Clarify", plan: "Plan", tasks: "Tasks", analyze: "Analyze" };
   const base = () => `/api/features/${encodeURIComponent(route.project)}/${encodeURIComponent(route.feature)}`;
@@ -81,7 +84,8 @@
       const s = f.budget_suggestion;
       return h`<form class="lock-bar" data-submit="lock">
         <div class="field"><label for="lk-pipeline">Pipeline</label><select id="lk-pipeline">${f.pipelines.map((p) => h`<option value="${p.name}"${raw(p.name === f.pipeline ? " selected" : "")}>${p.name}${p.verifying ? "" : " (not verified)"}</option>`)}</select></div>
-        <div class="field"><label for="lk-autonomy">Autonomy</label><select id="lk-autonomy">${["strict", "normal", "free"].map((a) => h`<option value="${a}"${raw(a === f.autonomy ? " selected" : "")}>${a[0].toUpperCase() + a.slice(1)}</option>`)}</select></div>
+        <div class="field"><label for="lk-autonomy">Autonomy</label><select id="lk-autonomy" data-change="lk-level">${["strict", "normal", "free"].map((a) => h`<option value="${a}"${raw(a === f.autonomy ? " selected" : "")}>${a[0].toUpperCase() + a.slice(1)}</option>`)}</select></div>
+        <div class="field"><label for="lk-when" title="Only when the project has a remote Fallow can publish to">When verified</label><select id="lk-when" data-change="lk-when">${[["wait", "Wait for me"], ["pull_request", "Open a pull request"]].map(([v, l]) => h`<option value="${v}"${raw(v === whenPreset(f.autonomy) ? " selected" : "")}>${l}</option>`)}</select></div>
         <div class="field"><label for="lk-usd">Budget, $</label><input id="lk-usd" type="text" inputmode="decimal" value="${s.usd.toFixed(2)}"></div>
         <div class="field"><label for="lk-min">Budget, minutes</label><input id="lk-min" type="text" inputmode="numeric" value="${s.minutes}"></div>
         <div class="small muted grow lh">Suggested from ${s.tasks} tasks. Locking commits spec, plan and tasks to <span class="mono tiny">${f.branch || f.name}</span> and starts the loop.</div>
@@ -361,7 +365,7 @@
         if (name === "keep-mine") return save(conflict.mine, conflict.version);
         if (name === "keep-theirs") { conflict = null; await openDoc(tab); return render(appEl); }
         if (name === "step") { await post(`${base()}/step`, { to: el.dataset.to }); return again(); }
-        if (name === "lock-open") { lockForm = true; return render(appEl); }
+        if (name === "lock-open") { lockForm = true; whenTouched = false; return render(appEl); }
         if (name === "lock-step") {
           if (state.lock_check && state.lock_check.ok) { lockForm = true; render(appEl); }
           const bar = document.getElementById("lock");
@@ -373,6 +377,12 @@
           return;
         }
         if (name === "lock-cancel") { lockForm = false; return render(appEl); }
+        if (name === "lk-level") {
+          const w = document.getElementById("lk-when");
+          if (w && !whenTouched) w.value = whenPreset(el.value);
+          return;
+        }
+        if (name === "lk-when") { whenTouched = true; return; }
         if (name === "dismiss") {
           const crit = state.findings.map((x, i) => [x, i]).filter(([x]) => x.severity.toUpperCase() === "CRITICAL" && !x.dismissed);
           const ok = await confirm({ title: "Dismiss the critical findings?", text: "The lock will no longer be blocked by them. This is recorded.", items: crit.map(([x]) => x.text), ok: "Dismiss" });
@@ -390,9 +400,11 @@
           const out = await post(`${base()}/lock`, {
             pipeline: document.getElementById("lk-pipeline").value,
             autonomy: document.getElementById("lk-autonomy").value,
+            when_verified: document.getElementById("lk-when").value,
             budget: { usd: isFinite(usd) ? usd : undefined, minutes: isFinite(minutes) ? minutes : undefined },
           });
           lockForm = false;
+          whenTouched = false;
           location.hash = `#/p/${encodeURIComponent(route.project)}/f/${encodeURIComponent(route.feature)}/loop`;
           return out;
         }

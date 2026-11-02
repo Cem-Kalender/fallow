@@ -917,6 +917,7 @@ const Fallow = (() => {
     locked: h`<span class="pill blue">${long ? "Locked" : "locked"}</span>`,
     building: h`<span class="pill blue">${long ? "Building" : "building"}</span>`,
     ready_to_merge: h`<span class="pill green">${long ? "Ready to merge" : "ready"}</span>`,
+    pull_request: h`<span class="pill purple">${long ? "Pull request open" : "PR open"}</span>`,
     done_unverified: h`<span class="pill orange">${long ? "Done, not verified" : "not verified"}</span>`,
     merged: h`<span class="pill grey">${long ? "Merged" : "merged"}</span>`,
     stopped: h`<span class="pill orange">${long ? "Stopped" : "stopped"}</span>`,

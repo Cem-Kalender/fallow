@@ -237,6 +237,18 @@ pub fn needs(run: &Run, project_name: &str) -> Vec<Value> {
         v["text"] = json!(q.text);
         out.push(v);
     }
+    // 010: a pull request waits for the engineer's merge on the remote.
+    if s.stage == Stage::Publishing {
+        if let Some(pb) = l.publication.as_ref() {
+            let mut v = base("pr_open", &pb.at);
+            v["key"] = json!(format!("{}:pr:{}", s.id, pb.pr_number));
+            v["pr_url"] = json!(pb.pr_url);
+            v["pr_number"] = json!(pb.pr_number);
+            v["repo"] = json!(pb.repo);
+            v["by"] = json!(pb.by);
+            out.push(v);
+        }
+    }
     if s.stage == Stage::Ready && l.outcome.is_some() {
         let verified = l.outcome.as_ref().is_some_and(|o| o.0);
         let mut v = base(if verified { "ready" } else { "unverified" }, &s.stage_at);

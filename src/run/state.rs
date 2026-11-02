@@ -217,6 +217,13 @@ pub struct LoopState {
     pub publication: Option<Publication>,
     /// 010: the last failed publication, until the next try (step, reason, what was pushed).
     pub publish_failed: Option<PublishFailure>,
+    /// 010: a publication was started and has not ended (a restart reconciles it, R-8).
+    pub publish_pending: bool,
+    /// 010: a publication was ever tried (the loop publishes itself at most once).
+    pub publish_tried: bool,
+    /// 010: each publishing step, for the activity (FR-018): when, what, and whether it went
+    /// through.
+    pub publish_steps: Vec<(String, String, bool)>,
 }
 
 /// 010: a loop's pull request (`Published`) and its latest state (`PullRequestState`).
@@ -243,6 +250,7 @@ pub struct PublishFailure {
     pub step: String,
     pub why: String,
     pub pushed: Option<(String, String)>,
+    pub by: String,
     pub at: String,
 }
 
@@ -618,6 +626,12 @@ impl RunState {
             } => {
                 // An action of the engineer answers what was waiting for them.
                 self.needs = None;
+                if *kind == SteeringKind::Publish {
+                    if let Some(f) = self.feature_loop.as_mut() {
+                        f.publish_pending = true;
+                        f.publish_tried = true;
+                    }
+                }
                 if *kind == SteeringKind::SetAutonomy {
                     if let Some(a) = detail.as_deref().and_then(Autonomy::parse) {
                         self.autonomy = a;
@@ -726,6 +740,9 @@ impl RunState {
                     when_verified: *when_verified,
                     publication: None,
                     publish_failed: None,
+                    publish_pending: false,
+                    publish_tried: false,
+                    publish_steps: Vec::new(),
                 });
             }
             Event::Task {
@@ -968,16 +985,49 @@ impl RunState {
                         at: l.at.clone(),
                     });
                     f.publish_failed = None;
+                    f.publish_pending = false;
+                    f.publish_steps.push((
+                        l.at.clone(),
+                        format!(
+                            "Pushed {branch} at {} to {remote} and opened pull request #{pr_number} into {target} on {repo}{}",
+                            &commit[..commit.len().min(7)],
+                            if by == "when_verified" { ", when verified as chosen at the lock" } else { "" }
+                        ),
+                        true,
+                    ));
                 }
             }
-            Event::PublishFailed { step, why, pushed } => {
+            Event::PublishFailed {
+                step,
+                why,
+                pushed,
+                by,
+            } => {
                 if let Some(f) = self.feature_loop.as_mut() {
                     f.publish_failed = Some(PublishFailure {
                         step: step.clone(),
                         why: why.clone(),
                         pushed: pushed.clone(),
+                        by: by.clone(),
                         at: l.at.clone(),
                     });
+                    f.publish_pending = false;
+                    f.publish_steps.push((
+                        l.at.clone(),
+                        format!(
+                            "Publishing stopped at the {}: {why}{}",
+                            match step.as_str() {
+                                "check" => "check of the remote",
+                                "push" => "push",
+                                _ => "pull request",
+                            },
+                            match pushed {
+                                Some((b, c)) => format!(" ({b} was pushed at {})", &c[..c.len().min(7)]),
+                                None => String::new(),
+                            }
+                        ),
+                        false,
+                    ));
                 }
             }
             Event::PullRequestState {
@@ -985,10 +1035,32 @@ impl RunState {
                 checks,
                 merged_at,
             } => {
-                if let Some(p) = self.feature_loop.as_mut().and_then(|f| f.publication.as_mut()) {
-                    p.state = *state;
-                    p.checks = checks.clone();
-                    p.merged_at = merged_at.clone();
+                if let Some(f) = self.feature_loop.as_mut() {
+                    if let Some(p) = f.publication.as_mut() {
+                        let n = p.pr_number;
+                        let was = p.state;
+                        p.state = *state;
+                        p.checks = checks.clone();
+                        p.merged_at = merged_at.clone();
+                        let what = match state {
+                            crate::publish::host::PrStatus::Merged if was != *state => {
+                                format!("Pull request #{n} was merged on {}", p.repo)
+                            }
+                            crate::publish::host::PrStatus::Closed if was != *state => {
+                                format!("Pull request #{n} was closed without merging")
+                            }
+                            _ => {
+                                let list: Vec<String> = checks
+                                    .iter()
+                                    .map(|c| format!("{} {}", c.name, serde_json::to_value(c.state).ok().and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default()))
+                                    .collect();
+                                format!("Pull request #{n}: checks {}", if list.is_empty() { "none yet".into() } else { list.join(", ") })
+                            }
+                        };
+                        let ok = !checks.iter().any(|c| c.state == crate::publish::host::CheckState::Failed)
+                            && *state != crate::publish::host::PrStatus::Closed;
+                        f.publish_steps.push((l.at.clone(), what, ok));
+                    }
                 }
             }
         }

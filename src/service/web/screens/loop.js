@@ -27,8 +27,53 @@
     ready: h`<span class="pill green">Ready to merge</span>`,
     done_unverified: h`<span class="pill orange">Done, not verified by Fallow</span>`,
     done: h`<span class="pill grey">Merged</span>`,
+    publishing: h`<span class="pill purple">Pull request open</span>`,
     stopped: h`<span class="pill grey">Stopped</span>`,
   };
+
+  // ---- 010: publishing ---------------------------------------------------------------------
+  const CHECK = { passed: "green", failed: "red", waiting: "yellow", skipped: "grey" };
+  const PR_STATE = { open: "open", merged: "merged", closed: "closed without merging" };
+
+  function publishArea(v) {
+    const p = v.publish;
+    if (!p) return raw("");
+    const pb = p.publication;
+    const at = (iso) => {
+      const d = new Date(iso);
+      return isNaN(d) ? iso || "" : d.toLocaleString([], { hour: "2-digit", minute: "2-digit", day: "numeric", month: "short" });
+    };
+    const lines = [];
+    if (v.busy === "publish") lines.push(h`<div class="row gap-8"><span class="pill blue">Publishing…</span><span class="small muted">pushing ${v.build_branch} and opening the pull request</span></div>`);
+    if (pb) {
+      const by = pb.by === "when_verified" ? "on its own when verified, as chosen at the lock" : "by you";
+      const link = /^https:\/\//.test(pb.pr_url || "") ? h`<a href="${pb.pr_url}" target="_blank" rel="noopener">#${pb.pr_number}</a>` : h`#${pb.pr_number}`;
+      lines.push(h`<div class="row wrap gap-8"><b>Pull request ${link}</b>
+        <span class="pill ${pb.state === "merged" ? "green" : pb.state === "closed" ? "grey" : "purple"}">${PR_STATE[pb.state] || pb.state}</span>
+        <span class="small muted">${pb.branch} into ${pb.target} on ${pb.repo} · ${by} · ${at(pb.at)}${pb.merged_at ? ` · merged ${at(pb.merged_at)}` : ""}</span></div>`);
+      if ((pb.checks || []).length) {
+        lines.push(h`<div class="row wrap gap-6"><span class="small muted">Checks on the remote:</span>${pb.checks.map((c) => /^https:\/\//.test(c.url || "")
+          ? h`<a class="pill ${CHECK[c.state] || "grey"}" href="${c.url}" target="_blank" rel="noopener">${c.name} · ${c.state}</a>`
+          : h`<span class="pill ${CHECK[c.state] || "grey"}">${c.name} · ${c.state}</span>`)}</div>`);
+      }
+      if (pb.state === "open") lines.push(h`<div class="small muted">The merge is yours, on ${pb.repo}. Fallow follows the pull request and shows when it is merged; it does not change your local ${pb.target}.</div>`);
+      if (pb.state === "merged") lines.push(h`<div class="small muted">Merged on the remote; your local ${pb.target} is as it was: pull it to bring the merge in.</div>`);
+      if (pb.state === "closed") lines.push(h`<div class="small muted">Closed without merging: publish again, or stop the loop.</div>`);
+    }
+    if (p.failed) {
+      const f = p.failed;
+      const step = { check: "the check of the remote", push: "the push", pull_request: "the pull request" }[f.step] || f.step;
+      lines.push(h`<div class="notice">Publishing stopped at ${step}: ${f.why}${f.pushed ? h` <span class="small muted">(${f.pushed[0]} was pushed at ${short(f.pushed[1])})</span>` : ""}
+        ${(p.offer || []).includes("pull_request") ? h` <button class="btn btn2 sm" data-act="publish">Try again</button>` : ""}</div>`);
+    }
+    const ready = ["ready", "done_unverified"].includes(v.stage);
+    if (ready && !pb && !p.failed && v.busy !== "publish") {
+      const wv = p.when_verified === "pull_request" ? "When verified: open a pull request" : "When verified: wait for you";
+      lines.push(h`<div class="small muted">${p.why}. ${wv}${p.waits ? ` (${p.waits})` : ""}.</div>`);
+    }
+    if (!lines.length) return raw("");
+    return h`<section class="card pad-14 col gap-8 publish-area" aria-label="Publishing">${lines}</section>`;
+  }
 
   // ---- The pipeline strip -------------------------------------------------------------------
   function strip(v) {
@@ -61,7 +106,7 @@
     for (const s of pl.steps.filter((x) => x.when === "once")) {
       parts.push(stage("", `ONCE · ${s.at === "start" ? "AT THE START" : "AT THE END"}`, s.agent, s.checker ? "checks the whole feature" : "works on the whole feature"));
     }
-    const merging = ["ready", "done_unverified"].includes(v.stage);
+    const merging = ["ready", "done_unverified", "publishing"].includes(v.stage);
     parts.push(stage(v.stage === "done" ? " done" : merging ? " now" : "", v.stage === "done" ? "DONE" : merging ? "NOW" : "ONCE", "Merge", "you"));
     const out = [];
     parts.forEach((p, i) => { if (i) out.push(arrow); out.push(p); });
@@ -151,7 +196,8 @@
     );
     const byName = Object.fromEntries((v.agents || []).map((a) => [a.name, a]));
     const final = ["done", "stopped"].includes(v.stage);
-    const merging = ["ready", "done_unverified"].includes(v.stage);
+    // 010: a loop whose pull request is open has done everything but the merge.
+    const merging = ["ready", "done_unverified", "publishing"].includes(v.stage);
     const tasksDone = v.used.of > 0 && v.used.tasks >= v.used.of;
     const gatesBusy = /gates/.test(v.busy || "");
     // The repair under way (the builder working on a story, not a task): its edge is bold.
@@ -240,7 +286,7 @@
     }
     const a = (v.agents || []).find((x) => x.name === state.tab);
     if (!a) return raw("");
-    const ended = ["done", "stopped", "ready", "done_unverified"].includes(v.stage);
+    const ended = ["done", "stopped", "ready", "done_unverified", "publishing"].includes(v.stage);
     return h`<div class="card pad-12 agent-focus${a.status === "asks you" ? " needs" : ""}"><b>${a.name}</b>${ended && a.status !== "working" && a.steps > 0 ? h`<span class="pill green">done</span>` : ended && !a.steps ? h`<span class="pill grey">did not run</span>` : pill(a.status)}
       <span class="tiny muted">${a.runtime || "?"} · ${a.model || "default model"} · <span class="mono">${a.where}</span></span>
       <span class="small">${a.task ? `${a.task} · ${a.tool_calls} tool call${a.tool_calls === 1 ? "" : "s"} · ` : a.steps ? `${a.steps} step${a.steps === 1 ? "" : "s"} · ` : ""}${money(a.cost_usd)}</span>
@@ -497,6 +543,10 @@
       const parts = [f.usd && `$${f.usd}`, f.min && `${f.min} min`, f.repair_cap && `${f.repair_cap} repairs per task`].filter(Boolean);
       return `${x.detail.endsWith(" once") ? "continued once past the limit" : "limits set to"}${parts.length ? ` ${parts.join(", ")}` : ""}`;
     }
+    if (x.kind === "publish" && x.detail) {
+      const [commit, by] = x.detail.split(" ");
+      return by === "(when_verified)" ? `published ${short(commit)} on its own when verified` : `published ${short(commit)} as a pull request`;
+    }
     return `${x.kind.replace(/_/g, " ")}${x.detail ? `: ${x.detail}` : ""}`;
   }
 
@@ -523,6 +573,11 @@
     const paused = v.paused_by_engineer;
     const over = ["done", "stopped"].includes(v.stage);
     const merge = ["ready", "done_unverified"].includes(v.stage);
+    const pub = v.publish || null;
+    const offer = pub ? pub.offer || [] : ["local_merge"];
+    const busyPublishing = v.busy === "publish";
+    // 010: what the remote allows (FR-005 to FR-007): a pull request, a local merge, or both.
+    const publishButtons = merge && !busyPublishing ? h`${offer.includes("pull_request") ? h`<button class="btn" data-act="publish">Push and open a pull request</button>` : ""}${offer.includes("local_merge") ? h`<button class="btn${offer.includes("pull_request") ? " btn2" : ""}" data-act="merge">${offer.includes("pull_request") ? "Merge locally" : v.stage === "ready" ? "Merge" : "Merge anyway…"}</button>` : ""}` : "";
     app.innerHTML = h`<div class="page col gap-16">
       <div class="row wrap gap-20 loop-head">
         <div><div class="small muted">${v.project} · locked at <span class="mono tiny">${short(v.lock_commit)}</span> · pipeline <a href="#/pipelines">${v.pipeline ? v.pipeline.name : "?"}</a></div>
@@ -533,12 +588,13 @@
           <span><b>${v.used.tasks}</b>/${v.used.of} tasks</span><span><b>${v.repairs}</b> repair${v.repairs === 1 ? "" : "s"}</span></div>
         <div class="row wrap gap-8 steer-buttons" role="group" aria-label="The loop's controls">
           <button class="btn${state.files ? "" : " btn2"}" data-act="files-toggle" aria-pressed="${state.files ? "true" : "false"}">${state.files ? "Files ✕" : "Files"}</button>
-          ${merge ? h`<button class="btn btn2" data-act="verified">What was verified</button><button class="btn" data-act="merge">${v.stage === "ready" ? "Merge" : "Merge anyway…"}</button>` : ""}
-          ${over ? "" : h`<button class="btn btn2" data-act="note">Note for next step</button><button class="btn btn2" data-act="limits">Limits</button>${merge ? "" : h`<button class="btn btn2" data-act="${paused ? "resume" : "pause"}">${paused ? "Go on" : "Pause"}</button>`}<button class="btn btn2" data-act="stop">Stop</button>`}
+          ${merge || v.stage === "publishing" ? h`<button class="btn btn2" data-act="verified">What was verified</button>${publishButtons}` : ""}
+          ${over ? "" : h`<button class="btn btn2" data-act="note">Note for next step</button><button class="btn btn2" data-act="limits">Limits</button>${merge || v.stage === "publishing" ? "" : h`<button class="btn btn2" data-act="${paused ? "resume" : "pause"}">${paused ? "Go on" : "Pause"}</button>`}<button class="btn btn2" data-act="stop">Stop</button>`}
         </div>
       </div>
       ${steerLine(v)}
       ${v.stage === "done_unverified" ? h`<div class="notice">Done, not verified by Fallow: ${(v.outcome && v.outcome[1] || []).join(", ")}. Review the work yourself before merging.</div>` : ""}
+      ${publishArea(v)}
       ${liveGraph(v)}
       ${banner(v)}
       ${verification(v)}
@@ -741,6 +797,26 @@
       case "stop": {
         const ok = await confirm({ title: "Stop this loop?", text: "The agent at work ends now. Branches and worktrees stay, and nothing is merged.", items: [`${state.view.feature}: ${state.view.used.tasks}/${state.view.used.of} tasks done`], ok: "Stop the loop" });
         if (ok) run("stop", { confirm: true });
+        return;
+      }
+      case "publish": {
+        const v = state.view;
+        const p = v.publish || {};
+        const r = p.remote || {};
+        const repo = r.repo ? `${r.repo.owner}/${r.repo.name}` : "?";
+        const unverified = v.stage === "done_unverified";
+        const ok = await confirm({
+          title: unverified ? "Publish work Fallow did not verify?" : "Push and open a pull request?",
+          text: (unverified ? `Not verified by Fallow: ${(v.outcome && v.outcome[1] || []).join(", ")}. ` : "")
+            + "Exactly the gated commit is pushed to the loop's own branch, and a pull request is opened with what Fallow verified. Nothing is pushed to the target branch; the merge stays yours, on the remote.",
+          items: [
+            `${v.build_branch} at ${short(v.integrated)} to ${r.remote || "the remote"} (${repo})`,
+            `pull request into ${r.target || v.base_branch}`,
+            p.account ? `opened as ${p.account}` : "opened with your gh sign-in",
+          ],
+          ok: "Push and open",
+        });
+        if (ok) run("publish", { confirm: true });
         return;
       }
       case "merge": {

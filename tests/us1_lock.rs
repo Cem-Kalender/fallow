@@ -61,6 +61,7 @@ fn the_lock_names_every_problem_then_commits_and_creates_the_loop() {
                 level: None,
                 budget_usd: None,
                 budget_minutes: None,
+                when_verified: None,
             },
         )
     };

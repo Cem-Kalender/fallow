@@ -464,6 +464,9 @@ pub enum Event {
         why: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pushed: Option<(String, String)>,
+        /// `engineer` or `when_verified`.
+        #[serde(default = "engineer")]
+        by: String,
     },
     /// 010: the pull request's state and checks, as the remote reports them; recorded when
     /// something changed (FR-013).
@@ -474,6 +477,10 @@ pub enum Event {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         merged_at: Option<String>,
     },
+}
+
+fn engineer() -> String {
+    "engineer".into()
 }
 
 /// 010: what a loop does when it ends verified (FR-019): wait for the engineer, or open a pull

@@ -218,6 +218,18 @@ fn fallow_lines(run: &Run, last_line: &BTreeMap<u32, u64>) -> Vec<Value> {
             .join("\n");
         out.push(check(at, g.part.clone(), text, result, detail));
     }
+    // 010: every publishing step (FR-018).
+    if let Some(l) = run.state.feature_loop.as_ref() {
+        for (at, text, ok) in &l.publish_steps {
+            out.push(check(
+                ms_of(at) + 999,
+                None,
+                text.clone(),
+                Some(if *ok { "ok" } else { "failed" }),
+                String::new(),
+            ));
+        }
+    }
     // Every answer, with who gave it and its commit (FR-023).
     let mut by_engineer: Vec<&str> = Vec::new();
     if let Some(l) = run.state.feature_loop.as_ref() {
@@ -347,6 +359,8 @@ fn fallow_lines(run: &Run, last_line: &BTreeMap<u32, u64>) -> Vec<Value> {
                 ),
             ),
             SteeringKind::Merge => ("steer", "You merged the feature".into()),
+            SteeringKind::Publish if st.detail.as_deref().is_some_and(|d| d.ends_with("(when_verified)")) => continue,
+            SteeringKind::Publish => ("steer", "You published the feature as a pull request".into()),
             SteeringKind::Unlock => ("steer", "You unlocked the feature".into()),
             _ => continue,
         };

@@ -33,6 +33,8 @@ fn what(item: &Value) -> &'static str {
         Some("question") => "a question for you; the loop waits",
         Some("ready") => "ready to merge",
         Some("unverified") => "done, not verified by Fallow: review it before merging",
+        Some("pr_open") => "pull request opened: review and merge it on the remote",
+        Some("pr_merged") => "merged on the remote",
         _ => match item["what"].as_str() {
             Some("stopped at a limit") => "stopped at a limit",
             Some("stopped at the repair cap") => "stopped at the repair cap",
