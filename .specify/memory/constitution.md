@@ -1,28 +1,27 @@
 <!--
 Sync Impact Report
 ==================
-Version change: 6.1.0 → 6.2.0
-Bump rationale: MINOR. A principle added (IX. Runtime-Agnostic); no principle removed, redefined
-or loosened; budgets unchanged. Approved by the project owner on 2026-11-02, after a fix whose
-first version relied on how Claude Code behaves (a step's agent "begun" judged from what that
-runtime streams); the fix now uses a fact Fallow records itself (the runtime contract's
-`launched` event).
+Version change: 6.2.0 → 6.3.0
+Bump rationale: MINOR. Guidance materially expanded for solo sessions (a feature to come): the
+assistant acts on the engineer's word in a solo session, and its web and git-remote traffic is
+part of a run's allowed traffic. Nothing removed or loosened for loops: their merge, pull request
+and no-push rules are unchanged. Approved by the project owner on 2026-11-02.
 
-Modified principles: none.
+Modified principles:
+  - II. The Engineer Decides: one bullet added (the assistant acts on the engineer's word; Fallow
+    shows every change to branches and remotes it observes)
+  - V. Local and Private by Construction: one item added to the traffic of a run (the assistant's
+    web and git-remote requests, on by default for the assistant only)
 
-Added sections:
-  - IX. Runtime-Agnostic (after VIII. Small and Measured)
-
-Removed sections: none.
+Added sections: none. Removed sections: none.
 
 Templates requiring updates: none. plan-template.md, spec-template.md and tasks-template.md read
-the constitution at runtime; every Constitution Check now includes IX.
+the constitution at runtime.
 
 Follow-up TODOs: none.
 
-Previous amendment (6.1.0): MINOR. Guidance expanded for feature 007 (Fallow Studio). Source:
-specs/007-fallow-studio/constitution-proposal.md. Before it (6.0.0): MAJOR, the constitution
-replaced for Fallow as the headless orchestrator.
+Previous amendments: 6.2.0 (MINOR) added IX. Runtime-Agnostic; 6.1.0 (MINOR) expanded guidance
+for feature 007; 6.0.0 (MAJOR) replaced the constitution for Fallow as the headless orchestrator.
 -->
 
 # Fallow Constitution
@@ -58,6 +57,9 @@ offers to merge has been checked by something other than the agent that produced
 - Nothing reaches the target branch without the engineer's explicit merge. With a protected
   remote branch, Fallow only opens a pull request: it never pushes to the target branch,
   force-pushes, bypasses protection or approves its own pull request.
+- In a solo session the assistant acts on the engineer's word: a merge, commit, push or pull
+  request it makes when the engineer asks for it counts as the engineer's decision. Fallow shows
+  every change to the project's branches and remotes it observes, from any session.
 - Agent steps start only after the engineer approved the plan, apart from the planning
   conversation the engineer started. The approval covers that run's steps, within its caps.
 - The engineer sets how much is decided without them (the autonomy level). The lead may answer an
@@ -116,6 +118,9 @@ the work divides cleanly and measurement says it pays.
   - the agents' own traffic to their providers;
   - the engineer's own git and remote tools, which Fallow runs with the engineer's credentials only
     to publish a run (push its branch, open its pull request, read branch rules and check results).
+  - the assistant's own requests to the web and to the project's git remotes, in a solo session;
+    on by default for the assistant, and off for every other kind unless its definition allows it.
+    Each request shows in the activity like any other tool call.
 - Fallow MUST NOT read secret values (credential files, keychains, tokens, API keys), and never
   stores or displays environment variable values.
 - Run data (state, steps, agent activity, decisions, steering actions) MAY be kept on disk in
@@ -231,4 +236,4 @@ breaks silently on the next, and ties the engineer to one supplier.
   section; unjustified violations block merge.
 - Compliance is reviewed at every pull request and at every release.
 
-**Version**: 6.2.0 | **Ratified**: 2026-10-13 | **Last Amended**: 2026-11-02
+**Version**: 6.3.0 | **Ratified**: 2026-10-13 | **Last Amended**: 2026-11-02
