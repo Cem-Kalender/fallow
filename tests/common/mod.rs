@@ -353,6 +353,7 @@ pub fn lock_calc_in(
         Req::NewFeature {
             project: project.clone(),
             title: "Calc".into(),
+            lead: None,
         },
     )
     .unwrap();
@@ -419,4 +420,37 @@ pub fn analyze_again(tx: &Sender<Msg>, project: &str, feature: &str) {
     )
     .unwrap();
     turn_ended(tx, &conv, n);
+}
+
+// ---- 009: a second lead, and an editor that records how it was started -------------------
+
+/// Writes the project override `.fallow/agents/<name>.md`: the shipped lead under another name,
+/// on `runtime` with `model`, with `marker` in its instructions (scenario steps tell it apart by
+/// `system = "<marker>"` or `model = "<model>"`).
+pub fn second_lead(repo: &Path, name: &str, runtime: &str, model: &str, marker: &str) {
+    let dir = repo.join(".fallow/agents");
+    std::fs::create_dir_all(&dir).unwrap();
+    let shipped = fallow::defs::DEFAULT_AGENTS
+        .iter()
+        .find(|(n, _)| *n == "lead")
+        .unwrap()
+        .1;
+    let text = shipped
+        .replacen("name: lead", &format!("name: {name}"), 1)
+        .replacen("runtime: claude", &format!("runtime: {runtime}"), 1)
+        .replacen("model: opus", &format!("model: {model}"), 1)
+        // The first "\n---" closes the frontmatter (the opening "---" starts the file).
+        .replacen("\n---", &format!("\n---\n\n{marker}\n"), 1);
+    std::fs::write(dir.join(format!("{name}.md")), text).unwrap();
+}
+
+/// An editor for "Open in my editor": the fake agent's `--record` mode. Returns the program and
+/// the fixed arguments to save, and the file where each start's arguments end up.
+pub fn fake_editor(root: &Path) -> (String, Vec<String>, PathBuf) {
+    let log = root.join("editor.log");
+    (
+        env!("CARGO_BIN_EXE_fallow-fake-agent").to_string(),
+        vec!["--record".into(), log.display().to_string()],
+        log,
+    )
 }

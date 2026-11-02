@@ -380,7 +380,7 @@ impl Engine {
     pub fn load(data: PathBuf, ctx: Ctx) -> Result<Engine, String> {
         crate::platform::private_dir(&data)?;
         crate::platform::private_dir(&runs_dir(&data))?;
-        let studio = crate::studio::Studio::load(&data, ctx.config.clone())?;
+        let studio = crate::studio::Studio::load(&data, ctx.config.clone(), ctx.settings.clone())?;
         let notifier = crate::service::notify::Notifier::new(
             Arc::clone(&ctx.notify),
             Arc::clone(&ctx.notify_on),
@@ -1055,6 +1055,18 @@ impl Engine {
         v["approved_commands"] = json!(p.approved_commands);
         v["budget_per_task"] = json!(p.budget_per_task);
         v["notifications"] = json!(p.notifications);
+        // The project's lead (009): the default, and why it is not used if it cannot lead.
+        let lead = p.lead.clone().unwrap_or_else(|| "lead".into());
+        v["lead"] = match p
+            .lead
+            .as_deref()
+            .and_then(|l| self.studio.lead_problem(&p.path, l))
+        {
+            Some(why) => {
+                json!({ "name": lead, "problem": format!("{why}; new sessions use lead") })
+            }
+            None => json!({ "name": lead }),
+        };
         v["branch"] = json!(git::branch(&p.path));
         v["feature_list"] = Value::Array(
             p.features
@@ -1075,13 +1087,193 @@ impl Engine {
                 .filter(|a| a.source == crate::defs::Source::Project)
                 .count()
         );
-        v["conversation"] = self
-            .studio
-            .convs
-            .get(&conv)
-            .map(|c| c.view())
-            .unwrap_or(Value::Null);
+        v["conversation"] = self.studio.conv_view(&conv).unwrap_or(Value::Null);
         Ok(v)
+    }
+
+    // ---- 009 US5: the project's files ---------------------------------------------------------
+
+    /// The versions of a project's files: the folder, then each feature's live copy (research R-8).
+    fn file_versions(&self, project: &str) -> Result<Vec<crate::studio::files::Version>, String> {
+        self.versions_of(project, None)
+    }
+
+    /// The folder, and each feature's version, or only `only`'s (a feature's name): a file view
+    /// asks for one version every few seconds, and resolving every feature each time costs git
+    /// calls on the engine's thread.
+    fn versions_of(
+        &self,
+        project: &str,
+        only: Option<&str>,
+    ) -> Result<Vec<crate::studio::files::Version>, String> {
+        use crate::studio::files::{self, FeatureCopy};
+        let p = self
+            .studio
+            .store
+            .get(project)
+            .cloned()
+            .ok_or_else(|| format!("there is no project {project}"))?;
+        let git_project = p.kind() == crate::project::Kind::Git;
+        let feats = p
+            .features
+            .iter()
+            .filter(|f| only.is_none_or(|o| f.name() == o))
+            .map(|f| {
+                let conv = f
+                    .conversation
+                    .as_ref()
+                    .and_then(|c| self.studio.convs.get(c));
+                let loop_wt = f.run.and_then(|id| self.runs.get(&id)).map(|r| {
+                    let who = r
+                        .running
+                        .keys()
+                        .next()
+                        .and_then(|n| r.state.steps.get(n))
+                        .and_then(|s| s.def.clone());
+                    (r.worktrees().join("build"), !r.state.stage.is_final(), who)
+                });
+                FeatureCopy {
+                    name: f.name().to_string(),
+                    dir: f.dir.clone(),
+                    base_branch: f.base_branch.clone(),
+                    branch: f.branch.clone(),
+                    loop_wt,
+                    spec_wt: conv.map(|c| c.state.workdir.clone()),
+                    lead: conv.map_or_else(|| "lead".into(), |c| c.state.lead_name().to_string()),
+                }
+            })
+            .collect();
+        Ok(files::versions(&p.path, git_project, feats))
+    }
+
+    fn file_version(
+        &self,
+        project: &str,
+        id: &str,
+    ) -> Result<crate::studio::files::Version, String> {
+        let id = if id.is_empty() { "folder" } else { id };
+        // The folder needs no feature; a feature, only itself.
+        let only = id.strip_prefix("feature:").unwrap_or("\u{0}");
+        self.versions_of(project, Some(only))?
+            .into_iter()
+            .find(|v| v.id == id)
+            .ok_or_else(|| crate::studio::files::GONE.to_string())
+    }
+
+    /// The files a message refers to with `@path`, optionally followed by `(on <feature>)`
+    /// (009 T031): their text for the lead, within the file view's limits; a secret by its name
+    /// only. In a spec session a file is the feature's; in the project conversation, the folder's.
+    fn file_refs(&self, conv: &str, text: &str) -> Vec<crate::agent::prompts::FileRef> {
+        use crate::studio::files;
+        let Some(c) = self.studio.convs.get(conv) else {
+            return Vec::new();
+        };
+        let project = c.state.project.clone();
+        let own = c
+            .state
+            .feature
+            .as_ref()
+            .map_or_else(|| "folder".to_string(), |f| format!("feature:{f}"));
+        let mut out = Vec::new();
+        let mut rest = text;
+        while let Some(i) = rest.find('@') {
+            let at_start = i == 0 || rest[..i].ends_with(char::is_whitespace);
+            let tail = &rest[i + 1..];
+            let end = tail.find(char::is_whitespace).unwrap_or(tail.len());
+            let token = tail[..end].trim_end_matches([',', ';', ':', ')', '!', '?', '.']);
+            rest = &tail[end..];
+            if !at_start || token.is_empty() || files::safe_rel(token).is_err() {
+                continue;
+            }
+            let after = rest.trim_start();
+            let version = match after.strip_prefix("(on ").and_then(|a| a.split_once(')')) {
+                Some((f, _)) => format!("feature:{}", f.trim()),
+                None => own.clone(),
+            };
+            let Ok(v) = self.file_version(&project, &version) else {
+                continue;
+            };
+            let label = if v.id == "folder" {
+                "the project folder".to_string()
+            } else {
+                format!("{} on its branch", v.label)
+            };
+            let mut r = crate::agent::prompts::FileRef {
+                path: token.to_string(),
+                version: label,
+                text: None,
+                note: None,
+            };
+            if files::is_secret(token) {
+                r.note = Some(files::SECRET.to_string());
+            } else {
+                match files::file(&v, token, false, &|a, b| self.step_agent(a, b)) {
+                    Ok(f) if f["kind"] == "text" || f["kind"] == "deleted" => {
+                        let t = f["text"].as_str().unwrap_or_default();
+                        let mut cut = t.len().min(files::REF_MAX);
+                        while !t.is_char_boundary(cut) {
+                            cut -= 1;
+                        }
+                        r.text = Some(t[..cut].to_string());
+                        if cut < t.len() || f["cut"] == true {
+                            r.note = Some("only its beginning: the file is longer".into());
+                        } else if f["kind"] == "deleted" {
+                            r.note = Some("deleted on this version: as it was before".into());
+                        }
+                    }
+                    Ok(f) if f["kind"] == "binary" => r.note = Some("a binary file".into()),
+                    Ok(f) if f["kind"] == "secret" => r.note = Some(files::SECRET.to_string()),
+                    _ => r.note = Some("not found".into()),
+                }
+            }
+            out.push(r);
+            if out.len() >= 5 {
+                break;
+            }
+        }
+        out
+    }
+
+    /// The agent definition of a loop's step, for "who changed it".
+    fn step_agent(&self, run: u64, n: u32) -> Option<String> {
+        self.runs.get(&run)?.state.steps.get(&n)?.def.clone()
+    }
+
+    /// "Open in my editor" (FR-032): the saved editor, or the engineer's choice saved first, or
+    /// the editors found to choose from, with the file's path to copy.
+    fn open_file(
+        &self,
+        project: &str,
+        version: &str,
+        path: &str,
+        editor: Option<crate::studio::files::Editor>,
+        command: Option<String>,
+    ) -> Result<Value, String> {
+        use crate::studio::files;
+        let v = self.file_version(project, version)?;
+        if v.rev.is_some() {
+            return Err(
+                "This version has no working copy any more: open the project folder's version"
+                    .into(),
+            );
+        }
+        let abs = files::safe_path(&v.dir, path)?;
+        let data = &self.studio.data;
+        let chosen = match (command, editor) {
+            (Some(c), _) => Some(files::parse_command(&c)?),
+            (None, Some(e)) => Some(e),
+            (None, None) => None,
+        };
+        let ed = match chosen {
+            Some(e) => files::set_editor(data, Some(e))?,
+            None => files::editor(data),
+        };
+        match ed {
+            Some(e) => files::open(&abs, &e).map(|()| json!({ "opened": true, "editor": e })),
+            None => {
+                Ok(json!({ "choose": files::found_editors(), "path": abs.display().to_string() }))
+            }
+        }
     }
 
     /// A feature as the spec session shows it (mockup screen 2).
@@ -1148,8 +1340,7 @@ impl Engine {
         v["conversation"] = f
             .conversation
             .as_ref()
-            .and_then(|c| self.studio.convs.get(c))
-            .map(|c| c.view())
+            .and_then(|c| self.studio.conv_view(c))
             .unwrap_or(Value::Null);
         Ok(v)
     }
@@ -1183,16 +1374,18 @@ impl Engine {
             Req::Project { id } => self.project_view(&id),
             Req::Conversation { id } => self
                 .studio
-                .convs
-                .get(&id)
-                .map(|c| c.view())
+                .conv_view(&id)
                 .ok_or_else(|| format!("there is no conversation {id}")),
             Req::ProjectConversation { project } => self
                 .studio
                 .project_conversation(&project)
                 .map(|id| json!({ "conversation": id })),
-            Req::Say { conv, text } => self.studio.say(&self.ctx, &conv, &text),
+            Req::Say { conv, text } => {
+                let refs = self.file_refs(&conv, &text);
+                self.studio.say(&self.ctx, &conv, &text, refs)
+            }
             Req::Cancel { conv } => self.studio.cancel(&conv),
+            Req::Commands { conv } => self.studio.commands(&conv),
             Req::SetMode { conv, mode } => self.studio.set_mode(&conv, mode),
             Req::Approve {
                 conv,
@@ -1200,7 +1393,57 @@ impl Engine {
                 answer,
                 prefix,
             } => self.studio.approve(&conv, &id, answer, prefix),
-            Req::NewFeature { project, title } => self.studio.new_feature(&project, &title),
+            Req::NewFeature {
+                project,
+                title,
+                lead,
+            } => self.studio.new_feature(&project, &title, lead),
+            Req::SetLead { conv, lead } => self.studio.set_lead(&conv, &lead),
+            Req::FileVersions { project } => self
+                .file_versions(&project)
+                .map(|v| json!({ "versions": v })),
+            Req::Files { project, version } => {
+                let v = self.file_version(&project, &version)?;
+                let (entries, fingerprint, changed) =
+                    crate::studio::files::entries(&v, &|r, n| self.step_agent(r, n))?;
+                Ok(
+                    json!({ "version": v, "entries": entries, "fingerprint": fingerprint, "changed": changed }),
+                )
+            }
+            Req::File {
+                project,
+                version,
+                path,
+                changes,
+            } => {
+                let v = self.file_version(&project, &version)?;
+                crate::studio::files::file(&v, &path, changes, &|r, n| self.step_agent(r, n))
+            }
+            Req::OpenFile {
+                project,
+                version,
+                path,
+                editor,
+                command,
+            } => self.open_file(&project, &version, &path, editor, command),
+            Req::GetEditor => {
+                Ok(json!({ "editor": crate::studio::files::editor(&self.studio.data) }))
+            }
+            Req::SetEditor {
+                editor,
+                command,
+                clear,
+            } => {
+                use crate::studio::files;
+                let e = if clear {
+                    None
+                } else if let Some(c) = command {
+                    Some(files::parse_command(&c)?)
+                } else {
+                    Some(editor.ok_or("say which program opens files")?)
+                };
+                files::set_editor(&self.studio.data, e).map(|e| json!({ "editor": e }))
+            }
             Req::Feature { project, feature } => self.feature_view(&project, &feature),
             Req::Doc {
                 project,
@@ -1717,6 +1960,11 @@ impl Engine {
                         | Req::Conversation { .. }
                         | Req::Feature { .. }
                         | Req::Doc { .. }
+                        | Req::Commands { .. }
+                        | Req::FileVersions { .. }
+                        | Req::Files { .. }
+                        | Req::File { .. }
+                        | Req::GetEditor
                         | Req::ToolOpen { .. }
                 );
                 let out = self.studio_request(req);

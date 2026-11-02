@@ -45,6 +45,7 @@ fn the_lock_names_every_problem_then_commits_and_creates_the_loop() {
         Req::NewFeature {
             project: project.clone(),
             title: "Cart".into(),
+            lead: None,
         },
     )
     .unwrap();
@@ -286,6 +287,7 @@ fn a_plain_folder_gets_git_and_its_features_their_branches() {
         Req::NewFeature {
             project: project.clone(),
             title: "Plots".into(),
+            lead: None,
         },
     )
     .unwrap();
@@ -402,6 +404,7 @@ fn a_document_changed_after_analyze_sends_the_session_back_to_analyze() {
         Req::NewFeature {
             project: project.clone(),
             title: "Cart".into(),
+            lead: None,
         },
     )
     .unwrap();

@@ -100,7 +100,7 @@
     const c = f.conversation || { turns: [], mode: "ask" };
     const chat = document.getElementById("chat");
     const wasAtEnd = atEnd(chat);
-    chat.innerHTML = h`${messages(c)}`.s;
+    document.getElementById("chat-list").innerHTML = h`${messages(c)}`.s;
     if (wasAtEnd) chat.scrollTop = chat.scrollHeight;
     document.getElementById("stepper").innerHTML = stepper(f).s;
     // An open editor is left alone, so its cursor and draft survive the lead's streaming.
@@ -120,21 +120,130 @@
           <h1 class="page-title">${f.name} <span class="small muted">· ${f.title} · spec session with the lead</span></h1></div>
         <div class="grow"></div>
         <div id="stepper">${stepper(f)}</div>
+        <button class="btn${files ? "" : " btn2"} sm" data-act="files-toggle" aria-pressed="${files ? "true" : "false"}">${files ? "Files ✕" : "Files"}</button>
       </div>
       <div class="studio${chatWide("spec") ? " chat-wide" : ""}">
         <section class="chat-col narrow" aria-label="Conversation">
-          <div class="chat-head"><div class="avatar" aria-hidden="true">L</div><div><b>Spec session</b> <span class="small muted">· with the lead</span></div><span class="grow"></span>${expandBtn("spec")}</div>
+          <div class="chat-head"><div class="avatar" aria-hidden="true">L</div><div><b>Spec session</b><div id="lead-head">${Fallow.leadHead(c)}</div></div><span class="grow"></span>${expandBtn("spec")}</div>
           ${f.kind === "folder" ? h`<div class="notice">A plain folder: Fallow cannot check what a command the lead runs writes, and a loop needs git.</div>` : ""}
-          <div class="chat" id="chat">${messages(c)}</div>
+          <div id="lead-notice">${Fallow.leadNotice(c)}</div>
+          <div class="chat" id="chat"><div id="chat-list">${messages(c)}</div>${Fallow.working(c)}</div>
           ${f.stage === "spec_session" ? composer(c, "Answer, or tell the lead what to change…") : h`<div class="composer small muted">The feature is locked: its spec session continues when you unlock it.</div>`}
         </section>
         <section class="docs" aria-label="Documents">
-          <div id="docs">${docs(f)}</div>
-          <div id="lock">${lockBar(f)}</div>
+          <div id="files-drawer" class="files-in-spec"${raw(files ? "" : " hidden")}>${files ? filesHtml() : ""}</div>
+          <div id="docs"${raw(files ? " hidden" : "")}>${docs(f)}</div>
+          <div id="lock"${raw(files ? " hidden" : "")}>${lockBar(f)}</div>
         </section>
       </div></div>`.s;
     const chat = document.getElementById("chat");
     chat.scrollTop = chat.scrollHeight;
+    // A warning that came with the address (a /specify that made the feature but did not start).
+    try {
+      const w = sessionStorage.getItem("fallow.alert");
+      if (w) { sessionStorage.removeItem("fallow.alert"); alertLine(w); }
+    } catch (_) { /* nothing kept */ }
+    // Always: a screen without a conversation leaves the menu with none (009 review).
+    if (Fallow.menu) {
+      Fallow.menu.attach({ conv: c.id || null, project: route.project, actions: () => actions(state), pickAgent: (a) => pickLead(state, a) });
+    }
+  }
+
+  // 009 US5: the Files drawer in place of the documents, widening over them when a file is open.
+  let files = null;
+  const filesHtml = () => h`<div class="${files.isOpen() ? "fs-wide" : "fs-list"}">${files.treeHtml()}${files.isOpen() ? h`<div class="fw-view">${files.viewHtml()}</div>` : ""}</div>`;
+  function drawFiles(focusId) {
+    const d = document.getElementById("files-drawer");
+    if (!d) return;
+    const focusKeep = files ? files.keep() : null;
+    const tree = d.querySelector(".ft-tree");
+    const codeEl = d.querySelector(".fcode");
+    const [t1, c1] = [tree ? tree.scrollTop : 0, codeEl ? codeEl.scrollTop : 0];
+    d.hidden = !files;
+    document.getElementById("docs").hidden = !!files;
+    document.getElementById("lock").hidden = !!files;
+    d.innerHTML = files ? filesHtml().s : "";
+    const t2 = d.querySelector(".ft-tree");
+    if (t2) t2.scrollTop = t1;
+    const c2 = d.querySelector(".fcode");
+    if (c2) c2.scrollTop = c1;
+    if (files) files.settle(focusId || focusKeep);
+    const b = document.querySelector("[data-act=files-toggle]");
+    if (b) {
+      b.classList.toggle("btn2", !files);
+      b.setAttribute("aria-pressed", files ? "true" : "false");
+      b.textContent = files ? "Files ✕" : "Files";
+    }
+  }
+  function filesToggle() {
+    if (files) {
+      files.stop();
+      files = null;
+      Fallow.files.active = null;
+      return drawFiles();
+    }
+    files = Fallow.files.create({
+      project: route.project, version: `feature:${route.feature}`, drawer: true,
+      changed: (focusId) => drawFiles(focusId),
+      // From the spec session's drawer, into its own message box (decided at analyze).
+      ask: (path) => {
+        files.st.file = null; files.st.data = null;
+        drawFiles();
+        const box = document.getElementById("say");
+        if (box) {
+          const ref = `@${path} `;
+          box.value = box.value.trim() ? `${ref}${box.value}` : ref;
+          box.focus();
+          box.dispatchEvent(new Event("input", { bubbles: true }));
+        }
+      },
+    });
+    Fallow.files.active = files;
+    const mine = files;
+    mine.load().then(() => {
+      if (files !== mine) return mine.stop();
+      mine.start();
+      drawFiles();
+    }, (e) => alertLine(e.message));
+    drawFiles();
+  }
+
+  // 009 US2: in the `/` menu, a lead picked before the session's first message becomes its lead.
+  function pickLead(f, a) {
+    const c = f && f.conversation;
+    if (!c || a.kind !== "lead" || !c.lead || c.lead.fixed) return false;
+    post(`/api/conversations/${encodeURIComponent(c.id)}/lead`, { lead: a.name })
+      .catch((e) => alertLine(e.message))
+      .then(() => { const b = document.querySelector("[data-act=lead-pick]"); if (b) b.blur(); });
+    return true;
+  }
+
+  // The `/` menu's Fallow actions in a spec session (009 T011): each does what its button does.
+  function actions(f) {
+    const c = (f && f.conversation) || {};
+    const click = (sel) => { const b = document.querySelector(sel); if (b) b.click(); };
+    const lc = f.lock_check || {};
+    const locked = f.stage !== "spec_session";
+    const out = [
+      {
+        name: "Lock the spec", description: "Lock spec, plan and tasks and start the loop",
+        available: !locked && !!lc.ok,
+        reason: locked ? "The feature is locked" : `Not ready to lock: ${((lc.problems) || ["after Tasks and Analyze"])[0]}`,
+        run: () => click("[data-act=lock-step]"),
+      },
+    ];
+    for (const d of f.documents || []) {
+      const name = d.path.split("/").pop();
+      if (!["spec.md", "plan.md", "tasks.md"].includes(name)) continue;
+      out.push({ name: `Open ${name}`, description: d.path, available: !!d.exists, reason: "The lead has not written it yet", run: () => click(`.tab[data-path="${CSS.escape(d.path)}"]`) });
+    }
+    out.push({
+      name: "Go to the loop", description: "The loop that builds this feature",
+      available: (f.locks || []).length > 0, reason: "The feature has no loop yet",
+      run: () => { location.hash = `#/p/${encodeURIComponent(route.project)}/f/${encodeURIComponent(route.feature)}/loop`; },
+    });
+    out.push({ name: "Choose the lead", description: "The lead this session talks to", available: !!(c.lead && !c.lead.fixed && !c.lead.problem), reason: "A session keeps its lead", run: () => { const b = document.querySelector("[data-act=lead-pick]"); if (b) b.click(); } });
+    return [...out, ...Fallow.menu.chatActions(c)];
   }
 
   async function openDoc(path) {
@@ -160,7 +269,20 @@
   }
 
   let appEl = null;
-  async function save(text, version) {
+  // A save under way, for the router's guard (009 US4).
+  let savingP = null;
+  function save(text, version) {
+    savingP = doSave(text, version).finally(() => { savingP = null; });
+    return savingP;
+  }
+
+  // An edit not saved yet: the editor is open and its text differs from the document's.
+  function dirty() {
+    const ed = document.getElementById("editor");
+    return !!(editing && ed && doc && ed.value !== doc.text);
+  }
+
+  async function doSave(text, version) {
     try {
       await api("PUT", `${base()}/doc?path=${encodeURIComponent(tab)}`, { text, version });
       editing = null;
@@ -180,6 +302,9 @@
   }
 
   Fallow.register("spec", {
+    // 009 US4: an unsaved document edit asks before any way out of the screen.
+    dirty,
+    saving: () => savingP,
     enter(app, r) {
       appEl = app;
       if (!route || route.project !== r.project || route.feature !== r.feature) {
@@ -204,8 +329,13 @@
     leave() {
       if (stop) stop();
       stop = null;
+      if (files) files.stop();
+      files = null;
+      Fallow.files.active = null;
     },
     async act(name, el) {
+      if (name === "files-toggle") return filesToggle();
+      if (files && name.startsWith("f-") && (await files.act(name, el))) return;
       const conv = state && state.conversation && state.conversation.id;
       const again = () => load(appEl);
       if (conv && (await chatAct(conv, name, el, again))) return;
@@ -226,7 +356,11 @@
           return render(appEl);
         }
         if (name === "edit") { editing = { text: doc ? doc.text : "" }; return render(appEl); }
-        if (name === "cancel") { editing = null; return render(appEl); }
+        if (name === "cancel") {
+          if (dirty() && !(await confirm({ title: "Leave your unsaved edit?", text: "Cancelling drops what you typed in this document.", items: [tab], ok: "Drop it" }))) return;
+          editing = null;
+          return render(appEl);
+        }
         if (name === "save") { const text = document.getElementById("editor").value; editing.text = text; return save(text, doc.version); }
         if (name === "keep-mine") return save(conflict.mine, conflict.version);
         if (name === "keep-theirs") { conflict = null; await openDoc(tab); return render(appEl); }

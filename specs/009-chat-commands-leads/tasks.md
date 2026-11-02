@@ -30,10 +30,10 @@ After every phase, an independent fresh-context reviewer verifies it, and the im
 
 **Purpose**: test support and the git building blocks that several stories use.
 
-- [ ] T001 [P] Add test helpers to `tests/common/mod.rs`:
+- [X] T001 [P] Add test helpers to `tests/common/mod.rs`:
   - `second_lead(repo, name, runtime, model, marker)` writes `.fallow/agents/<name>.md` as a copy of the shipped `lead` definition, with `kind: lead` and `returns: reply` kept. It changes the name, runtime and model, and puts `marker` in its instructions, so a scenario's `when` can tell which lead was called.
   - `fake_editor(root) -> (command, log)` writes a small program that appends its arguments to `log`: a `.cmd` file on Windows, a shell script elsewhere.
-- [ ] T002 [P] Add git helpers to `src/verify/git.rs`, each with a unit test in its test module (research R-8):
+- [X] T002 [P] Add git helpers to `src/verify/git.rs`, each with a unit test in its test module (research R-8):
   - `listed(dir) -> Vec<String>`: `ls-files --cached --others --exclude-standard -z`.
   - `name_status(dir, base) -> Vec<(char, String)>`: the working tree against `base` with `diff --name-status --no-renames -z`, plus untracked files from `ls-files --others --exclude-standard` as `A`.
   - `last_change(dir, base, path) -> Option<(commit, subject, body, unix_time)>`: `log -1 --format=%H%x1f%s%x1f%b%x1f%ct <base>..HEAD -- <path>`.
@@ -46,7 +46,7 @@ After every phase, an independent fresh-context reviewer verifies it, and the im
 
 **Purpose**: the session-lead fields every lead and command change builds on. ⚠️ Must be done before US1 and US2.
 
-- [ ] T003 In `src/conversation/events.rs`:
+- [X] T003 In `src/conversation/events.rs`:
   - add `#[serde(default)] lead: Option<String>` to `ConversationCreated`;
   - add the new event `LeadSet { lead: String }`;
   - add `#[serde(default)] runtime: Option<String>, model: Option<String>, new_session: bool` to `TurnStarted` (`new_session` is true for `Session::New`; its `session` string alone cannot tell a new session from a resume or fork);
@@ -57,8 +57,8 @@ After every phase, an independent fresh-context reviewer verifies it, and the im
   - add `State::lead_fixed()`: a `TurnStarted` exists that was not withdrawn (answered, answering or failed).
 
   Unit tests: an old log without the fields folds to `lead: None`; `LeadSet` after creation; runtime and model kept across resumed turns and replaced by a new session; `lead_fixed` true while the first turn is busy and after a failed first turn, false after a withdrawn one.
-- [ ] T004 Add `#[serde(default)] lead: Option<String>` to `Project` in `src/project/mod.rs`. Give `new_conv` in `src/studio/mod.rs` a `lead: Option<String>` parameter that it records in `ConversationCreated` and in the `State` it builds by hand (lines ~385-408). Update its callers: `project_conversation` passes the project's default lead. Give `new_feature` a `lead: Option<String>` parameter (default: the project's default lead) that it passes on; `Req::NewFeature` passes `None` until T015.
-- [ ] T005 Rewrite `patch_project` in `src/studio/mod.rs` so that every key is checked before any is applied (today an error on a later key leaves earlier ones changed in memory). Add the `lead` key: it must name an agent of kind Lead in `Library::load(config, Some(&p.path))`, whose runtime `agent::registry::runtime` accepts. Otherwise the error is "there is no lead <name> for this project", or "<name>'s runtime is not available: <reason>". Add `lead: {name, problem?}` to `project_view` in `src/run/engine.rs`. `problem` is set when the stored name no longer resolves to an available Lead, in which case new sessions use `lead`.
+- [X] T004 Add `#[serde(default)] lead: Option<String>` to `Project` in `src/project/mod.rs`. Give `new_conv` in `src/studio/mod.rs` a `lead: Option<String>` parameter that it records in `ConversationCreated` and in the `State` it builds by hand (lines ~385-408). Update its callers: `project_conversation` passes the project's default lead. Give `new_feature` a `lead: Option<String>` parameter (default: the project's default lead) that it passes on; `Req::NewFeature` passes `None` until T015.
+- [X] T005 Rewrite `patch_project` in `src/studio/mod.rs` so that every key is checked before any is applied (today an error on a later key leaves earlier ones changed in memory). Add the `lead` key: it must name an agent of kind Lead in `Library::load(config, Some(&p.path))`, whose runtime `agent::registry::runtime` accepts. Otherwise the error is "there is no lead <name> for this project", or "<name>'s runtime is not available: <reason>". Add `lead: {name, problem?}` to `project_view` in `src/run/engine.rs`. `problem` is set when the stored name no longer resolves to an available Lead, in which case new sessions use `lead`.
 
 **Checkpoint**: the build and every existing test pass; nothing visible has changed yet.
 
@@ -72,7 +72,7 @@ After every phase, an independent fresh-context reviewer verifies it, and the im
 
 ### Tests for User Story 1
 
-- [ ] T006 [P] [US1] Write `tests/us9_commands.rs`, with scenarios whose `when` matches the prompt text:
+- [X] T006 [P] [US1] Write `tests/us9_commands.rs`, with scenarios whose `when` matches the prompt text:
   - The catalogue (`Req::Commands`):
     - a spec session lists `constitution, specify, clarify, plan, tasks, analyze, checklist, converge` with the SKILL.md `description` and `argument-hint`, and not `implement` or `taskstoissues`;
     - the project conversation lists only `specify`;
@@ -99,7 +99,7 @@ After every phase, an independent fresh-context reviewer verifies it, and the im
 
 ### Implementation for User Story 1
 
-- [ ] T007 [P] [US1] Create `src/studio/commands.rs`, with unit tests, per research R-1 and R-2 and data-model.md "Command":
+- [X] T007 [P] [US1] Create `src/studio/commands.rs`, with unit tests, per research R-1 and R-2 and data-model.md "Command":
   - `catalogue(project_path, workdir, kind) -> Vec<Command>`:
     - Spec Kit steps from `workdir/.claude/skills/speckit-<step>/SKILL.md`, for the eight steps of R-1, or only `specify` when `kind` is `Project`;
     - then the project's commands from `project_path`, in R-2's order;
@@ -107,14 +107,14 @@ After every phase, an independent fresh-context reviewer verifies it, and the im
     - "over 64 KiB" makes a command unavailable.
   - `resolve(catalogue, text) -> Option<(Command, input)>`: the first word `/<name>`; the first in the list wins.
   - `instructions(cmd, input) -> String`: the body (TOML `prompt`), with `$ARGUMENTS` and `{{args}}` replaced, or the input appended under "The engineer's input:". Frontmatter is never included.
-- [ ] T008 [P] [US1] In `src/agent/prompts.rs`, add `command: Option<CommandUse>` to `LeadTurn`. `CommandUse` is either a `Step { step, path, input }` or a `Project { name, source, instructions }`. Write the two blocks of contracts/web-api.md "Commands" before "The engineer says:", with the input and the instructions quoted with `> `. Unit tests on the exact text.
-- [ ] T009 [US1] In `src/studio/mod.rs` `say()`:
+- [X] T008 [P] [US1] In `src/agent/prompts.rs`, add `command: Option<CommandUse>` to `LeadTurn`. `CommandUse` is either a `Step { step, path, input }` or a `Project { name, source, instructions }`. Write the two blocks of contracts/web-api.md "Commands" before "The engineer says:", with the input and the instructions quoted with `> `. Unit tests on the exact text.
+- [X] T009 [US1] In `src/studio/mod.rs` `say()`:
   - Compute the catalogue for the conversation; when `resolve` finds a command, fill `LeadTurn.command`.
   - Keep `said` as typed.
   - In a project conversation, `/specify <title>` calls `new_feature(project, title, None)` (the project's default lead, T004), then `say(new_conv, "/specify <title>")`, and answers `{feature, conversation}`; an empty title gives "Give the feature a name: /specify <name>".
   - Add `Req::Commands { conv }` and handle it in `src/run/engine.rs`.
   - Add the route `GET /api/conversations/<c>/commands` in `src/service/http.rs` `studio_route`.
-- [ ] T010 [US1] Build the menu in `src/service/web/app.js`, per contracts/page.md "The `/` menu":
+- [X] T010 [US1] Build the menu in `src/service/web/app.js`, per contracts/page.md "The `/` menu":
   - The `#say` box becomes a combobox while its text matches `^/\S*$`.
   - A `#cmd-menu` listbox shows the groups "Spec Kit steps", "Fallow actions", "Agents" and "Project commands" (`role="group"` with `aria-labelledby`). Options carry ids for `aria-activedescendant`.
   - A `role="status"` line gives the count.
@@ -129,13 +129,13 @@ After every phase, an independent fresh-context reviewer verifies it, and the im
   - Agents come from `/api/agents?project=<p>`, grouped with their kind. Picking one opens `#/agents/<p>/<name>`; a lead's picking behaviour is wired in T019.
   - Fallow actions come from `Fallow.actions(c)`, which screens provide (T011).
   - Add the styles in `src/service/web/app.css` (no inline `style=`; the CSP test must pass).
-- [ ] T011 [US1] Provide `actions(c)` for the menu:
+- [X] T011 [US1] Provide `actions(c)` for the menu:
   - in `src/service/web/screens/spec.js`: Lock the spec (unavailable with the stepper's "Not ready to lock: …" reason), Open spec.md / plan.md / tasks.md (unavailable before the file exists), Go to the loop (unavailable without a loop);
   - in `src/service/web/screens/project.js`: New feature (focus `#feature-title`), and Lock unavailable with "Open a feature's spec session to lock it";
   - shared in app.js: Cancel the answer (unavailable when not busy), Expand / Narrow the chat, and Files (opens the project page's Files tab, or the drawer in a spec session, once US5 is built; until then it is listed unavailable with "Coming with the file views").
 
   Each calls the same handler as its button, including its confirmations. In project.js, when `say` answers `{feature, conversation}`, open `#/p/<p>/f/<feature>`.
-- [ ] T012 [US1] Check the menu with headless Chrome on the demo service (the scenario gets steps whose `when` matches the step prompts). Test by keyboard only:
+- [X] T012 [US1] Check the menu with headless Chrome on the demo service (the scenario gets steps whose `when` matches the step prompts). Test by keyboard only:
   - `/pl` Enter Enter sends `/plan`;
   - Escape keeps the text;
   - Lock is greyed out with its reason;
@@ -157,7 +157,7 @@ After every phase, an independent fresh-context reviewer verifies it, and the im
 
 ### Tests for User Story 2
 
-- [ ] T013 [P] [US2] Write `tests/us9_leads.rs`, using T001's `second_lead`:
+- [X] T013 [P] [US2] Write `tests/us9_leads.rs`, using T001's `second_lead`:
   - `PatchProject {lead}`:
     - refused for an unknown name and for a non-lead agent;
     - refused for a lead whose runtime is not installed;
@@ -187,20 +187,20 @@ After every phase, an independent fresh-context reviewer verifies it, and the im
 
 ### Implementation for User Story 2
 
-- [ ] T014 [US2] In `src/studio/mod.rs` `say()`:
+- [X] T014 [US2] In `src/studio/mod.rs` `say()`:
   - Look up `state.lead.unwrap_or("lead")` instead of `"lead"`, and refuse with the problem when it is gone, not kind Lead, or its runtime is not available (FR-019).
   - Record `runtime`, `model` and `new_session` on `TurnStarted`.
   - Start `Session::New` when the definition's runtime or model differs from `lead_runtime`/`lead_model` (FR-019a).
   - Fork the parent's session only when the parent conversation's lead, runtime and model are the same; otherwise start a new session.
   - The "first message" test counts only turns that were not withdrawn.
   - Label the lead's messages with the session's lead name (`messages()` in `src/service/web/app.js` uses `c.lead.name` instead of the word "lead").
-- [ ] T015 [US2] Add `Req::SetLead { conv, lead }`, which appends `LeadSet` when the lead is not fixed (`State::lead_fixed()`), the conversation is not busy, and the lead is an available Lead. Otherwise refuse with "A session keeps its lead; start a new feature or session to use another", "Wait until the lead has answered", or the availability reason. Route `POST /api/conversations/<c>/lead`. Give `Req::NewFeature` an optional `lead`, taken from the body of `POST /api/projects/<p>/features`. Files: `src/studio/mod.rs`, `src/run/engine.rs`, `src/service/http.rs`.
-- [ ] T016 [US2] In `src/studio/conv.rs` `view()`, add:
+- [X] T015 [US2] Add `Req::SetLead { conv, lead }`, which appends `LeadSet` when the lead is not fixed (`State::lead_fixed()`), the conversation is not busy, and the lead is an available Lead. Otherwise refuse with "A session keeps its lead; start a new feature or session to use another", "Wait until the lead has answered", or the availability reason. Route `POST /api/conversations/<c>/lead`. Give `Req::NewFeature` an optional `lead`, taken from the body of `POST /api/projects/<p>/features`. Files: `src/studio/mod.rs`, `src/run/engine.rs`, `src/service/http.rs`.
+- [X] T016 [US2] In `src/studio/conv.rs` `view()`, add:
   - `lead: {name, runtime, model, fixed, changed, problem?}`;
   - `leads: [{name, runtime, model, available, reason?}]` for every Lead agent of the project's library, with availability from `agent::registry::runtime`.
 
   Rules as in data-model.md "Derived in the view".
-- [ ] T017 [US2] In `src/run/questions.rs`:
+- [X] T017 [US2] In `src/run/questions.rs`:
   - add `agent: String` to `Lead`;
   - fill it in `Studio::lead_of` from the feature's spec session (`src/studio/mod.rs`); `lead_of` gives `session: None` when the lead's definition no longer runs on the session's `lead_runtime`/`lead_model` (research R-12);
   - look up `lib.agent(&lead.agent)` in `start_lead`. When it is gone, the question goes to the engineer with the reason, as when the lead cannot answer today;
@@ -208,18 +208,18 @@ After every phase, an independent fresh-context reviewer verifies it, and the im
   - the overrule check (~line 896, `entry.by == Some("lead")`) uses `by_lead`, so the engineer can overrule any lead's answer (constitution II).
 
   In `src/run/activity.rs`, replace the `by == "lead"` checks (lines ~220-234, ~733) with `by_lead`. In `src/service/web/screens/loop.js`, show "<name> answered" for `by_lead` (replacing `q.by === "lead"`, ~line 466), and replace `e.agent === "lead"` (~line 274) with the feed entry's lead flag.
-- [ ] T018 [P] [US2] On the Agents tab (`src/service/web/screens/agents.js`), give a Lead agent:
+- [X] T018 [P] [US2] On the Agents tab (`src/service/web/screens/agents.js`), give a Lead agent:
   - "Use for this project" (`PATCH /api/projects/<p>` `{lead}`), disabled with the reason when its runtime is not available;
   - a "this project's lead" pill.
 
   Show the project's `lead.problem` on the project page.
-- [ ] T019 [US2] Show the lead in the chat heads of `src/service/web/screens/project.js` and `spec.js`, through a shared `leadHead(c)` in `app.js`: "Lead: <name> · <runtime> · <model>".
+- [X] T019 [US2] Show the lead in the chat heads of `src/service/web/screens/project.js` and `spec.js`, through a shared `leadHead(c)` in `app.js`: "Lead: <name> · <runtime> · <model>".
   - Before the session's lead is fixed, the name is a button opening a picker: available leads can be chosen, unavailable ones are greyed out with the reason. Choosing calls `POST …/lead`.
   - After it is fixed, the name is plain text, titled "A session keeps its lead".
   - `lead.changed` shows its notice above the box; `lead.problem` shows the reason and disables the box.
   - "+ New feature" gets a lead select, defaulting to the project's lead.
   - In the menu (T010), picking a lead before the lead is fixed sets it, and afterwards opens it in Agents. "Choose the lead" in Fallow actions opens the picker (unavailable when fixed).
-- [ ] T020 [US2] Check with headless Chrome on the demo service with a second lead:
+- [X] T020 [US2] Check with headless Chrome on the demo service with a second lead:
   - the head, the picker, the refusal after the first message, the changed-model notice;
   - "Use for this project";
   - "careful-lead answered" in a loop's feed.
@@ -236,14 +236,14 @@ After every phase, an independent fresh-context reviewer verifies it, and the im
 
 **Independent Test**: while a fake turn sleeps, the `#working` element is visible, and it is the same DOM node across three live updates. Under emulated `prefers-reduced-motion: reduce`, its computed `animation-name` is `none`.
 
-- [ ] T021 [US3] In `src/service/web/app.js`:
+- [X] T021 [US3] In `src/service/web/app.js`:
   - wrap the messages in `#chat-list` inside `#chat`, and re-render only `#chat-list` in `project.js` and `spec.js`;
   - add `#working` (`role="status"`: three `span.dot` and "The lead is answering…") after `#chat-list`;
   - show it in `sendSay` as soon as the message is sent (before the request returns), hide it again if the send is refused, and otherwise show or hide it in `syncComposer` from `c.busy`;
   - remove the `.typing` span from `messages()`, keeping "working" in the meta line.
 
   In `src/service/web/app.css`, add the dots, with the animation only under `@media (prefers-reduced-motion: no-preference)` (research R-6). Scroll-to-end keeps `#working` in view.
-- [ ] T022 [US3] Check with headless Chrome:
+- [X] T022 [US3] Check with headless Chrome:
   - shown before the `say` request returns (hold the request back with CDP `Fetch` interception);
   - node identity across updates;
   - the animation under no preference, none under reduce (`Emulation.setEmulatedMedia`);
@@ -259,19 +259,19 @@ After every phase, an independent fresh-context reviewer verifies it, and the im
 
 **Independent Test**: with an agent changed, every route of quickstart Q4 asks. Staying keeps the address, the selection and the text; leaving goes where the engineer asked.
 
-- [ ] T023 [US4] In `src/service/web/app.js`:
+- [X] T023 [US4] In `src/service/web/app.js`:
   - keep `lastHash` at every shown address;
   - on `hashchange`, when the current screen's `dirty?.()` is true and the new route leaves the screen (another screen, or a project the screen's `update()` would not take), put the old address back without rewriting the history: for a link or a `location.hash` write with `history.replaceState(lastHash)`, for Back or Forward with `history.go(+1)` or `history.go(-1)` (the router keeps a position counter in `history.state` to tell which), ignoring the `hashchange` this causes; then `confirm({title: "Leave your changes?", …, ok: "Leave them"})`. On yes, mark the screen as leaving and set `location.hash` to the asked address; on no, stay.
   - A save under way finishes (or fails) before the screen is asked whether it is dirty.
   - Add a `beforeunload` listener that calls `preventDefault()` (and sets `returnValue`) while the current screen is dirty.
   - The screens' own `update()` guards stay for changes within a screen.
-- [ ] T024 [US4] Expose `dirty()`:
+- [X] T024 [US4] Expose `dirty()`:
   - `src/service/web/screens/agents.js`: the existing function;
   - `src/service/web/screens/pipelines.js`: `() => s.dirty`;
   - `src/service/web/screens/spec.js`: the editor is open and its text differs from `doc.text`.
 
   In spec.js, "Cancel" of an edit with changes also asks "Leave your unsaved edit?".
-- [ ] T025 [US4] Check with headless Chrome, for an unsaved agent, pipeline and spec document:
+- [X] T025 [US4] Check with headless Chrome, for an unsaved agent, pipeline and spec document:
   - the nav links, a project link, Back, a feature link, and `location.hash` from code all ask;
   - staying keeps the address and the text, and after staying on Back, Back and Forward still lead where they did before (the history is not rewritten);
   - leaving right after Save (while it is under way) does not ask once the save succeeded;
@@ -294,7 +294,7 @@ After every phase, an independent fresh-context reviewer verifies it, and the im
 
 ### Tests for User Story 5
 
-- [ ] T026 [P] [US5] Write `tests/us9_files.rs`:
+- [X] T026 [P] [US5] Write `tests/us9_files.rs`:
   - Versions:
     - `folder` first;
     - a feature with only a spec session is `kind: spec`;
@@ -332,36 +332,36 @@ After every phase, an independent fresh-context reviewer verifies it, and the im
 
 ### Implementation for User Story 5
 
-- [ ] T027 [P] [US5] Create `src/studio/files.rs`, with unit tests:
+- [X] T027 [P] [US5] Create `src/studio/files.rs`, with unit tests:
   - `safe_path(root, rel)`: relative, with no `..`, `\`, drive or leading `/`; canonicalized under the canonical root; not a symlink.
   - `is_secret(path)` per research R-8's list.
   - `versions(p, features, runs)`: the `folder` version, then per feature the loop's `wt/build` if it exists, else the spec conversation's workdir, else the branch if it exists (`kind: branch`); a feature with none of these is left out. The base is `git::merge_base` with `feature.base_branch`.
-- [ ] T028 [US5] In `src/studio/files.rs`, implement `entries(version)` with T002's `listed` and `name_status` (a walk for plain folders, skipping `.git` and `git::CACHES`), with `spec` and `secret` and a `fingerprint` (a hash of paths and marks); a `branch` version uses `git::files_at(branch)` and `git diff --name-status <base> <branch>`, and its files `git::show(branch, path)`. Then implement `file(version, path, view)`:
+- [X] T028 [US5] In `src/studio/files.rs`, implement `entries(version)` with T002's `listed` and `name_status` (a walk for plain folders, skipping `.git` and `git::CACHES`), with `spec` and `secret` and a `fingerprint` (a hash of paths and marks); a `branch` version uses `git::files_at(branch)` and `git diff --name-status <base> <branch>`, and its files `git::show(branch, path)`. Then implement `file(version, path, view)`:
   - text up to 512 KiB with `cut`;
   - binary when there is a NUL in the first 8 KiB;
   - `secret` without reading the file;
   - deleted files via `git::show(base, path)`;
   - `added` from `added_ranges`, and `changes` from `diff_worktree`;
   - `last`: parse `last_change`'s subject `^(\w+) (T\d+|[\w-]+):` and body `Fallow loop r(\d+), step (\d+)`, then map the step to its agent definition through the run's state (`steps[n].def`); a spec session's commit is the session's lead name. While the loop runs and the file differs from its last commit, `live: true` with the agent at work.
-- [ ] T029 [US5] In `src/studio/files.rs`, implement the editor (research R-10):
+- [X] T029 [US5] In `src/studio/files.rs`, implement the editor (research R-10):
   - `prefs.json` in the data directory, read and written atomically, holding `editor: {program, args}`;
   - `parse_command(text) -> (program, args)`: split on spaces with double quotes grouping, never through a shell; the program must exist (on `PATH` or as a full path) when saved;
   - `found_editors()`: R-10's names on `PATH`, plus their usual install folders on Windows (`%LOCALAPPDATA%\Programs\Microsoft VS Code\bin\code.cmd` and similar);
   - `open(path, editor)`: starts the program directly with `args` and then the absolute path as the last argument. A `.cmd` or `.bat` launcher runs through `cmd /c` with every argument quoted, and paths or arguments containing `"%^&|<>` are refused there. It never opens the file by its type;
   - `set_editor` / `clear_editor`.
-- [ ] T030 [US5] Add `Req::FileVersions`, `Req::Files`, `Req::File` and `Req::OpenFile` in `src/studio/mod.rs`, handle them in `src/run/engine.rs`, and route them in `src/service/http.rs` per contracts/web-api.md "Files":
+- [X] T030 [US5] Add `Req::FileVersions`, `Req::Files`, `Req::File` and `Req::OpenFile` in `src/studio/mod.rs`, handle them in `src/run/engine.rs`, and route them in `src/service/http.rs` per contracts/web-api.md "Files":
   - `GET /api/projects/<p>/files/versions`
   - `GET /api/projects/<p>/files?version=`
   - `GET /api/projects/<p>/file?version=&path=&view=`
   - `POST /api/files/open`
   - `GET` and `POST /api/files/editor`
-- [ ] T031 [US5] Implement `@` references in `say()`:
+- [X] T031 [US5] Implement `@` references in `say()`:
   - find `@<path>` tokens, with an optional `(on <feature>)` after them;
   - read each through `files::file` (secret: name only; over 64 KiB: the beginning, marked as cut);
   - pass them as `LeadTurn.refs`.
 
   In `src/agent/prompts.rs`, write the "The engineer refers to these files:" block (contracts/web-api.md), with unit tests.
-- [ ] T032 [US5] Create `src/service/web/screens/files.js`: a component `Fallow.files.mount(el, {project, version, mode})` with:
+- [X] T032 [US5] Create `src/service/web/screens/files.js`: a component `Fallow.files.mount(el, {project, version, mode})` with:
   - the version picker, the filter and "Only changed";
   - the tree (`role="tree"`, ↑↓→← and Enter) with the marks M/A/D, "spec" and a lock;
   - the file view: a header with the mark and "by <who> in <task>", Changes / Whole file, line numbers with added lines highlighted, and nothing editable;
@@ -370,20 +370,20 @@ After every phase, an independent fresh-context reviewer verifies it, and the im
   - "Editor: <program> · change" once an editor is saved, which opens the same choice as the first time, with "Remove".
 
   Add it to `SCREENS` in `src/service/http.rs` and to `src/service/web/index.html`, and add its styles to `app.css`, following `mockup/files.html`.
-- [ ] T033 [US5] In `src/service/web/screens/project.js`:
+- [X] T033 [US5] In `src/service/web/screens/project.js`:
   - the left column's tabs Features / Files (`role="tablist"`);
   - an open file takes the chat column's place, with "Changes vs <base>", "Ask the lead about it" (back to the chat with `@<path> (on <feature>) ` in the box), "Open in my editor" and "← Conversation";
   - the route `#/p/<p>/files?v=<version>&f=<path>` in `app.js` `route()`.
 
   "Open in my editor" posts `/api/files/open`. On `choose`, it asks with `confirm()`: the found editors as choices, or an input for a command. It then posts again with the chosen `editor`, or with `command` (the text the engineer typed, which the server splits). Declining shows the file's absolute `path`, selected, to copy. A secret file's view offers only that button.
-- [ ] T034 [US5] Add the Files drawer:
+- [X] T034 [US5] Add the Files drawer:
   - in `src/service/web/screens/loop.js`: a "Files" button in the header;
     - B1: a narrow drawer in place of the side column, with "Changed · n" / "All files" and "Open full";
     - B2: opening a file widens it over the agent cards and the feed, keeping the header and the task tree, with "← Back to the loop";
   - in `src/service/web/screens/spec.js`: the same drawer next to the documents, widening over them.
 
   "Ask the lead" from the loop page goes to the project conversation (clarify answer 2); from the spec session's drawer it goes into that spec session's own message box (decided at analyze). The loop page's `render()` keeps the drawer's state across live updates.
-- [ ] T035 [US5] Check with headless Chrome on the demo service with a running loop:
+- [X] T035 [US5] Check with headless Chrome on the demo service with a running loop:
   - the tab, versions, marks, filter, "Only changed", the open file and its live refresh (every 3 s, only while visible);
   - a secret's view;
   - "Ask the lead" prefill;
@@ -399,15 +399,15 @@ After every phase, an independent fresh-context reviewer verifies it, and the im
 
 ## Phase 8: Polish & Cross-Cutting Concerns
 
-- [ ] T036 Adjust 007/008 tests that assert `by == "lead"`, the conversation view's keys, or the chat's `.typing` text, and run the whole suite (`cargo test --test-threads=2`). Every test passes.
-- [ ] T037 [P] Update `specs/007-fallow-studio/contracts/web-api.md` with rows pointing to 009's contracts for the new and changed endpoints.
-- [ ] T038 Visual check:
+- [X] T036 Adjust 007/008 tests that assert `by == "lead"`, the conversation view's keys, or the chat's `.typing` text, and run the whole suite (`cargo test --test-threads=2`). Every test passes.
+- [X] T037 [P] Update `specs/007-fallow-studio/contracts/web-api.md` with rows pointing to 009's contracts for the new and changed endpoints.
+- [X] T038 Visual check:
   - the project page's Files tab and the loop page's drawer (B1 and B2) against `mockup/files.html`, and the menu, lead head and indicator for consistency with 008's look;
   - at 1440 px and 390 px, nothing scrolls sideways at 390 px;
   - screenshots in `specs/009-chat-commands-leads/checks/`.
 
   Fix what differs.
-- [ ] T039 Whole-change review by an independent fresh-context reviewer against the spec, plan, contracts and constitution, especially V (secrets, nothing outside the project) and VI (no rights from project commands, the editor never "opens by type"). Fix the confirmed findings and run the suite again.
+- [X] T039 Whole-change review by an independent fresh-context reviewer against the spec, plan, contracts and constitution, especially V (secrets, nothing outside the project) and VI (no rights from project commands, the editor never "opens by type"). Fix the confirmed findings and run the suite again.
 - [ ] T040 Real-agent validation with `claude` (Sonnet) in `C:\Repos\FallowSandbox`, with the budget agreed with the engineer before starting:
   - quickstart Q1 steps 2 and 5 (a `/plan` and a project command);
   - Q2 steps 1 and 5 (a second lead answering in its session and a loop question);

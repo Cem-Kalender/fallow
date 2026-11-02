@@ -92,6 +92,7 @@ output = { reply = "I saw your edit.", step = "clarify" }
         Req::NewFeature {
             project: project.clone(),
             title: "Cart".into(),
+            lead: None,
         },
     )
     .unwrap();
@@ -305,6 +306,7 @@ output = { reply = "Still here.", step = "none" }
         Req::NewFeature {
             project,
             title: "Cart".into(),
+            lead: None,
         },
     )
     .unwrap();

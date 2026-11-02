@@ -587,6 +587,7 @@ fn a_pipeline_the_lead_proposes_is_used_only_once_saved() {
         Req::NewFeature {
             project: p.clone(),
             title: "Calc".into(),
+            lead: None,
         },
     )
     .unwrap();

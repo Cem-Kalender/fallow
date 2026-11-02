@@ -127,7 +127,12 @@ const Fallow = (() => {
   // `#/pipelines[/<project>[/<pipeline>]]`, `#/agents[/<project>[/<agent>]]` (`_`: no project),
   // `#/specs`, `#/loops`, `#/data`.
   function route() {
-    const parts = (location.hash.replace(/^#\/?/, "") || "").split("/").filter(Boolean).map(decodeURIComponent);
+    const [path, query] = (location.hash.replace(/^#\/?/, "") || "").split("?");
+    const parts = path.split("/").filter(Boolean).map(decodeURIComponent);
+    if (parts[0] === "p" && parts[1] && parts[2] === "files") {
+      const q = new URLSearchParams(query || "");
+      return { screen: "project", nav: "dashboard", project: parts[1], files: { v: q.get("v") || "folder", f: q.get("f") || null } };
+    }
     if (parts[0] === "p" && parts[1]) {
       if (parts[2] === "f" && parts[3]) {
         if (parts[4] === "loop") return { screen: "loop", nav: "loop", project: parts[1], feature: parts[3] };
@@ -204,14 +209,110 @@ const Fallow = (() => {
     } catch (_) { /* the dashboard API arrives with US1 and US5 */ }
   }
 
+  // ---- 009 US4: leaving with unsaved changes ----------------------------------------------
+  // A screen with an editor says whether it holds unsaved changes (`dirty()`) and whether a save
+  // is under way (`saving()`, a promise). Every way of leaving it goes through here: links, the
+  // navigation, Back and Forward, and `location.hash` from code. The old address comes back
+  // without rewriting the history, then "Leave your changes?" asks before going.
+  let lastHash = ""; // set when the page starts
+  let lastPos = 0;
+  let ignoreHash = null; // the address the guard itself goes back to
+  let forced = false; // the engineer chose to leave: the next address change is not asked about
+  let asking = false;
+
+  // Each history entry Fallow shows is numbered, so Back and Forward can be undone exactly.
+  function stamp() {
+    const st = history.state;
+    if (st && typeof st.fallowPos === "number") lastPos = st.fallowPos;
+    else {
+      lastPos += 1;
+      history.replaceState({ ...(st || {}), fallowPos: lastPos }, "");
+    }
+    lastHash = location.hash;
+  }
+
+  // Whether the current screen follows `r` itself (and guards its own changes, as the agents
+  // and pipelines screens do for another agent or pipeline).
+  function stays(r) {
+    const same = screens[r.screen];
+    return !!(same && current === same && same.update && (!same.takes || same.takes(r)));
+  }
+
+  // Puts the old address back after an address change: Back and Forward are undone exactly, a
+  // link or a `location.hash` write by stepping back to the entry before it.
+  function undo() {
+    const st = history.state;
+    const pos = st && typeof st.fallowPos === "number" ? st.fallowPos : null;
+    ignoreHash = lastHash;
+    if (pos === null) history.back();
+    else if (pos !== lastPos) history.go(lastPos - pos);
+    else { history.replaceState(st, "", lastHash); ignoreHash = null; }
+    return pos;
+  }
+
+  async function onHash() {
+    // The guard's own step back: whatever it lands on, it is not asked about again.
+    if (ignoreHash !== null) {
+      const mine = location.hash === ignoreHash;
+      ignoreHash = null;
+      if (mine) return;
+    }
+    // Another change while "Leave your changes?" is open: undone too, the question stands.
+    if (asking) {
+      undo();
+      return;
+    }
+    // A screen asking its own "Leave your changes?" (agents, pipelines): any other change waits.
+    if (current && current.confirming && current.confirming()) {
+      undo();
+      return;
+    }
+    const r = route();
+    if (!forced && current && current.dirty && !stays(r)) {
+      if (current.saving && current.saving()) {
+        try { await current.saving(); } catch (_) { /* the save failed: the changes are still there */ }
+      }
+      if (current.dirty()) {
+        const want = location.hash;
+        const pos = undo();
+        asking = true;
+        const ok = await confirm({ title: "Leave your changes?", text: "What you changed here is not saved. Leaving drops it.", ok: "Leave them" });
+        asking = false;
+        if (!ok) return;
+        forced = true;
+        if (pos === null || pos === lastPos) location.hash = want;
+        else history.go(pos - lastPos);
+        return;
+      }
+    }
+    forced = false;
+    show();
+    stamp();
+  }
+
+  // A screen that already asked "Leave your changes?" itself, before it goes (009).
+  function leaveAsked() { forced = true; }
+  // A screen that put its own address back (its own question, answered "stay"): the guard
+  // keeps that address as the one shown.
+  function restamp() { lastHash = location.hash; }
+
+  // Closing or reloading the window: the browser's own prompt (FR-025).
+  window.addEventListener("beforeunload", (ev) => {
+    if (current && current.dirty && current.dirty()) {
+      ev.preventDefault();
+      ev.returnValue = "";
+    }
+  });
+
   function start() {
     delegate("click");
     delegate("change");
     delegate("input");
-    window.addEventListener("hashchange", show);
+    window.addEventListener("hashchange", onHash);
     header();
     headerWatch = watch("global", () => header());
     show();
+    stamp();
   }
 
   const money = (v) => (typeof v === "number" ? `$${v.toFixed(2)}` : "cost not reported");
@@ -368,11 +469,11 @@ const Fallow = (() => {
       const r = t.result || {};
       if (t.reply === null || t.reply === undefined) {
         const reads = filesRead(c.activity);
-        out.push(leadMsg(h`<b>lead</b> · working`, c.live ? md(c.live) : h`<span class="typing">The lead is answering…</span>`,
+        out.push(leadMsg(h`<b>${leadName(c)}</b> · working`, c.live ? md(c.live) : raw(""),
           reads.length ? h`<div class="act small mt-6">${icon.file} Read ${reads.slice(0, 6).join(" · ")}</div>` : ""));
         return;
       }
-      const meta = [h`<b>lead</b>`];
+      const meta = [h`<b>${leadName(c)}</b>`];
       if (r.step && r.step !== "none") meta.push(raw(` · ran /speckit-${esc(r.step)}`));
       const extras = [];
       const reads = [...new Set([...(last ? filesRead(c.activity) : []), ...(r.files_read || [])])];
@@ -400,6 +501,47 @@ const Fallow = (() => {
     return out;
   }
 
+  // 009 US2: the session's lead in the chat head. Before the first message the name opens a
+  // picker of the project's leads; from then on the session keeps it.
+  const leadName = (c) => (c && c.lead && c.lead.name) || "lead";
+  function leadHead(c) {
+    const l = c && c.lead;
+    if (!l) return h`<span class="small muted">· lead</span>`;
+    const meta = [l.runtime, l.model].filter(Boolean).join(" · ");
+    const name = !l.fixed && !l.problem
+      ? h`<button class="linkish b" data-act="lead-pick" aria-expanded="false" aria-controls="lead-picker" title="Choose the lead for this session">${l.name}</button>`
+      : h`<b title="A session keeps its lead">${l.name}</b>`;
+    return h`<span class="small">Lead: ${name}${meta ? h` <span class="muted">· ${meta}</span>` : ""}</span>`;
+  }
+  function leadNotice(c) {
+    const l = c && c.lead;
+    if (!l) return raw("");
+    if (l.problem) return h`<div class="notice" role="alert">${l.problem}. This session cannot go on with it; start a new feature or session to use another lead.</div>`;
+    if (l.changed) return h`<div class="notice">${l.name}'s runtime or model changed since this session started: your next message starts a new session with it.</div>`;
+    return raw("");
+  }
+  function leadPicker(c) {
+    const leads = (c && c.leads) || [];
+    return h`<div class="lead-picker" id="lead-picker" role="group" aria-label="Choose the lead">${leads.map((l) => h`<button class="btn btn2 xs${l.name === leadName(c) ? " on" : ""}" data-act="lead-set" data-lead="${l.name}"${raw(l.available ? "" : ` disabled title="${esc(l.reason || "not available")}"`)}>${l.name}<span class="tiny muted"> · ${[l.runtime, l.model].filter(Boolean).join(" · ")}${l.available ? "" : " · not available"}</span></button>`)}</div>`;
+  }
+
+  // 009 US3: the moving dots while the lead answers. They sit after the message list, which is
+  // drawn again on every update, so they are never re-created and their motion never restarts.
+  function working(c) {
+    const busy = !!(c && c.busy);
+    return h`<div id="working" class="working${busy ? " on" : ""}" role="status"><span class="dots" aria-hidden="true"><span></span><span></span><span></span></span><span class="wtext">${busy ? "The lead is answering…" : ""}</span></div>`;
+  }
+  // The live region stays in the page, so a screen reader hears it when its text comes.
+  function showWorking(on) {
+    const w = document.getElementById("working");
+    if (!w || w.classList.contains("on") === on) return;
+    w.classList.toggle("on", on);
+    // The text changes as it shows, so a screen reader says it once.
+    w.querySelector(".wtext").textContent = on ? "The lead is answering…" : "";
+    const chat = document.getElementById("chat");
+    if (on && chat && atEnd(chat)) chat.scrollTop = chat.scrollHeight;
+  }
+
   const chipInner = (mode) => h`${icon.shield}${MODE_LABEL[mode]}<span class="hint">· Shift+Tab</span>`;
 
   // Updates the mode chip and the send button in place, so focus stays where it is (FR-032).
@@ -410,6 +552,14 @@ const Fallow = (() => {
       chip.dataset.mode = c.mode;
       chip.setAttribute("aria-label", `Mode: ${MODE_LABEL[c.mode]}. Shift+Tab switches it.`);
     }
+    // 009: the lead's head, its notice, and a box closed while the lead cannot answer.
+    const head = document.getElementById("lead-head");
+    if (head && !document.getElementById("lead-picker")) head.innerHTML = leadHead(c).s;
+    const notice = document.getElementById("lead-notice");
+    if (notice) notice.innerHTML = leadNotice(c).s;
+    const say = document.getElementById("say");
+    if (say) say.disabled = !!(c.lead && c.lead.problem);
+    showWorking(!!c.busy);
     const send = document.querySelector(".composer .send-btn");
     const want = sendKind(c);
     if (send && send.dataset.kind !== want) {
@@ -437,7 +587,7 @@ const Fallow = (() => {
     return h`<form class="composer" data-submit="say">
       <div class="cbox">
         <label for="say" class="sr">Message the lead</label>
-        <textarea id="say" rows="2" placeholder="${placeholder}"></textarea>
+        <textarea id="say" rows="2" placeholder="${placeholder}"${raw(c && c.lead && c.lead.problem ? " disabled" : "")}></textarea>
         <div class="cbar">
           <button type="button" class="mode-chip" data-act="mode" data-mode="${mode}" title="Shift+Tab switches the mode" aria-label="${`Mode: ${MODE_LABEL[mode]}. Shift+Tab switches it.`}">${chipInner(mode)}</button>
           <span class="grow"></span>
@@ -481,6 +631,31 @@ const Fallow = (() => {
       try { localStorage.setItem(`fallow.chatWide.${el.dataset.screen}`, wide ? "1" : "0"); } catch { /* kept for this view only */ }
       el.textContent = wide ? "Show the side panels" : "Expand";
       el.setAttribute("aria-pressed", wide ? "true" : "false");
+      return true;
+    }
+    // 009 US2: the lead picker, before the session's first message.
+    if (name === "lead-pick") {
+      const open = document.getElementById("lead-picker");
+      if (open) {
+        open.remove();
+        el.setAttribute("aria-expanded", "false");
+        return true;
+      }
+      const v = await get(`/api/conversations/${conv}`);
+      el.setAttribute("aria-expanded", "true");
+      el.closest("#lead-head").insertAdjacentHTML("beforeend", leadPicker(v).s);
+      const first = document.querySelector("#lead-picker button:not([disabled])");
+      if (first) first.focus();
+      return true;
+    }
+    if (name === "lead-set") {
+      try { await post(`/api/conversations/${conv}/lead`, { lead: el.dataset.lead }); } catch (e) { alertLine(e.message); }
+      const p = document.getElementById("lead-picker");
+      if (p) p.remove();
+      await after();
+      // Back to the lead's name, or the message box once the name is plain.
+      const back = document.querySelector("[data-act=lead-pick]") || document.getElementById("say");
+      if (back) back.focus();
       return true;
     }
     if (name === "mode") {
@@ -546,11 +721,28 @@ const Fallow = (() => {
     const box = document.getElementById("say");
     const text = box ? box.value.trim() : "";
     if (!text) return;
+    // Shown as the message is sent, before Fallow answers (SC-006).
+    showWorking(true);
     try {
-      await post(`/api/conversations/${conv}/say`, { text });
+      const out = await post(`/api/conversations/${conv}/say`, { text });
       box.value = "";
       box.style.height = "";
-    } catch (e) { alertLine(e.message); }
+      // `/specify <title>` in the project conversation started a feature (009): open it.
+      if (out && out.feature && out.conversation) {
+        const r = route();
+        if (r.project) {
+          location.hash = `#/p/${encodeURIComponent(r.project)}/f/${encodeURIComponent(out.feature)}`;
+          // Shown on the new feature's page, once it is there.
+          if (out.warning) {
+            try { sessionStorage.setItem("fallow.alert", out.warning); } catch (_) { /* not kept */ }
+          }
+          return;
+        }
+      }
+    } catch (e) {
+      showWorking(false);
+      alertLine(e.message);
+    }
     after();
   }
 
@@ -577,6 +769,14 @@ const Fallow = (() => {
   });
 
   document.addEventListener("keydown", (ev) => {
+    // Escape closes the lead picker and goes back to its button.
+    if (ev.key === "Escape" && ev.target && ev.target.closest && ev.target.closest("#lead-picker")) {
+      ev.preventDefault();
+      document.getElementById("lead-picker").remove();
+      const b = document.querySelector("[data-act=lead-pick]");
+      if (b) { b.setAttribute("aria-expanded", "false"); b.focus(); }
+      return;
+    }
     if (ev.key === "Tab" && ev.shiftKey && ev.target && ev.target.id === "say") {
       ev.preventDefault();
       const chip = document.querySelector("[data-act=mode]");
@@ -646,7 +846,7 @@ const Fallow = (() => {
   }
 
   return { deleteSession, chatWide, expandBtn, saveFor, scopeOf, esc, h, raw, md, inline, LOGO, icon, api, get, post, watch, live, here, confirm, register, route, show, start, money,
-    MODE_LABEL, messages, composer, syncComposer, chatAct, sendSay, alertLine, atEnd, stagePill, filesRead,
+    MODE_LABEL, messages, composer, syncComposer, chatAct, sendSay, alertLine, atEnd, stagePill, filesRead, leadHead, leadNotice, working, leaveAsked, restamp,
     get headerWatch() { return headerWatch; } };
 
 })();

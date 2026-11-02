@@ -38,7 +38,7 @@
           const sel = a.name === s.agent;
           const n = a.used_by.length;
           return h`<button class="ag-item${sel ? " sel" : ""}" data-act="agent" data-name="${a.name}" aria-pressed="${sel ? "true" : "false"}">
-            <span class="row wrap gap-6"><b>${a.name}</b><span class="pill grey">${SOURCE[a.source] || a.source}</span></span>
+            <span class="row wrap gap-6"><b>${a.name}</b><span class="pill grey">${SOURCE[a.source] || a.source}</span>${isProjectLead(a) ? h`<span class="pill green">this project's lead</span>` : ""}</span>
             <span class="d">${a.description}</span>
             <span class="d mono">${a.runtime}${a.model ? ` · ${a.model}` : ""} · ${n ? `in ${n} pipeline${n === 1 ? "" : "s"}` : "in no pipeline"}${s.runtimes.some((r) => r.name === a.runtime && !r.installed) ? h` <span class="error">· not installed</span>` : ""}</span></button>`;
         })}`;
@@ -74,6 +74,12 @@
       <div class="row wrap gap-8">
         <h1 class="page-title">${name}</h1>
         ${a ? h`<span class="pill grey">${a.kind}</span><span class="pill grey">${SOURCE[a.source] || a.source}</span>` : h`<span class="pill orange">new · not saved</span>`}
+        ${a && a.kind === "lead" && s.project ? (isProjectLead(a)
+          ? h`<span class="pill green">this project's lead</span>`
+          : (() => {
+            const off = s.runtimes.some((r) => r.name === a.runtime && !r.installed);
+            return h`<button class="btn btn2 xs" data-act="use-lead"${raw(off ? ` disabled title="${Fallow.esc(a.runtime)} is not installed"` : ' title="New spec sessions of this project start with this lead"')}>Use for this project</button>`;
+          })()) : ""}
         <span class="grow"></span>
         ${saveFor("ag-scope", s.project, scopeDefault, "agents")}
         <button class="btn" data-act="save">Save</button>
@@ -130,7 +136,14 @@
     s.agents = ag.agents;
     s.problems = ag.problems;
     s.projects = dash.projects || [];
+    // The project's lead (009 US2).
+    s.projectLead = null;
+    if (s.project) {
+      try { s.projectLead = (await get(`/api/projects/${encodeURIComponent(s.project)}`)).lead || null; } catch { s.projectLead = null; }
+    }
   }
+
+  const isProjectLead = (a) => !!(s.projectLead && a.kind === "lead" && s.projectLead.name === a.name);
 
   function pick(name) {
     const a = agentOf(name);
@@ -189,7 +202,14 @@
     }
   }
 
-  async function save() {
+  // A save under way, for the router's guard (009 US4).
+  let savingP = null;
+  function save() {
+    savingP = doSave().finally(() => { savingP = null; });
+    return savingP;
+  }
+
+  async function doSave() {
     const a = agentOf(s.agent);
     const name = s.agent || s.newAgent;
     const scope = Fallow.scopeOf(document.getElementById("ag-scope").value, s.project);
@@ -255,6 +275,13 @@
         pick(s.agent);
         return render();
       case "show-update": s.showUpdate = !s.showUpdate; return render();
+      case "use-lead": {
+        try {
+          await Fallow.api("PATCH", `/api/projects/${encodeURIComponent(s.project)}`, { lead: s.agent });
+          await load();
+        } catch (e) { Fallow.alertLine(e.message); }
+        return render();
+      }
       case "save": return save();
       case "delete-agent": {
         const a = agentOf(s.agent);
@@ -275,6 +302,7 @@
       }
       case "project":
         if (!(await leaveOk())) { el.value = s.project || ""; return; }
+        if (dirty()) Fallow.leaveAsked();
         location.hash = el.value ? `#/agents/${encodeURIComponent(el.value)}` : "#/agents";
         return;
       case "field": {
@@ -312,10 +340,16 @@
       return true;
     }
     // Back or Forward with unsaved edits: they go only when the engineer agrees; if not, the
-    // address shown before comes back (no new navigation).
+    // address shown before comes back (no new navigation). Another change while it asks waits.
+    if (s.confirming) {
+      if (s.here) { history.replaceState(history.state, "", s.here); Fallow.restamp(); }
+      return true;
+    }
+    s.confirming = true;
     leaveOk().then((ok) => {
+      s.confirming = false;
       if (ok) return show();
-      if (s.here) history.replaceState(null, "", s.here);
+      if (s.here) { history.replaceState(history.state, "", s.here); Fallow.restamp(); }
     });
     return true;
   }
@@ -323,6 +357,11 @@
   Fallow.register("agents", {
     enter,
     update,
+    // 009 US4: unsaved changes ask before any way out of the screen.
+    dirty: () => !!(s && s.app && dirty()),
+    confirming: () => !!(s && s.confirming),
+    saving: () => savingP,
+    takes: (r) => !!(s && (r.project || null) === s.project && agentOf(r.agent || "builder")),
     act(name, el, ev) {
       if (ev && ev.type === "input") return;
       return act(name, el);

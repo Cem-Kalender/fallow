@@ -120,6 +120,9 @@ pub struct Project {
     pub conversation: Option<String>,
     #[serde(default)]
     pub features: Vec<Feature>,
+    /// The lead new sessions start with (009); none is the agent named `lead`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lead: Option<String>,
 }
 
 fn standard() -> String {
@@ -323,6 +326,7 @@ impl Store {
             notifications: true,
             conversation: None,
             features: Vec::new(),
+            lead: None,
         };
         self.projects.push(p.clone());
         self.save()?;

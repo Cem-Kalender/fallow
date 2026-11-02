@@ -509,3 +509,338 @@ pub fn origin_url(dir: &Path) -> Option<String> {
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
 }
+
+// ---- 009: read-only views of a working copy or a branch (research R-8) ----------------------
+
+fn git_bytes(dir: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
+    let out = crate::platform::command("git")
+        .current_dir(dir)
+        .args(args)
+        .output()
+        .map_err(|e| format!("git: {e}"))?;
+    if out.status.success() {
+        Ok(out.stdout)
+    } else {
+        Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
+    }
+}
+
+fn nul_list(bytes: &[u8]) -> Vec<String> {
+    bytes
+        .split(|b| *b == 0)
+        .filter(|s| !s.is_empty())
+        .map(|s| String::from_utf8_lossy(s).into_owned())
+        .collect()
+}
+
+/// The files of the working copy `dir` that the project does not ignore: tracked and untracked,
+/// by the project's own ignore rules.
+pub fn listed(dir: &Path) -> Result<Vec<String>, String> {
+    let mut v = nul_list(&git_bytes(
+        dir,
+        &[
+            "ls-files",
+            "-z",
+            "--cached",
+            "--others",
+            "--exclude-standard",
+        ],
+    )?);
+    v.sort();
+    v.dedup();
+    Ok(v)
+}
+
+/// What changed against `base`, as (`A`, `M` or `D`, path): the working tree of `dir` when `to`
+/// is `None` (uncommitted changes and untracked files included), else the commit `to`.
+pub fn name_status(
+    dir: &Path,
+    base: &str,
+    to: Option<&str>,
+) -> Result<Vec<(char, String)>, String> {
+    let mut args = vec!["diff", "--name-status", "--no-renames", "-z", base];
+    if let Some(t) = to {
+        args.push(t);
+    }
+    let parts = nul_list(&git_bytes(dir, &args)?);
+    let mut out = Vec::new();
+    let mut it = parts.into_iter();
+    while let (Some(st), Some(path)) = (it.next(), it.next()) {
+        let c = match st.chars().next() {
+            Some('A') => 'A',
+            Some('D') => 'D',
+            _ => 'M',
+        };
+        out.push((c, path));
+    }
+    if to.is_none() {
+        for p in nul_list(&git_bytes(
+            dir,
+            &["ls-files", "-z", "--others", "--exclude-standard"],
+        )?) {
+            out.push(('A', p));
+        }
+    }
+    out.sort_by(|a, b| a.1.cmp(&b.1));
+    out.dedup_by(|a, b| a.1 == b.1);
+    Ok(out)
+}
+
+/// The last commit after `base` up to `to` (default `HEAD`) that changed `path`: its id,
+/// subject, body and time (seconds since 1970).
+pub fn last_change(
+    dir: &Path,
+    base: &str,
+    to: Option<&str>,
+    path: &str,
+) -> Result<Option<(String, String, String, i64)>, String> {
+    let range = format!("{base}..{}", to.unwrap_or("HEAD"));
+    let out = git(
+        dir,
+        &[
+            "--literal-pathspecs",
+            "log",
+            "-1",
+            "--format=%H%x1f%s%x1f%b%x1f%ct",
+            &range,
+            "--",
+            path,
+        ],
+    )?;
+    let out = out.trim_end();
+    if out.is_empty() {
+        return Ok(None);
+    }
+    let f: Vec<&str> = out.split('\x1f').collect();
+    if f.len() < 4 {
+        return Ok(None);
+    }
+    Ok(Some((
+        f[0].trim().to_string(),
+        f[1].to_string(),
+        f[2].trim().to_string(),
+        f[3].trim().parse().unwrap_or(0),
+    )))
+}
+
+/// The unified diff of `path` against `base`, with `context` lines: the working tree of `dir`
+/// when `to` is `None`, else the commit `to`.
+pub fn diff_path(
+    dir: &Path,
+    base: &str,
+    to: Option<&str>,
+    path: &str,
+    context: u32,
+) -> Result<String, String> {
+    let u = format!("-U{context}");
+    // The path as it is, never a pattern; git's own diff, no tool of the project's.
+    let mut args = vec![
+        "--literal-pathspecs",
+        "diff",
+        "--no-color",
+        "--no-renames",
+        "--no-ext-diff",
+        "--no-textconv",
+        u.as_str(),
+        base,
+    ];
+    if let Some(t) = to {
+        args.push(t);
+    }
+    args.push("--");
+    args.push(path);
+    git(dir, &args)
+}
+
+/// The line ranges (first, last; 1-based, inclusive) of `path` added against `base`.
+pub fn added_ranges(
+    dir: &Path,
+    base: &str,
+    to: Option<&str>,
+    path: &str,
+) -> Result<Vec<(u32, u32)>, String> {
+    let d = diff_path(dir, base, to, path, 0)?;
+    let mut out = Vec::new();
+    for line in d.lines().filter(|l| l.starts_with("@@")) {
+        // "@@ -a,b +c,d @@": the new side is the word that starts with '+'.
+        let Some(plus) = line.split_whitespace().find(|w| w.starts_with('+')) else {
+            continue;
+        };
+        let mut it = plus[1..].split(',');
+        let start: u32 = it.next().and_then(|s| s.parse().ok()).unwrap_or(0);
+        let count: u32 = it.next().map_or(Some(1), |s| s.parse().ok()).unwrap_or(1);
+        if count > 0 && start > 0 {
+            out.push((start, start + count - 1));
+        }
+    }
+    Ok(out)
+}
+
+/// The bytes of `path` at `rev`; `Ok(None)` when `rev` has no such file.
+pub fn show_bytes(dir: &Path, rev: &str, path: &str) -> Result<Option<Vec<u8>>, String> {
+    let spec = format!("{rev}:{path}");
+    let exists = crate::platform::command("git")
+        .current_dir(dir)
+        .args(["cat-file", "-e", &spec])
+        .output()
+        .is_ok_and(|o| o.status.success());
+    if !exists {
+        return Ok(None);
+    }
+    git_bytes(dir, &["show", &spec]).map(Some)
+}
+
+/// Whether `rev` names a commit (a branch, say).
+pub fn rev_exists(dir: &Path, rev: &str) -> bool {
+    let spec = format!("{rev}^{{commit}}");
+    crate::platform::command("git")
+        .current_dir(dir)
+        .args(["rev-parse", "-q", "--verify", &spec])
+        .output()
+        .is_ok_and(|o| o.status.success())
+}
+
+/// For each file changed after `base` up to `to` (default `HEAD`), the last commit that changed
+/// it: its subject and body. One `git log` for the whole list.
+pub fn last_changes(
+    dir: &Path,
+    base: &str,
+    to: Option<&str>,
+) -> Result<std::collections::BTreeMap<String, (String, String)>, String> {
+    let range = format!("{base}..{}", to.unwrap_or("HEAD"));
+    let out = git(
+        dir,
+        &[
+            "log",
+            "--no-renames",
+            "--format=%x1e%s%x1f%b%x1f",
+            "--name-only",
+            &range,
+        ],
+    )?;
+    let mut map = std::collections::BTreeMap::new();
+    for rec in out.split('\x1e').filter(|r| !r.trim().is_empty()) {
+        let mut f = rec.splitn(3, '\x1f');
+        let subject = f.next().unwrap_or_default().trim().to_string();
+        let body = f.next().unwrap_or_default().trim().to_string();
+        for path in f
+            .next()
+            .unwrap_or_default()
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+        {
+            // Newest first: the first commit seen for a path is its last change.
+            map.entry(path.to_string())
+                .or_insert_with(|| (subject.clone(), body.clone()));
+        }
+    }
+    Ok(map)
+}
+
+#[cfg(test)]
+mod view_tests {
+    use super::*;
+
+    fn run(dir: &Path, args: &[&str]) {
+        let ok = crate::platform::command("git")
+            .current_dir(dir)
+            .args(args)
+            .output()
+            .unwrap()
+            .status
+            .success();
+        assert!(ok, "git {args:?}");
+    }
+
+    fn repo(name: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("fallow-gitview-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        run(&d, &["init", "-q", "-b", "main"]);
+        run(&d, &["config", "user.email", "t@example.invalid"]);
+        run(&d, &["config", "user.name", "t"]);
+        run(&d, &["config", "core.autocrlf", "false"]);
+        std::fs::write(d.join(".gitignore"), "build/\n").unwrap();
+        std::fs::write(d.join("a.txt"), "one\ntwo\n").unwrap();
+        std::fs::write(d.join("gone.txt"), "x\n").unwrap();
+        run(&d, &["add", "."]);
+        run(&d, &["commit", "-q", "-m", "base"]);
+        d
+    }
+
+    #[test]
+    fn a_working_copy_lists_marks_and_ranges() {
+        let d = repo("wc");
+        let base = head(&d).unwrap();
+        std::fs::write(d.join("a.txt"), "one\nnew\ntwo\n").unwrap();
+        std::fs::remove_file(d.join("gone.txt")).unwrap();
+        std::fs::write(d.join("new file.txt"), "n\n").unwrap();
+        std::fs::create_dir_all(d.join("build")).unwrap();
+        std::fs::write(d.join("build/out"), "o").unwrap();
+        let l = listed(&d).unwrap();
+        assert!(l.contains(&"new file.txt".to_string()), "{l:?}");
+        assert!(!l.iter().any(|p| p.starts_with("build/")), "{l:?}");
+        let ns = name_status(&d, &base, None).unwrap();
+        assert!(ns.contains(&('M', "a.txt".into())), "{ns:?}");
+        assert!(ns.contains(&('D', "gone.txt".into())), "{ns:?}");
+        assert!(ns.contains(&('A', "new file.txt".into())), "{ns:?}");
+        assert_eq!(
+            added_ranges(&d, &base, None, "a.txt").unwrap(),
+            vec![(2, 2)]
+        );
+        assert!(
+            diff_path(&d, &base, None, "a.txt", 3)
+                .unwrap()
+                .contains("+new")
+        );
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn a_branch_reads_without_a_working_copy() {
+        let d = repo("br");
+        let base = head(&d).unwrap();
+        run(&d, &["checkout", "-q", "-b", "f"]);
+        std::fs::write(d.join("b.txt"), "b\n").unwrap();
+        run(&d, &["add", "."]);
+        run(
+            &d,
+            &[
+                "commit",
+                "-q",
+                "-m",
+                "build T002: add b",
+                "-m",
+                "Fallow loop r3, step 4",
+            ],
+        );
+        run(&d, &["checkout", "-q", "main"]);
+        assert!(rev_exists(&d, "f"));
+        assert!(!rev_exists(&d, "nope"));
+        assert_eq!(
+            name_status(&d, &base, Some("f")).unwrap(),
+            vec![('A', "b.txt".to_string())]
+        );
+        assert_eq!(show_bytes(&d, "f", "b.txt").unwrap(), Some(b"b\n".to_vec()));
+        assert_eq!(show_bytes(&d, "f", "none").unwrap(), None);
+        let (_, subject, body, _) = last_change(&d, &base, Some("f"), "b.txt").unwrap().unwrap();
+        assert_eq!(subject, "build T002: add b");
+        assert_eq!(body, "Fallow loop r3, step 4");
+        assert!(
+            last_change(&d, &base, Some("f"), "a.txt")
+                .unwrap()
+                .is_none()
+        );
+        let all = last_changes(&d, &base, Some("f")).unwrap();
+        assert_eq!(
+            all.get("b.txt"),
+            Some(&(
+                "build T002: add b".to_string(),
+                "Fallow loop r3, step 4".to_string()
+            ))
+        );
+        assert!(!all.contains_key("a.txt"));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+}

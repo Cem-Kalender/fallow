@@ -30,6 +30,8 @@ const SCREENS: &[(&str, &str)] = &[
     ("loop.js", include_str!("web/screens/loop.js")),
     ("pipelines.js", include_str!("web/screens/pipelines.js")),
     ("agents.js", include_str!("web/screens/agents.js")),
+    ("cmdmenu.js", include_str!("web/screens/cmdmenu.js")),
+    ("files.js", include_str!("web/screens/files.js")),
 ];
 
 /// The fonts Fallow ships (research S-3), served at `/fonts/<name>`.
@@ -383,6 +385,11 @@ fn studio_route(
             Ok(t) => r(Req::NewFeature {
                 project: p.to_string(),
                 title: t,
+                lead: body
+                    .get("lead")
+                    .and_then(Value::as_str)
+                    .filter(|l| !l.is_empty())
+                    .map(str::to_string),
             }),
             Err(e) => Some(Err(e)),
         },
@@ -394,6 +401,52 @@ fn studio_route(
             }),
             Err(e) => Some(Err(e)),
         },
+        ("GET", ["api", "projects", p, "files", "versions"]) => r(Req::FileVersions {
+            project: p.to_string(),
+        }),
+        ("GET", ["api", "projects", p, "files"]) => r(Req::Files {
+            project: p.to_string(),
+            version: query_arg(url, "version").unwrap_or_default(),
+        }),
+        ("GET", ["api", "projects", p, "file"]) => match query_arg(url, "path") {
+            Some(path) => r(Req::File {
+                project: p.to_string(),
+                version: query_arg(url, "version").unwrap_or_default(),
+                path,
+                changes: query_arg(url, "view").as_deref() == Some("changes"),
+            }),
+            None => Some(Err("path is required".into())),
+        },
+        ("POST", ["api", "files", "open"]) => match (need("project"), need("path")) {
+            (Ok(project), Ok(path)) => r(Req::OpenFile {
+                project,
+                version: s("version").unwrap_or_default(),
+                path,
+                editor: body
+                    .get("editor")
+                    .and_then(|e| serde_json::from_value(e.clone()).ok()),
+                command: s("command").filter(|c| !c.trim().is_empty()),
+            }),
+            (Err(e), _) | (_, Err(e)) => Some(Err(e)),
+        },
+        ("GET", ["api", "files", "editor"]) => r(Req::GetEditor),
+        ("POST", ["api", "files", "editor"]) => r(Req::SetEditor {
+            editor: serde_json::from_value(body.clone())
+                .ok()
+                .filter(|e: &crate::studio::files::Editor| !e.program.is_empty()),
+            command: s("command").filter(|c| !c.trim().is_empty()),
+            clear: body.get("clear").and_then(Value::as_bool).unwrap_or(false),
+        }),
+        ("POST", ["api", "conversations", c, "lead"]) => match need("lead") {
+            Ok(l) => r(Req::SetLead {
+                conv: c.to_string(),
+                lead: l,
+            }),
+            Err(e) => Some(Err(e)),
+        },
+        ("GET", ["api", "conversations", c, "commands"]) => r(Req::Commands {
+            conv: c.to_string(),
+        }),
         ("POST", ["api", "conversations", c, "cancel"]) => r(Req::Cancel {
             conv: c.to_string(),
         }),

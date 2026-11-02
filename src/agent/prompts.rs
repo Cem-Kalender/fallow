@@ -43,6 +43,40 @@ pub struct LeadTurn<'a> {
     /// Messages the engineer withdrew since the lead's last answer (008 T047), each with
     /// whether Fallow undid what the lead changed for it.
     pub withdrawn: &'a [(String, bool)],
+    /// A command from the `/` menu (009 US1).
+    pub command: Option<CommandUse>,
+    /// Files the engineer refers to with `@` (009 US5).
+    pub refs: &'a [FileRef],
+}
+
+/// A file the engineer refers to: its text, or why it is not given (a secret, a binary).
+#[derive(Debug, Clone, PartialEq)]
+pub struct FileRef {
+    pub path: String,
+    pub version: String,
+    pub text: Option<String>,
+    pub note: Option<String>,
+}
+
+/// A command the engineer's message names (009 research R-1 to R-3).
+#[derive(Debug, Clone, PartialEq)]
+pub enum CommandUse {
+    /// A Spec Kit step: the lead reads and follows `path` in its working copy.
+    Step {
+        step: String,
+        path: String,
+        input: String,
+    },
+    /// One of the project's own commands: its instructions, the input already in place.
+    Project {
+        name: String,
+        source: String,
+        instructions: String,
+    },
+}
+
+fn quoted(text: &str) -> String {
+    format!("> {}\n", text.trim_end().replace('\n', "\n> "))
 }
 
 /// The instruction of a lead's turn (header `Fallow step: lead_turn`).
@@ -89,6 +123,50 @@ pub fn lead_turn(t: &LeadTurn) -> String {
             s.push_str(&format!("\n> {}\n", w.replace('\n', "\n> ")));
         }
         s.push('\n');
+    }
+    if !t.refs.is_empty() {
+        s.push_str("The engineer refers to these files:\n");
+        for r in t.refs {
+            s.push_str(&format!("\n`{}` ({}):", r.path, r.version));
+            match (&r.text, &r.note) {
+                (Some(text), note) => {
+                    let fence = if text.contains("```") { "````" } else { "```" };
+                    s.push_str(&format!("\n{fence}\n{}\n{fence}\n", text.trim_end()));
+                    if let Some(n) = note {
+                        s.push_str(&format!("({n})\n"));
+                    }
+                }
+                (None, Some(n)) => s.push_str(&format!(" {n}.\n")),
+                (None, None) => s.push('\n'),
+            }
+        }
+        s.push('\n');
+    }
+    match &t.command {
+        Some(CommandUse::Step { step, path, input }) => {
+            s.push_str(&format!(
+                "The engineer asks you to run the Spec Kit step `{step}`: read `{path}` in your working copy and follow it. Use the engineer's input below wherever it says `$ARGUMENTS`."
+            ));
+            if input.trim().is_empty() {
+                s.push_str(" The engineer gave no input.\n\n");
+            } else {
+                s.push_str("\n\n");
+                s.push_str(&quoted(input));
+                s.push('\n');
+            }
+        }
+        Some(CommandUse::Project {
+            name,
+            source,
+            instructions,
+        }) => {
+            s.push_str(&format!(
+                "The engineer runs their command `{name}` (from `{source}`). Its instructions, which are the engineer's request:\n\n"
+            ));
+            s.push_str(&quoted(instructions));
+            s.push('\n');
+        }
+        None => {}
     }
     s.push_str(&format!("The engineer says:\n\n{}\n", t.said));
     s
@@ -343,4 +421,52 @@ pub fn loop_overrule(part: &str, question: &str, old: &str, new: &str, tasks: &[
     }
     s.push_str("\n\nBring the code and tests in line with the engineer's answer, and run the tests. Fallow commits your changes when the step ends, runs the gates, and the story is checked again. Return the same result as for a task (`task` names what you repaired).");
     s
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn turn(command: Option<CommandUse>) -> String {
+        lead_turn(&LeadTurn {
+            project: "shop",
+            feature: Some(("specs/001-cart", "Cart", "plan")),
+            first: false,
+            said: "/plan keep it small",
+            edits: &[],
+            plain_folder: false,
+            withdrawn: &[],
+            command,
+            refs: &[],
+        })
+    }
+
+    #[test]
+    fn a_step_names_its_skill_file_and_quotes_the_input() {
+        let s = turn(Some(CommandUse::Step {
+            step: "plan".into(),
+            path: ".claude/skills/speckit-plan/SKILL.md".into(),
+            input: "keep it small".into(),
+        }));
+        assert!(s.contains(
+            "The engineer asks you to run the Spec Kit step `plan`: read `.claude/skills/speckit-plan/SKILL.md` in your working copy and follow it."
+        ));
+        assert!(s.contains("\n> keep it small\n"));
+        let at = s.find("Spec Kit step `plan`").unwrap();
+        assert!(at < s.find("The engineer says:").unwrap());
+    }
+
+    #[test]
+    fn a_project_command_sends_its_instructions_quoted() {
+        let s = turn(Some(CommandUse::Project {
+            name: "review".into(),
+            source: ".claude/commands/review.md".into(),
+            instructions: "Review the cart.\nBe brief.".into(),
+        }));
+        assert!(s.contains(
+            "The engineer runs their command `review` (from `.claude/commands/review.md`)."
+        ));
+        assert!(s.contains("> Review the cart.\n> Be brief.\n"));
+        assert!(!turn(None).contains("asks you to run the Spec Kit step"));
+    }
 }

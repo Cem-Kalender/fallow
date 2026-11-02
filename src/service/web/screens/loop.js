@@ -271,7 +271,7 @@
     if (e.agent === "fallow") return h`<span class="who fallow">Fallow</span>`;
     if (e.agent === "you") return h`<span class="who me">you</span>`;
     if (e.kind === "ask") return h`<span class="who ask">question</span>`;
-    if (e.agent === "lead") return h`<span class="who lead">lead</span>`;
+    if (e.lead || e.agent === "lead") return h`<span class="who lead">${e.agent || "lead"}</span>`;
     return h`<span class="who agent">${e.agent || "agent"}</span>`;
   }
 
@@ -463,7 +463,7 @@
       confirmed: h`<span class="pill green">decided by the lead · you confirmed</span>`,
     };
     const qpill = (q) => STATE[q.state] || (q.state === "decided" ? h`<span class="pill orange">decided by the lead</span>`
-      : q.by === "lead" ? h`<span class="pill green">lead answered</span>` : h`<span class="pill green">you answered</span>`);
+      : (q.by_lead || q.by === "lead") ? h`<span class="pill green">${q.by || "lead"} answered</span>` : h`<span class="pill green">you answered</span>`);
     const questions = (v.questions || []).map((q) => h`<div class="qrow">
       <div class="kv"><span><span class="mono tiny">${q.id}</span> <span class="mono tiny muted">${q.task || ""}</span></span>${qpill(q)}</div>
       <div class="small lh">${fmt(q.text)}</div>
@@ -514,6 +514,7 @@
     const pageY = window.scrollY;
     const opened = new Set([...app.querySelectorAll("details[data-keep]")].filter((d) => d.open).map((d) => d.dataset.keep));
     const scrolled = [...app.querySelectorAll("[data-keep-scroll]")].map((e) => [e.dataset.keepScroll, e.scrollTop, e.scrollLeft]);
+    const filesKeep = state.files ? state.files.keep() : null;
     const paused = v.paused_by_engineer;
     const over = ["done", "stopped"].includes(v.stage);
     const merge = ["ready", "done_unverified"].includes(v.stage);
@@ -526,6 +527,7 @@
           <span><b>${v.used.minutes}</b> of ${v.budget.minutes} min</span><span><b>${money(v.used.usd)}</b> of ${money(v.budget.usd)}</span>
           <span><b>${v.used.tasks}</b>/${v.used.of} tasks</span><span><b>${v.repairs}</b> repair${v.repairs === 1 ? "" : "s"}</span></div>
         <div class="row wrap gap-8 steer-buttons" role="group" aria-label="The loop's controls">
+          <button class="btn${state.files ? "" : " btn2"}" data-act="files-toggle" aria-pressed="${state.files ? "true" : "false"}">${state.files ? "Files ✕" : "Files"}</button>
           ${merge ? h`<button class="btn btn2" data-act="verified">What was verified</button><button class="btn" data-act="merge">${v.stage === "ready" ? "Merge" : "Merge anyway…"}</button>` : ""}
           ${over ? "" : h`<button class="btn btn2" data-act="note">Note for next step</button><button class="btn btn2" data-act="limits">Limits</button>${merge ? "" : h`<button class="btn btn2" data-act="${paused ? "resume" : "pause"}">${paused ? "Go on" : "Pause"}</button>`}<button class="btn btn2" data-act="stop">Stop</button>`}
         </div>
@@ -537,12 +539,15 @@
       ${verification(v)}
       <div class="row wrap top gap-16 loop-body">
         ${tree(v)}
-        <section aria-label="Agents and activity" class="col gap-12 loop-main">
+        ${state.files && state.files.isOpen()
+          // B2: a file open widens the drawer over the agent cards and the feed (009 US5).
+          ? h`<section class="card files-wide" aria-label="Files">${state.files.treeHtml()}<div class="fw-view">${state.files.viewHtml()}</div></section>`
+          : h`<section aria-label="Agents and activity" class="col gap-12 loop-main">
           ${agentFocus(v)}
           ${taskCard()}
           ${feedCard(v)}
         </section>
-        ${checks(v)}
+        ${state.files ? h`<aside class="card files-drawer" aria-label="Files">${state.files.treeHtml()}</aside>` : checks(v)}`}
       </div></div>`.s;
     for (const d of app.querySelectorAll("details[data-keep]")) if (opened.has(d.dataset.keep)) d.open = true;
     for (const [k, top, left] of scrolled) {
@@ -559,6 +564,37 @@
       if (again) again.focus({ preventScroll: true });
     }
     window.scrollTo(pageX, pageY);
+    if (state.files) state.files.settle(state.filesFocus || filesKeep);
+    state.filesFocus = null;
+  }
+
+  // 009 US5: the Files drawer, scoped to this feature (B1: its changed files; B2: one open).
+  function filesToggle(app) {
+    if (state.files) {
+      state.files.stop();
+      state.files = null;
+      Fallow.files.active = null;
+      return render(app);
+    }
+    const project = state.project;
+    const fc = Fallow.files.create({
+      project, version: `feature:${state.feature}`, drawer: true,
+      changed: (focusId) => { state.filesFocus = focusId || null; render(app); },
+      // The spec session is closed while the feature is locked: the project conversation.
+      ask: (path, label) => {
+        try { sessionStorage.setItem("fallow.prefill", `@${path}${label ? ` (on ${label})` : ""} `); } catch (_) { /* typed again */ }
+        location.hash = `#/p/${encodeURIComponent(project)}`;
+      },
+    });
+    state.files = fc;
+    Fallow.files.active = fc;
+    fc.load().then(() => {
+      // Closed or left while it loaded: it never starts.
+      if (!state || state.files !== fc) return fc.stop();
+      fc.start();
+      render(app);
+    }, (e) => alertLine(e.message));
+    return render(app);
   }
 
   function scrollFeed() {
@@ -629,6 +665,8 @@
       try { await post(`/api/loops/${id}/${p}`, body); } catch (e) { alertLine(e.message); }
       refresh(app);
     };
+    if (name === "files-toggle") return filesToggle(app);
+    if (state.files && name.startsWith("f-") && (await state.files.act(name, el))) return;
     switch (name) {
       case "phase": {
         const n = Number(el.dataset.n);
@@ -765,6 +803,8 @@
     leave() {
       if (stop) stop();
       stop = null;
+      if (state && state.files) state.files.stop();
+      Fallow.files.active = null;
       state = null;
     },
     act,

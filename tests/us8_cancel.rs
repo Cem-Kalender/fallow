@@ -50,6 +50,7 @@ output = { reply = "Understood, I left it.", step = "none" }
         Req::NewFeature {
             project: project.clone(),
             title: "Cart".into(),
+            lead: None,
         },
     )
     .unwrap();
@@ -257,6 +258,7 @@ output = { reply = "Never seen.", step = "none" }
         Req::NewFeature {
             project: project.clone(),
             title: "Cart".into(),
+            lead: None,
         },
     )
     .unwrap();

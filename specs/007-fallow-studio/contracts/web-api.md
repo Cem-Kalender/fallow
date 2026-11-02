@@ -95,3 +95,18 @@ The global events are `project`, `feature`, `loop_progress`, `needs_you` and `ne
 | `GET /api/runtimes` | | `[{name, installed, version, models}]` |
 
 A definition or pipeline that does not pass is refused like any other request (`{ok: false, error}`), the error holding one problem per line, each `file:line: message` for a definition and `file: step N: message` for a pipeline. A default is reset to what Fallow ships rather than deleted. A change to an agent, or its deletion, is refused when a pipeline it reaches (in any project, or recorded by a loop still going) would no longer parse or no longer verify; a pipeline that a project, or a feature not locked or unlocked, chooses cannot be deleted. `PATCH /api/projects/<p>` accepts only a `pipeline` in force for the project.
+
+## Since 009
+
+009 (`specs/009-chat-commands-leads/contracts/web-api.md`) adds and changes these; the rules above hold for them:
+
+| Method and path | What |
+|---|---|
+| `PATCH /api/projects/<p>` | Also `{lead}`: the project's default lead. Every key is checked before any changes |
+| `POST /api/projects/<p>/features` | Also `{lead?}`: the new spec session's lead |
+| `GET /api/conversations/<c>` | Also `lead` and `leads` |
+| `POST /api/conversations/<c>/lead` | `{lead}`: the session's lead, before its first message |
+| `GET /api/conversations/<c>/commands` | The `/` menu's commands |
+| `POST /api/conversations/<c>/say` | A `/<command>` runs it; `/specify <title>` in the project conversation starts a feature; `@<path>` gives the lead a file |
+| `GET /api/projects/<p>/files/versions`, `GET /api/projects/<p>/files`, `GET /api/projects/<p>/file` | The project's files, read-only |
+| `POST /api/files/open`, `GET`/`POST /api/files/editor` | "Open in my editor" and its setting |

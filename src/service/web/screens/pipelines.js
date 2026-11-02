@@ -765,20 +765,34 @@
     }
     // Back or Forward with unsaved changes: they go only when the engineer agrees; if not, the
     // address shown before comes back (no new navigation).
+    if (s.confirming) {
+      if (s.here) { history.replaceState(history.state, "", s.here); Fallow.restamp(); }
+      return true;
+    }
+    s.confirming = true;
     confirm({ title: "Leave your changes?", text: "This pipeline has changes that are not saved.", ok: "Leave them" }).then((ok) => {
+      s.confirming = false;
       if (ok) return show();
-      if (s.here) history.replaceState(null, "", s.here);
+      if (s.here) { history.replaceState(history.state, "", s.here); Fallow.restamp(); }
     });
     return true;
   }
 
+  let savingP = null;
   Fallow.register("pipelines", {
     enter,
     update,
+    // 009 US4: unsaved changes ask before any way out of the screen.
+    dirty: () => !!(s && s.app && s.dirty),
+    confirming: () => !!(s && s.confirming),
+    saving: () => savingP,
+    takes: (r) => !!(s && (r.project || null) === s.project && r.pipeline && s.pipelines.some((p) => p.name === r.pipeline)),
     act(name, el, ev) {
       // Text fields commit on change, not on every key.
       if (ev && ev.type === "input") return;
-      return act(name, el);
+      const out = act(name, el);
+      if (name === "save" && out && out.finally) savingP = out.finally(() => { savingP = null; });
+      return out;
     },
   });
 })();

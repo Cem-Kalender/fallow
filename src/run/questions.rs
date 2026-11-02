@@ -37,6 +37,8 @@ pub struct Lead {
     pub session: Option<String>,
     pub workdir: PathBuf,
     pub approved: Vec<String>,
+    /// The lead agent of the feature's spec session (009 US2).
+    pub agent: String,
 }
 
 /// An agent's `ask` waiting for the lead.
@@ -337,9 +339,10 @@ fn start_lead(
 ) -> Result<(), String> {
     let lib = crate::defs::Library::load(ctx.config.as_deref(), Some(&run.state.repo));
     let def = lib
-        .agent("lead")
+        .agent(&lead.agent)
+        .filter(|d| d.kind == crate::defs::agent::Kind::Lead)
         .cloned()
-        .ok_or("there is no lead definition")?;
+        .ok_or_else(|| format!("the lead {} is gone", lead.agent))?;
     let runtime = agent::registry::runtime(&def.runtime, &ctx.settings)
         .map_err(|e| format!("the lead cannot answer: {e}"))?;
     let at = git::head(&lead.workdir)?;
@@ -532,8 +535,13 @@ pub fn lead_done(
         let decided = v["outcome"] == "decided";
         let answer = v["answer"].as_str().unwrap_or_default().trim().to_string();
         let ld = lead.expect("checked");
-        let who = if decided { "lead, decided" } else { "lead" };
-        match commit_answer(run, &l, ld, &entry, who, &answer) {
+        // The lead's own name (009): `lead` for the default one, so its records read as before.
+        let who = if decided {
+            format!("{}, decided", ld.agent)
+        } else {
+            ld.agent.clone()
+        };
+        match commit_answer(run, &l, ld, &entry, &who, &answer) {
             Ok(commit) => {
                 record(
                     run,
@@ -543,7 +551,7 @@ pub fn lead_done(
                     } else {
                         QuestionState::Answered
                     },
-                    Some("lead"),
+                    Some(ld.agent.as_str()),
                     Some(answer.clone()),
                     Some(commit.clone()),
                     entry.options.clone(),
@@ -554,7 +562,7 @@ pub fn lead_done(
                 )?;
                 send(json!({
                     "state": if decided { "decided" } else { "answered" },
-                    "answer": answer, "by": "lead", "commit": commit
+                    "answer": answer, "by": ld.agent, "by_lead": true, "commit": commit
                 }));
                 return Ok(());
             }
@@ -893,7 +901,7 @@ pub fn overrule(run: &mut Run, lead: &Lead, q: &str, answer: &str) -> Result<Val
         .cloned()
         .ok_or("there is no such question")?;
     let by_lead = matches!(entry.state, QuestionState::Decided)
-        || (entry.state == QuestionState::Answered && entry.by.as_deref() == Some("lead"));
+        || (entry.state == QuestionState::Answered && entry.by_lead());
     if !by_lead {
         return Err(format!("{q} was not answered by the lead"));
     }

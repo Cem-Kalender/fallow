@@ -27,6 +27,7 @@ fn deleting_an_unlocked_session_removes_its_draft() {
         Req::NewFeature {
             project: project.clone(),
             title: "Idea".into(),
+            lead: None,
         },
     )
     .unwrap();

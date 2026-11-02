@@ -2,8 +2,10 @@
 //! S-16; contracts/web-api.md). The engine owns one `Studio`; turns of the lead run on threads
 //! and report back as `Note`s.
 
+pub mod commands;
 pub mod conv;
 pub mod defs;
+pub mod files;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -105,6 +107,10 @@ pub enum Req {
     Cancel {
         conv: String,
     },
+    /// The `/` menu's commands of a conversation (009 US1).
+    Commands {
+        conv: String,
+    },
     SetMode {
         conv: String,
         mode: Mode,
@@ -118,6 +124,40 @@ pub enum Req {
     NewFeature {
         project: String,
         title: String,
+        /// The lead the spec session starts with (009); none is the project's.
+        lead: Option<String>,
+    },
+    /// Picks the session's lead before its first message (009 US2).
+    SetLead {
+        conv: String,
+        lead: String,
+    },
+    /// 009 US5: the project's files, read-only (contracts/web-api.md "Files").
+    FileVersions {
+        project: String,
+    },
+    Files {
+        project: String,
+        version: String,
+    },
+    File {
+        project: String,
+        version: String,
+        path: String,
+        changes: bool,
+    },
+    OpenFile {
+        project: String,
+        version: String,
+        path: String,
+        editor: Option<files::Editor>,
+        command: Option<String>,
+    },
+    GetEditor,
+    SetEditor {
+        editor: Option<files::Editor>,
+        command: Option<String>,
+        clear: bool,
     },
     Feature {
         project: String,
@@ -199,6 +239,16 @@ pub struct Studio {
     /// How long a command waits for the engineer (`APPROVAL_WAIT`; shorter in tests).
     pub approval_wait: Duration,
     pub console: Vec<String>,
+    /// The settings in force: which runtimes a lead can run on (009).
+    pub settings: crate::config::Settings,
+}
+
+/// Whether a session's lead now runs on another runtime or model than the session began on
+/// (FR-019a). A session from before 009 recorded neither: it is taken as unchanged.
+fn lead_changed(s: &State, runtime: &str, model: &Option<String>) -> bool {
+    s.session.is_some()
+        && s.lead_runtime.is_some()
+        && (s.lead_runtime.as_deref() != Some(runtime) || s.lead_model != *model)
 }
 
 fn now() -> String {
@@ -271,7 +321,11 @@ fn undo(
 impl Studio {
     /// Loads the projects and every conversation. A conversation whose turn was cut off by a
     /// stop or a crash gets that turn closed, so it can go on (constitution VII).
-    pub fn load(data: &Path, config: Option<PathBuf>) -> Result<Studio, String> {
+    pub fn load(
+        data: &Path,
+        config: Option<PathBuf>,
+        settings: crate::config::Settings,
+    ) -> Result<Studio, String> {
         let store = Store::load(data)?;
         let mut s = Studio {
             data: data.to_path_buf(),
@@ -282,6 +336,7 @@ impl Studio {
             endpoint: None,
             approval_wait: APPROVAL_WAIT,
             console: Vec::new(),
+            settings,
         };
         let dir = data.join("conversations");
         crate::platform::private_dir(&dir)?;
@@ -346,6 +401,31 @@ impl Studio {
         Library::load(self.config.as_deref(), project)
     }
 
+    /// Why `name` cannot be a lead in the project at `path`, if it cannot (009, FR-019, FR-020):
+    /// it is gone, it is not of kind Lead, or its runtime is not available.
+    pub fn lead_problem(&self, path: &Path, name: &str) -> Option<String> {
+        let lib = self.library(Some(path));
+        let Some(def) = lib.agent(name) else {
+            return Some(format!(
+                "the lead {name} is gone: there is no agent of that name"
+            ));
+        };
+        if def.kind != crate::defs::agent::Kind::Lead {
+            return Some(format!("{name} is not a lead"));
+        }
+        agent::registry::runtime(&def.runtime, &self.settings)
+            .err()
+            .map(|e| format!("{name}'s runtime is not available: {e}"))
+    }
+
+    /// The lead a new session of project `p` starts with: its chosen lead while that can lead,
+    /// else `lead` (`None`).
+    pub fn default_lead(&self, p: &Project) -> Option<String> {
+        p.lead
+            .clone()
+            .filter(|l| self.lead_problem(&p.path, l).is_none())
+    }
+
     fn project(&self, id: &str) -> Result<&Project, String> {
         self.store
             .get(id)
@@ -375,6 +455,7 @@ impl Studio {
         feature: Option<String>,
         forked_from: Option<String>,
         workdir: PathBuf,
+        lead: Option<String>,
     ) -> Result<String, String> {
         let id = format!(
             "c{}",
@@ -397,6 +478,10 @@ impl Studio {
             cost_usd: 0.0,
             seq: 0,
             pending_edits: Vec::new(),
+            lead: lead.clone(),
+            lead_runtime: None,
+            lead_model: None,
+            lead_pending: None,
         };
         let mut c = Conv::new(dir, log, state);
         c.append(CEvent::ConversationCreated {
@@ -405,6 +490,7 @@ impl Studio {
             feature,
             forked_from,
             workdir,
+            lead,
         })?;
         self.convs.insert(id.clone(), c);
         Ok(id)
@@ -447,14 +533,19 @@ impl Studio {
     }
 
     pub fn patch_project(&mut self, id: &str, patch: &Value) -> Result<Value, String> {
-        let config = self.config.clone();
-        let p = self.project_mut(id)?;
+        // Every key is checked on a copy before any is applied (009 T005): a refused key leaves
+        // the project as it was.
+        let mut p = self.project(id)?.clone();
+        if let Some(v) = patch.get("path").and_then(Value::as_str) {
+            let path = PathBuf::from(v);
+            if !path.is_dir() {
+                return Err(format!("{v} is not a folder"));
+            }
+            p.path = path;
+        }
         if let Some(v) = patch.get("pipeline").and_then(Value::as_str) {
             // Only a pipeline in force for the project, saved and checked (FR-027, FR-028).
-            if !Library::load(config.as_deref(), Some(&p.path))
-                .pipelines
-                .contains_key(v)
-            {
+            if !self.library(Some(&p.path)).pipelines.contains_key(v) {
                 return Err(format!("there is no pipeline {v:?} for this project"));
             }
             p.pipeline = v.to_string();
@@ -478,13 +569,18 @@ impl Studio {
         if let Some(v) = patch.get("notifications").and_then(Value::as_bool) {
             p.notifications = v;
         }
-        if let Some(v) = patch.get("path").and_then(Value::as_str) {
-            let path = PathBuf::from(v);
-            if !path.is_dir() {
-                return Err(format!("{v} is not a folder"));
+        if let Some(v) = patch.get("lead").and_then(Value::as_str) {
+            // An agent of kind Lead of the project's library, on a runtime that is there (009,
+            // FR-013, FR-020).
+            if self.library(Some(&p.path)).agent(v).is_none() {
+                return Err(format!("there is no lead {v} for this project"));
             }
-            p.path = path;
+            if let Some(why) = self.lead_problem(&p.path, v) {
+                return Err(why);
+            }
+            p.lead = Some(v.to_string()).filter(|l| l != "lead");
         }
+        *self.project_mut(id)? = p;
         self.store.save()?;
         Ok(json!({}))
     }
@@ -582,10 +678,100 @@ impl Studio {
             }
             _ => p.path.clone(),
         };
-        let id = self.new_conv(Kind::Project, &p.id, None, None, workdir)?;
+        let lead = self.default_lead(&p);
+        let id = self.new_conv(Kind::Project, &p.id, None, None, workdir, lead)?;
         self.project_mut(project)?.conversation = Some(id.clone());
         self.store.save()?;
         Ok(id)
+    }
+
+    /// A conversation as the page shows it, with its lead and the leads it could pick (009 US2,
+    /// data-model.md "Derived in the view").
+    pub fn conv_view(&self, id: &str) -> Option<Value> {
+        let c = self.convs.get(id)?;
+        let mut v = c.view();
+        let Ok(p) = self.project(&c.state.project) else {
+            return Some(v);
+        };
+        let lib = self.library(Some(&p.path));
+        let name = c.state.lead_name();
+        let def = lib.agent(name);
+        let runtime = def.map(|d| d.runtime.clone()).unwrap_or_default();
+        let model = def.map(|d| d.model.clone()).filter(|m| !m.is_empty());
+        let changed = def.is_some() && lead_changed(&c.state, &runtime, &model);
+        v["lead"] = json!({
+            "name": name,
+            "runtime": runtime,
+            "model": model,
+            "fixed": c.state.lead_fixed(),
+            "changed": changed,
+            "problem": self.lead_problem(&p.path, name),
+        });
+        v["leads"] = Value::Array(
+            lib.agents
+                .values()
+                .filter(|a| a.kind == crate::defs::agent::Kind::Lead)
+                .map(|a| {
+                    let reason = agent::registry::runtime(&a.runtime, &self.settings)
+                        .err()
+                        .map(|e| format!("its runtime is not available: {e}"));
+                    json!({
+                        "name": a.name,
+                        "runtime": a.runtime,
+                        "model": Some(a.model.clone()).filter(|m| !m.is_empty()),
+                        "available": reason.is_none(),
+                        "reason": reason,
+                    })
+                })
+                .collect(),
+        );
+        Some(v)
+    }
+
+    /// Picks the lead of a session that has not started (009 US2, FR-014, FR-015).
+    pub fn set_lead(&mut self, conv: &str, lead: &str) -> Result<Value, String> {
+        let c = self
+            .convs
+            .get(conv)
+            .ok_or_else(|| format!("there is no conversation {conv}"))?;
+        if c.state.busy {
+            return Err("Wait until the lead has answered".into());
+        }
+        if c.state.lead_fixed() {
+            return Err(
+                "A session keeps its lead; start a new feature or session to use another".into(),
+            );
+        }
+        let path = self.project(&c.state.project)?.path.clone();
+        if let Some(why) = self.lead_problem(&path, lead) {
+            return Err(why);
+        }
+        let c = self.conv_mut(conv)?;
+        c.append(CEvent::LeadSet {
+            lead: lead.to_string(),
+        })?;
+        Ok(json!({}))
+    }
+
+    /// The `/` menu's commands of a conversation (009 US1, contracts/web-api.md "Commands").
+    pub fn commands(&self, conv: &str) -> Result<Value, String> {
+        let c = self
+            .convs
+            .get(conv)
+            .ok_or_else(|| format!("there is no conversation {conv}"))?;
+        let p = self.project(&c.state.project)?;
+        let workdir = &c.state.workdir;
+        // A working copy of its own is Fallow's worktree of a git project (no git call here: the
+        // menu opens as the engineer types, SC-002). As at every turn, Spec Kit's skills are in it.
+        if *workdir != p.path
+            && !workdir
+                .join(".claude/skills/speckit-specify/SKILL.md")
+                .is_file()
+        {
+            project::install::scaffold(workdir)?;
+        }
+        let list = commands::catalogue(&p.path, workdir, c.state.kind == Kind::Project);
+        Ok(json!({ "commands": list }))
     }
 
     pub fn set_mode(&mut self, conv: &str, mode: Mode) -> Result<Value, String> {
@@ -595,7 +781,13 @@ impl Studio {
     }
 
     /// Starts a turn of the lead (research S-5): one resumable call, its reply streamed.
-    pub fn say(&mut self, ctx: &Ctx, conv: &str, text: &str) -> Result<Value, String> {
+    pub fn say(
+        &mut self,
+        ctx: &Ctx,
+        conv: &str,
+        text: &str,
+        refs: Vec<prompts::FileRef>,
+    ) -> Result<Value, String> {
         let text = text.trim();
         if text.is_empty() {
             return Err("say something to the lead".into());
@@ -606,6 +798,42 @@ impl Studio {
             .ok_or_else(|| format!("there is no conversation {conv}"))?;
         if c.state.busy {
             return Err("the lead is still answering".into());
+        }
+        // 009: `/specify <title>` in the project conversation starts the feature, as "+ New
+        // feature" does, and runs specify in its spec session (clarify answer 1).
+        if c.state.kind == Kind::Project {
+            if let Some(rest) = text
+                .strip_prefix("/specify")
+                .filter(|r| r.is_empty() || r.starts_with(char::is_whitespace))
+            {
+                let title = rest.trim().to_string();
+                if title.is_empty() {
+                    return Err("Give the feature a name: /specify <name>".into());
+                }
+                let project = c.state.project.clone();
+                let p = self.project(&project)?;
+                let lead = self.default_lead(p).unwrap_or_else(|| "lead".into());
+                if let Some(why) = self.lead_problem(&p.path, &lead) {
+                    return Err(why);
+                }
+                if p.kind() != project::Kind::Git
+                    && !p
+                        .path
+                        .join(".claude/skills/speckit-specify/SKILL.md")
+                        .is_file()
+                {
+                    return Err("/specify cannot be sent: Spec Kit is not installed here".into());
+                }
+                let mut f = self.new_feature(&project, &title, None)?;
+                let spec = f["conversation"].as_str().unwrap_or_default().to_string();
+                // The feature exists now: if specify cannot start, the engineer opens it anyway.
+                if let Err(e) = self.say(ctx, &spec, &format!("/specify {title}"), Vec::new()) {
+                    f["warning"] = json!(format!(
+                        "The feature was made, but specify did not start: {e}"
+                    ));
+                }
+                return Ok(f);
+            }
         }
         let p = self.project(&c.state.project)?.clone();
         let kind = c.state.kind;
@@ -651,13 +879,48 @@ impl Studio {
             let _ = std::fs::write(&fj, json!({ "feature_directory": f.dir }).to_string());
             let _ = std::fs::create_dir_all(workdir.join(&f.dir));
         }
+        // 009 US1: a message whose first word names a command of the `/` menu runs it; any other
+        // message is plain text (FR-005).
+        let catalogue = commands::catalogue(&p.path, &workdir, kind == Kind::Project);
+        let command = match commands::resolve(&catalogue, text) {
+            Some((cmd, _)) if !cmd.available => {
+                return Err(format!(
+                    "/{} cannot be sent: {}",
+                    cmd.name,
+                    cmd.reason.as_deref().unwrap_or("it is not available")
+                ));
+            }
+            Some((cmd, input)) => Some(match cmd.group {
+                commands::Group::SpecKit => prompts::CommandUse::Step {
+                    step: cmd.name.clone(),
+                    path: cmd.source.clone(),
+                    input,
+                },
+                commands::Group::Project => prompts::CommandUse::Project {
+                    name: cmd.name.clone(),
+                    source: cmd.source.clone(),
+                    instructions: commands::instructions(cmd, &input)?,
+                },
+            }),
+            None => None,
+        };
+        // 009 US2: the session's own lead, refused with the reason when it cannot lead (FR-019).
+        let lead_name = self
+            .convs
+            .get(conv)
+            .map(|c| c.state.lead_name().to_string())
+            .unwrap_or_else(|| "lead".into());
+        if let Some(why) = self.lead_problem(&p.path, &lead_name) {
+            return Err(why);
+        }
         let lib = self.library(Some(&p.path));
         let def = lib
-            .agent("lead")
+            .agent(&lead_name)
             .cloned()
-            .ok_or("there is no lead agent definition")?;
+            .ok_or_else(|| format!("there is no lead {lead_name}"))?;
         let runtime = agent::registry::runtime(&def.runtime, &ctx.settings)
             .map_err(|e| format!("the lead cannot answer: {e}"))?;
+        let def_model = Some(def.model.clone()).filter(|m| !m.is_empty());
         // The project's approved commands, with its gates (FR-007a).
         let mut approved = p.approved_commands.clone();
         let squad_text = std::fs::read_to_string(workdir.join(crate::config::squad::SQUAD_FILE))
@@ -704,23 +967,39 @@ impl Studio {
         }
         let n = c.state.turns.len() as u32 + 1;
         let edits: Vec<DocEdit> = c.state.pending_edits.clone();
+        // A session cannot move to another runtime or model (FR-019a): when the lead's changed
+        // since the session began, this turn starts a new one with it.
+        let changed = lead_changed(&c.state, &def.runtime, &def_model);
+        let new = || {
+            crate::platform::random::uuid_v4()
+                .map(Session::New)
+                .map_err(|e| e.to_string())
+        };
         let session = match &c.state.session {
-            Some(s) => Session::Resume(s.clone()),
+            Some(s) if !changed => Session::Resume(s.clone()),
+            Some(_) => new()?,
             None => {
+                // A spec session forks the project conversation's session only when both talk
+                // to the same lead on the same runtime and model.
                 let fork = c
                     .state
                     .forked_from
                     .as_ref()
                     .and_then(|f| self.convs.get(f))
+                    .filter(|f| {
+                        f.state.lead_name() == lead_name
+                            && !lead_changed(&f.state, &def.runtime, &def_model)
+                    })
                     .and_then(|f| f.state.session.clone());
                 match fork {
                     Some(s) => Session::Fork(s),
-                    None => {
-                        Session::New(crate::platform::random::uuid_v4().map_err(|e| e.to_string())?)
-                    }
+                    None => new()?,
                 }
             }
         };
+        if changed {
+            withdrawn.clear();
+        }
         let prompt_edits: Vec<prompts::Edit> = edits
             .iter()
             .map(|e| prompts::Edit {
@@ -738,6 +1017,8 @@ impl Studio {
             edits: &prompt_edits,
             plain_folder: !git_project,
             withdrawn: &withdrawn,
+            command,
+            refs: &refs,
         });
         // The MCP bridge for the approval tool, checked against the turn's own processes.
         let token = crate::mcp::identity::Token::new()
@@ -790,6 +1071,10 @@ impl Studio {
             edits,
             mode,
             session: session.id().to_string(),
+            runtime: Some(def.runtime.clone()),
+            model: Some(def.model.clone()).filter(|m| !m.is_empty()),
+            // A new session or a fork: a session of its own, on this runtime and model.
+            new_session: !matches!(session, Session::Resume(_)),
         })?;
         c.live.clear();
         c.head_before = if git_project && c.state.workdir != p.path {
@@ -1089,11 +1374,27 @@ impl Studio {
 
     /// Starts a feature from the project conversation (FR-034): its folder and branch, its
     /// worktree, and its spec session forked from the project conversation.
-    pub fn new_feature(&mut self, project_id: &str, title: &str) -> Result<Value, String> {
+    pub fn new_feature(
+        &mut self,
+        project_id: &str,
+        title: &str,
+        lead: Option<String>,
+    ) -> Result<Value, String> {
         let title = title.trim();
         if title.is_empty() {
             return Err("name the feature".into());
         }
+        // The engineer's pick, or the project's lead (009, FR-014).
+        let lead = match lead {
+            Some(l) => {
+                let p = self.project(project_id)?;
+                if let Some(why) = self.lead_problem(&p.path, &l) {
+                    return Err(why);
+                }
+                Some(l).filter(|l| l != "lead")
+            }
+            None => self.default_lead(self.project(project_id)?),
+        };
         let parent = self.project_conversation(project_id)?;
         let p = self.project(project_id)?.clone();
         let dir = p.next_dir(title);
@@ -1113,7 +1414,14 @@ impl Studio {
             (None, None, p.path.clone())
         };
         std::fs::create_dir_all(workdir.join(&dir)).map_err(|e| e.to_string())?;
-        let conv = self.new_conv(Kind::Spec, &p.id, Some(name.clone()), Some(parent), workdir)?;
+        let conv = self.new_conv(
+            Kind::Spec,
+            &p.id,
+            Some(name.clone()),
+            Some(parent),
+            workdir,
+            lead,
+        )?;
         // A project whose constitution is still the template starts with the constitution.
         let constitution = std::fs::read_to_string(p.path.join(".specify/memory/constitution.md"))
             .unwrap_or_default();
@@ -1178,15 +1486,28 @@ impl Studio {
         if wd == p.path {
             return Err("the feature has no worktree of its own".into());
         }
-        let session = f
-            .conversation
-            .as_ref()
-            .and_then(|c| self.convs.get(c))
+        let conv = f.conversation.as_ref().and_then(|c| self.convs.get(c));
+        // The feature's spec session's lead (009 US2, FR-017); `lead` for a session that never
+        // named one.
+        let agent = conv.map_or("lead", |c| c.state.lead_name()).to_string();
+        // Its session is forked only on the runtime and model it began on (research R-12).
+        let def = self.library(Some(&p.path)).agent(&agent).cloned();
+        let session = conv
+            .filter(|c| {
+                def.as_ref().is_some_and(|d| {
+                    !lead_changed(
+                        &c.state,
+                        &d.runtime,
+                        &Some(d.model.clone()).filter(|m| !m.is_empty()),
+                    )
+                })
+            })
             .and_then(|c| c.state.session.clone());
         Ok(crate::run::questions::Lead {
             session,
             workdir: wd,
             approved: p.approved_commands.clone(),
+            agent,
         })
     }
 

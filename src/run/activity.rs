@@ -217,19 +217,32 @@ fn fallow_lines(run: &Run, last_line: &BTreeMap<u32, u64>) -> Vec<Value> {
                 let answer = h.answer.as_deref().unwrap_or("");
                 let (agent, text, result) = match (h.state, h.by.as_deref()) {
                     (QuestionState::WithLead, _) => continue,
-                    (QuestionState::Answered, Some("lead")) => (
-                        "lead",
-                        format!("lead answered {}: {answer}", q.id),
-                        Some("ok"),
-                    ),
-                    (QuestionState::Decided, _) => (
-                        "lead",
-                        format!(
-                            "decided by the lead ({}): {answer}. Confirm it or overrule it.",
-                            q.id
-                        ),
-                        Some("ok"),
-                    ),
+                    (QuestionState::Answered, by) if super::state::by_a_lead(by) => {
+                        let who = by.unwrap_or("lead");
+                        (
+                            who,
+                            format!("{who} answered {}: {answer}", q.id),
+                            Some("ok"),
+                        )
+                    }
+                    (QuestionState::Decided, by) => {
+                        let who = by
+                            .filter(|b| super::state::by_a_lead(Some(b)))
+                            .unwrap_or("lead");
+                        let the = if who == "lead" {
+                            "the lead".to_string()
+                        } else {
+                            who.to_string()
+                        };
+                        (
+                            who,
+                            format!(
+                                "decided by {the} ({}): {answer}. Confirm it or overrule it.",
+                                q.id
+                            ),
+                            Some("ok"),
+                        )
+                    }
                     (QuestionState::WaitingEngineer, _) => (
                         "lead",
                         match &q.recommended {
@@ -274,6 +287,10 @@ fn fallow_lines(run: &Run, last_line: &BTreeMap<u32, u64>) -> Vec<Value> {
                     "at": ms_of(&h.at) + 999, "agent": agent, "task": q.task, "kind": "answer",
                     "text": text, "question": q.id,
                 });
+                // A line of a lead's, whichever lead (009): the page marks it as the lead's.
+                if agent != "you" {
+                    e["lead"] = json!(true);
+                }
                 if let Some(r) = result {
                     e["result"] = json!(r);
                 }
@@ -721,7 +738,7 @@ pub fn view(run: &Run, ctx: &Ctx) -> Result<Value, String> {
         .map(|q| {
             let mut v = json!({
                 "id": q.id, "step": q.step, "task": q.task, "text": q.text, "options": q.options,
-                "state": q.state, "by": q.by, "answer": q.answer, "commit": q.commit,
+                "state": q.state, "by": q.by, "by_lead": q.by_lead(), "answer": q.answer, "commit": q.commit,
                 "affects": q.affects, "recommended": q.recommended, "reopened": q.reopened,
                 "why": q.why,
             });
@@ -730,7 +747,7 @@ pub fn view(run: &Run, ctx: &Ctx) -> Result<Value, String> {
             v["overrulable"] = json!(
                 !s.stage.is_final()
                     && (q.state == QuestionState::Decided
-                        || (q.state == QuestionState::Answered && q.by.as_deref() == Some("lead")))
+                        || (q.state == QuestionState::Answered && q.by_lead()))
             );
             v
         })

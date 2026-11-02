@@ -138,6 +138,12 @@ pub struct TaskStatus {
     pub since: u64,
 }
 
+/// Whether `by` names a lead (009): any agent other than the engineer. Records from before 009
+/// say `lead`.
+pub fn by_a_lead(by: Option<&str>) -> bool {
+    by.is_some_and(|b| b != "engineer")
+}
+
 /// A question an agent asked during the loop (007 data-model.md, Question).
 #[derive(Debug, Clone, Serialize)]
 pub struct QuestionEntry {
@@ -160,6 +166,13 @@ pub struct QuestionEntry {
     pub asked_seq: u64,
     /// Every change, oldest first, for the feed (FR-023).
     pub history: Vec<QuestionChange>,
+}
+
+impl QuestionEntry {
+    /// Answered by a lead, the default one or another (009).
+    pub fn by_lead(&self) -> bool {
+        by_a_lead(self.by.as_deref())
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]

@@ -58,6 +58,9 @@ pub enum Event {
         forked_from: Option<String>,
         /// Where the lead works: Fallow's worktree, or the folder itself.
         workdir: PathBuf,
+        /// The lead agent the session talks to (009); none reads as `lead`.
+        #[serde(default)]
+        lead: Option<String>,
     },
     TurnStarted {
         n: u32,
@@ -66,6 +69,15 @@ pub enum Event {
         mode: Mode,
         /// The session given to the call: new, resumed, or forked from.
         session: String,
+        /// What the lead's call ran on (009), and whether it began an agent session of its own
+        /// (a new one or a fork, not a resume): the session's runtime and model are that turn's,
+        /// once it has a session.
+        #[serde(default)]
+        runtime: Option<String>,
+        #[serde(default)]
+        model: Option<String>,
+        #[serde(default)]
+        new_session: bool,
     },
     TurnFinished {
         n: u32,
@@ -118,6 +130,10 @@ pub enum Event {
     /// The lead works in another place from now on (a plain folder that got git).
     WorkdirSet {
         workdir: PathBuf,
+    },
+    /// The engineer picked another lead before the session's first message (009).
+    LeadSet {
+        lead: String,
     },
 }
 
@@ -172,6 +188,14 @@ pub struct State {
     pub seq: u64,
     /// The engineer's edits since the lead's last turn, one per document.
     pub pending_edits: Vec<DocEdit>,
+    /// The lead agent the session talks to (009); `None` is `lead`.
+    pub lead: Option<String>,
+    /// The runtime and model the current agent session began on (009).
+    pub lead_runtime: Option<String>,
+    pub lead_model: Option<String>,
+    /// Those of a turn that began a session, until it ends with one.
+    #[serde(skip)]
+    pub lead_pending: Option<(Option<String>, Option<String>)>,
 }
 
 impl State {
@@ -185,6 +209,7 @@ impl State {
             feature,
             forked_from,
             workdir,
+            lead,
         } = &first.event
         else {
             return Err(format!(
@@ -206,6 +231,10 @@ impl State {
             cost_usd: 0.0,
             seq: first.seq,
             pending_edits: Vec::new(),
+            lead: lead.clone(),
+            lead_runtime: None,
+            lead_model: None,
+            lead_pending: None,
         };
         for l in &events[1..] {
             s.apply(l);
@@ -222,10 +251,14 @@ impl State {
                 said,
                 edits,
                 mode,
+                runtime,
+                model,
+                new_session,
                 ..
             } => {
                 self.busy = true;
                 self.pending_edits.clear();
+                self.lead_pending = new_session.then(|| (runtime.clone(), model.clone()));
                 self.turns.push(Turn {
                     n: *n,
                     said: said.clone(),
@@ -260,6 +293,14 @@ impl State {
                 if let Some(s) = session {
                     self.session = Some(s.clone());
                 }
+                // A session of its own began: it runs on what that turn ran on. A turn that
+                // brought no session leaves the old session and what it ran on.
+                if let Some((r, m)) = self.lead_pending.take() {
+                    if session.is_some() {
+                        self.lead_runtime = r;
+                        self.lead_model = m;
+                    }
+                }
                 self.cost_usd += cost_usd.unwrap_or(0.0);
                 if let Some(t) = self.turns.iter_mut().find(|t| t.n == *n) {
                     t.reply = Some(reply.clone());
@@ -273,6 +314,11 @@ impl State {
                     t.cancel = None;
                     // The edits that went with a withdrawn message go with the next one.
                     if *withdrawn {
+                        // A session that was never saved has no runtime or model either.
+                        if self.session.is_none() {
+                            self.lead_runtime = None;
+                            self.lead_model = None;
+                        }
                         for e in &t.edits {
                             if !self.pending_edits.iter().any(|p| p.path == e.path) {
                                 self.pending_edits.push(e.clone());
@@ -322,7 +368,19 @@ impl State {
                 }
             }
             Event::WorkdirSet { workdir } => self.workdir = workdir.clone(),
+            Event::LeadSet { lead } => self.lead = Some(lead.clone()),
         }
+    }
+
+    /// The lead agent's name (009): `lead` for a session that never named one.
+    pub fn lead_name(&self) -> &str {
+        self.lead.as_deref().unwrap_or("lead")
+    }
+
+    /// Whether the session's lead can no longer change (FR-015): a message was sent and not
+    /// withdrawn, whether it is still being answered, was answered, or failed.
+    pub fn lead_fixed(&self) -> bool {
+        self.turns.iter().any(|t| !t.withdrawn)
     }
 
     /// The running turn's cancel, if the engineer asked for one.
@@ -367,6 +425,7 @@ mod tests {
                     feature: Some("008-checkout".into()),
                     forked_from: Some("c1".into()),
                     workdir: "w".into(),
+                    lead: None,
                 },
             ),
             logged(
@@ -377,6 +436,9 @@ mod tests {
                     edits: vec![],
                     mode: Mode::Ask,
                     session: "s0".into(),
+                    runtime: None,
+                    model: None,
+                    new_session: false,
                 },
             ),
             logged(
@@ -447,6 +509,7 @@ mod tests {
             feature: None,
             forked_from: None,
             workdir: "w".into(),
+            lead: None,
         })
         .unwrap();
         log.append(Event::ModeSet {
@@ -459,5 +522,101 @@ mod tests {
         let s = State::fold("c1", &events).unwrap();
         assert_eq!(s.mode, Mode::RunAnything);
         let _ = std::fs::remove_dir_all(&d);
+    }
+
+    fn started(seq: u64, n: u32, new_session: bool, model: &str) -> Logged<Event> {
+        logged(
+            seq,
+            Event::TurnStarted {
+                n,
+                said: "x".into(),
+                edits: vec![],
+                mode: Mode::Ask,
+                session: "s".into(),
+                runtime: Some("claude".into()),
+                model: Some(model.into()),
+                new_session,
+            },
+        )
+    }
+
+    fn finished(seq: u64, n: u32, session: Option<&str>, withdrawn: bool) -> Logged<Event> {
+        logged(
+            seq,
+            Event::TurnFinished {
+                n,
+                reply: String::new(),
+                result: None,
+                session: session.map(str::to_string),
+                documents_changed: vec![],
+                commit: None,
+                discarded: vec![],
+                cost_usd: None,
+                failure: None,
+                withdrawn,
+            },
+        )
+    }
+
+    #[test]
+    fn a_session_keeps_its_lead_and_what_it_ran_on() {
+        // A log from before 009: no lead field at all.
+        let old: Event = serde_json::from_str(
+            r#"{"type":"conversation_created","kind":"spec","project":"p","feature":null,"forked_from":null,"workdir":"w"}"#,
+        )
+        .unwrap();
+        let s = State::fold("c", &[logged(1, old.clone())]).unwrap();
+        assert_eq!(s.lead_name(), "lead");
+        assert!(!s.lead_fixed());
+
+        let mut ev = vec![
+            logged(1, old),
+            logged(
+                2,
+                Event::LeadSet {
+                    lead: "careful".into(),
+                },
+            ),
+        ];
+        let s = State::fold("c", &ev).unwrap();
+        assert_eq!(s.lead_name(), "careful");
+
+        // A first turn cancelled before it saved a session: withdrawn, nothing kept.
+        ev.push(started(3, 1, true, "opus"));
+        let s = State::fold("c", &ev).unwrap();
+        assert!(s.lead_fixed(), "fixed while the first message is answered");
+        ev.push(finished(4, 1, None, true));
+        let s = State::fold("c", &ev).unwrap();
+        assert!(!s.lead_fixed());
+        assert_eq!(s.lead_model, None);
+
+        // A first turn that failed still fixes the lead.
+        ev.push(started(5, 2, true, "opus"));
+        ev.push(finished(6, 2, Some("s1"), false));
+        let s = State::fold("c", &ev).unwrap();
+        assert!(s.lead_fixed());
+        assert_eq!(s.lead_model.as_deref(), Some("opus"));
+        assert_eq!(s.lead_runtime.as_deref(), Some("claude"));
+
+        // A resumed turn keeps what the session began on; a new session replaces it.
+        ev.push(started(7, 3, false, "sonnet"));
+        let s = State::fold("c", &ev).unwrap();
+        assert_eq!(s.lead_model.as_deref(), Some("opus"));
+        ev.push(finished(8, 3, Some("s1"), false));
+        ev.push(started(9, 4, true, "sonnet"));
+        let s = State::fold("c", &ev).unwrap();
+        assert_eq!(
+            s.lead_model.as_deref(),
+            Some("opus"),
+            "not before it has a session"
+        );
+        // A new session that failed without one: the old session and model stay.
+        ev.push(finished(10, 4, None, false));
+        let s = State::fold("c", &ev).unwrap();
+        assert_eq!(s.lead_model.as_deref(), Some("opus"));
+        ev.push(started(11, 5, true, "sonnet"));
+        ev.push(finished(12, 5, Some("s2"), false));
+        let s = State::fold("c", &ev).unwrap();
+        assert_eq!(s.lead_model.as_deref(), Some("sonnet"));
     }
 }

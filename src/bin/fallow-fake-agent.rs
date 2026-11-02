@@ -12,6 +12,9 @@
 //! kind = "build"                 # build, repair, review, handover, lead_turn, ...
 //! part = "main"                  # optional
 //! when = "text in the instruction"  # optional, e.g. a task id "T014"
+//! model = "opus"                # optional: only a call with this --model
+//! system = "text"                # optional: only a call whose --append-system-prompt has it
+//! forked = false                # optional: only a call that forks (true) or does not (false)
 //! files = [{ path = "shop/x.py", text = "..." }]   # with old = "..." it is an Edit
 //! commit = "message"             # git add -A; git commit -m
 //! output = { status = "done", commit = "$HEAD", summary = "..." }
@@ -59,6 +62,9 @@ struct Step {
     kind: String,
     part: Option<String>,
     when: Option<String>,
+    model: Option<String>,
+    system: Option<String>,
+    forked: Option<bool>,
     #[serde(default)]
     files: Vec<File>,
     commit: Option<String>,
@@ -205,6 +211,26 @@ fn mcp_call(config: &Path, tool: &str, arguments: Value) -> Result<String, Strin
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    // 009: playing an editor. `--record <file> <args...>` appends each argument, one per line,
+    // and exits: tests see what "Open in my editor" started it with.
+    if args.first().is_some_and(|a| a == "--record") {
+        let Some(log) = args.get(1) else {
+            return ExitCode::from(2);
+        };
+        use std::io::Write;
+        let mut f = match std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(log)
+        {
+            Ok(f) => f,
+            Err(_) => return ExitCode::from(2),
+        };
+        for a in &args[2..] {
+            let _ = writeln!(f, "{a}");
+        }
+        return ExitCode::SUCCESS;
+    }
     let mut scenario: Option<PathBuf> = None;
     let mut session = String::from("fake-session");
     let mut resumed = false;
@@ -213,6 +239,8 @@ fn main() -> ExitCode {
     let mut mcp_config: Option<PathBuf> = None;
     let mut prompt_tool: Option<String> = None;
     let mut mode = String::from("default");
+    let mut model = String::new();
+    let mut system = String::new();
     let mut allowed: Vec<String> = Vec::new();
     let mut disallowed: Vec<String> = Vec::new();
     let mut i = 0;
@@ -230,6 +258,16 @@ fn main() -> ExitCode {
                 i += 1;
             }
             "--fork-session" => fork = true,
+            "--model" | "--append-system-prompt" => {
+                if let Some(v) = args.get(i + 1) {
+                    if args[i] == "--model" {
+                        model = v.clone();
+                    } else {
+                        system = v.clone();
+                    }
+                }
+                i += 1;
+            }
             "--include-partial-messages" => partial = true,
             "--mcp-config" => {
                 mcp_config = args.get(i + 1).map(PathBuf::from);
@@ -315,6 +353,11 @@ fn main() -> ExitCode {
             && s.when
                 .as_ref()
                 .is_none_or(|w| instruction.contains(w.as_str()))
+            && s.model.as_ref().is_none_or(|m| *m == model)
+            && s.forked.is_none_or(|f| f == fork)
+            && s.system
+                .as_ref()
+                .is_none_or(|w| system.contains(w.as_str()))
     });
     let Some((n, step)) = pick else {
         drop(lock);

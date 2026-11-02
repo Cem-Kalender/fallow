@@ -51,7 +51,7 @@
     const c = p.conversation || { turns: [], mode: "ask" };
     const chat = document.getElementById("chat");
     const wasAtEnd = atEnd(chat);
-    chat.innerHTML = h`${messages(c)}`.s;
+    document.getElementById("chat-list").innerHTML = h`${messages(c)}`.s;
     if (wasAtEnd) chat.scrollTop = chat.scrollHeight;
     document.getElementById("knows").innerHTML = knows(p, c).s;
     document.getElementById("ideas").innerHTML = h`${ideas(c)}`.s;
@@ -70,14 +70,21 @@
         <span class="mono tiny muted">${p.path}</span>
         <div class="row wrap gap-6">${kindPills(p)}</div>
         <div class="grow"></div>
-        <form class="row gap-8" data-submit="new-feature">
+        <form class="row wrap gap-8" data-submit="new-feature">
           <label for="feature-title" class="sr">New feature's name</label>
           <input id="feature-title" type="text" placeholder="New feature's name">
+          ${((c.leads || []).filter((l) => l.available).length > 1) ? h`<label for="feature-lead" class="sr">The new feature's lead</label><select id="feature-lead" title="The lead the new spec session talks to">${(c.leads || []).filter((l) => l.available).map((l) => h`<option value="${l.name}"${raw(l.name === ((p.lead && !p.lead.problem && p.lead.name) || "lead") ? " selected" : "")}>${l.name}</option>`)}</select>` : ""}
           <button class="btn" type="submit">+ New feature</button>
         </form>
       </div>
       <div class="studio${chatWide("project") ? " chat-wide" : ""}">
-        <aside class="column" aria-label="Features">
+        <aside class="column" aria-label="Features and files">
+          <div class="ptabs" role="tablist" aria-label="Features or files">
+            <button role="tab" id="ptab-features" class="ptab${tab === "features" ? " on" : ""}" data-act="ptab" data-tab="features" aria-selected="${tab === "features" ? "true" : "false"}" aria-controls="features-pane">Features</button>
+            <button role="tab" id="ptab-files" class="ptab${tab === "files" ? " on" : ""}" data-act="ptab" data-tab="files" aria-selected="${tab === "files" ? "true" : "false"}" aria-controls="files-pane">Files</button>
+          </div>
+          <div id="files-pane" role="tabpanel" aria-labelledby="ptab-files"${raw(tab === "files" ? "" : " hidden")}>${fc ? fc.treeHtml() : ""}</div>
+          <div id="features-pane" role="tabpanel" aria-labelledby="ptab-features"${raw(tab === "features" ? "" : " hidden")}>
           <h2 class="th">Features</h2>
           ${p.feature_list.length ? p.feature_list.slice().reverse().map((f) => featureLink(p, f)) : h`<div class="small muted">No features yet.</div>`}
           ${p.other_specs.length ? h`<div class="tiny muted mt-6">Also in specs/: ${p.other_specs.join(", ")}</div>` : ""}
@@ -89,11 +96,15 @@
           <label class="feat" for="notify-toggle"><span>Desktop notifications</span><input id="notify-toggle" type="checkbox" data-change="notifications"${raw(p.notifications ? " checked" : "")}></label>
           ${p.kind === "folder" ? h`<button class="btn btn2 sm mt-8" data-act="git-init">Set up git</button>` : ""}
           <button class="btn btn2 sm mt-8" data-act="remove">Remove from Fallow</button>
+          </div>
         </aside>
-        <section class="chat-col" aria-label="Conversation with the lead">
-          <div class="chat-head"><div class="avatar" aria-hidden="true">L</div><div><b>Project conversation</b> <span class="small muted">· lead · reads the code, never edits it here</span></div><span class="grow"></span>${expandBtn("project")}</div>
+        <section class="file-col card" id="file-view" aria-label="A file"${raw(fc && fc.isOpen() ? "" : " hidden")}>${fc && fc.isOpen() ? fc.viewHtml() : ""}</section>
+        <section class="chat-col" id="chat-col" aria-label="Conversation with the lead"${raw(fc && fc.isOpen() ? " hidden" : "")}>
+          <div class="chat-head"><div class="avatar" aria-hidden="true">L</div><div><b>Project conversation</b> <span class="small muted">· reads the code, never edits it here</span><div id="lead-head">${Fallow.leadHead(c)}</div></div><span class="grow"></span>${expandBtn("project")}</div>
           ${p.kind === "folder" ? h`<div class="notice">This project is a plain folder: Fallow cannot check what a command the lead runs writes. Set up git to work in a copy of your own.</div>` : ""}
-          <div class="chat" id="chat">${messages(c)}</div>
+          ${p.lead && p.lead.problem ? h`<div class="notice">The project's lead: ${p.lead.problem}.</div>` : ""}
+          <div id="lead-notice">${Fallow.leadNotice(c)}</div>
+          <div class="chat" id="chat"><div id="chat-list">${messages(c)}</div>${Fallow.working(c)}</div>
           ${composer(c, "Ask about the code, plan features, or design a pipeline…")}
         </section>
         <aside class="column end" aria-label="What the lead knows">
@@ -114,6 +125,31 @@
     try { pre = sessionStorage.getItem("fallow.prefill"); sessionStorage.removeItem("fallow.prefill"); } catch (_) { pre = null; }
     const box = document.getElementById("say");
     if (pre && box) { box.value = pre; box.focus(); }
+    // Always: a screen without a conversation leaves the menu with none (009 review).
+    if (Fallow.menu) {
+      Fallow.menu.attach({ conv: c.id || null, project: p.id, actions: () => actions(state), pickAgent: (a) => pickLead(state, a) });
+    }
+  }
+
+  // 009 US2: in the `/` menu, a lead picked before the session's first message becomes its lead.
+  function pickLead(p, a) {
+    const c = p && p.conversation;
+    if (!c || a.kind !== "lead" || !c.lead || c.lead.fixed) return false;
+    post(`/api/conversations/${encodeURIComponent(c.id)}/lead`, { lead: a.name })
+      .catch((e) => alertLine(e.message))
+      .then(() => load(document.getElementById("app"), p.id));
+    return true;
+  }
+
+  // The `/` menu's Fallow actions in the project conversation (009 T011).
+  function actions(p) {
+    const c = (p && p.conversation) || {};
+    return [
+      { name: "New feature", description: "Name a feature and start its spec session", available: true, run: () => { const f = document.getElementById("feature-title"); if (f) f.focus(); } },
+      { name: "Lock the spec", description: "Lock a feature and start its loop", available: false, reason: "Open a feature's spec session to lock it" },
+      { name: "Choose the lead", description: "The lead this conversation talks to", available: !!(c.lead && !c.lead.fixed && !c.lead.problem), reason: "A session keeps its lead", run: () => { const b = document.querySelector("[data-act=lead-pick]"); if (b) b.click(); } },
+      ...Fallow.menu.chatActions(c),
+    ];
   }
 
   async function load(app, id) {
@@ -129,10 +165,86 @@
     }
   }
 
+  // ---- 009 US5: the Files tab, and a file in place of the chat ------------------------------
+  let tab = "features";
+  let fc = null; // the files controller
+
+  function drawFiles(focusId) {
+    const pane = document.getElementById("files-pane");
+    const view = document.getElementById("file-view");
+    const chat = document.getElementById("chat-col");
+    if (!pane || !fc) return;
+    const keep = (el) => (el ? el.scrollTop : 0);
+    const focusKeep = fc.keep();
+    const tree = pane.querySelector(".ft-tree");
+    const codeEl = view && view.querySelector(".fcode");
+    const [t1, c1] = [keep(tree), keep(codeEl)];
+    pane.innerHTML = fc.treeHtml().s;
+    const open = fc.isOpen();
+    view.innerHTML = open ? fc.viewHtml().s : "";
+    view.hidden = !open;
+    chat.hidden = open;
+    const t2 = pane.querySelector(".ft-tree");
+    if (t2) t2.scrollTop = t1;
+    const c2 = view.querySelector(".fcode");
+    if (c2) c2.scrollTop = c1;
+    fc.settle(focusId || focusKeep);
+  }
+
+  async function filesFor(id, version, file) {
+    if (fc && fc.st.project === id && !version) return;
+    if (fc) fc.stop();
+    fc = Fallow.files.create({
+      project: id, version, file,
+      changed: (focusId) => drawFiles(focusId),
+      // Back to the chat, with the file named in the message box (FR-031).
+      ask: (path, label) => {
+        fc.st.file = null; fc.st.data = null;
+        drawFiles();
+        const box = document.getElementById("say");
+        if (box) {
+          const ref = `@${path}${label ? ` (on ${label})` : ""} `;
+          box.value = box.value.trim() ? `${ref}${box.value}` : ref;
+          box.focus();
+          box.dispatchEvent(new Event("input", { bubbles: true }));
+        }
+      },
+    });
+    Fallow.files.active = fc;
+    const mine = fc;
+    try {
+      await mine.load();
+      mine.st.loadError = null;
+    } catch (e) {
+      mine.st.loadError = e.message;
+    }
+    // Left, or another project's files, while it loaded: it never starts.
+    if (fc !== mine) return mine.stop();
+    mine.start();
+  }
+
   let current = null;
   Fallow.register("project", {
+    // A new address of the Files tab, on the same project, is followed without a reload.
+    update(r) {
+      if (!current || r.project !== current.id || !r.files || !state) return false;
+      tab = "files";
+      filesFor(r.project, r.files.v, r.files.f).then(() => {
+        const ft = document.getElementById("ptab-files");
+        if (ft) ft.click();
+        drawFiles();
+      });
+      return true;
+    },
     enter(app, r) {
       current = { app, id: r.project };
+      if (r.files) {
+        tab = "files";
+        // Drawn once the project's page is there and the files have come.
+        filesFor(r.project, r.files.v, r.files.f).then(() => { if (Fallow.here(app)) drawFiles(); });
+      } else if (fc && fc.st.project !== r.project) {
+        fc.stop(); fc = null; tab = "features";
+      }
       load(app, r.project).then(() => {
         if (!Fallow.here(app)) return;
         if (stop) stop();
@@ -143,8 +255,40 @@
     leave() {
       if (stop) stop();
       stop = null;
+      // The Files tab comes back closed: Features, and the chat, as the page opens.
+      if (fc) fc.stop();
+      fc = null;
+      tab = "features";
+      Fallow.files.active = null;
     },
     async act(name, el) {
+      if (name === "ptab") {
+        tab = el.dataset.tab;
+        if (tab === "files" && !fc) await filesFor(state.id);
+        else if (tab === "files") {
+          // A load that failed before is tried again.
+          if (fc.st.loadError) {
+            try { await fc.load(); fc.st.loadError = null; } catch (e) { fc.st.loadError = e.message; }
+          }
+          fc.start();
+        }
+        else if (fc) {
+          fc.stop();
+          fc.st.file = null;
+          fc.st.data = null;
+          drawFiles(); // the chat back in the middle
+        }
+        document.getElementById("files-pane").hidden = tab !== "files";
+        document.getElementById("features-pane").hidden = tab !== "features";
+        for (const b of document.querySelectorAll(".ptab")) {
+          const on = b.dataset.tab === tab;
+          b.classList.toggle("on", on);
+          b.setAttribute("aria-selected", on ? "true" : "false");
+        }
+        if (tab === "files") { Fallow.files.active = fc; drawFiles(); }
+        return;
+      }
+      if (fc && name.startsWith("f-") && (await fc.act(name, el))) return;
       const conv = state && state.conversation && state.conversation.id;
       const again = () => load(current.app, current.id);
       if (conv && (await chatAct(conv, name, el, again))) return;
@@ -159,7 +303,10 @@
         if (name === "new-feature" || name === "start-feature") {
           const title = name === "start-feature" ? el.dataset.title : document.getElementById("feature-title").value.trim();
           if (!title) return alertLine("Name the feature first.");
-          const f = await post(`/api/projects/${encodeURIComponent(state.id)}/features`, { title });
+          const sel = document.getElementById("feature-lead");
+          const body = { title };
+          if (name === "new-feature" && sel && sel.value) body.lead = sel.value;
+          const f = await post(`/api/projects/${encodeURIComponent(state.id)}/features`, body);
           location.hash = `#/p/${encodeURIComponent(state.id)}/f/${encodeURIComponent(f.feature)}`;
           return;
         }
