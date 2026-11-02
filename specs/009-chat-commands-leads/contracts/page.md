@@ -34,7 +34,7 @@
 
 ## The lead in the chat (US2)
 
-- The chat head shows "Lead: <name> · <runtime> · <model>".
+- The chat head shows "Lead: <name> · <runtime> · <model>", and the lead's messages are labelled with its name.
   - Before the first message, the name is a button that opens the picker: the project's Lead agents, each available one, or greyed out with its reason.
   - After the first message, it is plain text, with the title "A session keeps its lead".
 - `lead.changed`: a notice above the message box: "<lead>'s runtime or model changed since this session started: your next message starts a new session with it."
@@ -45,14 +45,14 @@
 ## The working indicator (US3)
 
 `#working`, a sibling after the chat's message list, has `role="status"`: three dots and "The lead is answering…".
-- It is shown while `busy`, and hidden at the end of the turn or a cancel.
+- It is shown as soon as the message is sent (before the request returns) and while `busy`, and hidden at the end of the turn or a cancel, or when the send is refused.
 - The dots animate only under `prefers-reduced-motion: no-preference`.
 - Re-rendering the messages never re-creates it.
 
 ## Leaving with unsaved changes (US4)
 
 - A screen may define `dirty()`: the agents and pipelines screens, and the spec session while a document is being edited.
-- On any address change that leaves a dirty screen (another screen or project, Back or Forward, a link), the old address is put back. Then "Leave your changes?" asks before going.
+- On any address change that leaves a dirty screen (another screen or project, Back or Forward, a link), the old address is put back without rewriting the history (Back or Forward are undone with `history.go`). Then "Leave your changes?" asks before going. A save under way finishes first.
 - On close or reload, `beforeunload` brings up the browser's prompt while a screen is dirty.
 
 ## The project's files (US5)
@@ -63,10 +63,13 @@
   - Marks: M (changed), A (added), D (deleted), "spec" for the feature's folder, and a lock for secrets.
 - **An open file** takes the chat column's place, with:
   - a header showing the path, its mark, and who changed it in which task;
-  - the buttons "Changes vs <base>" / "Whole file", "Ask the lead about it", "Open in my editor" and "← Conversation";
+  - the buttons "Changes vs <base>" / "Whole file", "Ask the lead about it", "Open in my editor" and "← Conversation", and "Editor: <program> · change" once an editor is saved;
+  - declining the editor's choice shows the file's absolute path, selected, to copy;
   - line numbers, with added lines highlighted.
 - **Loop page and spec session**: a "Files" button in the header.
   - B1, the drawer: it replaces the side column, with "Changed · n" / "All files" and "Open full".
   - B2, a file open: the drawer widens over the agent cards and the feed (spec session: over the documents), as in `mockup/files.html`. The header and the task tree stay in view, and it has "← Back to the loop".
+- **Ask the lead about it**: from the project page and the loop page's drawer, the project conversation; from a spec session's drawer, that spec session's chat.
+- **A version that is gone**: an open file of it says so and offers the project folder's version.
 - **Address**: `#/p/<p>/files?v=<version>&f=<path>` opens the project page's Files tab with that file.
 - **No file view has an editable element.**

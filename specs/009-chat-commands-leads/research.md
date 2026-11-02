@@ -59,7 +59,7 @@ When sent, the lead's prompt carries the command's instructions as the engineer'
 - A message whose first word is `/<name>`, with `<name>` in the conversation's catalogue, is a command; anything else is plain text (FR-005).
 - `TurnStarted.said` keeps the text as typed (FR-012).
 - `LeadTurn` gains `command: Option<Command>`. The prompt adds a short block for it (R-1, R-2) before "The engineer says:".
-- In the project conversation, `/specify <title>` does not start a turn there. `say` creates the feature (as `NewFeature`, with the session's lead choice, R-4), then sends `/specify <title>` in the new spec session. It answers `{feature, conversation}`, and the page opens that session (clarify answer 1).
+- In the project conversation, `/specify <title>` does not start a turn there. `say` creates the feature (as `NewFeature`, with the project's default lead, R-4), then sends `/specify <title>` in the new spec session. It answers `{feature, conversation}`, and the page opens that session (clarify answer 1).
 - The catalogue is computed per request from the files, so it is never stale. It is cheap: a few directory reads.
 - `GET /api/conversations/<c>/commands` gives the page the same catalogue (contracts/web-api.md).
 - Fallow's own actions are the page's (R-9). They are not sent to the server as messages.
@@ -74,10 +74,10 @@ When sent, the lead's prompt carries the command's instructions as the engineer'
 - `Project` gains `lead: Option<String>`; `None` means `lead`. It is set by `PATCH /api/projects/<p>` with `{lead}`, which checks that the name is an agent of kind Lead in the project's library.
 - `patch_project` now checks every key before changing any. Today an error on a later key leaves earlier keys changed in memory but not saved.
 - `ConversationCreated` gains `#[serde(default)] lead: Option<String>`, set from the project's default when the session is created.
-- A new event, `LeadSet { lead }`, records a change before the first message. It is refused once a turn has started that was not withdrawn and has a session.
+- A new event, `LeadSet { lead }`, records a change before the first message. The lead is **fixed** once a `TurnStarted` exists that was not withdrawn: from the moment the first message is sent, while it is answered, and also when that turn failed. `LeadSet` is refused when the lead is fixed and while the conversation is busy.
 - `State` gains:
   - `lead: Option<String>` (`None` means `lead`, which covers sessions from before 009, FR-018);
-  - `lead_runtime` and `lead_model`, taken from the first `TurnStarted` of the current agent session.
+  - `lead_runtime` and `lead_model`, taken from the `TurnStarted` that begins an agent session. `TurnStarted` gains `#[serde(default)] new_session: bool` (true for `Session::New`), because its `session` string alone does not tell a new session from a resume or a fork.
 - `TurnStarted` gains `#[serde(default)] runtime, model`.
 - `say()` looks up `state.lead` instead of `"lead"`. When the definition's runtime or model differs from the one the session ran on, the turn starts a `Session::New`. The engineer sees a notice before sending (FR-019a), from the view's `lead.changed`.
 - A spec session forks the project conversation's agent session only when both use the same lead on the same runtime and model; otherwise it starts a new one. Today it always forks, which would cross runtimes.
@@ -120,10 +120,11 @@ When sent, the lead's prompt carries the command's instructions as the engineer'
 **Decision**:
 - A screen may define `dirty()`: agents.js already has one, pipelines.js has `s.dirty`, and spec.js gains one (the editor's text differs from the document's).
 - The router keeps the last address shown. On `hashchange`, if the current screen is dirty and the new address leaves it, the router:
-  - puts the old address back with `history.replaceState`;
+  - puts the old address back: after a link or a `location.hash` write with `history.replaceState`, after Back or Forward with `history.go(+1)` or `history.go(-1)` (known from the position the router keeps in `history.state`), so staying never rewrites an entry of the history;
   - asks "Leave your changes?" with the existing `confirm()`;
   - goes on only on "Leave them".
 - The screens' own `update()` guards stay, for changes within a screen.
+- A save under way is finished (or fails) before the screen is asked whether it is dirty, so a saved change is not asked about.
 - A `beforeunload` listener calls `preventDefault()` when the current screen is dirty, which brings up the browser's own prompt (FR-025).
 
 **Why**: every navigation is a hash change (links, nav, Back and Forward, `location.hash =`), so one check in the router covers them all (FR-023).
@@ -155,7 +156,7 @@ When sent, the lead's prompt carries the command's instructions as the engineer'
 **Who changed it**:
 - `git log -1 --format=%H%x1f%s%x1f%b%x1f%ct <base>..HEAD -- <path>`.
 - The subject's `<kind> <task>:`, plus the body's `Fallow loop r<id>, step <n>`, give the task and, through the loop's step record, the agent definition.
-- Spec sessions' `spec: <step> (turn n)` gives "the lead".
+- Spec sessions' `spec: <step> (turn n)` gives the session's lead name.
 - An uncommitted change in a running loop's worktree is "being changed", with the agent at work.
 
 **Safety (FR-035, FR-036, FR-036a)**:
@@ -190,17 +191,18 @@ When sent, the lead's prompt carries the command's instructions as the engineer'
 ## R-10 Ask the lead about a file, and Open in my editor
 
 **Ask the lead**:
-- The page opens the project page and fills the box with `@<path>`, adding `(on <feature>)` for a feature's version, through the existing `fallow.prefill`.
+- From the project page and a loop page's drawer, the page opens the project page and fills its box with `@<path>`, adding `(on <feature>)` for a feature's version, through the existing `fallow.prefill`. From a spec session's drawer, it fills that spec session's own box.
 - When it is sent, `say()` finds `@` references to files in the project's views. It adds each file's text to the lead's prompt as context, with its version, applying the same limits and the secrets rule as the file view.
 - The lead does not need git access to a branch, so this works for any lead.
 
 **Open in my editor**:
-- A preference in Fallow's data directory, `prefs.json`, holds `editor: {command}`. It is Fallow's own data (VI). `settings.toml` stays read-only to Fallow.
-- `POST /api/files/open` with a version, a path and an optional confirmed `command`:
+- A preference in Fallow's data directory, `prefs.json`, holds `editor: {program, args}`: a program (a name found on `PATH` or a full path) and fixed arguments, such as `{program: "code", args: ["-r"]}`. A typed command is split on spaces, with double quotes grouping, never through a shell; the program must exist when it is saved. It is Fallow's own data (VI). `settings.toml` stays read-only to Fallow.
+- The file view shows "Editor: <program> · change". `POST /api/files/editor` sets it (`{program, args}`, or `{command}` typed and split as above) or clears it (`{clear: true}`).
+- `POST /api/files/open` with a version, a path and, when the engineer has just chosen, either `editor: {program, args}` (a found editor) or `command: "<text>"` (typed, split by the server as above):
   - It opens the file with the preferred editor, launching the program with the file's absolute path as one argument.
   - Without a preference it answers `{choose: [found editors]}`. The editors looked for are `code`, `code-insiders`, `cursor`, `windsurf`, `zed`, `subl`, `idea` and `pycharm`, plus `notepad++` on Windows. Fallow looks on `PATH` and in their usual install folders.
-  - The page asks the engineer to confirm one, or to type a command. Confirming saves it.
-- It never asks the system to open the file by its type (FR-032). A `.cmd` launcher on Windows goes through `cmd /c` with the path quoted. Paths with `"`, `%`, `^`, `&`, `|`, `<` or `>` are refused there, because `cmd` would read them.
+  - The page asks the engineer to confirm one, or to type a command. Confirming saves it. Declining shows the file's absolute path to copy.
+- The program is started directly with `args` followed by the file's absolute path as the last argument; no shell is involved. It never asks the system to open the file by its type (FR-032). A `.cmd` launcher on Windows goes through `cmd /c` with every argument quoted. A path or an argument with `"`, `%`, `^`, `&`, `|`, `<` or `>` is refused there, because `cmd` would read them.
 
 ## R-11 Tests
 
@@ -215,3 +217,17 @@ When sent, the lead's prompt carries the command's instructions as the engineer'
 - the indicator, and the absence of motion under reduced motion;
 - the leave prompt on every way out;
 - the Files tab and drawer against the mockup, at 1440 px and 390 px.
+
+## R-12 Changes after analysis (2026-11-02)
+
+A fresh reviewer's analysis of spec, plan and tasks led to these decisions; the sections above are updated where they changed.
+
+- **The loop's lead and a changed runtime or model**: `Studio::lead_of` gives no session (`None`, so the question starts a new one) when the lead's definition no longer runs on the session's `lead_runtime`/`lead_model`, so a loop question never forks across runtimes.
+- **"Answered by a lead"** is stored with the answer: the question entry gains `#[serde(default)] by_lead: bool`, set when a lead answered. `by` holds the agent's name. Every check of `by == "lead"` reads `by_lead` instead: activity.rs (~220-234, ~733), the overrule check in questions.rs (~896, so the engineer can still overrule any lead's answer, constitution II), and loop.js (~466 `q.by === "lead"`; ~274 `e.agent === "lead"` uses the feed entry's lead flag). Entries written before 009 have `by: "lead"` and read `by_lead` from it.
+- **A branch version** (a feature with neither a loop worktree nor a spec worktree): its entries come from `git::files_at(branch)` with marks from `git diff --name-status <base> <branch>`, and its files from `git::show(branch, path)`. A feature whose copy and branch are both gone is not a version; a file open on it says so and offers the project folder.
+- **The spec session's lead name in labels**: chat messages and the file view's "who" use the session's lead name, not the word "lead".
+- **Speed claims in CI (constitution VIII)**: every timed claim has a `cargo test` that CI runs:
+  - SC-002: the catalogue of a project with 200 commands is answered within 100 ms; narrowing is done in the page without a request, which the page check confirms.
+  - SC-006: the indicator is shown by the page when the message is sent, before the request returns; the page check confirms the order, and `cargo test` checks that the conversation read right after `say` returns is `busy`.
+  - FR-034: after a file is written in a loop's worktree, the next `files` reply has a new `fingerprint` (nothing kept from before); the page asks every 3 s, which the page check confirms (plan, Complexity Tracking).
+  - SC-008: 5,000 files listed within 2 s.

@@ -75,7 +75,7 @@ For Q2, a second lead: a project override `.fallow/agents/careful-lead.md`, a co
    - **Expected:**
      - the added lines are green;
      - the header says "by builder in T009";
-     - the builder's next change appears within 5 s without losing the place.
+     - the builder's next change appears at the next refresh (every 3 s) without losing the place.
 3. Choose "Ask the lead about it" and send.
    - **Expected:** the project conversation's lead answers about that file on that branch.
 4. Choose "Open in my editor" for the first time.

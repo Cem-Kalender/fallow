@@ -17,15 +17,15 @@
 | Event | Change |
 |---|---|
 | `conversation_created` | + `lead: string?` (`#[serde(default)]`): the lead at creation, from the project's default or the engineer's pick at "+ New feature" |
-| `lead_set` (new) | `{lead}`: the engineer picked another lead. Valid only while no turn has started that was not withdrawn and has a session (FR-014, FR-015) |
-| `turn_started` | + `runtime: string?`, `model: string?` (`#[serde(default)]`): what the lead's call ran on |
+| `lead_set` (new) | `{lead}`: the engineer picked another lead. Valid only while the lead is not fixed (no `turn_started` that was not withdrawn) and the conversation is not busy (FR-014, FR-015) |
+| `turn_started` | + `runtime: string?`, `model: string?`, `new_session: bool` (`#[serde(default)]`): what the lead's call ran on, and whether it began a new agent session |
 
 **State** (folded):
 
 | Field | Type | Rule |
 |---|---|---|
 | lead | string? | The last `lead_set`, else `conversation_created.lead`; `None` reads as `lead` (FR-018) |
-| lead_runtime, lead_model | string? | Taken from `turn_started` when it begins an agent session (the turn's `session` is new, not a resume), and kept for as long as that session lasts. Cleared with the session (a withdrawn first turn, R-4 of 008) |
+| lead_runtime, lead_model | string? | Taken from the `turn_started` with `new_session: true`, and kept for as long as that session lasts. Cleared with the session (a withdrawn first turn, R-4 of 008) |
 
 **Derived in the view** (`GET /api/conversations/<c>`):
 
@@ -33,14 +33,14 @@
 |---|---|
 | lead.name | `state.lead` or `lead` |
 | lead.runtime, lead.model | From the definition as it is now |
-| lead.fixed | `true` once a turn that was not withdrawn has a session: the lead cannot change (FR-015) |
+| lead.fixed | `true` once a `turn_started` exists that was not withdrawn (answered, answering or failed): the lead cannot change (FR-015) |
 | lead.changed | The definition's runtime or model differs from `lead_runtime`/`lead_model`: the next message starts a new agent session (FR-019a) |
 | lead.problem | The lead is gone or unavailable (deleted, not kind Lead, runtime not available), with the reason; `say` refuses with it (FR-019) |
 | leads[] | Every Lead agent of the project's library: `{name, runtime, model, available, reason}`, for the picker (FR-014, FR-020) |
 
 ## Lead for a loop's questions (changed, in memory)
 
-`run::questions::Lead` + `agent: String`. It is filled by `Studio::lead_of` from the feature's spec session (R-5). Nothing new is stored in the loop's log; the answer's `by` names the agent.
+`run::questions::Lead` + `agent: String`. It is filled by `Studio::lead_of` from the feature's spec session (R-5). `lead_of` gives `session: None` when the lead's definition no longer matches the session's `lead_runtime`/`lead_model` (research R-12). A question entry gains `by_lead: bool` (`#[serde(default)]`; read as `by == "lead"` for entries before 009); `by` names the agent.
 
 ## Command (derived, per conversation)
 
@@ -68,7 +68,7 @@
 |---|---|---|
 | id | `folder \| feature:<f>` | |
 | label | string | "Project folder", or the feature's name |
-| kind | `folder \| loop \| spec \| branch` | Which copy is read (R-8): the loop's build worktree, the spec session's worktree, or the branch via git |
+| kind | `folder \| loop \| spec \| branch` | Which copy is read (R-8, R-12): the loop's build worktree, the spec session's worktree, or the branch via git |
 | running | bool | The feature's loop is running |
 | base | commit? | `merge-base` with the feature's base branch; none for `folder` |
 
@@ -94,10 +94,11 @@ The list carries a `fingerprint`: a hash of the paths and marks, for the 3-secon
 | size | int | Bytes |
 | added | `[[from, to]]` | Line ranges added against the base |
 | changes | string? | The unified diff against the base (asked for with `view=changes`) |
-| last | object? | `{who, task?, step?, commit?, when, live}`. `who` is the agent definition, `lead` or `you`. `live` means the change is not committed yet and a loop is at work |
+| last | object? | `{who, task?, step?, commit?, when, live}`. `who` is the agent definition, the spec session's lead name, or `you`. `live` means the change is not committed yet and a loop is at work |
 
 ## Preferences (new, `<data>/prefs.json`)
 
 | Field | Type | Rule |
 |---|---|---|
-| editor.command | string | The program "Open in my editor" starts with the file's path. It is set only when the engineer confirms one (R-10), and can be changed the same way |
+| editor.program | string | The program "Open in my editor" starts: a name on `PATH` or a full path; it must exist when saved |
+| editor.args | string[] | Fixed arguments before the file's path (for example `["-r"]`). Set only when the engineer confirms (R-10); changed or cleared from the file view |

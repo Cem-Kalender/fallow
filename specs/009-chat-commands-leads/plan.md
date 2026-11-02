@@ -27,7 +27,7 @@
 **Storage**:
 - `projects.json` gains `lead` (optional).
 - A conversation's log gains `lead` on `conversation_created`, the new `lead_set` event, and `runtime`/`model` on `turn_started`. All are optional with defaults, so logs from before 009 load unchanged.
-- New: `<data>/prefs.json` (`editor.command`).
+- New: `<data>/prefs.json` (`editor: {program, args}`).
 - Older builds truncate a log at `lead_set` (R-4 note).
 
 **Testing**: `cargo test` with the fake runtime: `tests/us9_leads.rs`, `tests/us9_commands.rs` and `tests/us9_files.rs`, plus unit tests for the catalogue, the frontmatter, input substitution, path safety, the secrets list and parsing commit subjects. The page is checked with headless Chrome over CDP, as 008: the menu by keyboard, the indicator under reduced motion, the leave prompt on every route, and the file views against `mockup/files.html` at 1440 px and 390 px. Every test from 007 and 008 stays green.
@@ -37,9 +37,9 @@
 **Project Type**: local service with a browser page (one crate plus `xtask`).
 
 **Performance Goals**:
-- SC-002: the menu narrows in under 100 ms for 200 commands. Matching runs in the page over a list fetched once.
+- SC-002: the catalogue of 200 commands is answered within 100 ms (a CI test); narrowing runs in the page over that list, without a request.
 - SC-008: the tree of 5,000 files within 2 s. That is one `git ls-files` and one `git diff --name-status`, about 200 KB of JSON.
-- FR-034: changes show within 5 s (3 s refresh while visible).
+- FR-034: nothing kept from before (a CI fingerprint test); the page asks every 3 s while visible (a page check, Complexity Tracking).
 - 007's budgets hold: idle < 60 MB, page ready < 500 ms. File listings are not cached in memory.
 
 **Constraints**:
@@ -70,7 +70,7 @@ Checked against v6.1.0.
 | V. Local and Private | No network path. File views read only the project and Fallow's copies of it. Files that may hold secrets are listed but never read, shown or sent to a lead (FR-036a). Prefs are stored in Fallow's data directory. | PASS |
 | VI. Least Privilege | Project commands cannot widen a lead's rights: their `allowed-tools` and similar settings are not applied (FR-009). Spec Kit's `implement` and `taskstoissues` are not offered. The file views write nothing. "Open in my editor" starts the engineer's own program, with their rights, on one file path, never "open with the associated program". Fallow writes only `prefs.json` in its own data directory. | PASS |
 | VII. Runs Survive | The session's lead and its runtime and model are in the conversation's log, so a restart keeps them. The loop finds its lead from the feature's record on every question, as today. | PASS |
-| VIII. Small and Measured | No dependencies. Listings are computed on request and not kept. SC-008's tree time is a test on a generated repository of 5,000 files in `tests/us9_files.rs`, and the idle-memory benchmark still runs. | PASS |
+| VIII. Small and Measured | No dependencies. Listings are computed on request and not kept. Every timed claim has a `cargo test` that CI runs (research R-12): the catalogue of 200 commands within 100 ms (SC-002), the conversation `busy` when read right after `say` returns (SC-006, with the page showing the indicator before the reply), a new fingerprint right after a file changes (FR-034's "nothing kept from before"), and 5,000 files listed within 2 s (SC-008). The idle-memory benchmark still runs. | PASS |
 
 **Re-check after Phase 1 design**: PASS. The contracts add endpoints and optional fields, and only `prefs.json` and the conversation log's optional fields are new on disk.
 
@@ -81,7 +81,7 @@ Checked against v6.1.0.
 ```text
 specs/009-chat-commands-leads/
 ├── plan.md          # this file
-├── research.md      # R-1 to R-11
+├── research.md      # R-1 to R-12
 ├── data-model.md
 ├── quickstart.md    # Q1 to Q6
 ├── contracts/
@@ -96,7 +96,7 @@ specs/009-chat-commands-leads/
 
 ```text
 src/
-├── conversation/events.rs  # ConversationCreated.lead, LeadSet, TurnStarted.runtime/model; State.lead, lead_runtime/model
+├── conversation/events.rs  # ConversationCreated.lead, LeadSet, TurnStarted.runtime/model/new_session; State.lead, lead_runtime/model
 ├── project/mod.rs          # Project.lead
 ├── studio/
 │   ├── mod.rs              # say(): the session's lead, new session on a changed runtime/model, fork only with the same lead,
@@ -110,7 +110,7 @@ src/
 │   ├── questions.rs        # Lead.agent; start_lead uses it; by: <agent>
 │   ├── activity.rs         # "answered by a lead" no longer means by == "lead"
 │   └── engine.rs           # Req dispatch for the new requests
-├── verify/git.rs           # name_status(base), others(dir), last_change(base, path), added_ranges(base, path)
+├── verify/git.rs           # listed, name_status(base), last_change(base, path), added_ranges(base, path), diff_worktree
 ├── service/
 │   ├── http.rs             # the new routes; SCREENS += files.js
 │   └── web/
@@ -121,13 +121,15 @@ src/
 │           ├── files.js    # NEW: the tree and the file view, shared by the three places
 │           ├── project.js  # Features | Files tabs; the file in place of the chat; lead picker at + New feature
 │           ├── spec.js     # dirty(); Files drawer; lead in the chat head
-│           ├── loop.js     # Files button and drawer (B1/B2); "careful-lead answered"
-│           └── agents.js   # "Use for this project" on a Lead; "this project's lead"
+│           ├── loop.js     # Files button and drawer (B1/B2); "careful-lead answered" (by_lead)
+│           ├── pipelines.js # dirty() for the router's guard
+│           └── agents.js   # "Use for this project" on a Lead; "this project's lead"; dirty()
 └── bin/fallow-fake-agent.rs  # unchanged (scenarios match on prompt text)
 tests/
 ├── us9_leads.rs     # NEW (US2)
 ├── us9_commands.rs  # NEW (US1)
 ├── us9_files.rs     # NEW (US5)
+├── common/mod.rs    # second_lead, fake_editor
 └── (007/008 tests adjusted where `by == "lead"` or a conversation view's keys are asserted)
 ```
 
@@ -142,4 +144,7 @@ The order of the work follows the priorities, with what they share first:
 
 ## Complexity Tracking
 
-No violation needs justifying.
+| Exception | Why it is needed | Simpler alternative rejected because |
+|---|---|---|
+| The page's own timing (the indicator shown before the reply, the 3-second refresh of the file views) is checked with headless Chrome, which CI does not run | CI has no browser; adding one (Chrome in CI and a CDP driver) is a dependency against VIII | The server-side half of each claim is a CI test (R-12): for SC-008 the listing of 5,000 files within 2 s, for which the page's drawing of the tree adds no request; the page half is a fixed interval, an order of statements or the drawing of an answer already received, checked at every phase and at the visual check (T038) |
+| An older Fallow build truncates a conversation log at `lead_set` (VII: no history lost) | A lead picked before the first message must survive restarts, and can only be recorded as an event | Recording the lead only on `conversation_created` would leave no way to record a pick made before the first message. The loss happens only when the engineer goes back to a build older than 009, as with 008's `cancel_asked`, and is stated in the release note. |
