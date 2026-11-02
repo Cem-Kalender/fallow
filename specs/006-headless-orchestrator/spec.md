@@ -203,6 +203,12 @@ part.
 
 ### User Story 6 - Publishing that respects the remote (Priority: P6)
 
+> Delivered for a feature loop by 010 (`specs/010-publish-remote`): FR-024 and FR-027 (push the
+> loop's branch, open a pull request with the run's summary, never push to the target, force,
+> bypass or approve). Not yet: FR-025 and FR-026 (learning required checks, waiting for them,
+> repairing a failing check, bringing a branch that fell behind up to date); 010 shows the
+> remote's checks and leaves what follows to the engineer.
+
 **Without a remote, or with an unprotected target branch:** the engineer merges locally.
 
 **With a protected target branch:**

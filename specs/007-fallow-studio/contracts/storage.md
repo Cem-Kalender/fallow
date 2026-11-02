@@ -56,6 +56,18 @@
 | `relocked` | lock, commit, affected[], phases[] (the new lock's `tasks.md`) |
 | `outcome` | ready \| done_unverified, missing[] |
 
+010 adds (all optional when read, so earlier logs load unchanged):
+
+| Type | Fields |
+|---|---|
+| `loop_created` | + when_verified: wait \| pull_request (absent: wait) |
+| `published` | remote, service, repo, branch (on the remote), commit (the gated commit), target, pr_number, pr_url, by: engineer \| when_verified |
+| `publish_failed` | step: check \| push \| pull_request, why, pushed? [branch, commit], by |
+| `pull_request_state` | state: open \| merged \| closed, checks[] (name, state: waiting \| passed \| failed \| skipped, url?), merged_at? (written only when something changed) |
+| `steering` | + kind `publish` (detail: the commit and who: engineer or when_verified) |
+
+A loop's stage goes Ready → Publishing on `published`, Publishing → Done (with `merged`, how: "pull request") when the pull request is merged on the remote, and Publishing → Ready when it is closed. `projects.json` gains `remote_seen` per project (the remote as last read, with `checked_at`) and `when_verified` on each lock record. The pull request's text is kept at `runs/<id>/publish/body.md`.
+
 006's events (`step_*`, `verified`, `gate_run`, `verdict`, `steering`, `limits_set`, `session_lost`, `needs_cleared`, `merged`, `stopped`) are kept. `run_created` is kept for runs from 006, which stay readable.
 
 **Rules**:
