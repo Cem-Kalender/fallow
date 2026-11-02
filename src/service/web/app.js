@@ -764,12 +764,28 @@ const Fallow = (() => {
     const box = document.getElementById("say");
     const text = box ? box.value.trim() : "";
     if (!text) return;
-    // Shown as the message is sent, before Fallow answers (SC-006).
+    // Shown as the message is sent, before Fallow answers (SC-006): the message, the lead's
+    // header and the working line at once. Fallow's own view of the turn replaces them when it
+    // comes; a send that is refused takes them away and gives the text back.
+    const list = document.getElementById("chat-list");
+    let pending = [];
+    if (list) {
+      const empty = list.querySelector(":scope > .empty");
+      if (empty) empty.remove();
+      const named = document.querySelector("#lead-head b, #lead-head [data-act=lead-pick]");
+      const name = named ? named.textContent : "lead";
+      const tmp = document.createElement("div");
+      tmp.innerHTML = h`<div class="you">${text}</div>${leadMsg(h`<b>${name}</b> · working`, raw(""), "")}`.s;
+      pending = [...tmp.children];
+      for (const n of pending) list.appendChild(n);
+    }
+    box.value = "";
+    box.style.height = "";
     showWorking(true);
+    const chat = document.getElementById("chat");
+    if (chat) chat.scrollTop = chat.scrollHeight;
     try {
       const out = await post(`/api/conversations/${conv}/say`, { text });
-      box.value = "";
-      box.style.height = "";
       // `/specify <title>` in the project conversation started a feature (009): open it.
       if (out && out.feature && out.conversation) {
         const r = route();
@@ -784,6 +800,11 @@ const Fallow = (() => {
       }
     } catch (e) {
       showWorking(false);
+      for (const n of pending) n.remove();
+      if (box && !box.value.trim()) {
+        box.value = text;
+        box.dispatchEvent(new Event("input", { bubbles: true }));
+      }
       alertLine(e.message);
     }
     after();
