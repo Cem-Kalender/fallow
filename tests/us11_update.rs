@@ -382,6 +382,7 @@ fn a_target_that_changed_the_features_documents_stops_the_update() {
         v["needs_engineer"]
             .as_str()
             .is_some_and(|n| n.contains("documents"))
+            && v["feature_loop"]["update"]["docs_changed"].is_array()
     });
     assert!(
         !s["steps"]
@@ -773,6 +774,7 @@ fn normal_strict_and_auto_off_ask_first() {
 }
 
 /// US3 scenario 3, FR-010: a Free loop whose budget is used up asks, naming the limit.
+/// The fake runtime's steps cost $0.01 each: 002-calc2's four reach $0.04 at ready.
 #[test]
 fn a_free_loop_over_its_budget_asks() {
     let root = scratch("u-budget");
@@ -784,11 +786,15 @@ fn a_free_loop_over_its_budget_asks() {
             .is_some_and(|n| n.contains("limit is used up"))
     });
     assert_eq!(v["feature_loop"]["updates"], 0, "nothing started");
+    // "Needs you" names the limit, never "Ready to merge" (FR-010).
+    let d = ask(tx, Request::Dashboard).unwrap().to_string();
+    assert!(d.contains("stopped at a limit"), "{d}");
     drop(e);
     let _ = std::fs::remove_dir_all(&root);
 }
 
 /// FR-007: the budget used up during an update stops it there; the loop asks, nothing merged.
+/// $0.04 at ready, under the $0.045 budget: the update starts; its repair ($0.01) uses it up.
 #[test]
 fn a_budget_used_up_during_an_update_stops_it() {
     let root = scratch("u-budget2");

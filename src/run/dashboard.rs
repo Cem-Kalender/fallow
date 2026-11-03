@@ -261,10 +261,15 @@ pub fn needs(run: &Run, project_name: &str) -> Vec<Value> {
             .update
             .as_ref()
             .is_some_and(|u| !u.docs_changed.is_empty())
+            || (l.update.is_none() && n.options.iter().any(|o| o == "lock again"))
         {
+            // Held by an update, or found by the watch before one (L1).
             Some("docs_changed")
         } else if l.update.is_none() && n.options.iter().any(|o| o == "bring up to date") {
             Some("update")
+        } else if n.options.iter().any(|o| o == "raise the limit") {
+            // A limit asked at Ready (FR-010), named, never shown as "Ready to merge" (M3).
+            Some("stopped")
         } else {
             None
         };
@@ -274,6 +279,10 @@ pub fn needs(run: &Run, project_name: &str) -> Vec<Value> {
             v["text"] = json!(n.why);
             v["updates"] = json!(l.updates);
             v["target"] = json!(s.target);
+            if kind == "stopped" {
+                v["what"] = json!("stopped at a limit");
+                v["task"] = json!(current_task(l));
+            }
             out.push(v);
             return out;
         }

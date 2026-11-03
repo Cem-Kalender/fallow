@@ -514,3 +514,37 @@ fn two_ready_with_squad(
     wait_for(tx, a, "001-calc ready", |v| v["stage"] == "ready");
     (e, repo, a, b)
 }
+
+/// FR-009a, FR-010 (phase 5 review M1): a Normal loop whose target moved before its turn asks;
+/// "Bring up to date" puts it back in line, its turn makes the update and merges after.
+#[test]
+fn a_normal_loop_asks_at_its_turn_then_merges() {
+    let root = scratch("l-normal");
+    let after = format!(
+        "{}{}",
+        check_step("US1", true, ""),
+        check_step("US2", true, "")
+    );
+    let (e, repo, a, _b) = two_ready(&root, &after, Some(Level::Normal), LockExtra::default());
+    let tx = &e.tx;
+    commit_on(
+        &repo,
+        "main",
+        "NOTES.md",
+        "outside
+",
+        "a note from outside Fallow",
+    );
+    merge_when_read(tx, a).unwrap();
+    wait_for(tx, a, "the question at its turn", |v| {
+        v["needs_engineer"]
+            .as_str()
+            .is_some_and(|n| n.contains("Bring it up to date"))
+    });
+    ask(tx, Request::Update { id: a }).unwrap();
+    let r = wait_for(tx, a, "merged", |v| v["stage"] == "done");
+    assert_eq!(r["feature_loop"]["updates"], 1);
+    assert_eq!(r["feature_loop"]["overtaken"], 0);
+    drop(e);
+    let _ = std::fs::remove_dir_all(&root);
+}

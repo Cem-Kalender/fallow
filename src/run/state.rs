@@ -250,6 +250,9 @@ pub struct LoopState {
     /// 011: a merge the engineer asked for and not made: the loop takes its turn again at the end
     /// of its line when it goes on after a wait (FR-009a).
     pub merge_pending: bool,
+    /// 011: the engineer asked for an update ("Bring up to date", "Verify again") not started
+    /// yet: the loop's turn starts it whatever the level (M1).
+    pub update_asked: bool,
     /// 011: files the loop's accepted steps changed.
     pub touched: BTreeSet<String>,
     /// 011: files the locked tasks name.
@@ -720,6 +723,11 @@ impl RunState {
             } => {
                 // An action of the engineer answers what was waiting for them.
                 self.needs = None;
+                if *kind == SteeringKind::Update {
+                    if let Some(f) = self.feature_loop.as_mut() {
+                        f.update_asked = true;
+                    }
+                }
                 // 011: publishing instead, or merging without the latest check, ends the merge
                 // asked for in its line (review F1).
                 if matches!(
@@ -891,6 +899,7 @@ impl RunState {
                     lined_at: None,
                     turn_updates: 0,
                     merge_pending: false,
+                    update_asked: false,
                     touched: BTreeSet::new(),
                     task_paths: task_paths(phases),
                     overlaps: Vec::new(),
@@ -1271,6 +1280,7 @@ impl RunState {
                 if let Some(f) = self.feature_loop.as_mut() {
                     f.fresh_seq = l.seq;
                     f.updates += 1;
+                    f.update_asked = false;
                     if *in_turn && f.lined_at.is_some() {
                         f.turn_updates += 1;
                     }

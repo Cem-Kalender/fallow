@@ -463,9 +463,6 @@ pub struct Engine {
     /// 011: the target watch per loop (research R-1): when it last asked, whether a read is
     /// running, for which verified commit, and what it read.
     watched: BTreeMap<u64, Watched>,
-    /// 011: the target commit each loop was last asked about or brought up to date for by
-    /// itself (R-4), so a watch read again does not ask again.
-    asked_tip: BTreeMap<u64, String>,
 }
 
 /// 010: how often a project's protection is read again: a known value once a minute, an unknown
@@ -510,7 +507,6 @@ impl Engine {
             pr_checked: BTreeMap::new(),
             auto_waits: BTreeMap::new(),
             ready_seen: std::collections::BTreeSet::new(),
-            asked_tip: BTreeMap::new(),
             watched: BTreeMap::new(),
             data,
             runs: BTreeMap::new(),
@@ -1790,9 +1786,15 @@ impl Engine {
             target: Some(r.state.target.clone()),
             detail: Some(tip.clone()),
         })?;
-        // "Verify again on the latest <target>" at the limit: the count starts again and the
-        // loop takes its turn again at the end of its line, for the merge asked for (R-6).
-        if at_limit {
+        // "Verify again on the latest <target>" at the limit, or "Bring up to date" for a merge
+        // asked for: the loop takes its turn again at the end of its line and its turn starts
+        // the update, so the line holds while it runs and a later move counts (R-6, M1).
+        let merge_pending = r
+            .state
+            .feature_loop
+            .as_ref()
+            .is_some_and(|l| l.merge_pending && l.lined_at.is_none());
+        if at_limit || merge_pending {
             r.append(Event::Lined {
                 at_ms: super::time::unix_ms(),
             })?;
@@ -1806,7 +1808,8 @@ impl Engine {
 
     /// 011 (research R-4, FR-010): the watch found the target moved for a ready loop, outside
     /// its merge line: a Free loop brings itself up to date, unless a limit is used up; Normal and
-    /// Strict (or `[updates] auto = false`) ask first. Asked once per target commit.
+    /// Strict (or `[updates] auto = false`) ask first; documents changed on the target ask whatever
+    /// the level. A question stands until the engineer acts; then the next read decides again.
     fn target_moved_for(&mut self, id: u64) {
         let Some(m) = self
             .watched
@@ -1820,10 +1823,7 @@ impl Engine {
         else {
             return;
         };
-        if !m.moved || m.gone || !m.docs_changed.is_empty() {
-            return;
-        }
-        if self.asked_tip.get(&id) == Some(&m.target_commit) {
+        if !m.moved || m.gone {
             return;
         }
         let tx = self.ctx.tx.clone();
@@ -1840,14 +1840,26 @@ impl Engine {
             || l.unlocked
             || r.state.needs.is_some()
             || r.is_busy()
+            // The limit's own question decides (L3).
+            || (l.overtaken > 0 && l.overtaken >= l.update_limit)
         {
             return;
         }
-        self.asked_tip.insert(id, m.target_commit.clone());
+        let target = r.state.target.clone();
+        if !m.docs_changed.is_empty() {
+            // FR-005: nothing merged, no builder; the engineer locks again or stops (L1).
+            let _ = r.append(Event::NeedsEngineer {
+                why: format!(
+                    "{target} changed this feature's documents since the loop was locked ({}): nothing is merged. Lock again with them, or stop.",
+                    m.docs_changed.join(", ")
+                ),
+                options: vec!["lock again".into(), "stop".into()],
+            });
+            return;
+        }
         let n = m.commits.len();
         let moved = format!(
-            "{} moved since this loop was verified ({n} commit{}{})",
-            r.state.target,
+            "{target} moved since this loop was verified ({n} commit{}{})",
             if n == 1 { "" } else { "s" },
             if m.conflicts.is_empty() {
                 String::new()
@@ -1855,6 +1867,12 @@ impl Engine {
                 format!(", conflicting in {}", m.conflicts.join(", "))
             }
         );
+        let ask = |r: &mut Run, why: String| {
+            r.append(Event::NeedsEngineer {
+                why,
+                options: vec!["bring up to date".into(), "stop".into()],
+            })
+        };
         let result = if let Some((which, used)) = r.state.limit_hit(super::time::unix_now()) {
             // FR-010: a limit used up asks whatever the level, naming it.
             r.append(Event::NeedsEngineer {
@@ -1864,20 +1882,26 @@ impl Engine {
                 options: vec!["raise the limit".into(), "stop".into()],
             })
         } else if update_by_itself(&l) {
-            super::update::start(r, tx, &m.target_commit, false, false)
+            match super::update::start(r, tx, &m.target_commit, false, false) {
+                Ok(()) => Ok(()),
+                // A start that failed says why instead of trying at every read (L2).
+                Err(e) => ask(
+                    r,
+                    format!("{moved}. It could not bring itself up to date: {e}."),
+                ),
+            }
         } else {
-            r.append(Event::NeedsEngineer {
-                why: format!(
-                    "{moved}. Bring it up to date: {} is merged into the loop's own branch in its own working copy{}, then the gates and every story are checked again.",
-                    r.state.target,
+            ask(
+                r,
+                format!(
+                    "{moved}. Bring it up to date: {target} is merged into the loop's own branch in its own working copy{}, then the gates and every story are checked again.",
                     if m.conflicts.is_empty() {
                         ""
                     } else {
                         ", a builder resolves the conflicts"
                     }
                 ),
-                options: vec!["bring up to date".into(), "stop".into()],
-            })
+            )
         };
         if let Err(e) = result {
             self.console.push(format!("run {id}: {e}"));
@@ -2173,7 +2197,7 @@ impl Engine {
                     ),
                     options: vec!["raise the limit".into(), "stop".into()],
                 })
-            } else if update_by_itself(&l) {
+            } else if update_by_itself(&l) || l.update_asked {
                 super::update::start(r, tx, &tip, false, true)
             } else {
                 // Normal and Strict ask first; the loop leaves the line while it waits, its merge
