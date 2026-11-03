@@ -1,17 +1,16 @@
 <!--
 Sync Impact Report
 ==================
-Version change: 6.3.1 → 6.4.0
-Bump rationale: MINOR. VI fixes the rights of a new agent kind, the assistant of a solo session
-(feature 011, FR-008): it edits only its session's working copy, and the project's branches only on
-the engineer's word; like the lead, it may run commands that are not approved only when the engineer
-lets it, per command or until they switch back; Fallow writes to the working copies and branches of
-solo sessions. Guidance materially expanded, nothing removed or loosened for existing kinds.
-Approved by the project owner on 2026-11-03.
+Version change: 6.4.0 → 6.5.0
+Bump rationale: MINOR. Every project is a git repository (III), as git is how Fallow's agents
+coordinate and how work is handed over; to make a folder one, on the engineer's click, Fallow may
+write the repository, an ignore file the engineer accepted, and its first commit (VI). Guidance
+materially expanded; nothing removed or loosened. Approved by the project owner on 2026-11-03
+(feature 011, FR-039 to FR-041).
 
 Modified principles:
-  - VI. Least Privilege: the assistant's rights; the lead's exception for unapproved commands
-    extended to the assistant; solo sessions among the places Fallow writes to
+  - III. Coordination in Code, Decisions in the Repo: every project is a git repository
+  - VI. Least Privilege: making a folder a git repository among the places Fallow writes to
 
 Added sections: none. Removed sections: none.
 
@@ -19,9 +18,9 @@ Templates requiring updates: none.
 
 Follow-up TODOs: none.
 
-Previous amendments: 6.3.1 (PATCH) V clarified for showing a project's remote; 6.3.0 (MINOR) solo
-sessions in II and V; 6.2.0 (MINOR) IX. Runtime-Agnostic; 6.1.0 (MINOR) feature 007; 6.0.0 (MAJOR)
-the constitution replaced for the headless orchestrator.
+Previous amendments: 6.4.0 (MINOR) VI names the assistant; 6.3.1 (PATCH) V clarified for showing
+a project's remote; 6.3.0 (MINOR) solo sessions in II and V; 6.2.0 (MINOR) IX. Runtime-Agnostic;
+6.1.0 (MINOR) feature 007; 6.0.0 (MAJOR) the constitution replaced for the headless orchestrator.
 -->
 
 # Fallow Constitution
@@ -78,6 +77,8 @@ step in precisely.
 
 ### III. Coordination in Code, Decisions in the Repo
 
+- Every project is a git repository: git is how Fallow's agents coordinate and how work is handed
+  over.
 - Fallow, not the agents, decides which step runs next, from state it has verified.
 - Agents MUST NOT message each other or the engineer. During a step, an agent may read the locked
   documents, report progress, and ask a question. Fallow routes the question to the lead or the
@@ -151,6 +152,8 @@ already has.
 - Fallow writes only to these places:
   - its own data and config directories;
   - the working copies and branches of its loops, conversations and solo sessions;
+  - in a folder the engineer adds, on their click: the git repository, an ignore file they
+    accepted, and its first commit;
   - in a project the engineer added: the Spec Kit files and `.fallow/` files it installs where
     they are missing, and the spec documents and handovers of that project's features.
 
@@ -239,4 +242,4 @@ breaks silently on the next, and ties the engineer to one supplier.
   section; unjustified violations block merge.
 - Compliance is reviewed at every pull request and at every release.
 
-**Version**: 6.4.0 | **Ratified**: 2026-10-13 | **Last Amended**: 2026-11-03
+**Version**: 6.5.0 | **Ratified**: 2026-10-13 | **Last Amended**: 2026-11-03
