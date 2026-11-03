@@ -265,7 +265,7 @@ The engineer talks a feature through with the assistant ("users should be able t
 - **Waiting message**: a message typed while the assistant works, with its attachments, in order.
 - **Observed git change**: a change Fallow saw to a branch of the project or of its remotes: the branch, before and after, the kind of change, its source, and when.
 - **Gate run (session)**: the gates run on a session's commit against the session's base, with each outcome.
-- **Feature brief**: the title and the text of what a session's discussion settled about a feature, as the engineer confirmed it; committed in the feature's folder, the description specify runs on, linking the feature to the session it came from.
+- **Feature brief**: the title and the text of what a session's discussion (or an earlier conversation's proposal, FR-037) settled about a feature, as the engineer confirmed it; committed in the feature's folder (written there, in a project that is not a git repository), the description specify runs on, linking the feature to the session or conversation it came from.
 
 ## Success Criteria *(mandatory)*
 
