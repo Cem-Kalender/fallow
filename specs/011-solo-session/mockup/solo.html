@@ -113,17 +113,26 @@
   .ddi .ck { color: var(--accent); font-weight: 700; }
   .ddi.new { color: var(--accent); font-weight: 600; }
   .ddsep { border-top: 1px solid var(--line-2); margin: 6px 0; }
+  .ddi.old { color: var(--muted); font-size: 13px; }
+  .sessbar { display: flex; align-items: center; gap: 8px; padding: 10px 18px 0; }
+  .sessbtn { display: inline-flex; align-items: center; gap: 8px; font: 600 15px var(--sans); color: var(--ink); border: 1px solid var(--line); border-radius: 10px; padding: 6px 12px; background: var(--panel); }
+  .suggest { border: 1px solid var(--accent); background: var(--accent-bg); border-radius: 12px; padding: 12px 14px; margin: 6px 0 4px; }
+  .suggest .t { font: 700 11px var(--sans); letter-spacing: .06em; text-transform: uppercase; color: var(--accent); margin-bottom: 6px; }
+  .ask { border: 1px solid var(--line); background: var(--chip); border-radius: 12px; padding: 10px 12px; margin: 4px 0; font-size: 13.5px; }
+  .ask .t { font: 700 11px var(--sans); letter-spacing: .06em; text-transform: uppercase; color: var(--needs); margin-bottom: 4px; }
+  .modal { width: 520px; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 14px 36px rgba(0,0,0,.16); padding: 16px 18px; }
+  .modal .field { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; font-size: 13.5px; color: var(--body); margin: 4px 0 10px; }
 </style></head>
 <body>
 <main class="page">
 
-  <p class="why"><b>The project page with solo sessions</b> (revised after the decisions of 2026-11-02). The left column and the top bar stay as they are. The middle column gets two tabs: <b>Plan with the lead</b> and <b>Code with the assistant</b>. Each solo session works in <b>its own worktree, on its own branch</b> started from your branch, so several can be open at once; your project folder is not touched. Fallow commits every turn on the session's branch, so a turn can be undone. Merging, pushing or opening a pull request: you ask the assistant, and Fallow shows what it sees happen to your branches.</p>
+  <p class="why"><b>The project page with solo sessions</b> (revised on 2026-11-03: the assistant is the project's only conversation). The left column and the top bar stay as they are. The middle column is the assistant, with a dropdown of its sessions on top; there are no tabs. You discuss fixes and features with it; when a feature has been discussed enough, it suggests making it one, and the lead takes over in the feature's spec session. The lead works only behind features. Each solo session works in <b>its own worktree, on its own branch</b> started from your branch, so several can be open at once; your project folder is not touched. Fallow commits every turn on the session's branch, so a turn can be undone. Merging, pushing or opening a pull request: you ask the assistant, and Fallow shows what it sees happen to your branches.</p>
 
   <!-- 1 -->
-  <div class="label">1 · Plan with the lead</div>
-  <h2>As today, with the two tabs on top</h2>
-  <p class="why">Nothing changes in the lead's conversation. The dot on "Code with the assistant" says an assistant is at work in one of the solo sessions.</p>
-  <div class="frame" style="height:520px">
+  <div class="label">1 · Discussing a feature with the assistant</div>
+  <h2>The assistant suggests a feature; you check the brief and confirm</h2>
+  <p class="why">You talk a feature through with the assistant as with a colleague who knows the code. When it has been discussed enough, the assistant suggests making it a feature, with a title and a brief of what was settled (or you type <b>/feature</b>). Nothing starts until you confirm. In the confirmation you can edit the title and the brief, and pick the lead (your project's default is preset).</p>
+  <div class="frame" style="height:640px">
     <div class="sub"><div><div class="small muted">Projects ›</div><h1>FallowSandbox</h1></div><span class="small muted mono">C:\Repos\FallowSandbox</span><span class="pill blue">git · master</span><span class="pill green">Spec Kit 1.0.12</span><span class="grow"></span><span class="input">New feature's name</span><span class="input">lead ▾</span><button class="btn">+ New feature</button></div>
     <div class="pbody">
       <aside class="left">
@@ -134,26 +143,66 @@
         <div class="feat"><span><span class="n">009</span>Read-only web page</span><span class="pill grey">merged</span></div>
         <div class="feat"><span><span class="n">008</span>Checkout</span><span class="pill grey">merged</span></div>
       </aside>
-      <section class="chat">
-        <div class="ctabs"><span class="ctab on">Plan with the lead</span><span class="ctab">Code with the assistant <span class="wk" title="At work"></span></span></div>
-        <div class="chead"><div class="av">L</div><div><b>Project conversation</b> <span class="small muted">· reads the code, never edits it</span><div class="small">Lead: <b>lead</b> <span class="muted">· claude · sonnet</span></div></div><span class="grow"></span><button class="btn btn2" style="min-height:32px">Expand</button></div>
+      <section class="chat" style="position:relative">
+        <div class="sessbar"><span class="sessbtn">Export customer data <span class="caret">▾</span></span><span class="small muted">· branch <span class="mono">fallow/solo-export-data</span>, from <span class="mono">master</span> at a1c09e2</span></div>
         <div class="msgs">
-          <div class="mine">What would fit after the sales report?</div>
-          <div class="leadm"><div class="av">L</div><div><b>lead</b><br>Two ideas: e-mailing a receipt, and a warning when stock runs low. Both are small and independent of each other.</div></div>
+          <div class="mine">Customers keep asking for their data. What would an export take here?</div>
+          <div class="act">📄 Read shop/orders.py · 📄 Read shop/customers.py</div>
+          <div class="leadm"><div class="av as">A</div><div><b>assistant</b><br>Orders and customers are both in <span class="mono">shop/</span>; a JSON or CSV export per customer is small. Do you want it on request in the shop, or by e-mail?</div></div>
+          <div class="mine">On request, as a download, CSV. Only their own orders.</div>
+          <div class="leadm"><div class="av as">A</div><div><b>assistant</b><br>Then this is a feature of its own: a download button, one CSV per customer, their orders only.</div></div>
+          <div class="suggest"><div class="t">Make this a feature?</div><b>Customer data export</b><div class="small" style="margin:4px 0 8px">A customer can download their own orders as one CSV file, on request in the shop; only their own orders; …</div><button class="btn" style="min-height:32px">Make this a feature…</button> <span class="small muted">or keep talking</span></div>
         </div>
-        <div class="composer"><div class="box">Ask about the code, plan features, or design a pipeline…<div class="modes"><b>Ask</b> · Shift+Tab</div></div></div>
+        <div class="composer"><div class="box">Ask the assistant, or type /feature…<div class="modes"><b>Asks before other commands</b> · Shift+Tab</div></div></div>
+        <div style="position:absolute;top:150px;right:24px" class="modal">
+          <div class="th" style="margin-bottom:8px">Make this a feature</div>
+          <div class="small muted">Title</div><div class="field">Customer data export</div>
+          <div class="small muted">Brief · from your discussion, edit it as you like</div>
+          <div class="field" style="min-height:96px">A customer can download their own orders as one CSV file, on request in the shop (a button on their account page). Only their own orders, never another customer's. No e-mail. Orders and customers live in <span class="mono">shop/orders.py</span> and <span class="mono">shop/customers.py</span>.</div>
+          <div class="row" style="gap:10px;align-items:center"><span class="small muted">Lead</span><span class="input">lead ▾</span><span class="grow"></span><button class="btn btn2" style="min-height:34px">Cancel</button><button class="btn" style="min-height:34px">Start the spec session</button></div>
+          <div class="pnote">Fallow creates feature 012, commits this brief in its folder, opens its spec session with the lead, and runs specify on the brief. This session stays open.</div>
+        </div>
       </section>
       <nav class="rail" aria-label="Side panels">
-        <span class="ricon" title="Proposed features"><svg class="i" viewBox="0 0 24 24"><path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3.5 10.9c.5.4.5 1 .5 1.6V16h6v-.5c0-.6 0-1.2.5-1.6A6 6 0 0 0 12 3z"/></svg><span class="dot">2</span></span>
+        <span class="ricon" title="Changes"><svg class="i" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></span>
+        <span class="ricon" title="Gates"><svg class="i" viewBox="0 0 24 24"><path d="M9 12l2 2 4-4"/><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/></svg></span>
+      </nav>
+    </div>
+  </div>
+
+  <!-- 1b -->
+  <div class="label" style="margin-top:18px">1b · The feature's spec session</div>
+  <h2>The lead starts from the brief; you go on with it as today</h2>
+  <p class="why">The feature's spec session opens in the middle column, with the lead you picked. Its first message ran specify on the brief, so the lead comes back with the spec and its questions. From there it goes on as today: clarify, plan, tasks, lock. That lead answers the builders' questions in the feature's loop. The session you came from is linked at the top.</p>
+  <div class="frame" style="height:430px">
+    <div class="sub"><div><div class="small muted">Projects ›</div><h1>FallowSandbox</h1></div><span class="small muted mono">C:\Repos\FallowSandbox</span><span class="pill blue">git · master</span><span class="pill green">Spec Kit 1.0.12</span><span class="grow"></span><span class="input">New feature's name</span><span class="input">lead ▾</span><button class="btn">+ New feature</button></div>
+    <div class="pbody">
+      <aside class="left">
+        <div class="seg"><span class="on">Features</span><span>Files</span></div>
+        <div class="gt">Features</div>
+        <div class="feat" style="background:var(--accent-bg)"><span><span class="n">012</span>Customer data export</span><span class="pill blue">spec</span></div>
+        <div class="feat"><span><span class="n">011</span>Order history and sales report</span><span class="pill green">ready</span></div>
+        <div class="feat"><span><span class="n">010</span>Receipt printout</span><span class="pill grey">merged</span></div>
+      </aside>
+      <section class="chat">
+        <div class="chead"><div class="av">L</div><div><b>012 · Customer data export</b> <span class="small muted">· from the session <a style="color:var(--accent)">Export customer data</a></span><div class="small">Lead: <b>lead</b> <span class="muted">· claude · sonnet · writes only spec documents</span></div></div></div>
+        <div class="msgs">
+          <div class="mine"><span class="mono">/speckit-specify</span> from the brief <span class="small muted">(specs/012-customer-data-export/brief.md)</span></div>
+          <div class="act">✎ Wrote specs/012-customer-data-export/spec.md</div>
+          <div class="leadm"><div class="av">L</div><div><b>lead</b><br>The spec is written: two user stories (download, only one's own orders). One question before planning: should cancelled orders be in the export?</div></div>
+        </div>
+        <div class="composer"><div class="box">Answer the lead, or /clarify, /plan…<div class="modes"><b>Ask</b> · Shift+Tab</div></div></div>
+      </section>
+      <nav class="rail" aria-label="Side panels">
         <span class="ricon" title="What the lead knows"><svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg></span>
       </nav>
     </div>
   </div>
 
   <!-- 2 -->
-  <div class="label" style="margin-top:18px">2 · Code with the assistant</div>
-  <h2>The assistant's tab opens a list of sessions; each turn its own commit, with "Undo this turn"; a screenshot, the web, a message waiting</h2>
-  <p class="why">Clicking <b>Code with the assistant</b> (shown open here) lists the project's solo sessions: the open one ticked, each named after its first message (renamed in its header), a dot while its assistant works, the number of its changes; <b>+ New session</b> starts one from your branch as it is now. Picking one opens it; the tab then shows that session. The header names the session's branch and where it started. In the conversation: a pasted screenshot goes to the assistant with the message; its work shows as in a loop, also what it looks up on the web; under each turn, what it changed and <b>Undo this turn</b>. A message typed while it works waits above the box and is sent when the turn ends.</p>
+  <div class="label" style="margin-top:18px">2 · Coding with the assistant</div>
+  <h2>The session dropdown; each turn its own commit, with "Undo this turn"; a command asked; a screenshot, the web, a message waiting</h2>
+  <p class="why">Clicking the session's name (shown open here) lists the project's solo sessions: the open one ticked, each named after its first message (renamed in its header), a dot while its assistant works, the number of its changes; <b>+ New session</b> starts one from your branch as it is now. Picking one opens it. At the bottom: closed sessions, and the project conversations with the lead held before this change, readable. The header names the session's branch and where it started. A command that changes your folder, such as a merge, is always asked first, naming what is uncommitted there. In the conversation: a pasted screenshot goes to the assistant with the message; its work shows as in a loop, also what it looks up on the web; under each turn, what it changed and <b>Undo this turn</b>. A message typed while it works waits above the box and is sent when the turn ends.</p>
   <div class="frame" style="height:920px">
     <div class="sub"><div><div class="small muted">Projects ›</div><h1>FallowSandbox</h1></div><span class="small muted mono">C:\Repos\FallowSandbox</span><span class="pill blue">git · master</span><span class="pill green">Spec Kit 1.0.12</span><span class="grow"></span><span class="input">New feature's name</span><span class="input">lead ▾</span><button class="btn">+ New feature</button></div>
     <div class="pbody">
@@ -166,8 +215,8 @@
         <div class="feat"><span><span class="n">008</span>Checkout</span><span class="pill grey">merged</span></div>
       </aside>
       <section class="chat" style="position:relative">
-        <div class="ctabs"><span class="ctab">Plan with the lead</span><span class="ctab on">Code with the assistant <span class="caret">▾</span></span></div>
-        <div class="dd" role="menu" aria-label="Solo sessions"><div class="ddh">Solo sessions</div><div class="ddi on"><span class="wk"></span><span class="grow">Receipt prints negative amounts</span><span class="n">2 changes</span><span class="ck">✓</span></div><div class="ddi"><span class="nowk"></span><span class="grow">Faster catalog load</span><span class="n">5 changes</span></div><div class="ddi"><span class="nowk"></span><span class="grow">Try a CSV export</span><span class="n0">no changes</span></div><div class="ddsep"></div><div class="ddi new">+ New session <span class="small muted">from <span class="mono">master</span> as it is now</span></div></div>
+        <div class="sessbar"><span class="sessbtn">Receipt prints negative amounts <span class="caret">▾</span></span></div>
+        <div class="dd" role="menu" aria-label="Solo sessions" style="left:18px"><div class="ddh">Solo sessions</div><div class="ddi on"><span class="wk"></span><span class="grow">Receipt prints negative amounts</span><span class="n">2 changes</span><span class="ck">✓</span></div><div class="ddi"><span class="nowk"></span><span class="grow">Faster catalog load</span><span class="n">5 changes</span></div><div class="ddi"><span class="nowk"></span><span class="grow">Try a CSV export</span><span class="n0">no changes</span></div><div class="ddsep"></div><div class="ddi new">+ New session <span class="small muted">from <span class="mono">master</span> as it is now</span></div><div class="ddsep"></div><div class="ddi old">Closed sessions…</div><div class="ddi old">Earlier conversations with the lead…</div></div>
         <div class="chead"><div class="av as">A</div><div><b>Receipt prints negative amounts</b> <span class="small muted">· branch <span class="mono">fallow/solo-receipt-negative</span>, from <span class="mono">master</span> at a1c09e2</span><div class="small">Assistant: <b>assistant</b> <span class="muted">· claude · sonnet · web on</span></div></div><span class="grow"></span><button class="btn btn2" style="min-height:32px">Open in my editor</button><button class="btn btn2" style="min-height:32px">Expand</button></div>
         <div class="msgs">
           <div class="mine">The discount line prints like this, fix it.<span class="shot"></span></div>
@@ -178,12 +227,13 @@
           <div class="leadm"><div class="av as">A</div><div><b>assistant</b><br>Fixed: negative amounts print with the sign in front ("-0.50"), with a test for a discount line.</div></div>
           <div class="turnfoot"><span>Turn 1 · 2 files · commit 7f3e1b0</span><a>Undo this turn</a></div>
           <div class="mine">Merge this into master.</div>
-          <div class="act">▶ Ran <span class="mono">git merge fallow/solo-receipt-negative</span> (in your project folder)</div>
+          <div class="ask"><div class="t">Allow this command?</div><span class="mono">git merge fallow/solo-receipt-negative</span> in your project folder (<span class="mono">master</span> checked out, nothing uncommitted). <span class="grow"></span><a style="color:var(--accent)">Allow</a> · <a style="color:var(--accent)">Refuse</a></div>
+          <div class="act">▶ Ran <span class="mono">git merge fallow/solo-receipt-negative</span> (in your project folder, allowed by you)</div>
           <div class="gitline"><span class="by">Fallow saw</span> <span><span class="mono">master</span> moved: 1 commit merged from this session (7f3e1b0). Not pushed.</span></div>
         </div>
         <div class="composer">
           <div class="queued">Waiting to send when the turn ends: <b>"and show the discount code on the receipt"</b> <span class="grow"></span><a style="color:var(--accent)">Edit</a> <a style="color:var(--accent)">Remove</a></div>
-          <div class="box">Ask the assistant to change the code…<div class="modes"><b>Run anything</b> · Shift+Tab <span class="grow"></span> <span class="attach" style="float:right">📎 Attach · paste a screenshot</span></div></div>
+          <div class="box">Ask the assistant to change the code…<div class="modes"><b>Asks before other commands</b> · Shift+Tab <span class="grow"></span> <span class="attach" style="float:right">📎 Attach · paste a screenshot</span></div></div>
         </div>
       </section>
       <nav class="rail" aria-label="Side panels">
@@ -196,7 +246,7 @@
   <!-- 3 -->
   <div class="label" style="margin-top:18px">3 · Changes and Gates</div>
   <h2>What this session changed since it started, turn by turn; the gates on the session's branch</h2>
-  <p class="why"><b>Changes</b> lists the files this session changed against where it started (its branch against <span class="mono">master</span> at a1c09e2), and its turns, each with Undo. A file opens with its diff. Until the gates run they are "Not verified by Fallow". <b>Gates</b> runs the project's gates on the session's branch and compares them with where it started; "Gates passed" holds until the next change.</p>
+  <p class="why"><b>Changes</b> lists the files this session changed against its base, where it started (its branch against <span class="mono">master</span> at a1c09e2), and its turns, each with Undo. A file opens with its diff. Until the gates run they are "Not verified by Fallow". <b>Gates</b> runs the project's gates on the session's branch and compares them with where it started; "Gates passed" holds until the next change.</p>
   <div class="row top" style="gap:16px;align-items:flex-start;flex-wrap:wrap">
     <div class="card2" style="width:360px;box-shadow:none">
       <div class="th">Changes · this session</div>
@@ -217,9 +267,9 @@
   </div>
 
   <!-- 4 -->
-  <div class="label" style="margin-top:18px">4 · Files, while coding with the assistant</div>
+  <div class="label" style="margin-top:18px">4 · Files, while a session is open</div>
   <h2>The tree is the session's worktree, its changes marked; a file opens beside the conversation</h2>
-  <p class="why">With the assistant's tab on, the Files tab shows the open session's worktree and marks what the session changed: <b>M</b> changed, <b>A</b> new, the number of changes on a folder. A file opens in the middle and the conversation moves beside it on the right, so you see the file and the assistant at work together. A changed file opens on its changes; "Whole file" shows all of it. Read-only, as in 009: the code is changed by the assistant, or by you in your editor.</p>
+  <p class="why">While a session is open, the Files tab shows the open session's worktree and marks what the session changed: <b>M</b> changed, <b>A</b> new, the number of changes on a folder. A file opens in the middle and the conversation moves beside it on the right, so you see the file and the assistant at work together. A changed file opens on its changes; "Whole file" shows all of it. Read-only, as in 009: the code is changed by the assistant, or by you in your editor (Fallow commits your edits as yours before the next turn). A feature's spec session shows a file beside its conversation the same way.</p>
   <div class="frame">
     <div class="sub"><div><div class="small muted">Projects ›</div><h1>FallowSandbox</h1></div><span class="small muted mono">C:\Repos\FallowSandbox</span><span class="pill blue">git · master</span><span class="pill green">Spec Kit 1.0.12</span><span class="grow"></span><span class="input">New feature's name</span><span class="input">lead ▾</span><button class="btn">+ New feature</button></div>
     <div class="pbody">
@@ -263,7 +313,6 @@
         </div>
       </section>
       <section class="side-chat">
-        <div class="ctabs" style="padding:8px 14px 0"><span class="ctab" style="font-size:13px">Lead</span><span class="ctab on" style="font-size:13px">Assistant</span></div>
         <div class="chead" style="padding:10px 14px"><div class="av as">A</div><div><b>Receipt prints negative…</b><div class="small muted">assistant · claude · sonnet</div></div></div>
         <div class="msgs">
           <div class="mine" style="max-width:85%">Also show the discount code on the receipt.</div>
@@ -271,7 +320,7 @@
           <div class="act">📄 Read shop/orders.py</div>
           <div class="act" style="color:var(--accent)">● Editing shop/receipt.py · 12 s</div>
         </div>
-        <div class="composer"><div class="box">Ask the assistant…<div class="modes"><b>Run anything</b> · Shift+Tab</div></div></div>
+        <div class="composer"><div class="box">Ask the assistant…<div class="modes"><b>Asks before other commands</b> · Shift+Tab</div></div></div>
       </section>
       <nav class="rail" aria-label="Side panels">
         <span class="ricon" title="Changes"><svg class="i" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg><span class="dot chg">2</span></span>
@@ -280,14 +329,14 @@
     </div>
   </div>
 
-  <div class="label" style="margin-top:18px">To settle</div>
-  <h2>Five details</h2>
+  <div class="label" style="margin-top:18px">Settled</div>
+  <h2>The details, as in the spec (2026-11-03)</h2>
   <div class="choices">
-    <div class="choice"><b>The tab names.</b> "Plan with the lead" and "Code with the assistant" say what each is for. Shorter: "Lead" and "Assistant".</div>
-    <div class="choice"><b>A session's end.</b> A session stays in the row until you close it; closing removes its worktree, and its branch too once it is merged (asked first when it is not). Its conversation stays readable.</div>
-    <div class="choice"><b>Setup in a new worktree.</b> A fresh worktree has no installed dependencies (node_modules, a virtual environment). First version: the assistant installs them when asked. Later: a setup command per project that Fallow runs when a session starts.</div>
-    <div class="choice"><b>A file beside the lead too?</b> Today a file opened on the project page takes the chat's place. With the conversation beside the file (view 4), the lead's tab could do the same, so both tabs behave alike.</div>
-    <div class="choice"><b>The top bar's lead picker.</b> "lead ▾" next to "+ New feature" stays the lead's: it picks who leads a new feature. The assistant is picked when a session starts.</div>
+    <div class="choice"><b>No tabs.</b> The assistant is the project's only conversation; the lead works behind features.</div>
+    <div class="choice"><b>A session's end.</b> "Close session" or <b>/close</b>; its worktree goes, and its branch when merged; with unmerged or uncommitted work Fallow asks first (keep or discard). Its conversation stays readable under "Closed sessions…".</div>
+    <div class="choice"><b>Setup in a new worktree.</b> The assistant installs dependencies when asked; a per-project setup command comes later.</div>
+    <div class="choice"><b>A file beside the conversation</b> in a feature's spec session too, as in a session.</div>
+    <div class="choice"><b>The top bar's lead picker</b> stays the lead's, for "+ New feature"; a feature made from a session takes the lead picked in its confirmation.</div>
   </div>
 </main>
 </body></html>
