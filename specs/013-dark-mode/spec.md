@@ -1,12 +1,12 @@
 # Feature Specification: Dark mode
 
-**Feature Branch**: `001-llm-aware-tui-editor` (the project's working branch; the spec lives in `specs/012-dark-mode`)
+**Feature Branch**: `001-llm-aware-tui-editor` (the project's working branch; the spec lives in `specs/013-dark-mode`)
 
 **Created**: 2026-11-02
 
 **Status**: Draft
 
-**Input**: User description: "Dark mode for Fallow Studio (012; first numbered 010), agreed with the engineer on 2026-11-02 after the mockup (`mockup/dark.html`, 'looks absolutely perfect'). Small feature, built on 009 as it is. A dark theme with the look of the mockup; by default Fallow follows the system's light or dark setting and switches with it without a reload; the engineer can choose Light, Dark or System, remembered on that machine across restarts; every screen and state is covered; text and controls meet WCAG AA contrast in both themes; no flash of the light theme on opening or reloading; the light theme does not change. Out of scope: more themes or custom colours, the standalone app (013), changing the layout."
+**Input**: User description: "Dark mode for Fallow Studio (013; first numbered 010, then 012), agreed with the engineer on 2026-11-02 after the mockup (`mockup/dark.html`, 'looks absolutely perfect'). Small feature, built on 009 as it is. A dark theme with the look of the mockup; by default Fallow follows the system's light or dark setting and switches with it without a reload; the engineer can choose Light, Dark or System, remembered on that machine across restarts; every screen and state is covered; text and controls meet WCAG AA contrast in both themes; no flash of the light theme on opening or reloading; the light theme does not change. Out of scope: more themes or custom colours, the standalone app (014), changing the layout."
 
 ## Context
 
@@ -21,7 +21,7 @@ The approved look:
 - **Secondary buttons** stay the colour of the panel, with light text and a visible border.
 - **Code, logs and terminal output** stay dark, as they already are in the light theme.
 
-Fallow will be its own app window later (013), which will follow the system's theme through this feature.
+Fallow will be its own app window later (014), which will follow the system's theme through this feature.
 
 **What does not change**: the layout, the light theme (it looks exactly as today), the content of any screen, and how Fallow works.
 
@@ -146,4 +146,4 @@ An engineer who uses Fallow in light mode sees no change at all.
 - Fallow's page address (port and key) changes at every start, so the choice cannot rely on what the browser keeps for one address; Fallow keeps it with its own settings on the machine (as it keeps other choices such as desktop notifications). It holds only one of three fixed values and is local, in line with principle V.
 - No new dependency is needed: the page already draws every colour from a shared set of named colours, and the system's setting is available to the page.
 - Desktop notifications are drawn by the operating system and follow its theme; they are not part of this feature.
-- The standalone app (013) will use the same themes and the System choice; nothing in this feature depends on it.
+- The standalone app (014) will use the same themes and the System choice; nothing in this feature depends on it.
