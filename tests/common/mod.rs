@@ -386,6 +386,14 @@ pub fn lock_feature_with(
     level: Option<fallow::run::events::Level>,
     extra: LockExtra,
 ) -> u64 {
+    prepare_feature_in(tx, project, title, feature);
+    lock_prepared(tx, project, feature, pipeline, budget, level, extra)
+}
+
+/// Works out a feature with the lead (the scenario's next two lead turns: the documents, then
+/// analyze), without locking it.
+#[allow(dead_code)]
+pub fn prepare_feature_in(tx: &Sender<Msg>, project: &str, title: &str, feature: &str) {
     let project = project.to_string();
     let f = sreq(
         tx,
@@ -416,10 +424,23 @@ pub fn lock_feature_with(
     )
     .unwrap();
     turn_ended(tx, &conv, 2);
+}
+
+/// Locks a feature already worked out; returns its loop's id.
+#[allow(dead_code)]
+pub fn lock_prepared(
+    tx: &Sender<Msg>,
+    project: &str,
+    feature: &str,
+    pipeline: Option<&str>,
+    budget: Option<(f64, u64)>,
+    level: Option<fallow::run::events::Level>,
+    extra: LockExtra,
+) -> u64 {
     let l = ask(
         tx,
         Request::Lock {
-            project,
+            project: project.to_string(),
             feature: feature.into(),
             pipeline: pipeline.map(str::to_string),
             level,

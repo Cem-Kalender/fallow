@@ -1041,6 +1041,34 @@ pub fn log_paths(dir: &Path, from: &str, to: &str, path: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// 011: puts the worktree `dir` at `commit`, detached (an update's repair starts there).
+pub fn checkout_detach(dir: &Path, commit: &str) -> Result<(), String> {
+    git(dir, &["checkout", "-q", "--detach", commit]).map(|_| ())
+}
+
+/// 011: checks `branch` out in the worktree `dir` again and moves it forward to `commit` (a
+/// fast-forward only).
+pub fn checkout_forward(dir: &Path, branch: &str, commit: &str) -> Result<(), String> {
+    git(dir, &["checkout", "-q", branch])?;
+    git(dir, &["merge", "-q", "--ff-only", commit]).map(|_| ())
+}
+
+/// 011: the parents of `commit`, in order.
+pub fn parents(dir: &Path, commit: &str) -> Result<Vec<String>, String> {
+    let line = git(dir, &["rev-list", "--parents", "-n", "1", commit])?;
+    Ok(line.split_whitespace().skip(1).map(str::to_string).collect())
+}
+
+/// 011: the first line of `commit`'s message.
+pub fn subject(dir: &Path, commit: &str) -> Result<String, String> {
+    git(dir, &["log", "-1", "--format=%s", commit]).map(|s| s.trim().to_string())
+}
+
+/// 011: the tree of `commit`.
+pub fn tree_of(dir: &Path, commit: &str) -> Result<String, String> {
+    git(dir, &["rev-parse", &format!("{commit}^{{tree}}")]).map(|s| s.trim().to_string())
+}
+
 /// The commits on `to`'s first-parent line since `from`, oldest first (FR-002).
 pub fn first_parent_commits(dir: &Path, from: &str, to: &str) -> Vec<String> {
     git(dir, &["rev-list", "--reverse", "--first-parent", &format!("{from}..{to}")])

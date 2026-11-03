@@ -768,6 +768,8 @@ fn handle(mut req: tiny_http::Request, tx: &Sender<Msg>, port: u16, secret: &str
                 }
                 ["merge"] => Request::Merge { id: i },
                 ["publish"] => Request::Publish { id: i },
+                // 011: bring the loop up to date with its target (contracts/web-api.md).
+                ["update"] => Request::Update { id: i },
                 ["questions", q, "answer"] => Request::QuestionAnswer {
                     id: i,
                     q: percent_decode(q),

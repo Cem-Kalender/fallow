@@ -43,6 +43,26 @@ pub enum Done {
     },
     /// 010: the pull request's state, as the remote reports it.
     PrState(Result<crate::publish::host::PrState, String>),
+    /// 011: an update's merge computed (research R-2).
+    Update {
+        n: u32,
+        result: Result<super::update::Computed, String>,
+    },
+    /// 011: what the target watch read (research R-1), for the verified commit `integrated`.
+    Moved {
+        integrated: String,
+        result: Result<super::update::Moved, String>,
+    },
+}
+
+/// 011: the target watch of one loop.
+#[derive(Default)]
+struct Watched {
+    asked: Option<Instant>,
+    running: bool,
+    integrated: String,
+    read: Option<super::update::Moved>,
+    error: Option<String>,
 }
 
 /// 011: the lock's settings beyond 010's.
@@ -80,6 +100,10 @@ pub enum Request {
         id: u64,
     },
     Merge {
+        id: u64,
+    },
+    /// 011: bring the loop up to date with its target (also "Verify again on the latest").
+    Update {
         id: u64,
     },
     Stop {
@@ -232,6 +256,8 @@ pub enum Busy {
     Merge,
     /// 010: pushing and opening a pull request.
     Publish,
+    /// 011: computing an update's merge.
+    Update,
 }
 
 /// An agent step running now (008 US5: checkers marked `parallel_with` run at the same time).
@@ -415,6 +441,9 @@ pub struct Engine {
     auto_waits: BTreeMap<u64, String>,
     /// 010 FR-003: loops seen ready, so the remote is read once when one becomes ready.
     ready_seen: std::collections::BTreeSet<u64>,
+    /// 011: the target watch per loop (research R-1): when it last asked, whether a read is
+    /// running, for which verified commit, and what it read.
+    watched: BTreeMap<u64, Watched>,
 }
 
 /// 010: how often a project's protection is read again: a known value once a minute, an unknown
@@ -459,6 +488,7 @@ impl Engine {
             pr_checked: BTreeMap::new(),
             auto_waits: BTreeMap::new(),
             ready_seen: std::collections::BTreeSet::new(),
+            watched: BTreeMap::new(),
             data,
             runs: BTreeMap::new(),
             ctx,
@@ -508,8 +538,10 @@ impl Engine {
         for id in ids {
             let run = e.runs.get_mut(&id).expect("loaded");
             if !run.state.stage.is_final() {
-                if let Err(err) =
-                    super::machine::resume(run).and_then(|()| super::questions::orphans(run))
+                let tx = e.ctx.tx.clone();
+                if let Err(err) = super::machine::resume(run)
+                    .and_then(|()| super::questions::orphans(run))
+                    .and_then(|()| super::update::resume(run, tx))
                 {
                     e.console.push(format!("run {id}: {err}"));
                 }
@@ -585,6 +617,19 @@ impl Engine {
                     let _ = reply.send(out);
                 }
                 Msg::Done { run, done } => {
+                    if let Done::Moved { integrated, result } = &done {
+                        let w = self.watched.entry(run).or_default();
+                        w.running = false;
+                        if w.integrated == *integrated {
+                            match result {
+                                Ok(m) => {
+                                    w.read = Some(m.clone());
+                                    w.error = None;
+                                }
+                                Err(e) => w.error = Some(e.clone()),
+                            }
+                        }
+                    }
                     if let Done::PrState(r) = &done {
                         self.pr_reads.insert(run, (Instant::now(), false));
                         let e = self.pr_checked.entry(run).or_default();
@@ -599,7 +644,7 @@ impl Engine {
                             Done::Step { n, .. } => {
                                 r.running.remove(n);
                             }
-                            Done::PrState(_) => {}
+                            Done::PrState(_) | Done::Moved { .. } => {}
                             _ => r.busy = None,
                         }
                         if let Err(e) = super::machine::on_done(r, &self.ctx, done) {
@@ -1421,6 +1466,173 @@ impl Engine {
         let p = self.loop_project(id)?;
         let target = self.runs.get(&id)?.state.target.clone();
         Some(self.remote_at(&p, &target, now, false))
+    }
+
+    /// 011: reads the loop's target on a thread when due (research R-1): every 30 s for a ready
+    /// loop, at most every 10 s when `now` (its page is read), and at once after its verified
+    /// commit changed.
+    fn watch(&mut self, id: u64, now: bool) {
+        let Some(r) = self.runs.get(&id) else {
+            return;
+        };
+        let Some(l) = r.state.feature_loop.as_ref() else {
+            return;
+        };
+        if r.state.stage != Stage::Ready || l.update.is_some() {
+            return;
+        }
+        let Some(integrated) = r.state.integrated.clone() else {
+            return;
+        };
+        let w = self.watched.entry(id).or_default();
+        if w.integrated != integrated {
+            *w = Watched {
+                integrated: integrated.clone(),
+                ..Watched::default()
+            };
+        }
+        let every = if now { Duration::from_secs(10) } else { Duration::from_secs(30) };
+        if w.running || w.asked.is_some_and(|t| t.elapsed() < every) {
+            return;
+        }
+        w.asked = Some(Instant::now());
+        w.running = true;
+        // Whose merge each target commit is: the other loops' merges and verified commits.
+        let mut merges: Vec<(String, String)> = Vec::new();
+        for (oid, o) in &self.runs {
+            if *oid == id || o.state.repo != r.state.repo {
+                continue;
+            }
+            if let Some(ol) = o.state.feature_loop.as_ref() {
+                for c in o.state.merged.iter().chain(o.state.integrated.iter()) {
+                    merges.push((c.clone(), ol.feature.clone()));
+                }
+                if let Some(p) = &ol.publication {
+                    merges.push((p.commit.clone(), ol.feature.clone()));
+                }
+            }
+        }
+        let (tx, repo, feature, target, reconciled, scratch) = (
+            self.ctx.tx.clone(),
+            r.state.repo.clone(),
+            l.feature.clone(),
+            r.state.target.clone(),
+            l.reconciled_target.clone(),
+            r.worktrees(),
+        );
+        let spawned = std::thread::Builder::new()
+            .name(format!("watch-{id}"))
+            .spawn(move || {
+                let result = super::update::watch(
+                    &repo,
+                    &feature,
+                    &target,
+                    &integrated,
+                    reconciled.as_deref(),
+                    &merges,
+                    &scratch,
+                );
+                let _ = tx.send(Msg::Done {
+                    run: id,
+                    done: Done::Moved { integrated, result },
+                });
+            });
+        if spawned.is_err() {
+            if let Some(w) = self.watched.get_mut(&id) {
+                w.running = false;
+            }
+        }
+    }
+
+    /// 011: the conflicting files when the loop's target moved past its verified commit (empty
+    /// when it moved without a conflict); `None` when it did not move or was not read yet.
+    fn target_moved(&self, id: u64) -> Option<Vec<String>> {
+        let r = self.runs.get(&id)?;
+        let w = self.watched.get(&id)?;
+        let m = w.read.as_ref()?;
+        (m.moved && r.state.integrated.as_deref() == Some(w.integrated.as_str()))
+            .then(|| m.conflicts.clone())
+    }
+
+    /// 011: whether the watch found the loop's target branch gone.
+    fn target_gone(&self, id: u64) -> bool {
+        self.watched
+            .get(&id)
+            .and_then(|w| w.read.as_ref())
+            .is_some_and(|m| m.gone)
+    }
+
+    /// 011: the loop view's `target` and `offer` (contracts/web-api.md).
+    fn target_view(&self, id: u64, publish: &Value) -> (Value, Value) {
+        let Some(r) = self.runs.get(&id) else {
+            return (Value::Null, json!([]));
+        };
+        let l = r.state.feature_loop.as_ref();
+        let w = self.watched.get(&id);
+        let read = w
+            .filter(|w| r.state.integrated.as_deref() == Some(w.integrated.as_str()))
+            .and_then(|w| w.read.as_ref());
+        let target = match read {
+            Some(m) => json!({
+                "moved": m.moved, "gone": m.gone, "commits": m.commits, "conflicts": m.conflicts,
+                "docs_changed": m.docs_changed, "remote": false, "target_commit": m.target_commit,
+            }),
+            None => json!({ "moved": false, "reading": w.is_some_and(|w| w.running) }),
+        };
+        let mut offer: Vec<&str> = Vec::new();
+        let stage = r.state.stage;
+        let updating = l.is_some_and(|l| l.update.is_some());
+        if stage == Stage::Ready && !updating {
+            match read {
+                // The target branch is gone: nothing is merged; stop, or unlock and lock the
+                // feature from another branch (spec edge case).
+                Some(m) if m.gone => offer.push("stop"),
+                Some(m) if m.moved && !m.docs_changed.is_empty() => offer.extend(["lock_again", "stop"]),
+                Some(m) if m.moved => offer.extend(["bring_up_to_date", "stop"]),
+                _ => {
+                    for o in publish["offer"].as_array().into_iter().flatten() {
+                        match o.as_str() {
+                            Some("local_merge") => offer.push("merge"),
+                            Some("pull_request") => offer.push("publish"),
+                            _ => {}
+                        }
+                    }
+                    offer.push("stop");
+                }
+            }
+        } else if !stage.is_final() && stage != Stage::Publishing {
+            offer.push("stop");
+        }
+        (target, json!(offer))
+    }
+
+    /// 011: brings a ready loop up to date with its target (FR-004): recorded as the engineer's
+    /// steering, then the update starts.
+    fn update(&mut self, id: u64) -> Result<(), String> {
+        let tip = self
+            .watched
+            .get(&id)
+            .and_then(|w| w.read.as_ref())
+            .filter(|m| m.moved)
+            .map(|m| m.target_commit.clone());
+        let tx = self.ctx.tx.clone();
+        let r = self.runs.get_mut(&id).ok_or_else(|| format!("there is no loop {id}"))?;
+        let tip = match tip {
+            Some(t) => t,
+            None => git::rev(&r.state.repo, &format!("refs/heads/{}", r.state.target))?,
+        };
+        let integrated = r.state.integrated.clone().unwrap_or_default();
+        if git::is_ancestor(&r.state.repo, &tip, &integrated) {
+            return Err("the target has not moved since this loop was verified".into());
+        }
+        r.append(Event::Steering {
+            kind: SteeringKind::Update,
+            target: Some(r.state.target.clone()),
+            detail: Some(tip.clone()),
+        })?;
+        super::update::start(r, tx, &tip, false)?;
+        self.watched.remove(&id);
+        Ok(())
     }
 
     /// 010: what publishing a loop offers, why, the remote, the account, the pull request and
@@ -2506,6 +2718,9 @@ impl Engine {
             .runs
             .get(&id)
             .is_some_and(|r| r.state.stage == Stage::Ready && r.state.feature_loop.is_some());
+        if ready {
+            self.watch(id, false);
+        }
         let was_ready = self.ready_seen.contains(&id);
         if ready && !was_ready {
             self.ready_seen.insert(id);
@@ -2627,6 +2842,18 @@ impl Engine {
             Request::Retry { id } => run_mut(self, id)
                 .and_then(super::machine::retry)
                 .map(|()| json!({})),
+            Request::Merge { id } if self.target_gone(id) => Err(format!(
+                "the target branch {} is gone: nothing is merged. Stop the loop, or unlock the feature and lock it from another branch.",
+                self.runs.get(&id).map(|r| r.state.target.clone()).unwrap_or_default()
+            )),
+            Request::Merge { id } if self.target_moved(id).is_some() => Err(format!(
+                "the target moved since this loop was verified{}: bring it up to date first",
+                self.target_moved(id)
+                    .filter(|c| !c.is_empty())
+                    .map(|c| format!(" and would conflict in {}", c.join(", ")))
+                    .unwrap_or_default()
+            )),
+            Request::Update { id } => self.update(id).map(|()| json!({})),
             Request::Merge { id } => {
                 // 010: a protected target takes a pull request, not a local merge (FR-006).
                 let refused = self.publish_view(id).and_then(|p| {
@@ -2656,10 +2883,21 @@ impl Engine {
                     .get(&id)
                     .ok_or_else(|| format!("there is no loop {id}"))
                     .and_then(|r| super::activity::view(r, ctx));
+                self.watch(id, true);
                 v.map(|mut v| {
                     // 010: what publishing offers, and the pull request (contracts/web-api.md).
                     if let Some(p) = self.publish_view(id) {
                         v["publish"] = p;
+                    }
+                    // 011: the target and what can succeed (contracts/web-api.md).
+                    let (target, offer) = self.target_view(id, &v["publish"]);
+                    v["target"] = target;
+                    v["offer"] = offer;
+                    if let Some(l) = self.runs.get(&id).and_then(|r| r.state.feature_loop.as_ref()) {
+                        v["update"] = json!(l.update);
+                        v["updates"] = json!(l.updates);
+                        v["update_limit"] = json!(l.update_limit);
+                        v["overtaken"] = json!(l.overtaken);
                     }
                     self.poll_pull_request(id, Duration::from_secs(10));
                     v
@@ -2816,6 +3054,7 @@ pub fn view(r: &Run) -> Value {
         Some(Busy::Gates) => "gates".into(),
         Some(Busy::Merge) => "merge".into(),
         Some(Busy::Publish) => "publish".into(),
+        Some(Busy::Update) => "update".into(),
         None if steps.len() == 1 => format!("step {}", steps[0]),
         None if !steps.is_empty() => format!("steps {}", steps.join(", ")),
         None => String::new(),

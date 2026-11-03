@@ -246,6 +246,71 @@ pub fn loop_repair(what: &str, reasons: &[String]) -> String {
     s
 }
 
+/// 011: one path of an update's conflicts, for the repair's prompt.
+pub struct UpdateConflictCx<'a> {
+    pub path: &'a str,
+    /// `false`: a file deleted on one side, a binary file, a rename (no conflict markers).
+    pub text: bool,
+    /// The loop's commits that touched it since the two sides met.
+    pub ours: &'a [String],
+    /// The target's commits that touched it since then.
+    pub theirs: &'a [String],
+}
+
+/// 011: the repair of an update's conflicts (research R-2), plain text for any runtime (IX).
+pub fn update_conflicts(part: &str, feature: &str, target: &str, conflicts: &[UpdateConflictCx]) -> String {
+    let mut s = header("repair", Some(part));
+    s.push_str(&format!(
+        "You are the builder of feature {feature}. Fallow is bringing this feature's work up to date with {target}, which moved since the feature was verified: other work was merged there. Merging {target} into this worktree conflicts.
+
+Resolve these conflicts: this feature's criteria and the work already on {target} must both keep working.
+
+"
+    ));
+    for c in conflicts {
+        if c.text {
+            s.push_str(&format!(
+                "- `{}`: both sides changed it; the file holds conflict markers (`<<<<<<<`, `=======`, `>>>>>>>`). Keep what both sides need and remove every marker.
+",
+                c.path
+            ));
+        } else {
+            s.push_str(&format!(
+                "- `{}`: a conflict without markers (a file deleted on one side and changed on the other, a binary file, or a rename); git kept one side, and may have added files named `{}~<side>`. Decide what the file must be, and remove any `~` file git added.
+",
+                c.path, c.path
+            ));
+        }
+        if !c.ours.is_empty() {
+            s.push_str("  This feature changed it in:
+");
+            for l in c.ours.iter().take(10) {
+                s.push_str(&format!("    {l}
+"));
+            }
+        }
+        if !c.theirs.is_empty() {
+            s.push_str(&format!("  {target} changed it in:
+"));
+            for l in c.theirs.iter().take(10) {
+                s.push_str(&format!("    {l}
+"));
+            }
+        }
+    }
+    s.push_str("
+Run the tests. Do not change the feature's spec documents. Fallow commits your changes when the step ends, runs the gates on the result, and every user story is checked again.
+");
+    if conflicts.iter().any(|c| !c.text) {
+        s.push_str("
+For every conflict without markers, say how you resolved it in `resolutions`: `[{\"path\": \"…\", \"how\": \"…\"}]`.
+");
+    }
+    s.push_str("
+Return `status: done`, the `files` you changed and a `summary`.");
+    s
+}
+
 /// A story reopened by a new lock (research S-17): a fresh session, with the change.
 pub fn loop_relock(cx: &LoopCx, story: &str, lock: u32, change: &str) -> String {
     let mut s = header("repair", Some(story));
@@ -468,5 +533,24 @@ mod tests {
         ));
         assert!(s.contains("> Review the cart.\n> Be brief.\n"));
         assert!(!turn(None).contains("asks you to run the Spec Kit step"));
+    }
+
+    #[test]
+    fn the_update_prompt_names_each_conflict_and_asks_for_resolutions_of_non_text_ones() {
+        let ours = vec!["abc123 mul()".to_string()];
+        let theirs = vec!["def456 add and sub".to_string()];
+        let t = update_conflicts(
+            "update-1",
+            "002-calc2",
+            "main",
+            &[
+                UpdateConflictCx { path: "calc/__init__.py", text: true, ours: &ours, theirs: &theirs },
+                UpdateConflictCx { path: "old.py", text: false, ours: &[], theirs: &[] },
+            ],
+        );
+        assert!(t.starts_with("Fallow step: repair (part update-1)"), "{t}");
+        assert!(t.contains("`calc/__init__.py`") && t.contains("def456 add and sub"));
+        assert!(t.contains("both keep working"));
+        assert!(t.contains("resolutions"));
     }
 }

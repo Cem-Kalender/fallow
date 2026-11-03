@@ -27,6 +27,9 @@ pub const SESSION_LOST: &str = "session lost: ";
 /// A step whose agent could not be started: it never saw its instruction, so it is no attempt
 /// at the work, and the same step goes again (for example while the runtime updates itself).
 pub const NOT_STARTED: &str = "not started: ";
+
+/// 011: a merge refused because the target moved right before it (FR-003).
+pub const MOVED: &str = "target moved: ";
 /// The start of a question raised because Fallow itself could not go on (a transient error).
 pub const COULD_NOT_GO_ON: &str = "Fallow could not go on: ";
 /// The detail of the engineer's "go on" after a pause (a retry's detail is "retry").
@@ -493,11 +496,27 @@ pub fn on_done(run: &mut Run, ctx: &Ctx, done: Done) -> Result<(), String> {
                     why: "merged by the engineer".into(),
                 })
             }
+            Err(e) if e.starts_with(MOVED) => run.append(Event::NeedsEngineer {
+                why: format!(
+                    "Nothing was merged: {}. Bring it up to date first.",
+                    e.trim_start_matches(MOVED)
+                ),
+                options: vec!["bring up to date".into(), "stop".into()],
+            }),
             Err(e) => run.append(Event::NeedsEngineer {
                 why: format!("The merge did not go through: {e}"),
                 options: vec!["merge again".into(), "stop".into()],
             }),
         },
+        // 011: an update's merge was computed (research R-2).
+        Done::Update { n, result } => {
+            if run.state.stage.is_final() {
+                return Ok(());
+            }
+            super::update::computed(run, n, result)
+        }
+        // 011: read by the engine (the target watch).
+        Done::Moved { .. } => Ok(()),
     }
 }
 
@@ -705,7 +724,15 @@ pub fn merge(run: &mut Run, tx: std::sync::mpsc::Sender<Msg>) -> Result<(), Stri
     std::thread::Builder::new()
         .name(format!("merge-{id}"))
         .spawn(move || {
-            let r = crate::publish::local::merge(&repo, &target, &commit, &scratch);
+            // 011 FR-003: the target is checked again right before merging; moved since the
+            // loop was verified, nothing is merged and the loop is brought up to date first.
+            let moved = git::rev(&repo, &format!("refs/heads/{target}"))
+                .is_ok_and(|tip| !git::is_ancestor(&repo, &tip, &commit));
+            let r = if moved {
+                Err(format!("{MOVED}{target} moved since this loop was verified"))
+            } else {
+                crate::publish::local::merge(&repo, &target, &commit, &scratch)
+            };
             let _ = tx.send(Msg::Done {
                 run: id,
                 done: Done::Merge(r),
@@ -832,6 +859,9 @@ pub fn stop(run: &mut Run, reason: Option<String>) -> Result<(), String> {
     }
     // Every running step ends, and the lead's calls for their questions too.
     run.stop_all();
+    // 011: an update in progress is dropped: its working branch removed, the build worktree back
+    // on the loop's branch, nothing merged.
+    super::update::drop_update(run, "the loop was stopped")?;
     run.append(Event::Steering {
         kind: SteeringKind::Stop,
         target: None,

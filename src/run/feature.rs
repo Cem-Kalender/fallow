@@ -318,6 +318,11 @@ fn step(run: &mut Run, ctx: &Ctx) -> Result<(), String> {
     }
     let lib = library(run, ctx);
     let pl = pipeline_of(run, &lib)?;
+    // 011: an update not merged yet holds the loop: only its repair runs, never the phases or
+    // finish() on the old commit (FR-003a, constitution I).
+    if let Some(u) = super::update::unmerged(&l).cloned() {
+        return update_step(run, &l, &pl, &u);
+    }
     // The build worktree, on the build branch (research S-9).
     let wt = build_wt(run);
     if !wt.join(".git").exists() {
@@ -352,6 +357,27 @@ fn step(run: &mut Run, ctx: &Ctx) -> Result<(), String> {
         );
     }
     let last_phase = l.phases.iter().map(|p| p.spec.n).max().unwrap_or(1);
+    // 011: the merged result of an update is gated before the stories are checked again
+    // (research R-3); a failure is a repair of the update, within the same cap.
+    if let Some(u) = l.update.as_ref().filter(|u| u.merged) {
+        let part = super::update::part(u.n);
+        let head = git::head(&wt)?;
+        match gated(run, ctx, &part, &head)? {
+            None => return Ok(()),
+            Some(failed) if !failed.is_empty() => {
+                return repair_or_ask(
+                    run,
+                    &part,
+                    None,
+                    last_phase,
+                    pl.caps.task_repairs,
+                    &builder_of(&pl),
+                    failed,
+                );
+            }
+            Some(_) => {}
+        }
+    }
     for s in pl
         .steps
         .iter()
@@ -2140,6 +2166,112 @@ fn parallel_units(checkers: &[pipeline::Step]) -> Vec<Vec<pipeline::Step>> {
 }
 
 /// Every phase is done: the outcome (FR-015) and ready to merge.
+/// 011: an update not merged yet (research R-2): waits while the merge is computed or for the
+/// engineer (documents changed); otherwise its repair is queued, judged, and made the merge.
+fn update_step(
+    run: &mut Run,
+    l: &LoopState,
+    pl: &Pipeline,
+    u: &super::state::UpdateState,
+) -> Result<(), String> {
+    if !u.docs_changed.is_empty() || u.working.is_none() || run.state.needs.is_some() {
+        return Ok(());
+    }
+    let part = super::update::part(u.n);
+    let last = run
+        .state
+        .steps
+        .values()
+        .rev()
+        .find(|s| s.part.as_deref() == Some(part.as_str()) && s.queued_seq > u.started_seq)
+        .cloned();
+    let builder = builder_of(pl);
+    let last_phase = l.phases.iter().map(|p| p.spec.n).max().unwrap_or(1);
+    let reasons = match &last {
+        None => Vec::new(),
+        Some(s) if s.end.is_none() || s.verified.is_none() => return Ok(()),
+        Some(s) => match (&s.verified, &s.verified_commit) {
+            (Some((true, _)), Some(c)) => {
+                let result = s.result().cloned().unwrap_or_default();
+                let wrong = super::update::resolved(run, u, c, &result)?;
+                if wrong.is_empty() {
+                    return Ok(());
+                }
+                wrong
+            }
+            (Some((_, why)), _) => {
+                // A step cut short or never started is asked again by `requeue_cut_short`.
+                if why.first().is_some_and(|w| {
+                    w.starts_with(machine::INTERRUPTED) || w.starts_with(machine::NOT_STARTED)
+                }) {
+                    return Ok(());
+                }
+                why.clone()
+            }
+            _ => return Ok(()),
+        },
+    };
+    if !reasons.is_empty() {
+        let done = repairs_of(run, &part);
+        if done >= pl.caps.task_repairs + allowed_more(run, &part) {
+            return run.append(Event::NeedsEngineer {
+                why: format!(
+                    "{part}: the conflicts are still not resolved after {done} repair round(s): {}. Allow one more repair, or stop the loop.",
+                    reasons.join("; ")
+                ),
+                options: vec!["allow one more repair".into(), "stop".into()],
+            });
+        }
+    }
+    let repo = run.state.repo.clone();
+    let since = git::merge_base(&repo, &u.loop_head, &u.target_commit).unwrap_or_default();
+    let logs: Vec<(String, bool, Vec<String>, Vec<String>)> = u
+        .conflicts
+        .iter()
+        .map(|c| {
+            (
+                c.path.clone(),
+                c.kind == ConflictKindRec::Text,
+                git::log_paths(&repo, &since, &u.loop_head, &c.path),
+                git::log_paths(&repo, &since, &u.target_commit, &c.path),
+            )
+        })
+        .collect();
+    let cx: Vec<prompts::UpdateConflictCx> = logs
+        .iter()
+        .map(|(p, t, o, th)| prompts::UpdateConflictCx {
+            path: p,
+            text: *t,
+            ours: o,
+            theirs: th,
+        })
+        .collect();
+    let mut text = prompts::update_conflicts(&part, &l.feature, &u.target, &cx);
+    if !reasons.is_empty() {
+        text.push_str("\n\nThe last attempt was not accepted:\n");
+        for r in &reasons {
+            text.push_str(&format!("- {r}\n"));
+        }
+    }
+    let why = if reasons.is_empty() {
+        format!("update {}: conflicts with {}", u.n, u.target)
+    } else {
+        format!("update {}: the conflicts again", u.n)
+    };
+    queue(
+        run,
+        StepKind::Repair,
+        Some(&part),
+        None,
+        Some(last_phase),
+        &builder,
+        None,
+        &why,
+        text,
+    )
+    .map(|_| ())
+}
+
 fn finish(run: &mut Run, pl: &Pipeline) -> Result<(), String> {
     // An answer committed after the last step is in what is merged too.
     take_answers(run, &lp(run)?)?;
@@ -2252,8 +2384,25 @@ fn start(run: &mut Run, ctx: &Ctx, n: u32) -> Result<(), String> {
                     && x.started.is_some()
             })
         });
-    if run.running.is_empty() && !round_begun {
+    let update_repair = super::update::unmerged(&l)
+        .filter(|u| step.part.as_deref() == Some(super::update::part(u.n).as_str()))
+        .cloned();
+    if run.running.is_empty() && !round_begun && super::update::unmerged(&l).is_none() {
         take_answers(run, &l)?;
+    }
+    if let Some(u) = &update_repair {
+        let wt = build_wt(run);
+        if !wt.join(".git").exists() {
+            git::worktree_add(&repo, &wt, Some(&l.build_branch), &l.lock_commit)?;
+        }
+        let working = u.working.clone().ok_or("the update's working commit is not made yet")?;
+        // A repair round goes on from the last attempt, as any repair does; the working commit
+        // is checked out only when the worktree does not build on it (the first round, or after
+        // something moved it away).
+        let head = git::head(&wt).unwrap_or_default();
+        if !git::is_ancestor(&repo, &working, &head) {
+            git::checkout_detach(&wt, &working)?;
+        }
     }
     let (worktree, base) = match step.kind {
         StepKind::Review => {
@@ -2731,8 +2880,21 @@ fn work_done(run: &mut Run, step: &Step, value: &Value) -> Result<(), String> {
                 }
             };
             let mut reasons: Vec<String> = tidied;
-            if !git::on_branch(&run.state.repo, &commit, &l.build_branch) {
-                reasons.push(format!("commit {commit} is not on {}", l.build_branch));
+            match super::update::unmerged(&l)
+                .filter(|u| step.part.as_deref() == Some(super::update::part(u.n).as_str()))
+                .and_then(|u| u.working.clone())
+            {
+                // 011: an update's repair works on the working commit, off the branch.
+                Some(working) => {
+                    if !git::is_ancestor(&run.state.repo, &working, &commit) {
+                        reasons.push(format!("commit {commit} does not build on the update's working commit"));
+                    }
+                }
+                None => {
+                    if !git::on_branch(&run.state.repo, &commit, &l.build_branch) {
+                        reasons.push(format!("commit {commit} is not on {}", l.build_branch));
+                    }
+                }
             }
             let locked = locked_changes(run, &l, &base, &commit, step.task.as_deref());
             if !locked.is_empty() {
@@ -2764,7 +2926,12 @@ fn work_done(run: &mut Run, step: &Step, value: &Value) -> Result<(), String> {
                 ));
             }
             if reasons.is_empty() {
-                verified(run, true, Vec::new(), Some(commit))
+                verified(run, true, Vec::new(), Some(commit))?;
+                // 011: what the loop touches, for the overlap warnings (research R-8).
+                if !changed.is_empty() {
+                    run.append(Event::Touched { files: changed })?;
+                }
+                Ok(())
             } else {
                 verified(run, false, reasons, None)
             }
