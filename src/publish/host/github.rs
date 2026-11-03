@@ -106,6 +106,45 @@ impl Host for GitHub {
             .any(|r| matches!(r["type"].as_str(), Some("pull_request" | "update"))))
     }
 
+    fn strict(&self, dir: &Path, repo: &Repo, branch: &str) -> Result<bool, String> {
+        let slug = repo.slug();
+        // A ruleset's required status checks with the strict policy.
+        if let Ok(text) = self.gh(
+            dir,
+            &["api", &format!("repos/{slug}/rules/branches/{branch}")],
+            READ,
+        ) {
+            let rules: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
+            let strict = rules.as_array().is_some_and(|a| {
+                a.iter().any(|r| {
+                    r["type"] == "required_status_checks"
+                        && r["parameters"]["strict_required_status_checks_policy"] == true
+                })
+            });
+            if strict {
+                return Ok(true);
+            }
+        }
+        // A classic protection's required status checks (their details may need admin rights).
+        let text = self.gh(
+            dir,
+            &[
+                "api",
+                &format!("repos/{slug}/branches/{branch}/protection/required_status_checks"),
+            ],
+            READ,
+        );
+        match text {
+            Ok(t) => serde_json::from_str::<Value>(&t)
+                .ok()
+                .and_then(|v| v["strict"].as_bool())
+                .ok_or_else(|| format!("could not read whether {branch} must be up to date")),
+            // No required status checks on a classic protection: not strict.
+            Err(e) if e.contains("404") || e.contains("not enabled") => Ok(false),
+            Err(e) => Err(e),
+        }
+    }
+
     fn open(
         &self,
         dir: &Path,
@@ -148,7 +187,7 @@ impl Host for GitHub {
                 "--repo",
                 &repo.slug(),
                 "--json",
-                "state,mergedAt,url,statusCheckRollup",
+                "state,mergedAt,url,statusCheckRollup,mergeable,mergeStateStatus",
             ],
             READ,
         )?;
@@ -245,6 +284,8 @@ fn state_of(out: &str) -> Result<PrState, String> {
         state: status_of(v["state"].as_str().unwrap_or("OPEN")),
         merged_at: v["mergedAt"].as_str().map(str::to_string),
         checks,
+        conflicting: v["mergeable"].as_str() == Some("CONFLICTING"),
+        behind: v["mergeStateStatus"].as_str() == Some("BEHIND"),
     })
 }
 
@@ -358,5 +399,24 @@ mod tests {
         ] {
             assert!(!code.contains(bad), "{bad}");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests_011 {
+    use super::*;
+
+    /// 011 (research R-7): a conflicting and a behind pull request, from `gh pr view` output.
+    #[test]
+    fn a_pull_requests_conflict_and_behind_state_are_read() {
+        let out = r#"{"state":"OPEN","mergedAt":null,"url":"u","statusCheckRollup":[],"mergeable":"CONFLICTING","mergeStateStatus":"DIRTY"}"#;
+        let s = state_of(out).unwrap();
+        assert!(s.conflicting && !s.behind);
+        let out = r#"{"state":"OPEN","mergedAt":null,"url":"u","statusCheckRollup":[],"mergeable":"MERGEABLE","mergeStateStatus":"BEHIND"}"#;
+        let s = state_of(out).unwrap();
+        assert!(!s.conflicting && s.behind);
+        // Older output without the fields: neither.
+        let s = state_of(r#"{"state":"OPEN","statusCheckRollup":[]}"#).unwrap();
+        assert!(!s.conflicting && !s.behind);
     }
 }

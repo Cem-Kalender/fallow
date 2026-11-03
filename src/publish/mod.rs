@@ -420,3 +420,39 @@ pub fn publish(job: &Job, settings: &crate::config::Settings) -> Result<Done, Fa
         pr,
     })
 }
+
+/// 011 (research R-7, FR-011a): the commit `target` is at on `remote`, its objects brought into
+/// the repository by sha: no ref of the repository is written (no remote-tracking ref, no
+/// `FETCH_HEAD`). Err when the remote cannot be read or the target is not on it.
+pub fn fetch_target(repo: &std::path::Path, remote: &str, target: &str) -> Result<String, String> {
+    let there = run::run(
+        "git",
+        &[
+            "ls-remote".to_string(),
+            remote.to_string(),
+            format!("refs/heads/{target}"),
+        ],
+        repo,
+        run::READ,
+    )?;
+    let sha = there
+        .split_whitespace()
+        .next()
+        .map(str::to_string)
+        .ok_or_else(|| format!("{target} is not on {remote}"))?;
+    if !crate::verify::git::commit_exists(repo, &sha) {
+        run::run(
+            "git",
+            &[
+                "fetch".to_string(),
+                "--no-write-fetch-head".to_string(),
+                "--no-tags".to_string(),
+                remote.to_string(),
+                sha.clone(),
+            ],
+            repo,
+            run::WRITE,
+        )?;
+    }
+    Ok(sha)
+}

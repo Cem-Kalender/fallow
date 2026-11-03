@@ -63,6 +63,12 @@ pub struct PrState {
     pub merged_at: Option<String>,
     #[serde(default)]
     pub checks: Vec<Check>,
+    /// 011 (research R-7): the pull request conflicts with its target (`mergeable: CONFLICTING`).
+    #[serde(default)]
+    pub conflicting: bool,
+    /// 011: the pull request's branch is behind its target (`mergeStateStatus: BEHIND`).
+    #[serde(default)]
+    pub behind: bool,
 }
 
 pub trait Host: Send + Sync {
@@ -85,6 +91,9 @@ pub trait Host: Send + Sync {
     ) -> Result<PullRequest, String>;
     /// The pull request's state and checks.
     fn state(&self, dir: &Path, repo: &Repo, number: u64) -> Result<PrState, String>;
+    /// 011 (research R-7): whether `branch` requires pull requests to be up to date with it
+    /// before they merge; Err when it cannot be read (shown as behind, not urged).
+    fn strict(&self, dir: &Path, repo: &Repo, branch: &str) -> Result<bool, String>;
     /// The latest pull request from `head` of `repo`'s own branches, in any state, with the
     /// commit it is at (after a restart, research R-8; after a failed opening, FR-011).
     fn find(

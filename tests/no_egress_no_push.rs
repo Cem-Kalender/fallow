@@ -106,5 +106,9 @@ fn fallow_neither_connects_out_nor_pushes_but_its_own_branch() {
         }
     }
     assert!(found.is_empty(), "{}", found.join("\n"));
-    assert_eq!(pushes, 1, "exactly one git push, of a loop's own branch");
+    // 010's first publication and 011's push forward of the same branch (research R-7).
+    assert_eq!(
+        pushes, 2,
+        "two git pushes, both of a loop's own branch, in publish/push.rs"
+    );
 }
