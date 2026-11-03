@@ -8,7 +8,7 @@ unchanged.
 | Event | Fields | Meaning |
 |---|---|---|
 | `Updated` | `n` (1, 2, …), `target`, `target_commit`, `loop_head`, `remote: bool` | An update started (written before the merge is computed); sets `fresh_seq`. |
-| `UpdateConflicted` | `n`, `working` (commit), `conflicts: [{ path, kind: text \| non_text }]` | The merge conflicts; the repair starts on the working commit, kept on the loop's own branch `fallow/<feature>/update-<n>` (R-2). |
+| `UpdateConflicted` | `n`, `working` (commit), `branch` (its actual name), `conflicts: [{ path, kind: text \| non_text }]` | The merge conflicts; the repair starts on the working commit, kept on the loop's own branch `fallow/<feature>/update-<n>` (`-2`, `-3`… when taken; the name used is recorded) (R-2). |
 | `UpdateDocsChanged` | `n`, `paths: [path]` | The feature's locked documents changed on the target; nothing merged (R-2). |
 | `UpdateMerged` | `n`, `commit` | Fallow's two-parent merge commit is on the loop's branch; the working branch deleted. Folded (R-3): every story's phases back to Pending with `reopened`, `outcome` cleared; `affected` untouched; `base_commit` = the target commit. |
 | `UpdateDropped` | `n`, `why` | Dropped (pull request merged or closed, loop stopped, locked again); its working branch deleted, if any. |
@@ -30,7 +30,7 @@ unchanged.
 
 | Field | Type | From |
 |---|---|---|
-| `update` | `Option<UpdateState { n, target_commit, conflicts, remote, working, merged, started_seq }>` | `Updated` until the loop is ready (or, published, pushed forward) again, or `UpdateDropped` (also appended by a relock that lands while an update is held: "locked again") |
+| `update` | `Option<UpdateState { n, target_commit, loop_head, conflicts, remote, working, branch, merged, started_seq }>` | `Updated` until the loop is ready (or, published, pushed forward) again, or `UpdateDropped` (also appended by a relock that lands while an update is held: "locked again") |
 | `fresh_seq` | `u64` | `Relocked` and `Updated`; read by `repairs_of`, `allowed_more`, `fresh_since` instead of `relocked_seq` |
 | `updates` | `u32` | count of `Updated` |
 | `update_limit` | `u32` | `LoopCreated`, default 3 |

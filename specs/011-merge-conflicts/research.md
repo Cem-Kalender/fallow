@@ -238,7 +238,7 @@ progress is resumed from what exists, keyed on the working branch, not on commit
 get new timestamps): `Updated` alone → if the loop's branch head already is a merge whose parents are `loop_head` and
 `target_commit` (the crash came after the fast-forward), `UpdateMerged` is recorded for it;
 otherwise computed again from the recorded `loop_head` (the same inputs give the same tree);
-`UpdateConflicted` and its ref, a repair step cut short → the build worktree detached at the ref
+`UpdateConflicted` and its working branch (by the name it records), a repair step cut short → the build worktree detached at that branch's commit
 again and the step re-queued by `requeue_cut_short`; a repair accepted but no `UpdateMerged` → Fallow
 makes the merge commit from the accepted tree; `UpdateMerged` with the build worktree still detached →
 checked out on the loop's branch again; a working branch still there after `UpdateMerged` or
