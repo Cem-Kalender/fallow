@@ -20,6 +20,12 @@ This feature treats both like any other change: Fallow brings the loop's branch 
 
 **What does not change**: how a loop builds and verifies, that only Fallow merges and only on the engineer's word (or the autonomy level the engineer chose), that the target branch and the engineer's folder are never used to resolve anything, and the remote rules of 010 (never a push to the target, never forced).
 
+## Clarifications
+
+### Session 2026-11-03
+
+- Q: When the target moved without a conflict, must the loop always be verified again before it is merged? → A: Yes, always. To keep that from becoming an endless chase, merges into the same target go through a queue (a loop being verified again for its merge is never overtaken by another loop), and after a set number of updates in a row that were overtaken anyway (by commits from outside Fallow), the loop asks the engineer: "Try again" or "Merge anyway", the latter shown as not verified on top of the target as it is now. The number is set in the lock form, default 3.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - A conflicting loop is brought up to date and verified again (Priority: P1)
@@ -42,7 +48,7 @@ Two loops of a project changed the same lines. The first is merged. The second i
 
 ### User Story 2 - A target that moved without conflict is verified again too (Priority: P1)
 
-The target moved since the loop started, but nothing conflicts. The verified commit would merge, but the combination was never checked: the other work was not underneath when the gates ran. Fallow brings the branch up to date (no builder needed), runs the gates and the checker again, and offers the merge only then. [NEEDS CLARIFICATION: when the target moved without a conflict, must the loop always be verified again before it is merged, or may the engineer merge the commit as verified on the old starting point, shown as not verified on the new one?]
+The target moved since the loop started, but nothing conflicts. The verified commit would merge, but the combination was never checked: the other work was not underneath when the gates ran. Fallow brings the branch up to date (no builder needed), runs the gates and the checker again, and offers the merge only then. Merges into the same target take turns, so another loop cannot overtake it meanwhile; only commits from outside Fallow can, and after a set number of updates in a row overtaken that way, the engineer decides.
 
 **Why this priority**: an unchecked combination merged as "verified" is the quieter version of the same problem.
 
@@ -50,7 +56,9 @@ The target moved since the loop started, but nothing conflicts. The verified com
 
 **Acceptance Scenarios**:
 
-1. **Given** a ready loop whose target moved without a conflict, **When** the engineer opens the loop page, **Then** it says the target moved since the loop was verified (by how many commits, from which features or "outside Fallow"), and what is offered follows the answer to the question above.
+1. **Given** a ready loop whose target moved without a conflict, **When** the engineer opens the loop page, **Then** it says the target moved since the loop was verified (by how many commits, from which features or "outside Fallow"), and offers "Bring up to date" (by the autonomy level, User Story 3), not "Merge".
+4. **Given** two ready loops with the same target, **When** the first is being brought up to date for its merge, **Then** the second waits in line, its page saying "in line to merge after <feature>", and its turn comes when the first is merged, stopped or leaves the line.
+5. **Given** a loop whose updates were overtaken by commits from outside Fallow as many times in a row as its lock allows (3 by default), **When** the next would start, **Then** the loop asks the engineer: "Try again" (another update) or "Merge anyway" (the commit as last verified, merged with the label "not verified on top of <target> as it is now", naming the commits it was not verified with), or "Stop" (except as in FR-016b).
 2. **Given** the loop brought up to date, **When** the gates and the checker pass on the combination, **Then** the loop is ready with the new verified commit.
 3. **Given** the gates or the checker fail on the combination, **When** that happens, **Then** it is a repair like any failing gate or criterion: a builder gets the failure, within the repair cap.
 
@@ -58,7 +66,7 @@ The target moved since the loop started, but nothing conflicts. The verified com
 
 ### User Story 3 - The autonomy level decides who starts it (Priority: P2)
 
-A loop locked with Free brings itself up to date and verifies again on its own, within its caps and budget, and the engineer finds it ready again (or waiting, with why). With Normal or Strict, Fallow asks first: the loop page and "Needs you" show "Bring up to date" with what it will do. When the loop's budget is used up, or it already brought itself up to date 3 times in a row, Fallow asks whatever the level.
+A loop locked with Free brings itself up to date and verifies again on its own, within its caps and budget, and the engineer finds it ready again (or waiting, with why). With Normal or Strict, Fallow asks first: the loop page and "Needs you" show "Bring up to date" with what it will do. When the loop's budget is used up, or its updates were overtaken as many times in a row as its lock allows, Fallow asks whatever the level.
 
 **Why this priority**: it decides whether this is a click or nothing at all, but the mechanism comes first.
 
@@ -68,7 +76,7 @@ A loop locked with Free brings itself up to date and verifies again on its own, 
 
 1. **Given** a loop locked Free whose target moved, **When** it becomes ready, **Then** it brings itself up to date and verifies again without the engineer, records that it did so and why, and the engineer can see each step.
 2. **Given** a loop locked Normal or Strict whose target moved, **When** it becomes ready, **Then** it waits for the engineer, shown under "Needs you" with "Bring up to date".
-3. **Given** a loop whose budget is used up, or that already brought itself up to date 3 times in a row, **When** it would start another update, **Then** it asks the engineer whatever its level, naming the limit.
+3. **Given** a loop whose budget is used up, or whose updates were overtaken as many times in a row as its lock allows, **When** it would start another update, **Then** it asks the engineer whatever its level, naming the limit.
 
 ---
 
@@ -136,9 +144,10 @@ When the engineer locks a feature, Fallow compares the files its tasks name with
 - **FR-004**: Bringing a loop up to date MUST merge the target, as it is then, into the loop's own branch in the loop's own working copy; it MUST NOT touch the target branch, the engineer's folder, or another loop's branch.
 - **FR-005**: Conflicting files MUST go to a builder as a repair step that names each file and what each side changed, with the instruction that the feature's criteria and the work already on the target must both keep working. A change on the target to the feature's own locked documents, conflicting or not, MUST NOT be merged in by the update nor go to a builder; the loop waits for the engineer, naming the documents, with "Lock again" (the feature's documents taken from the target into its spec session, locked again by the engineer as any re-lock, after which the loop goes on from the new lock) and "Stop" (except as in FR-016b).
 - **FR-006**: After the update, Fallow MUST verify the result as any result: no conflict markers left, the changes committed, the gates run by Fallow against the new starting point (the target as merged in), and every user story checked again by the checker (the pipeline's review rounds). Only then MUST the loop be ready, with the new verified commit.
-- **FR-007**: An update MUST count as a new task of the loop: its repairs (the conflict, and any failure after it) count against the pipeline's repair cap per task, starting from zero for that update; the review rounds after it count against the pipeline's review rounds, starting from zero; and everything counts against the loop's budget. Reaching a cap or the budget during an update MUST stop it there and make the loop wait for the engineer, as at any cap. A loop MUST NOT bring itself up to date more than 3 times in a row without the engineer; the fourth time it asks. The count starts again after any action of the engineer on that loop.
+- **FR-007**: An update MUST count as a new task of the loop: its repairs (the conflict, and any failure after it) count against the pipeline's repair cap per task, starting from zero for that update; the review rounds after it count against the pipeline's review rounds, starting from zero; and everything counts against the loop's budget. Reaching a cap or the budget during an update MUST stop it there and make the loop wait for the engineer, as at any cap. The lock form MUST set how many updates in a row may be overtaken before the engineer decides (default 3, at least 1): an update is overtaken when the target moved again before its result could be merged or published. When that number is reached, the loop MUST ask whatever the level (User Story 2, scenario 5). The count starts again when the loop is merged or published, or the engineer chooses "Try again".
 - **FR-008**: Each update MUST be recorded in the loop's history: when, what the target was, what conflicted, who resolved it, and the outcome; the engineer can see every step as for any step.
-- **FR-009**: The target moving without a conflict MUST be handled as decided in User Story 2.
+- **FR-009**: A target that moved without a conflict MUST be handled like a conflict without files: the loop is brought up to date and verified again before any merge or publication. "Merge anyway" MUST be offered only when the number of overtaken updates is reached (FR-007), and MUST label the merge as not verified on top of the target as it is then, in the loop's history, its page and its notification, never in the words or colors of a verified merge.
+- **FR-009a**: Local merges into the same target MUST take turns: while a loop is being brought up to date for its merge, or is merging, other loops' merges into that target MUST wait in line, in the order they became ready, each shown as "in line to merge after <feature>"; a loop leaves the line when it is merged, stopped, deleted, or brought up to date again for another reason. Commits from outside Fallow cannot be held; the count of FR-007 covers them.
 
 **Who starts it**
 
@@ -169,12 +178,15 @@ When the engineer locks a feature, Fallow compares the files its tasks name with
 - **Update of a loop**: bringing a loop's branch up to date with its target: the target commit merged in, the files in conflict (if any), the repair step that resolved them, the new verified commit, the outcome.
 - **Overlap**: two unfinished loops of a project touching the same files: the loops, the files, when it was seen (at the lock or during a run), and what the engineer chose (run now, run after, wait).
 - **Waiting for a loop**: a loop that does not run until another loop is merged, stopped or deleted.
+- **Merge line**: per target branch, the loops waiting their turn to merge, in order.
+- **Overtaken updates**: the count of a loop's updates in a row whose result the target outran, and the limit set at the lock (default 3).
 
 ## Success Criteria *(mandatory)*
 
 ### Measurable Outcomes
 
-- **SC-001**: In 100% of tests, no local merge leaves a conflict on the target, and every commit Fallow merges or publishes had its gates and checker run on top of the target as it was when the merge ran or the commit was published (a pull request merged later on the remote, after its target moved again, is the hosting service's to check).
+- **SC-001**: In 100% of tests, no local merge leaves a conflict on the target, and every commit Fallow merges or publishes had its gates and checker run on top of the target as it was when the merge ran or the commit was published, except a merge the engineer chose with "Merge anyway", which is labelled so (a pull request merged later on the remote, after its target moved again, is the hosting service's to check).
+- **SC-007**: With two loops ready for the same target, neither has to be verified again because of the other more than once, in 100% of tests (the line holds the second).
 - **SC-002**: With two loops changing the same lines, the second reaches ready again with a newly verified commit and merges without conflict, with at most one action of the engineer at Normal ("Bring up to date") and none at Free, besides the merge itself.
 - **SC-003**: The target branch and the engineer's folder are unchanged by any update, in 100% of tests.
 - **SC-004**: A published loop brought up to date keeps the same pull request, and its branch on the remote only moves forward, in 100% of tests.

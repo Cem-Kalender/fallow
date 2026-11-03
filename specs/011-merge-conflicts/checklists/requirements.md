@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -33,5 +33,5 @@
 
 - Git terms (branch, commit, merge, conflict, pull request) are the engineer's own vocabulary here,
   as in 010, not implementation details.
-- One marker remains (User Story 2, FR-009: a target that moved without a conflict); asked of the
-  engineer before `/speckit-plan`.
+- User Story 2/FR-009 settled with the engineer on 2026-11-03: always verify again, a merge line per
+  target, and "Try again"/"Merge anyway" after a number of overtaken updates set at the lock (default 3).
