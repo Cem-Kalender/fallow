@@ -1623,7 +1623,15 @@ impl Engine {
         let mut offer: Vec<&str> = Vec::new();
         let stage = r.state.stage;
         let updating = l.is_some_and(|l| l.update.is_some());
-        if stage == Stage::Ready && !updating {
+        let held = l
+            .and_then(|l| l.update.as_ref())
+            .is_some_and(|u| !u.docs_changed.is_empty());
+        if held {
+            offer.extend(["lock_again", "stop"]);
+        } else if stage == Stage::Ready && !updating && read.is_none() {
+            // The target is being read: nothing is offered to merge until it is (scenario 1).
+            offer.push("stop");
+        } else if stage == Stage::Ready && !updating {
             match read {
                 // The target branch is gone: nothing is merged; stop, or unlock and lock the
                 // feature from another branch (spec edge case).
@@ -1707,12 +1715,11 @@ impl Engine {
     /// 011: brings a ready loop up to date with its target (FR-004): recorded as the engineer's
     /// steering, then the update starts.
     fn update(&mut self, id: u64) -> Result<(), String> {
-        let tip = self
-            .watched
-            .get(&id)
-            .and_then(|w| w.read.as_ref())
-            .filter(|m| m.moved)
-            .map(|m| m.target_commit.clone());
+        let read = self.watched.get(&id).and_then(|w| w.read.as_ref());
+        if read.is_some_and(|m| m.gone) {
+            return Err("the target branch is gone: stop the loop, or unlock the feature and lock it from another branch".into());
+        }
+        let tip = read.filter(|m| m.moved).map(|m| m.target_commit.clone());
         let tx = self.ctx.tx.clone();
         let r = self
             .runs
@@ -1726,6 +1733,8 @@ impl Engine {
         if git::is_ancestor(&r.state.repo, &tip, &integrated) {
             return Err("the target has not moved since this loop was verified".into());
         }
+        // Refused before anything is recorded (review 1).
+        super::update::can_start(r, false)?;
         r.append(Event::Steering {
             kind: SteeringKind::Update,
             target: Some(r.state.target.clone()),
@@ -2484,6 +2493,18 @@ impl Engine {
     /// A new lock of an unlocked feature: the loop goes on, with the affected stories reopened
     /// (research S-17).
     fn relock(&mut self, project: &str, feature: &str, id: u64) -> Result<Value, String> {
+        // 011: an update's step or computation still running would be pulled from under it
+        // (review 4): the lock waits for it, or the engineer stops the loop.
+        if let Some(r) = self.runs.get(&id) {
+            let updating = r
+                .state
+                .feature_loop
+                .as_ref()
+                .is_some_and(|l| l.update.is_some());
+            if updating && (r.busy.is_some() || !r.running.is_empty()) {
+                return Err("the loop is being brought up to date and a step is running: lock again when it ends, or stop the loop".into());
+            }
+        }
         let (_, f, _) = self.studio.feature_ctx(project, feature)?;
         let old = f
             .locks

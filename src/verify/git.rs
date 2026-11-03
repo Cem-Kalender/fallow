@@ -122,12 +122,19 @@ pub fn on_branch(dir: &Path, commit: &str, branch: &str) -> bool {
 
 /// Files changed between two commits.
 pub fn files_between(dir: &Path, from: &str, to: &str) -> Result<Vec<String>, String> {
-    Ok(
-        git(dir, &["diff", "--name-only", &format!("{from}..{to}")])?
-            .lines()
-            .map(str::to_string)
-            .collect(),
-    )
+    Ok(git(
+        dir,
+        &[
+            "-c",
+            "core.quotePath=false",
+            "diff",
+            "--name-only",
+            &format!("{from}..{to}"),
+        ],
+    )?
+    .lines()
+    .map(str::to_string)
+    .collect())
 }
 
 /// What a worktree looks like now, for the read-only check (FR-013).
@@ -202,10 +209,20 @@ pub fn commits_touching(
 
 /// The files tracked at `commit`.
 pub fn files_at(dir: &Path, commit: &str) -> Result<Vec<String>, String> {
-    Ok(git(dir, &["ls-tree", "-r", "--name-only", commit])?
-        .lines()
-        .map(str::to_string)
-        .collect())
+    Ok(git(
+        dir,
+        &[
+            "-c",
+            "core.quotePath=false",
+            "ls-tree",
+            "-r",
+            "--name-only",
+            commit,
+        ],
+    )?
+    .lines()
+    .map(str::to_string)
+    .collect())
 }
 
 /// The best common ancestor of two commits.

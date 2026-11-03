@@ -41,6 +41,7 @@
     const u = v.update;
     const offer = v.offer || [];
     const lines = [];
+    if (t.reading && !u && v.stage === "ready") lines.push(h`<div class="small muted">Reading ${v.base_branch} before anything is offered to merge…</div>`);
     if (t.gone) {
       lines.push(h`<div class="notice">The target branch ${v.base_branch} is gone: nothing is merged. Stop the loop, or unlock the feature and lock it from another branch.</div>`);
     } else if (t.moved && !u) {
@@ -52,6 +53,7 @@
     }
     if (u) {
       const step = (u.docs_changed || []).length ? "waiting for you (the documents changed)" : !u.working && !u.merged ? "merging" : !u.merged ? "resolving the conflicts" : "gates and checking every story again";
+      if ((u.docs_changed || []).length && offer.includes("lock_again")) lines.push(h`<div class="notice">${v.base_branch} changed this feature's documents (<span class="mono">${u.docs_changed.join(", ")}</span>): nothing was merged. Lock again with them, or stop. <button class="btn btn2 sm" data-act="lock-again">Lock again</button></div>`);
       lines.push(h`<div class="row wrap gap-8"><span class="pill blue">Bringing up to date…</span><span class="small muted">update ${u.n}: ${v.base_branch} at ${short(u.target_commit)} · ${step}${(u.conflicts || []).length ? ` · conflicts: ${u.conflicts.map((c) => c.path).join(", ")}` : ""}</span></div>`);
     }
     if ((v.updates || 0) > 0 && !u && !t.moved) lines.push(h`<div class="small muted">Brought up to date ${v.updates} time${v.updates === 1 ? "" : "s"}; verified again on top of ${v.base_branch}.</div>`);
@@ -843,7 +845,7 @@
         try {
           const out = await post(`/api/loops/${id}/lock-again`, {});
           // The spec session opens with Fallow's message in its box, for you and the lead.
-          try { sessionStorage.setItem("fallow.prefill", out.message); } catch (_) { /* not kept */ }
+          try { sessionStorage.setItem("fallow.prefill", JSON.stringify({ key: `${out.project || v.project}/${out.feature || v.feature}`, message: out.message })); } catch (_) { /* not kept */ }
           location.hash = `#/p/${encodeURIComponent(out.project || v.project)}/f/${encodeURIComponent(out.feature || v.feature)}`;
         } catch (e) { alertLine(e.message); }
         return;
@@ -931,6 +933,8 @@
         if (o === "raise the limit") return act("limits", el);
         if (o === "stop") return act("stop", el);
         if (o === "merge again") return act("merge", el);
+        if (o === "bring up to date") return act("update", el);
+        if (o === "lock again") return act("lock-again", el);
         if (o === "answer") {
           const text = await confirm({ title: "Answer the builder", text: state.view.needs.why, ok: "Send the answer", input: { label: "Your answer", value: "" } });
           if (text) run("answer", { text });

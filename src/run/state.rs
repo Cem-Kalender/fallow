@@ -277,6 +277,9 @@ pub struct UpdateState {
     pub docs_changed: Vec<String>,
     pub merged: bool,
     pub started_seq: u64,
+    /// The loop's outcome before the update, back when it is dropped before anything moved.
+    #[serde(skip)]
+    pub prior_outcome: Option<(bool, Vec<String>)>,
 }
 
 /// 011: another unfinished loop touching the same files.
@@ -1228,8 +1231,9 @@ impl RunState {
                 if let Some(f) = self.feature_loop.as_mut() {
                     f.fresh_seq = l.seq;
                     f.updates += 1;
-                    f.outcome = None;
+                    let prior_outcome = f.outcome.take();
                     f.update = Some(UpdateState {
+                        prior_outcome,
                         n: *n,
                         target: target.clone(),
                         target_commit: target_commit.clone(),
@@ -1324,8 +1328,11 @@ impl RunState {
             }
             Event::UpdateDropped { n, why } => {
                 if let Some(f) = self.feature_loop.as_mut() {
-                    if f.update.as_ref().is_some_and(|u| u.n == *n) {
-                        f.update = None;
+                    if let Some(u) = f.update.take_if(|u| u.n == *n) {
+                        // Dropped before anything moved: the loop is as it was (review 3).
+                        if !u.merged && u.working.is_none() && f.outcome.is_none() {
+                            f.outcome = u.prior_outcome;
+                        }
                     }
                     f.update_steps.push((
                         l.at.clone(),

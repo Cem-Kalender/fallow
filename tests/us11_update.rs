@@ -350,6 +350,26 @@ fn a_target_that_changed_the_features_documents_stops_the_update() {
         "specs/002-calc2/spec.md"
     );
     assert_ne!(s["stage"], "ready");
+    // Held: Lock again is offered; another "Bring up to date" is refused and records nothing,
+    // so the question stays (review 1, 2).
+    let held = loop_view(tx, b);
+    assert_eq!(
+        held["offer"],
+        serde_json::json!(["lock_again", "stop"]),
+        "{}",
+        held["offer"]
+    );
+    let steered = held["steering"].as_array().map_or(0, Vec::len);
+    assert!(ask(tx, Request::Update { id: b }).is_err());
+    assert_eq!(
+        loop_view(tx, b)["steering"].as_array().map_or(0, Vec::len),
+        steered
+    );
+    wait_for(tx, b, "the question kept", |v| {
+        v["needs_engineer"]
+            .as_str()
+            .is_some_and(|n| n.contains("documents"))
+    });
     drop(e);
     let _ = std::fs::remove_dir_all(&root);
 }

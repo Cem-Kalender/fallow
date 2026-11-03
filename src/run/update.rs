@@ -183,12 +183,8 @@ pub fn part(n: u32) -> String {
 /// Starts an update of the loop to `target_commit` (research R-2): records it, takes a ready
 /// loop back to building (FR-003a), and computes the merge on a thread; its end comes back as
 /// `Done::Update`.
-pub fn start(
-    run: &mut Run,
-    tx: Sender<Msg>,
-    target_commit: &str,
-    remote: bool,
-) -> Result<(), String> {
+/// Whether an update can start now (checked before anything is recorded, review 3).
+pub fn can_start(run: &Run, remote: bool) -> Result<(), String> {
     let l = run
         .state
         .feature_loop
@@ -208,6 +204,26 @@ pub fn start(
     if !local_ready && !(remote && published) {
         return Err("only a loop ready to merge, or a published one, is brought up to date".into());
     }
+    // research R-1: git 2.38 or newer computes the merge; older git is refused by name.
+    if let Some(why) = git::version_refusal(git::git_version(&run.state.repo)) {
+        return Err(why);
+    }
+    Ok(())
+}
+
+pub fn start(
+    run: &mut Run,
+    tx: Sender<Msg>,
+    target_commit: &str,
+    remote: bool,
+) -> Result<(), String> {
+    can_start(run, remote)?;
+    let l = run
+        .state
+        .feature_loop
+        .as_ref()
+        .ok_or("only a feature's loop is brought up to date")?;
+    let local_ready = run.state.stage == Stage::Ready;
     let repo = run.state.repo.clone();
     let loop_head = git::rev(&repo, &format!("refs/heads/{}", l.build_branch))?;
     let n = l.updates + 1;
@@ -295,17 +311,30 @@ pub fn computed(run: &mut Run, n: u32, result: Result<Computed, String>) -> Resu
         .and_then(|l| l.update.clone())
         .filter(|u| u.n == n && !u.merged)
     else {
+        if let Ok(Computed::Conflicted { branch, .. }) = &result {
+            let _ = git::delete_branch(&run.state.repo, branch);
+        }
         return Ok(());
     };
     match result {
+        // Nothing moved: the loop goes back to where it was (ready, its outcome kept), and the
+        // engineer may bring it up to date again (review 3).
         Err(why) => {
             run.append(Event::UpdateDropped {
                 n,
                 why: why.clone(),
             })?;
-            run.append(Event::NeedsEngineer {
-                why: format!("The loop could not be brought up to date: {why}"),
-                options: vec!["bring up to date".into(), "stop".into()],
+            if u.remote {
+                return run.append(Event::NeedsEngineer {
+                    why: format!(
+                        "The pull request's branch could not be brought up to date: {why}"
+                    ),
+                    options: vec!["bring up to date".into(), "stop".into()],
+                });
+            }
+            run.append(Event::Stage {
+                to: Stage::Ready,
+                why: format!("not brought up to date: {why}"),
             })
         }
         Ok(Computed::DocsChanged(paths)) => {
