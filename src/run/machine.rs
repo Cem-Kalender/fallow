@@ -427,6 +427,7 @@ pub fn on_done(run: &mut Run, ctx: &Ctx, done: Done) -> Result<(), String> {
         }
         Done::Publish { by, result } => match result {
             Ok(d) => {
+                let unchecked = std::mem::take(&mut run.publish_unchecked);
                 run.append(Event::Published {
                     remote: d.remote,
                     service: d.service,
@@ -437,7 +438,7 @@ pub fn on_done(run: &mut Run, ctx: &Ctx, done: Done) -> Result<(), String> {
                     pr_number: d.pr.number,
                     pr_url: d.pr.url,
                     by,
-                    unchecked: Vec::new(),
+                    unchecked,
                 })?;
                 if run.state.stage == Stage::Ready {
                     run.append(Event::Stage {
@@ -447,13 +448,18 @@ pub fn on_done(run: &mut Run, ctx: &Ctx, done: Done) -> Result<(), String> {
                 }
                 Ok(())
             }
-            Err(f) => run.append(Event::PublishFailed {
-                step: f.step,
-                why: f.why,
-                pushed: f.pushed,
-                by,
-            }),
+            Err(f) => {
+                run.publish_unchecked.clear();
+                run.append(Event::PublishFailed {
+                    step: f.step,
+                    why: f.why,
+                    pushed: f.pushed,
+                    by,
+                })
+            }
         },
+        // 011: handled by the engine (an update may start from them).
+        Done::Fetched { .. } | Done::PushForward { .. } => Ok(()),
         Done::PrState(r) => {
             let Ok(st) = r else {
                 return Ok(());
@@ -469,14 +475,40 @@ pub fn on_done(run: &mut Run, ctx: &Ctx, done: Done) -> Result<(), String> {
             if run.state.stage != Stage::Publishing {
                 return Ok(());
             }
-            let changed =
-                st.state != pb.state || st.checks != pb.checks || st.merged_at != pb.merged_at;
+            let changed = st.state != pb.state
+                || st.checks != pb.checks
+                || st.merged_at != pb.merged_at
+                || st.conflicting != pb.conflicting
+                || st.behind != pb.behind
+                || st.strict != pb.strict;
             if changed {
                 run.append(Event::PullRequestState {
                     state: st.state,
                     checks: st.checks.clone(),
                     merged_at: st.merged_at.clone(),
+                    conflicting: st.conflicting,
+                    behind: st.behind,
+                    strict: st.strict,
                 })?;
+            }
+            // 011 (research R-7): merged or closed on the remote during an update: its steps are
+            // stopped and it is dropped; the loop then follows 010.
+            if st.state != crate::publish::host::PrStatus::Open
+                && run
+                    .state
+                    .feature_loop
+                    .as_ref()
+                    .is_some_and(|l| l.update.is_some())
+            {
+                run.stop_all();
+                super::update::drop_update(
+                    run,
+                    if st.state == crate::publish::host::PrStatus::Merged {
+                        "the pull request was merged on the remote"
+                    } else {
+                        "the pull request was closed on the remote"
+                    },
+                )?;
             }
             match st.state {
                 crate::publish::host::PrStatus::Merged => {
@@ -846,6 +878,7 @@ pub fn publish(
     by: &str,
     remote: &crate::publish::Remote,
     body: &str,
+    unchecked: Vec<String>,
 ) -> Result<(), String> {
     let l = run
         .state
@@ -887,7 +920,11 @@ pub fn publish(
     let body_file = dir.join("body.md");
     std::fs::write(&body_file, body).map_err(|e| format!("{}: {e}", body_file.display()))?;
     run.append(Event::Steering {
-        kind: SteeringKind::Publish,
+        kind: if unchecked.is_empty() {
+            SteeringKind::Publish
+        } else {
+            SteeringKind::PublishUnchecked
+        },
         target: remote.target.clone(),
         detail: Some(format!("{commit} ({by})")),
     })?;
@@ -899,7 +936,9 @@ pub fn publish(
         branch,
         title,
         body: body_file,
+        unchecked: !unchecked.is_empty(),
     };
+    run.publish_unchecked = unchecked;
     let (tx, settings, id, who) = (
         ctx.tx.clone(),
         ctx.settings.clone(),

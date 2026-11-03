@@ -47,9 +47,17 @@
     if (v.stage === "done" && (v.unchecked || []).length) lines.push(h`<div class="notice"><b>Merged without the latest check</b>: not verified on top of ${v.base_branch} as it was then. Not checked with: ${v.unchecked.length} commit${v.unchecked.length === 1 ? "" : "s"} <span class="mono tiny">${v.unchecked.map(short).join(", ")}</span>.</div>`);
     if (t.error && !u && v.stage === "ready") lines.push(h`<div class="small muted">${v.base_branch} could not be read (${t.error}); a merge checks it again first.</div>`);
     if (t.reading && !u && v.stage === "ready") lines.push(h`<div class="small muted">Reading ${v.base_branch} before anything is offered to merge…</div>`);
+    // 011 US4: a pull request open: the target as the remote has it (research R-7).
+    if (t.remote) {
+      const pr = t.pr || {};
+      if (pr.conflicting) lines.push(h`<div class="notice"><b>The pull request conflicts with ${v.base_branch}</b>: it is brought up to date in the loop's own working copy, verified again, and pushed forward on the same branch (never forced).${offer.includes("bring_up_to_date") ? h` <button class="btn btn2 sm" data-act="update">Bring up to date</button>` : ""}</div>`);
+      else if (pr.behind) lines.push(h`<div class="small">The pull request is behind ${v.base_branch}${pr.required === true ? h`, which requires it to be up to date. ${offer.includes("bring_up_to_date") ? h`<button class="btn btn2 sm" data-act="update">Bring up to date</button>` : ""}` : pr.required === false ? "; it does not need to be up to date to merge." : "; whether it must be up to date could not be read."}</div>`);
+      if (u && (u.docs_changed || []).length) lines.push(h`<div class="notice">${v.base_branch} changed this feature's documents (<span class="mono">${u.docs_changed.join(", ")}</span>): nothing was pushed. Close the pull request on the remote first; the loop is then ready again and offers "Lock again".</div>`);
+      if (offer.includes("leave_pr")) lines.push(h`<div class="row wrap gap-8"><button class="btn btn2 sm" data-act="update">Verify again on the latest ${v.base_branch}</button><button class="btn btn2 sm" data-act="leave-pr">Leave the pull request as it is</button></div>`);
+    }
     if (t.gone) {
       lines.push(h`<div class="notice">The target branch ${v.base_branch} is gone: nothing is merged. Stop the loop, or unlock the feature and lock it from another branch.</div>`);
-    } else if (t.moved && !u) {
+    } else if (t.moved && !u && !t.remote) {
       const n = (t.commits || []).length;
       lines.push(h`<div class="notice"><b>${v.base_branch} moved since this loop was verified</b>: ${n} commit${n === 1 ? "" : "s"}${(t.conflicts || []).length ? h`, which conflict with this feature in <span class="mono">${t.conflicts.join(", ")}</span>` : ""}.
         ${(t.docs_changed || []).length ? h` It changed this feature's documents (<span class="mono">${t.docs_changed.join(", ")}</span>): lock again with them, or stop.` : h` The loop is brought up to date in its own working copy and verified again before anything is merged.`}
@@ -859,6 +867,26 @@
         if (ok) run("merge", { confirm: true, without_latest_check: true });
         return;
       }
+      case "publish-unchecked": {
+        const v = state.view;
+        const ok = await confirm({
+          title: "Publish without the latest check?",
+          text: `The commit as last verified is pushed and its pull request opened, saying it was not verified on top of ${v.base_branch} as it is now, and naming the commits.`,
+          ok: "Publish without the latest check",
+        });
+        if (ok) run("publish", { confirm: true, without_latest_check: true });
+        return;
+      }
+      case "leave-pr": {
+        const v = state.view;
+        const ok = await confirm({
+          title: "Leave the pull request as it is?",
+          text: `It stays as published: not verified with ${v.base_branch}'s newer commits, and the loop's page and history say so. You decide on the remote.`,
+          ok: "Leave it as it is",
+        });
+        if (ok) run("leave-pr", {});
+        return;
+      }
       case "lock-again": {
         const v = state.view;
         try {
@@ -954,6 +982,8 @@
         if (o === "merge again") return act("merge", el);
         if (o === "bring up to date" || o.startsWith("verify again on the latest")) return act("update", el);
         if (o === "merge without the latest check") return act("merge-unchecked", el);
+        if (o === "publish without the latest check") return act("publish-unchecked", el);
+        if (o === "leave the pull request as it is") return act("leave-pr", el);
         if (o === "lock again") return act("lock-again", el);
         if (o === "answer") {
           const text = await confirm({ title: "Answer the builder", text: state.view.needs.why, ok: "Send the answer", input: { label: "Your answer", value: "" } });

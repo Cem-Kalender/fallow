@@ -355,6 +355,8 @@ pub struct Failed {
     pub step: String,
     pub why: String,
     pub pushed: Option<(String, String)>,
+    /// 011 (FR-011a): the remote target moved since the commit was verified; its commit now.
+    pub moved_to: Option<String>,
 }
 
 /// What a publication needs, taken on the engine thread.
@@ -366,6 +368,8 @@ pub struct Job {
     pub branch: String,
     pub title: String,
     pub body: std::path::PathBuf,
+    /// 011: "Publish without the latest check": the remote target is not checked first.
+    pub unchecked: bool,
 }
 
 /// Publishes on the calling thread (a thread of its own): the protection read again, the push,
@@ -376,6 +380,7 @@ pub fn publish(job: &Job, settings: &crate::config::Settings) -> Result<Done, Fa
         step: step.into(),
         why,
         pushed,
+        moved_to: None,
     };
     let r = &job.remote;
     let (Some(name), Some(service), Some(repo), Some(target)) =
@@ -396,6 +401,22 @@ pub fn publish(job: &Job, settings: &crate::config::Settings) -> Result<Done, Fa
     if let Err(why) = &read.protected {
         if why.contains(" is not on ") && why.ends_with(" yet") {
             return Err(fail("check", why.clone(), None));
+        }
+    }
+    // 011 FR-011a: the target as the remote has it now; moved since the commit was verified,
+    // nothing is pushed (unless the engineer chose to publish without the latest check).
+    if !job.unchecked {
+        let at = fetch_target(&job.repo, name, target).map_err(|why| fail("check", why, None))?;
+        if !crate::verify::git::is_ancestor(&job.repo, &at, &job.commit) {
+            return Err(Failed {
+                step: "check".into(),
+                why: format!(
+                    "{target} on {name} moved since this loop was verified (now at {}): it is brought up to date first",
+                    &at[..at.len().min(7)]
+                ),
+                pushed: None,
+                moved_to: Some(at),
+            });
         }
     }
     let branch = push::push(&job.repo, name, &job.commit, &job.branch, target)

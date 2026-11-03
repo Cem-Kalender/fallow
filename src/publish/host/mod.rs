@@ -69,6 +69,10 @@ pub struct PrState {
     /// 011: the pull request's branch is behind its target (`mergeStateStatus: BEHIND`).
     #[serde(default)]
     pub behind: bool,
+    /// 011: whether the target requires an up-to-date branch (read by the poll when behind;
+    /// `None` when it could not be read: shown, not urged).
+    #[serde(default)]
+    pub strict: Option<bool>,
 }
 
 pub trait Host: Send + Sync {

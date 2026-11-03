@@ -217,6 +217,7 @@ pub fn start(
     target_commit: &str,
     remote: bool,
     in_turn: bool,
+    for_publication: bool,
 ) -> Result<(), String> {
     can_start(run, remote)?;
     let l = run
@@ -238,6 +239,7 @@ pub fn start(
         loop_head: loop_head.clone(),
         remote,
         in_turn,
+        for_publication,
     })?;
     if local_ready {
         run.append(Event::Stage {
@@ -323,7 +325,8 @@ fn not_through(run: &mut Run, u: &UpdateState, why: &str) -> Result<(), String> 
     if u.remote {
         return run.append(Event::NeedsEngineer {
             why: format!("The pull request's branch could not be brought up to date: {why}"),
-            options: vec!["stop".into()],
+            // Never "stop" while the pull request is open (FR-016b).
+            options: vec!["bring up to date".into()],
         });
     }
     run.append(Event::Stage {
@@ -363,6 +366,17 @@ pub fn computed(run: &mut Run, n: u32, result: Result<Computed, String>) -> Resu
                 n,
                 paths: paths.clone(),
             })?;
+            if u.remote {
+                // FR-016b: no lock again nor stop while the pull request is open (T031).
+                return run.append(Event::NeedsEngineer {
+                    why: format!(
+                        "{} changed this feature's documents or a protected file ({}): nothing was pushed. Close the pull request on the remote first; the loop is then ready again and offers Lock again.",
+                        u.target,
+                        paths.join(", ")
+                    ),
+                    options: Vec::new(),
+                });
+            }
             run.append(Event::NeedsEngineer {
                 why: format!(
                     "{} changed this feature's documents or a protected file ({}): nothing was merged. Lock again with the target's version, or stop.",

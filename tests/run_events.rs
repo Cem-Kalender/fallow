@@ -374,6 +374,7 @@ fn an_update_folds_into_the_loop_and_reopens_every_story() {
             loop_head: "h1".into(),
             remote: false,
             in_turn: false,
+            for_publication: false,
         },
         Event::UpdateConflicted {
             n: 1,

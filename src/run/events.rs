@@ -513,6 +513,14 @@ pub enum Event {
         checks: Vec<crate::publish::host::Check>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         merged_at: Option<String>,
+        /// 011: conflicts with its target, behind it, and whether the target requires it to be
+        /// up to date (research R-7).
+        #[serde(default)]
+        conflicting: bool,
+        #[serde(default)]
+        behind: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        strict: Option<bool>,
     },
     /// 011: an update started (research R-2), written before the merge is computed.
     Updated {
@@ -525,6 +533,10 @@ pub enum Event {
         /// Started by the loop holding its line's turn, for the merge asked for (R-6).
         #[serde(default)]
         in_turn: bool,
+        /// Started for a publication: the remote target moved before the first push (FR-011a);
+        /// any move of it until the push counts as overtaken (FR-007).
+        #[serde(default)]
+        for_publication: bool,
     },
     /// 011: the update's merge conflicts; the repair starts on `working`, kept on the loop's own
     /// branch `branch`.

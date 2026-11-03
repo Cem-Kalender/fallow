@@ -253,6 +253,12 @@ pub struct LoopState {
     /// 011: the engineer asked for an update ("Bring up to date", "Verify again") not started
     /// yet: the loop's turn starts it whatever the level (M1).
     pub update_asked: bool,
+    /// 011: an update was made for a publication not yet made (FR-011a): Fallow publishes again
+    /// when the loop is ready, and a move of the remote target before then counts (FR-007).
+    pub publish_turn: bool,
+    /// 011: the target commit that overtook the loop last (for "Leave the pull request as it
+    /// is" and "without the latest check").
+    pub overtaken_tip: Option<String>,
     /// 011: files the loop's accepted steps changed.
     pub touched: BTreeSet<String>,
     /// 011: files the locked tasks name.
@@ -328,6 +334,11 @@ pub struct Publication {
     pub merged_at: Option<String>,
     /// When it was published.
     pub at: String,
+    /// 011: the pull request conflicts with its target; it is behind it; the target requires
+    /// it to be up to date (`None`: not read).
+    pub conflicting: bool,
+    pub behind: bool,
+    pub strict: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -901,6 +912,8 @@ impl RunState {
                     turn_updates: 0,
                     merge_pending: false,
                     update_asked: false,
+                    publish_turn: false,
+                    overtaken_tip: None,
                     touched: BTreeSet::new(),
                     task_paths: task_paths(phases),
                     overlaps: Vec::new(),
@@ -1043,6 +1056,7 @@ impl RunState {
                 if let Some(f) = self.feature_loop.as_mut() {
                     f.merge_pending = false;
                     f.update_asked = false;
+                    f.publish_turn = false;
                     f.unlocked = false;
                     f.fresh_seq = l.seq;
                     // The base follows the new lock until an update merged a target in.
@@ -1151,6 +1165,7 @@ impl RunState {
             } => {
                 if let Some(f) = self.feature_loop.as_mut() {
                     f.overtaken = 0;
+                    f.publish_turn = false;
                     f.unchecked = unchecked.clone();
                     f.publication = Some(Publication {
                         remote: remote.clone(),
@@ -1166,6 +1181,9 @@ impl RunState {
                         checks: Vec::new(),
                         merged_at: None,
                         at: l.at.clone(),
+                        conflicting: false,
+                        behind: false,
+                        strict: None,
                     });
                     f.publish_failed = None;
                     f.publish_pending = false;
@@ -1224,6 +1242,9 @@ impl RunState {
                 state,
                 checks,
                 merged_at,
+                conflicting,
+                behind,
+                strict,
             } => {
                 if let Some(f) = self.feature_loop.as_mut() {
                     if let Some(p) = f.publication.as_mut() {
@@ -1232,6 +1253,9 @@ impl RunState {
                         p.state = *state;
                         p.checks = checks.clone();
                         p.merged_at = merged_at.clone();
+                        p.conflicting = *conflicting;
+                        p.behind = *behind;
+                        p.strict = *strict;
                         let what = match state {
                             crate::publish::host::PrStatus::Merged if was != *state => {
                                 format!("Pull request #{n} was merged on {}", p.repo)
@@ -1278,11 +1302,15 @@ impl RunState {
                 loop_head,
                 remote,
                 in_turn,
+                for_publication,
             } => {
                 if let Some(f) = self.feature_loop.as_mut() {
                     f.fresh_seq = l.seq;
                     f.updates += 1;
                     f.update_asked = false;
+                    if *for_publication {
+                        f.publish_turn = true;
+                    }
                     if *in_turn && f.lined_at.is_some() {
                         f.turn_updates += 1;
                     }
@@ -1386,7 +1414,7 @@ impl RunState {
                     f.turn_updates = 0;
                     if let Some(u) = f.update.take_if(|u| u.n == *n) {
                         // Dropped before anything moved: the loop is as it was (review 3).
-                        if !u.merged && u.working.is_none() && f.outcome.is_none() {
+                        if (u.remote || (!u.merged && u.working.is_none())) && f.outcome.is_none() {
                             f.outcome = u.prior_outcome;
                         }
                     }
@@ -1403,6 +1431,8 @@ impl RunState {
                     f.update = None;
                     if let Some(p) = f.publication.as_mut() {
                         p.commit = to.clone();
+                        p.conflicting = false;
+                        p.behind = false;
                     }
                     f.update_steps.push((
                         l.at.clone(),
@@ -1437,6 +1467,7 @@ impl RunState {
             Event::Overtaken { n, target_commit } => {
                 if let Some(f) = self.feature_loop.as_mut() {
                     f.overtaken += 1;
+                    f.overtaken_tip = Some(target_commit.clone());
                     f.update_steps.push((
                         l.at.clone(),
                         format!(

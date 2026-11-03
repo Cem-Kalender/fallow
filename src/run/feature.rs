@@ -206,7 +206,7 @@ pub fn drive(run: &mut Run, ctx: &Ctx) -> Result<(), String> {
             || (!run.running.is_empty() && machine::queued(run).is_none())
             || run.state.needs.is_some()
             || run.state.seq == before
-            || run.state.stage != Stage::Building
+            || !(run.state.stage == Stage::Building || updating_published(run))
         {
             return Ok(());
         }
@@ -266,6 +266,14 @@ fn step(run: &mut Run, ctx: &Ctx) -> Result<(), String> {
     }
     if let Some(n) = machine::queued(run) {
         if let Some((w, u)) = machine::limit_hit(run) {
+            if updating_published(run) {
+                return run.append(Event::NeedsEngineer {
+                    why: format!(
+                        "The {w} limit is reached ({u}) while the pull request's branch is brought up to date: raise it to go on."
+                    ),
+                    options: vec!["raise the limit".into()],
+                });
+            }
             return machine::pause_for_limit(run, w, u);
         }
         if !machine::slot(run, ctx) {
@@ -2257,6 +2265,16 @@ fn update_step(
     .map(|_| ())
 }
 
+/// 011 (research R-7): a published loop's update runs while the loop stays publishing.
+pub fn updating_published(run: &Run) -> bool {
+    run.state.stage == Stage::Publishing
+        && run
+            .state
+            .feature_loop
+            .as_ref()
+            .is_some_and(|l| l.update.as_ref().is_some_and(|u| u.remote))
+}
+
 fn finish(run: &mut Run, pl: &Pipeline) -> Result<(), String> {
     // An answer committed after the last step is in what is merged too.
     take_answers(run, &lp(run)?)?;
@@ -2305,6 +2323,11 @@ fn finish(run: &mut Run, pl: &Pipeline) -> Result<(), String> {
         verified: pl.verifying,
         missing: pl.missing.clone(),
     })?;
+    // 011: a published loop's update hands over to the push forward (the engine), never back to
+    // ready (research R-7).
+    if updating_published(run) {
+        return Ok(());
+    }
     run.append(Event::Stage {
         to: Stage::Ready,
         why: if pl.verifying {

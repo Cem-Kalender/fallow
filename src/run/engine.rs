@@ -53,6 +53,28 @@ pub enum Done {
         integrated: String,
         result: Result<super::update::Moved, String>,
     },
+    /// 011 (research R-7): the remote target fetched by sha, to bring a published loop up to
+    /// date.
+    Fetched(Result<String, String>),
+    /// 011 (FR-012): the push forward of a published loop's branch after its update: `Ok(())`
+    /// pushed; `Err(Ok(sha))` the remote target moved since the update started (nothing pushed);
+    /// `Err(Err(why))` refused or failed, nothing pushed.
+    PushForward {
+        from: String,
+        to: String,
+        result: Result<(), Result<String, String>>,
+    },
+}
+
+/// 011: what a published loop's remote work leads to, on the engine thread.
+enum After {
+    Fetched(Result<String, String>),
+    Pushed {
+        from: String,
+        to: String,
+        result: Result<(), Result<String, String>>,
+    },
+    PublishMoved(String),
 }
 
 /// 011: the target watch of one loop.
@@ -114,6 +136,10 @@ pub enum Request {
     },
     /// 011: bring the loop up to date with its target (also "Verify again on the latest").
     Update {
+        id: u64,
+    },
+    /// 011: "Leave the pull request as it is" at the limit of overtaken updates (FR-009).
+    LeavePr {
         id: u64,
     },
     /// 011: the target changed the feature's documents: unlock it and open its spec session
@@ -306,6 +332,8 @@ pub struct Run {
     pub waiting: Option<String>,
     /// 011: the target's commits a merge without the latest check was not verified with.
     pub merge_unchecked: Vec<String>,
+    /// 011: the same for a publication without the latest check.
+    pub publish_unchecked: Vec<String>,
 }
 
 impl Run {
@@ -331,6 +359,16 @@ impl Run {
 
     /// Writes an event, applies it, and wakes the pages waiting for a change.
     pub fn append(&mut self, event: Event) -> Result<(), String> {
+        // 011 FR-016b: while its pull request is open, a loop never offers "stop".
+        let event = match event {
+            Event::NeedsEngineer { why, options } if self.state.stage == Stage::Publishing => {
+                Event::NeedsEngineer {
+                    why,
+                    options: options.into_iter().filter(|o| o != "stop").collect(),
+                }
+            }
+            e => e,
+        };
         let logged = self.log.append(event)?;
         self.state.apply(&logged);
         self.wake();
@@ -540,6 +578,7 @@ impl Engine {
                         running: BTreeMap::new(),
                         waiting: None,
                         merge_unchecked: Vec::new(),
+                        publish_unchecked: Vec::new(),
                     };
                     e.runs.insert(id, run);
                 }
@@ -637,6 +676,20 @@ impl Engine {
                     let _ = reply.send(out);
                 }
                 Msg::Done { run, done } => {
+                    // 011: a published loop's fetch and push forward go on here (an update may
+                    // start from them, which needs the engine).
+                    let after = match &done {
+                        Done::Fetched(r) => Some(After::Fetched(r.clone())),
+                        Done::PushForward { from, to, result } => Some(After::Pushed {
+                            from: from.clone(),
+                            to: to.clone(),
+                            result: result.clone(),
+                        }),
+                        Done::Publish { result: Err(f), .. } => {
+                            f.moved_to.clone().map(After::PublishMoved)
+                        }
+                        _ => None,
+                    };
                     if let Done::Moved { integrated, result } = &done {
                         let w = self.watched.entry(run).or_default();
                         w.running = false;
@@ -672,6 +725,9 @@ impl Engine {
                         if let Err(e) = super::machine::on_done(r, &self.ctx, done) {
                             self.console.push(format!("run {run}: {e}"));
                         }
+                    }
+                    if let Some(a) = after {
+                        self.after_remote(run, a);
                     }
                     self.drive(run);
                 }
@@ -1462,6 +1518,7 @@ impl Engine {
                 .name(format!("reconcile-{id}"))
                 .spawn(move || {
                     let interrupted = || crate::publish::Failed {
+                        moved_to: None,
                         step: "pull_request".into(),
                         why: "publishing was interrupted when Fallow stopped; try again".into(),
                         pushed: None,
@@ -1646,6 +1703,31 @@ impl Engine {
             return (Value::Null, json!([]));
         };
         let l = r.state.feature_loop.as_ref();
+        // 011 (research R-7): a loop with its pull request open: the remote target, as the pull
+        // request shows it; never "stop" nor "lock again" while it is open (FR-016b).
+        if let Some(pb) = self
+            .published(id)
+            .filter(|_| r.state.stage == Stage::Publishing)
+        {
+            let l = l.expect("a publication belongs to a feature's loop");
+            let mut offer: Vec<&str> = Vec::new();
+            let at_limit = l.overtaken > 0 && l.overtaken >= l.update_limit;
+            if l.update.is_none() && !r.is_busy() {
+                if at_limit {
+                    offer.extend(["verify_again", "leave_pr"]);
+                } else if pb.conflicting || (pb.behind && pb.strict == Some(true)) {
+                    offer.push("bring_up_to_date");
+                }
+            }
+            let target = json!({
+                "remote": true,
+                "moved": pb.conflicting || pb.behind,
+                "pr": { "conflicting": pb.conflicting, "behind": pb.behind, "required": pb.strict },
+                "docs_changed": l.update.as_ref().map(|u| u.docs_changed.clone()).unwrap_or_default(),
+                "target_commit": l.overtaken_tip,
+            });
+            return (target, json!(offer));
+        }
         let w = self.watched.get(&id);
         let same = w.filter(|w| r.state.integrated.as_deref() == Some(w.integrated.as_str()));
         let read = same.and_then(|w| w.read.as_ref());
@@ -1756,6 +1838,13 @@ impl Engine {
     /// 011: brings a ready loop up to date with its target (FR-004): recorded as the engineer's
     /// steering, then the update starts.
     fn update(&mut self, id: u64) -> Result<(), String> {
+        if self
+            .runs
+            .get(&id)
+            .is_some_and(|r| r.state.stage == Stage::Publishing)
+        {
+            return self.update_published(id);
+        }
         let read = self.watched.get(&id).and_then(|w| w.read.as_ref());
         if read.is_some_and(|m| m.gone) {
             return Err("the target branch is gone: stop the loop, or unlock the feature and lock it from another branch".into());
@@ -1809,9 +1898,361 @@ impl Engine {
             self.turns();
             return Ok(());
         }
-        super::update::start(r, tx, &tip, false, false)?;
+        super::update::start(r, tx, &tip, false, false, false)?;
         self.watched.remove(&id);
         Ok(())
+    }
+
+    /// 011 (research R-7): the remote of a published loop: its name, target, branch and the
+    /// commit Fallow pushed.
+    fn published(&self, id: u64) -> Option<super::state::Publication> {
+        let r = self.runs.get(&id)?;
+        r.state
+            .feature_loop
+            .as_ref()?
+            .publication
+            .clone()
+            .filter(|p| p.state == crate::publish::host::PrStatus::Open)
+    }
+
+    /// 011: fetches the remote target of a published loop on a thread (`Done::Fetched`).
+    fn fetch_remote_target(&mut self, id: u64) -> Result<(), String> {
+        let pb = self.published(id).ok_or("no open pull request")?;
+        let r = self.runs.get_mut(&id).ok_or("no such loop")?;
+        r.busy = Some(Busy::Update);
+        let (tx, repo) = (self.ctx.tx.clone(), r.state.repo.clone());
+        std::thread::Builder::new()
+            .name(format!("fetch-{id}"))
+            .spawn(move || {
+                let r = crate::publish::fetch_target(&repo, &pb.remote, &pb.target);
+                let _ = tx.send(Msg::Done {
+                    run: id,
+                    done: Done::Fetched(r),
+                });
+            })
+            .map(|_| ())
+            .map_err(|e| {
+                r.busy = None;
+                format!("cannot start a thread: {e}")
+            })
+    }
+
+    /// 011: brings a published loop up to date (FR-011, FR-012): the remote target is fetched,
+    /// then the update runs while the loop stays publishing; refused while one runs.
+    fn update_published(&mut self, id: u64) -> Result<(), String> {
+        let r = self.runs.get(&id).ok_or("no such loop")?;
+        super::update::can_start(r, true)?;
+        self.published(id).ok_or("no open pull request")?;
+        let r = self.runs.get_mut(&id).ok_or("no such loop")?;
+        r.append(Event::Steering {
+            kind: SteeringKind::Update,
+            target: Some(r.state.target.clone()),
+            detail: None,
+        })?;
+        self.fetch_remote_target(id)
+    }
+
+    /// 011: a published loop whose pull request conflicts, or is behind a target that requires
+    /// it up to date (research R-7): Free brings itself up to date; Normal and Strict ask, never
+    /// offering "stop" (FR-016b).
+    fn pr_fell_behind(&mut self, id: u64) {
+        let Some(pb) = self.published(id) else {
+            return;
+        };
+        let Some(r) = self.runs.get(&id) else {
+            return;
+        };
+        let Some(l) = r.state.feature_loop.as_ref() else {
+            return;
+        };
+        if r.state.stage != Stage::Publishing
+            || l.update.is_some()
+            || r.state.needs.is_some()
+            || r.is_busy()
+            || (l.overtaken > 0 && l.overtaken >= l.update_limit)
+            || !(pb.conflicting || (pb.behind && pb.strict == Some(true)))
+        {
+            return;
+        }
+        let what = if pb.conflicting {
+            format!(
+                "Pull request #{} conflicts with {}",
+                pb.pr_number, pb.target
+            )
+        } else {
+            format!(
+                "Pull request #{} is behind {}, which requires it to be up to date",
+                pb.pr_number, pb.target
+            )
+        };
+        if update_by_itself(l) {
+            if let Err(e) = self.fetch_remote_target(id) {
+                if let Some(r) = self.runs.get_mut(&id) {
+                    let _ = r.append(Event::NeedsEngineer {
+                        why: format!("{what}. It could not bring itself up to date: {e}."),
+                        options: vec!["bring up to date".into()],
+                    });
+                }
+            }
+            return;
+        }
+        if let Some(r) = self.runs.get_mut(&id) {
+            let _ = r.append(Event::NeedsEngineer {
+                why: format!(
+                    "{what}. Bring it up to date: {} as the remote has it is merged into the loop's own branch in its own working copy, verified again, and pushed forward on the same branch (never forced).",
+                    pb.target
+                ),
+                options: vec!["bring up to date".into()],
+            });
+        }
+    }
+
+    /// 011 (FR-012): a published loop whose update is verified: the remote target is checked
+    /// once more, then its branch is pushed forward, on a thread (`Done::PushForward`).
+    fn push_forward_due(&mut self, id: u64) {
+        let Some(pb) = self.published(id) else {
+            return;
+        };
+        let tx = self.ctx.tx.clone();
+        let Some(r) = self.runs.get_mut(&id) else {
+            return;
+        };
+        let Some(l) = r.state.feature_loop.as_ref() else {
+            return;
+        };
+        let Some(u) = l.update.clone().filter(|u| u.merged && u.remote) else {
+            return;
+        };
+        if r.state.stage != Stage::Publishing
+            || l.outcome.is_none()
+            || r.state.needs.is_some()
+            || r.is_busy()
+        {
+            return;
+        }
+        let Some(to) = r.state.integrated.clone() else {
+            return;
+        };
+        let (repo, from) = (r.state.repo.clone(), pb.commit.clone());
+        r.busy = Some(Busy::Publish);
+        let spawned = std::thread::Builder::new()
+            .name(format!("push-forward-{id}"))
+            .spawn(move || {
+                let result = match crate::publish::fetch_target(&repo, &pb.remote, &pb.target) {
+                    Err(e) => Err(Err(e)),
+                    // FR-011a: moved since the update started, nothing is pushed.
+                    Ok(at) if at != u.target_commit && !git::is_ancestor(&repo, &at, &to) => {
+                        Err(Ok(at))
+                    }
+                    Ok(_) => crate::publish::push::push_forward(
+                        &repo, &pb.remote, &pb.branch, &from, &to, &pb.target,
+                    )
+                    .map_err(Err),
+                };
+                let _ = tx.send(Msg::Done {
+                    run: id,
+                    done: Done::PushForward { from, to, result },
+                });
+            });
+        if spawned.is_err() {
+            r.busy = None;
+        }
+    }
+
+    /// 011: what a published loop's fetch, push forward, or a first publication refused because
+    /// the remote target moved, leads to.
+    fn after_remote(&mut self, id: u64, a: After) {
+        let tx = self.ctx.tx.clone();
+        let Some(r) = self.runs.get_mut(&id) else {
+            return;
+        };
+        let Some(l) = r.state.feature_loop.clone() else {
+            return;
+        };
+        let target = r.state.target.clone();
+        let result = match a {
+            After::Fetched(Err(e)) => r.append(Event::NeedsEngineer {
+                why: format!("{target} could not be read on the remote: {e}"),
+                options: vec!["bring up to date".into()],
+            }),
+            After::Fetched(Ok(sha)) => {
+                let integrated = r.state.integrated.clone().unwrap_or_default();
+                if git::is_ancestor(&r.state.repo, &sha, &integrated) {
+                    Ok(())
+                } else {
+                    super::update::start(r, tx, &sha, true, false, false)
+                }
+            }
+            After::Pushed {
+                from,
+                to,
+                result: Ok(()),
+            } => r.append(Event::PushedForward { from, to }),
+            After::Pushed {
+                result: Err(Err(why)),
+                ..
+            } => r.append(Event::NeedsEngineer {
+                why: format!("Nothing was pushed: {why}."),
+                options: vec!["bring up to date".into()],
+            }),
+            After::Pushed {
+                result: Err(Ok(sha)),
+                ..
+            } => {
+                // FR-007: any move of the remote target during a publication's update counts.
+                let at_limit = l.overtaken + 1 >= l.update_limit;
+                let mut r2 = r.append(Event::Overtaken {
+                    n: l.updates,
+                    target_commit: sha.clone(),
+                });
+                if r2.is_ok() {
+                    r2 = if at_limit {
+                        r.append(Event::NeedsEngineer {
+                            why: format!(
+                                "{}: updated {} times and overtaken {} in a row by changes of {target} on the remote; your decision",
+                                l.feature,
+                                l.updates,
+                                l.overtaken + 1
+                            ),
+                            options: vec![
+                                format!("verify again on the latest {target}"),
+                                "leave the pull request as it is".into(),
+                            ],
+                        })
+                    } else {
+                        super::update::drop_update(r, "overtaken on the remote")
+                            .and_then(|()| super::update::start(r, tx, &sha, true, false, false))
+                    };
+                }
+                r2
+            }
+            After::PublishMoved(sha) => {
+                if l.publish_turn {
+                    // An update was made for this publication and the target moved again.
+                    let at_limit = l.overtaken + 1 >= l.update_limit;
+                    let appended = r.append(Event::Overtaken {
+                        n: l.updates,
+                        target_commit: sha.clone(),
+                    });
+                    match appended {
+                        Err(e) => Err(e),
+                        Ok(()) if at_limit => {
+                            let integrated = r.state.integrated.clone().unwrap_or_default();
+                            let clean = git::merge_tree(&r.state.repo, &integrated, &sha)
+                                .is_ok_and(|m| m.conflicts.is_empty());
+                            let mut options = vec![format!("verify again on the latest {target}")];
+                            if clean {
+                                options.push("publish without the latest check".into());
+                            }
+                            options.push("stop".into());
+                            r.append(Event::NeedsEngineer {
+                                why: format!(
+                                    "{}: updated {} times and overtaken {} in a row by changes of {target} on the remote; your decision",
+                                    l.feature,
+                                    l.updates,
+                                    l.overtaken + 1
+                                ),
+                                options,
+                            })
+                        }
+                        Ok(()) => super::update::start(r, tx, &sha, false, false, true),
+                    }
+                } else {
+                    // The update made right before the publication asked for (FR-011a).
+                    super::update::start(r, tx, &sha, false, false, true)
+                }
+            }
+        };
+        if let Err(e) = result {
+            self.console.push(format!("run {id}: {e}"));
+        }
+    }
+
+    /// 011: a loop brought up to date for a publication publishes again once verified.
+    fn publish_again(&mut self, id: u64) {
+        let Some(r) = self.runs.get(&id) else {
+            return;
+        };
+        let Some(l) = r.state.feature_loop.as_ref() else {
+            return;
+        };
+        if !l.publish_turn
+            || r.state.stage != Stage::Ready
+            || l.outcome.is_none()
+            || l.update.is_some()
+            || r.state.needs.is_some()
+            || r.is_busy()
+            || l.unlocked
+        {
+            return;
+        }
+        if let Err(e) = self.publish(id, "engineer") {
+            if let Some(r) = self.runs.get_mut(&id) {
+                let _ = r.append(Event::NeedsEngineer {
+                    why: format!("The publication could not go on: {e}"),
+                    options: vec!["stop".into()],
+                });
+            }
+        }
+    }
+
+    /// 011 FR-009: "Publish without the latest check", for a first publication at the limit.
+    fn publish_unchecked(&mut self, id: u64) -> Result<(), String> {
+        let r = self.runs.get(&id).ok_or("no such loop")?;
+        let l = r
+            .state
+            .feature_loop
+            .as_ref()
+            .ok_or("only a feature's loop")?;
+        if !(l.publish_turn && l.overtaken > 0 && l.overtaken >= l.update_limit) {
+            return Err("publishing without the latest check is offered only at the limit of overtaken updates".into());
+        }
+        let tip = l
+            .overtaken_tip
+            .clone()
+            .ok_or("the target commit is not known")?;
+        let integrated = r.state.integrated.clone().ok_or("nothing is integrated")?;
+        if !git::merge_tree(&r.state.repo, &integrated, &tip)?
+            .conflicts
+            .is_empty()
+        {
+            return Err(format!(
+                "it would conflict with {}: verify again on the latest instead",
+                r.state.target
+            ));
+        }
+        let unchecked = git::first_parent_commits(&r.state.repo, &integrated, &tip);
+        self.publish_with(id, "engineer", unchecked)
+    }
+
+    /// 011 FR-009: "Leave the pull request as it is" at the limit: the pull request stays as
+    /// published, recorded with the target's commits it was not verified with.
+    fn leave_pr(&mut self, id: u64) -> Result<(), String> {
+        let pb = self.published(id).ok_or("no open pull request")?;
+        let r = self.runs.get_mut(&id).ok_or("no such loop")?;
+        let l = r
+            .state
+            .feature_loop
+            .clone()
+            .ok_or("only a feature's loop")?;
+        if !(l.overtaken > 0 && l.overtaken >= l.update_limit) {
+            return Err("offered only at the limit of overtaken updates".into());
+        }
+        if r.is_busy() {
+            return Err("a step or a push is running".into());
+        }
+        let tip = l
+            .overtaken_tip
+            .clone()
+            .ok_or("the target commit is not known")?;
+        let unchecked = git::first_parent_commits(&r.state.repo, &pb.commit, &tip);
+        r.append(Event::Steering {
+            kind: SteeringKind::LeavePullRequest,
+            target: Some(r.state.target.clone()),
+            detail: Some(pb.commit.clone()),
+        })?;
+        super::update::drop_update(r, "the pull request is left as it is")?;
+        r.append(Event::LeftPullRequest { unchecked })
     }
 
     /// 011 (research R-4, FR-010): the watch found the target moved for a ready loop, outside
@@ -1890,7 +2331,7 @@ impl Engine {
                 options: vec!["raise the limit".into(), "stop".into()],
             })
         } else if update_by_itself(&l) {
-            match super::update::start(r, tx, &m.target_commit, false, false) {
+            match super::update::start(r, tx, &m.target_commit, false, false, false) {
                 Ok(()) => Ok(()),
                 // A start that failed says why instead of trying at every read (L2).
                 Err(e) => ask(
@@ -2207,7 +2648,7 @@ impl Engine {
                     options: vec!["raise the limit".into(), "stop".into()],
                 })
             } else if update_by_itself(&l) || l.update_asked {
-                super::update::start(r, tx, &tip, false, true)
+                super::update::start(r, tx, &tip, false, true, false)
             } else {
                 // Normal and Strict ask first; the loop leaves the line while it waits, its merge
                 // still asked for (FR-009a, FR-010).
@@ -2260,6 +2701,10 @@ impl Engine {
     /// 010: pushes the loop's verified commit and opens a pull request, on a thread (FR-008 to
     /// FR-012); `by` is `engineer` or `when_verified`.
     fn publish(&mut self, id: u64, by: &str) -> Result<(), String> {
+        self.publish_with(id, by, Vec::new())
+    }
+
+    fn publish_with(&mut self, id: u64, by: &str, unchecked: Vec<String>) -> Result<(), String> {
         let remote = self
             .loop_remote(id, false)
             .ok_or_else(|| format!("there is no loop {id}"))?;
@@ -2273,9 +2718,19 @@ impl Engine {
             .get(&id)
             .ok_or_else(|| format!("there is no loop {id}"))?;
         let view = super::activity::view(run, ctx)?;
-        let body = crate::publish::body::body(&view);
+        let mut body = crate::publish::body::body(&view);
+        // 011 FR-009: the pull request says which target commits it was not verified with.
+        if !unchecked.is_empty() {
+            body.push_str(&format!(
+                "\n\n**Published without the latest check**: not verified on top of {} as it is now. Not checked with {} commit{}: {}.\n",
+                run.state.target,
+                unchecked.len(),
+                if unchecked.len() == 1 { "" } else { "s" },
+                unchecked.iter().map(|c| &c[..c.len().min(7)]).collect::<Vec<_>>().join(", ")
+            ));
+        }
         let run = self.runs.get_mut(&id).ok_or("no such loop")?;
-        super::machine::publish(run, &self.ctx, by, &remote, &body)
+        super::machine::publish(run, &self.ctx, by, &remote, &body, unchecked)
     }
 
     /// 010: a loop that ended verified publishes itself when that was chosen at the lock
@@ -2375,10 +2830,18 @@ impl Engine {
         let tx = self.ctx.tx.clone();
         let dir = p.path.clone();
         let number = pb.pr_number;
+        let target = pb.target.clone();
         let spawned = std::thread::Builder::new()
             .name(format!("pr-{id}"))
             .spawn(move || {
-                let r = host.state(&dir, &repo, number);
+                // 011 (research R-7): behind its target, whether the target requires it to be
+                // up to date.
+                let r = host.state(&dir, &repo, number).map(|mut st| {
+                    if st.behind {
+                        st.strict = host.strict(&dir, &repo, &target).ok();
+                    }
+                    st
+                });
                 let _ = tx.send(Msg::Done {
                     run: id,
                     done: Done::PrState(r),
@@ -3202,6 +3665,7 @@ impl Engine {
             running: BTreeMap::new(),
             waiting: None,
             merge_unchecked: Vec::new(),
+            publish_unchecked: Vec::new(),
         };
         run.append(Event::LoopCreated {
             project: p.id.clone(),
@@ -3379,6 +3843,9 @@ impl Engine {
         }
         self.turns();
         self.target_moved_for(id);
+        self.pr_fell_behind(id);
+        self.push_forward_due(id);
+        self.publish_again(id);
         let was_ready = self.ready_seen.contains(&id);
         if ready && !was_ready {
             self.ready_seen.insert(id);
@@ -3534,10 +4001,9 @@ impl Engine {
             Request::Publish {
                 id,
                 without_latest_check: true,
-            } => Err(format!(
-                "loop {id}: publishing without the latest check is offered only at the limit of overtaken updates"
-            )),
+            } => self.publish_unchecked(id).map(|()| json!({})),
             Request::Publish { id, .. } => self.publish(id, "engineer").map(|()| json!({})),
+            Request::LeavePr { id } => self.leave_pr(id).map(|()| json!({})),
             Request::Stop { id, reason } => run_mut(self, id)
                 .and_then(|r| super::machine::stop(r, reason))
                 .map(|()| json!({})),

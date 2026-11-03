@@ -286,6 +286,7 @@ fn state_of(out: &str) -> Result<PrState, String> {
         checks,
         conflicting: v["mergeable"].as_str() == Some("CONFLICTING"),
         behind: v["mergeStateStatus"].as_str() == Some("BEHIND"),
+        strict: None,
     })
 }
 
