@@ -535,6 +535,9 @@ fn a_loop_being_published_or_with_its_pull_request_open_is_not_stopped_paused_or
     )
     .unwrap_err();
     assert!(e2.contains("pull request is open"), "{e2}");
+    // Nor stopped while its pull request is open: it is followed to its end (FR-015).
+    let e3 = ask(tx, Request::Stop { id, reason: None }).unwrap_err();
+    assert!(e3.contains("close it on the remote first"), "{e3}");
     drop(e);
     let _ = std::fs::remove_dir_all(&root);
 }

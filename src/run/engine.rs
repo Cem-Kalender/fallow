@@ -2579,7 +2579,8 @@ impl Engine {
                 // 010: a protected target takes a pull request, not a local merge (FR-006).
                 let refused = self.publish_view(id).and_then(|p| {
                     let offer = p["offer"].as_array().cloned().unwrap_or_default();
-                    (p["remote"].is_object() && !offer.iter().any(|o| o == "local_merge"))
+                    let open = p["publication"]["state"] == "open";
+                    (p["remote"].is_object() && !open && !offer.iter().any(|o| o == "local_merge"))
                         .then(|| p["why"].as_str().unwrap_or("").to_string())
                 });
                 match refused {

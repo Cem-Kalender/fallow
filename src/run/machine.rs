@@ -822,6 +822,10 @@ pub fn stop(run: &mut Run, reason: Option<String>) -> Result<(), String> {
     if run.busy == Some(Busy::Publish) {
         return Err("the loop is being published; stop it after that".into());
     }
+    // 010: its pull request is followed to its end (FR-015: stop once it is closed).
+    if run.state.stage == Stage::Publishing {
+        return Err("its pull request is open: close it on the remote first, then stop the loop".into());
+    }
     // Every running step ends, and the lead's calls for their questions too.
     run.stop_all();
     run.append(Event::Steering {

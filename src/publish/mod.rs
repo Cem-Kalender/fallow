@@ -150,6 +150,10 @@ pub fn offer(remote: Option<&Remote>) -> (Vec<&'static str>, String) {
     let Some(r) = remote else {
         return (vec!["local_merge"], "the project is not on a git branch".into());
     };
+    // Nothing until the remote is read: a protected target must never get a local merge.
+    if r.state == "checking" || r.protected == "checking" {
+        return (Vec::new(), "reading the remote first".into());
+    }
     match r.state.as_str() {
         "none" => (vec!["local_merge"], "no remote: the merge is local".into()),
         "no_target" => (
@@ -244,6 +248,7 @@ mod offer_tests {
     #[test]
     fn what_is_offered_follows_the_remote() {
         assert_eq!(offer(None).0, ["local_merge"]);
+        assert!(offer(Some(&remote("known", "checking", None))).0.is_empty(), "nothing while reading");
         assert_eq!(offer(Some(&remote("none", "unknown", None))).0, ["local_merge"]);
         let (o, why) = offer(Some(&remote("unsupported", "unknown", None)));
         assert_eq!(o, ["local_merge"]);

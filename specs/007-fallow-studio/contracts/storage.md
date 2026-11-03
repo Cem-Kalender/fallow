@@ -66,7 +66,7 @@
 | `pull_request_state` | state: open \| merged \| closed, checks[] (name, state: waiting \| passed \| failed \| skipped, url?), merged_at? (written only when something changed) |
 | `steering` | + kind `publish` (detail: the commit and who: engineer or when_verified) |
 
-A loop's stage goes Ready → Publishing on `published`, Publishing → Done (with `merged`, how: "pull request") when the pull request is merged on the remote, and Publishing → Ready when it is closed. `projects.json` gains `remote_seen` per project (the remote as last read, with `checked_at`) and `when_verified` on each lock record. The pull request's text is kept at `runs/<id>/publish/body.md`.
+For a pull request, `merged.commit` (and a record's final commit) is the commit pushed and merged on the remote, not a commit on the local target (a squash or a rebase makes new ones there). A loop's stage goes Ready → Publishing on `published`, Publishing → Done (with `merged`, how: "pull request") when the pull request is merged on the remote, and Publishing → Ready when it is closed. `projects.json` gains `remote_seen` per project (the remote as last read, with `checked_at`) and `when_verified` on each lock record. The pull request's text is kept at `runs/<id>/publish/body.md`.
 
 006's events (`step_*`, `verified`, `gate_run`, `verdict`, `steering`, `limits_set`, `session_lost`, `needs_cleared`, `merged`, `stopped`) are kept. `run_created` is kept for runs from 006, which stay readable.
 

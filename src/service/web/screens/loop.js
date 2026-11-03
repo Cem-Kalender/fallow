@@ -591,7 +591,7 @@
         <div class="row wrap gap-8 steer-buttons" role="group" aria-label="The loop's controls">
           <button class="btn${state.files ? "" : " btn2"}" data-act="files-toggle" aria-pressed="${state.files ? "true" : "false"}">${state.files ? "Files ✕" : "Files"}</button>
           ${merge || v.stage === "publishing" ? h`<button class="btn btn2" data-act="verified">What was verified</button>${publishButtons}` : ""}
-          ${over ? "" : h`<button class="btn btn2" data-act="note">Note for next step</button><button class="btn btn2" data-act="limits">Limits</button>${merge || v.stage === "publishing" ? "" : h`<button class="btn btn2" data-act="${paused ? "resume" : "pause"}">${paused ? "Go on" : "Pause"}</button>`}<button class="btn btn2" data-act="stop">Stop</button>`}
+          ${over ? "" : h`<button class="btn btn2" data-act="note">Note for next step</button><button class="btn btn2" data-act="limits">Limits</button>${merge || v.stage === "publishing" ? "" : h`<button class="btn btn2" data-act="${paused ? "resume" : "pause"}">${paused ? "Go on" : "Pause"}</button>`}${v.stage === "publishing" ? "" : h`<button class="btn btn2" data-act="stop">Stop</button>`}`}
         </div>
       </div>
       ${steerLine(v)}
