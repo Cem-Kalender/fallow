@@ -512,6 +512,7 @@ pub fn on_done(run: &mut Run, ctx: &Ctx, done: Done) -> Result<(), String> {
         // 011: an update's merge was computed (research R-2).
         Done::Update { n, result } => {
             if run.state.stage.is_final() {
+                super::update::discard(run, &result);
                 return Ok(());
             }
             super::update::computed(run, n, result)

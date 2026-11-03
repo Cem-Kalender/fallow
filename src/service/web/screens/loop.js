@@ -41,6 +41,7 @@
     const u = v.update;
     const offer = v.offer || [];
     const lines = [];
+    if (t.error && !u) lines.push(h`<div class="small muted">${v.base_branch} could not be read (${t.error}); a merge checks it again first.</div>`);
     if (t.reading && !u && v.stage === "ready") lines.push(h`<div class="small muted">Reading ${v.base_branch} before anything is offered to merge…</div>`);
     if (t.gone) {
       lines.push(h`<div class="notice">The target branch ${v.base_branch} is gone: nothing is merged. Stop the loop, or unlock the feature and lock it from another branch.</div>`);

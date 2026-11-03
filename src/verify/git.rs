@@ -304,6 +304,21 @@ pub fn worktree_prune(repo: &Path) {
 }
 
 /// Deletes `branch` (not checked out anywhere), merged or not; one that is not there is fine.
+/// 011: the local branches matching `pattern` (a `for-each-ref` glob, such as
+/// `fallow/<feature>/update-*`).
+pub fn branches_like(dir: &Path, pattern: &str) -> Vec<String> {
+    git(
+        dir,
+        &[
+            "for-each-ref",
+            "--format=%(refname:short)",
+            &format!("refs/heads/{pattern}"),
+        ],
+    )
+    .map(|out| out.lines().map(str::to_string).collect())
+    .unwrap_or_default()
+}
+
 pub fn delete_branch(dir: &Path, branch: &str) -> Result<(), String> {
     if git(
         dir,

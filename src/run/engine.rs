@@ -1610,15 +1610,17 @@ impl Engine {
         };
         let l = r.state.feature_loop.as_ref();
         let w = self.watched.get(&id);
-        let read = w
-            .filter(|w| r.state.integrated.as_deref() == Some(w.integrated.as_str()))
-            .and_then(|w| w.read.as_ref());
+        let same = w.filter(|w| r.state.integrated.as_deref() == Some(w.integrated.as_str()));
+        let read = same.and_then(|w| w.read.as_ref());
+        // A read that failed: offers as before (the merge checks the target again) and the
+        // page says why (review C).
+        let unreadable = same.and_then(|w| w.error.clone());
         let target = match read {
             Some(m) => json!({
                 "moved": m.moved, "gone": m.gone, "commits": m.commits, "conflicts": m.conflicts,
                 "docs_changed": m.docs_changed, "remote": false, "target_commit": m.target_commit,
             }),
-            None => json!({ "moved": false, "reading": w.is_some_and(|w| w.running) }),
+            None => json!({ "moved": false, "reading": unreadable.is_none(), "error": unreadable }),
         };
         let mut offer: Vec<&str> = Vec::new();
         let stage = r.state.stage;
@@ -1628,7 +1630,7 @@ impl Engine {
             .is_some_and(|u| !u.docs_changed.is_empty());
         if held {
             offer.extend(["lock_again", "stop"]);
-        } else if stage == Stage::Ready && !updating && read.is_none() {
+        } else if stage == Stage::Ready && !updating && read.is_none() && unreadable.is_none() {
             // The target is being read: nothing is offered to merge until it is (scenario 1).
             offer.push("stop");
         } else if stage == Stage::Ready && !updating {

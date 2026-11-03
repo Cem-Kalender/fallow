@@ -302,6 +302,35 @@ fn computing(
         .map_err(|e| format!("cannot start a thread: {e}"))
 }
 
+/// An update that did not go through, the loop's branch not moved: dropped, and the loop goes
+/// back to where it was (ready, its outcome kept), to be brought up to date again (review 3).
+fn not_through(run: &mut Run, u: &UpdateState, why: &str) -> Result<(), String> {
+    if let Some(b) = &u.branch {
+        let _ = git::delete_branch(&run.state.repo, b);
+    }
+    run.append(Event::UpdateDropped {
+        n: u.n,
+        why: why.to_string(),
+    })?;
+    if u.remote {
+        return run.append(Event::NeedsEngineer {
+            why: format!("The pull request's branch could not be brought up to date: {why}"),
+            options: vec!["stop".into()],
+        });
+    }
+    run.append(Event::Stage {
+        to: Stage::Ready,
+        why: format!("not brought up to date: {why}"),
+    })
+}
+
+/// A computation's working branch nobody uses (its update dropped, or the loop stopped).
+pub fn discard(run: &Run, result: &Result<Computed, String>) {
+    if let Ok(Computed::Conflicted { branch, .. }) = result {
+        let _ = git::delete_branch(&run.state.repo, branch);
+    }
+}
+
 /// The end of an update's computation (machine::on_done).
 pub fn computed(run: &mut Run, n: u32, result: Result<Computed, String>) -> Result<(), String> {
     let Some(u) = run
@@ -311,32 +340,11 @@ pub fn computed(run: &mut Run, n: u32, result: Result<Computed, String>) -> Resu
         .and_then(|l| l.update.clone())
         .filter(|u| u.n == n && !u.merged)
     else {
-        if let Ok(Computed::Conflicted { branch, .. }) = &result {
-            let _ = git::delete_branch(&run.state.repo, branch);
-        }
+        discard(run, &result);
         return Ok(());
     };
     match result {
-        // Nothing moved: the loop goes back to where it was (ready, its outcome kept), and the
-        // engineer may bring it up to date again (review 3).
-        Err(why) => {
-            run.append(Event::UpdateDropped {
-                n,
-                why: why.clone(),
-            })?;
-            if u.remote {
-                return run.append(Event::NeedsEngineer {
-                    why: format!(
-                        "The pull request's branch could not be brought up to date: {why}"
-                    ),
-                    options: vec!["bring up to date".into(), "stop".into()],
-                });
-            }
-            run.append(Event::Stage {
-                to: Stage::Ready,
-                why: format!("not brought up to date: {why}"),
-            })
-        }
+        Err(why) => not_through(run, &u, &why),
         Ok(Computed::DocsChanged(paths)) => {
             run.append(Event::UpdateDocsChanged {
                 n,
@@ -351,7 +359,12 @@ pub fn computed(run: &mut Run, n: u32, result: Result<Computed, String>) -> Resu
                 options: vec!["lock again".into(), "stop".into()],
             })
         }
-        Ok(Computed::Clean(commit)) => merged(run, &u, &commit),
+        // The loop's branch moves only when the merge goes through; when it does not, the
+        // loop is as it was (review 3, A).
+        Ok(Computed::Clean(commit)) => match merged(run, &u, &commit) {
+            Ok(()) => Ok(()),
+            Err(why) => not_through(run, &u, &why),
+        },
         Ok(Computed::Conflicted {
             working,
             branch,
@@ -535,6 +548,12 @@ pub fn resume(run: &mut Run, tx: Sender<Msg>) -> Result<(), String> {
     let Some(l) = run.state.feature_loop.clone() else {
         return Ok(());
     };
+    let current = l.update.as_ref().and_then(|u| u.branch.clone());
+    for b in git::branches_like(&run.state.repo, &format!("fallow/{}/update-*", l.feature)) {
+        if Some(&b) != current.as_ref() {
+            let _ = git::delete_branch(&run.state.repo, &b);
+        }
+    }
     let Some(u) = l.update.clone() else {
         return Ok(());
     };
