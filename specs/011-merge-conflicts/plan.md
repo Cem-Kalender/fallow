@@ -130,6 +130,7 @@ src/publish/
 ├── mod.rs               # fetching the remote target; behind/required
 └── host/{mod.rs,github.rs}   # mergeable, mergeStateStatus; protection's strict
 src/speckit/tasks.rs     # paths_in (moved from run/relock.rs, public)
+src/agent/schemas.rs     # the step result's optional `resolutions` (path, how), for an update's repair; specs/007-fallow-studio/contracts/runtime.md documents it (IX)
 src/service/
 ├── http.rs              # the new routes; lock's update_limit/run_after; overlap read
 └── notify.rs            # the three notices
