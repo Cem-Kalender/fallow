@@ -6,7 +6,7 @@
 
 **Status**: Draft
 
-**Input**: User description: "Solo sessions (011), asked for by the engineer on 2026-11-02, after 010 (publishing to the remote). A bare coding assistant inside Fallow for vibe coding without Spec Kit. The project page's middle column gets two tabs, 'Plan with the lead' (today's conversation) and 'Code with the assistant', the latter a dropdown of sessions with '+ New session'; a new agent kind Assistant (shipped default `assistant`, any runtime and model); each session has its own worktree and branch from the engineer's branch, Fallow commits every turn; git by asking the assistant (merge, commit, push, pull request) counts as the engineer's decision, Fallow shows every change it observes to the project's branches and remotes; web access on by default for the assistant. First version: undo a turn, screenshots, queued messages while working, the project's instruction files handed as plain text, web access, gates on demand on the session's branch. Files tab shows the session's worktree with changes marked, read-only, conversation beside an open file. Closing is Fallow's own action; a closed session leaves the dropdown, its worktree is removed, its branch too when merged, with unmerged work Fallow asks first; its conversation stays readable under 'Closed sessions…'. Not in the first version: switching models within a session, a terminal, 'turn this into a feature'." The decisions agreed with the engineer are kept in [decisions.md](decisions.md), the approved mockup in [mockup/solo.html](mockup/solo.html).
+**Input**: User description: "Solo sessions (011), asked for by the engineer on 2026-11-02, after 010 (publishing to the remote). A bare coding assistant inside Fallow for vibe coding without Spec Kit. The project page's middle column gets two tabs, 'Plan with the lead' (today's conversation) and 'Code with the assistant', the latter a dropdown of sessions with '+ New session'; a new agent kind Assistant (shipped default `assistant`, any runtime and model); each session has its own worktree and branch from the engineer's branch, Fallow commits every turn; git by asking the assistant (merge, commit, push, pull request) counts as the engineer's decision, Fallow shows every change it observes to the project's branches and remotes; web access on by default for the assistant. First version: undo a turn, screenshots, queued messages while working, the project's instruction files handed as plain text, web access, gates on demand on the session's branch. Files tab shows the session's worktree with changes marked, read-only, conversation beside an open file. Closing is Fallow's own action; a closed session leaves the dropdown, its worktree is removed, its branch too when merged, with unmerged work Fallow asks first; its conversation stays readable under 'Closed sessions…'. Not in the first version: switching models within a session, a terminal, 'turn this into a feature'." Changed on 2026-11-03 by the engineer: the assistant is the project page's only conversation, also for discussing features; when a feature has been discussed enough, a spec session is started with a lead from a brief of the discussion, and specify runs on it; the lead works only behind features. The decisions agreed with the engineer are kept in [decisions.md](decisions.md), the mockup in [mockup/solo.html](mockup/solo.html).
 
 ## Context
 
@@ -14,11 +14,13 @@ Today a project in Fallow has one way to get code written: a feature, worked out
 
 A **solo session** is that coding assistant inside Fallow: a chat with an agent that reads and edits the project's code and runs commands, in a working copy of its own, while Fallow keeps what it always keeps: every turn committed, every change to the project's branches and remotes shown, the project's gates runnable on the result, and nothing presented as verified that was not.
 
+The assistant is also where features begin. The engineer talks ideas through with it, as with a colleague who knows the code; when something has been discussed enough to become a feature, the assistant suggests it, and on the engineer's word Fallow starts the feature's spec session with a lead, handing it a brief of the discussion and running specify on it. The lead then works only behind features: their spec sessions and the questions of their loops. The project page no longer has a conversation with the lead of its own.
+
 Fallow stays an agentic orchestration tool, not an editor: writing code by hand belongs in the engineer's own editor.
 
-The constitution already provides for it (6.3.0): in a solo session the assistant acts on the engineer's word, and a merge, commit, push or pull request it makes when the engineer asks counts as the engineer's decision (II); its web and git-remote traffic is on by default (V).
+The constitution provides for it (6.3.0, 6.4.0): in a solo session the assistant acts on the engineer's word, and a merge, commit, push or pull request it makes when the engineer asks counts as the engineer's decision (II); its web and git-remote traffic is on by default (V); its rights are fixed by its kind (VI).
 
-**What does not change**: the lead's conversation and features (except that a file opens beside the conversation, FR-029), loops and their verification, publishing a loop (010), and what any other agent kind may do.
+**What does not change**: features and their spec sessions with the lead (except that a file opens beside the conversation, FR-029), "+ New feature", loops and their verification, publishing a loop (010), and what any other agent kind may do. **What changes besides**: the project conversation with the lead is no longer started (those already held stay readable, FR-035).
 
 ## Clarifications
 
@@ -26,12 +28,13 @@ The constitution already provides for it (6.3.0): in a solo session the assistan
 
 - Q: Which commands may the assistant run without asking? → A: As the lead (constitution VI): the gates and the project's approved commands run; any other command is asked of the engineer in the chat, per command, with "allow until I switch back" for the session. VI is amended to name the assistant.
 - Review decisions (2026-11-03, after the independent review): git commands that rewrite or delete a branch other than the session's own, force a push, discard uncommitted changes or change the engineer's folder are asked per command even after "allow until I switch back" (II: destructive actions are confirmed per action); undo can go back to before any turn, as in the mockup; edits the engineer makes in a session's working copy between turns are committed as the engineer's, and named before an undo or a close would drop them.
+- Q: Should the lead and the assistant be one agent? → A: No: they stay separate kinds (their rights differ), but the assistant is the only conversation on the project page, also for discussing features. When a feature has been discussed enough, the assistant suggests it (or the engineer types `/feature`); on the engineer's confirmation Fallow starts the feature's spec session with a lead, commits a brief of the discussion in the feature's folder, and runs specify on it. The project conversation with the lead is retired; the lead works only behind features. Constitution VI amended (6.4.0).
 
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - A coding session with the assistant (Priority: P1)
 
-The engineer opens a project and switches the middle column from **Plan with the lead** to **Code with the assistant**. They start a new session and type what they want ("the date picker shows the wrong week on Sundays, fix it"). The assistant reads the code, edits files, runs commands, and answers in the chat, showing that it works and what it does, as the lead's conversation does today. Each turn's result is committed by Fallow on the session's own branch. The engineer's project folder and checked-out branch are untouched while they work.
+The engineer opens a project; its middle column is the assistant. They start a new session and type what they want ("the date picker shows the wrong week on Sundays, fix it"). The assistant reads the code, edits files, runs commands, and answers in the chat, showing that it works and what it does, as a conversation with the lead does today. Each turn's result is committed by Fallow on the session's own branch. The engineer's project folder and checked-out branch are untouched while they work.
 
 **Why this priority**: it is the feature; everything else refines it.
 
@@ -39,8 +42,8 @@ The engineer opens a project and switches the middle column from **Plan with the
 
 **Acceptance Scenarios**:
 
-1. **Given** a project, **When** the engineer opens it, **Then** the middle column shows two tabs, "Plan with the lead" (today's conversation, unchanged) and "Code with the assistant", and the left column and the top bar stay as they are.
-2. **Given** the assistant's tab with no session yet, **When** the engineer picks "+ New session", **Then** a session starts with its own working copy and branch, made from the latest commit of the engineer's current branch, with the project's default assistant (or the one the engineer picks), and is ready for a message; when the engineer's folder has uncommitted changes, the session says they are not in it.
+1. **Given** a project, **When** the engineer opens it, **Then** the middle column shows the assistant: the session open last, or a new one ready for a message when there is none; the left column and the top bar stay as they are.
+2. **Given** the session dropdown, **When** the engineer picks "+ New session", **Then** a session starts with its own working copy and branch, made from the latest commit of the engineer's current branch, with the project's default assistant (or the one the engineer picks), and is ready for a message; when the engineer's folder has uncommitted changes, the session says they are not in it.
 3. **Given** a session, **When** the engineer sends a message, **Then** the assistant works in the session's working copy, its activity (files read and edited, commands, web requests) shows in the chat as it happens, and its answer ends the turn.
 4. **Given** a turn that changed files, **When** the turn ends, **Then** Fallow has committed the changes on the session's branch, one commit per turn, named after the turn.
 5. **Given** a session at work, **When** the engineer looks at their project folder, **Then** its files and checked-out branch are as they were (until the engineer asks the assistant to change them, User Story 4).
@@ -50,7 +53,7 @@ The engineer opens a project and switches the middle column from **Plan with the
 
 ### User Story 2 - Several sessions, picked from one dropdown (Priority: P1)
 
-The engineer keeps more than one session open: a fix in one, an experiment in another. "Code with the assistant" is a dropdown: clicking it opens the list of the project's open sessions, each named after its first message (renameable in its header), the open one ticked and on top, a dot on those whose assistant is working, and the number of changes in each; "+ New session" starts another. Picking an item opens that session. Sessions work at the same time without touching each other.
+The engineer keeps more than one session open: a fix in one, an experiment in another. The top of the middle column is a dropdown with the open session's name: clicking it opens the list of the project's open sessions, each named after its first message (renameable in its header), the open one ticked and on top, a dot on those whose assistant is working, and the number of changes in each; "+ New session" starts another. Picking an item opens that session. Sessions work at the same time without touching each other.
 
 **Why this priority**: a session per task is how the engineer works; one shared working copy would mix unrelated changes.
 
@@ -58,7 +61,7 @@ The engineer keeps more than one session open: a fix in one, an experiment in an
 
 **Acceptance Scenarios**:
 
-1. **Given** two open sessions, **When** the engineer clicks "Code with the assistant", **Then** a list opens with both sessions and "+ New session"; clicking the tab never switches session by itself.
+1. **Given** two open sessions, **When** the engineer clicks the session dropdown, **Then** a list opens with both sessions and "+ New session"; clicking it never switches session by itself.
 2. **Given** the list open, **When** the engineer picks a session, **Then** that session's conversation, changes and gates show, and the list closes.
 3. **Given** one session's assistant working, **When** the engineer opens another session and sends a message, **Then** both work at the same time, each in its own working copy and on its own branch.
 4. **Given** a session, **When** the engineer renames it in its header, **Then** the dropdown shows the new name.
@@ -68,7 +71,7 @@ The engineer keeps more than one session open: a fix in one, an experiment in an
 
 ### User Story 3 - Seeing and checking what the session changed (Priority: P2)
 
-Beside the conversation, the assistant's tab shows the session's **Changes** (the files changed since the session started, with what changed) and **Gates** (the project's gates, runnable on the session's branch). In the left column, the Files tab shows the session's working copy with its changed files marked. Opening a file shows it in the middle, read-only, with the conversation beside it. The engineer can undo the last turn. The session's result says "Not verified by Fallow" until the gates ran on it, and again after any later change.
+Beside the conversation, the rail shows the session's **Changes** (the files changed since the session started, with what changed) and **Gates** (the project's gates, runnable on the session's branch). In the left column, the Files tab shows the session's working copy with its changed files marked. Opening a file shows it in the middle, read-only, with the conversation beside it. The engineer can undo back to before any turn. The session's result says "Not verified by Fallow" until the gates ran on it, and again after any later change.
 
 **Why this priority**: a coding assistant whose changes the engineer cannot see, check and undo is one they have to babysit in another tool.
 
@@ -76,8 +79,8 @@ Beside the conversation, the assistant's tab shows the session's **Changes** (th
 
 **Acceptance Scenarios**:
 
-1. **Given** a session with changes, **When** the engineer looks at the assistant's tab, **Then** the Changes panel lists every file changed since the session started (added, modified, deleted) and shows what changed in each.
-2. **Given** the Files tab while the assistant's tab is on, **When** the engineer looks at it, **Then** it shows the open session's working copy, changed files marked, folders with the number of changes in them, and a way to show only changed files; with the lead's tab on, it shows the project as today.
+1. **Given** a session with changes, **When** the engineer looks at the rail, **Then** the Changes panel lists every file changed since the session started (added, modified, deleted) and shows what changed in each.
+2. **Given** the Files tab while a session is open, **When** the engineer looks at it, **Then** it shows the open session's working copy, changed files marked, folders with the number of changes in them, and a way to show only changed files; while a feature is open, it shows the project as today.
 3. **Given** a file opened from the Files tab or the Changes panel, **When** it shows in the middle, **Then** it is read-only, the conversation stays usable beside it, and "Open in my editor" opens it in the engineer's editor.
 4. **Given** the Gates panel, **When** the engineer runs the gates, **Then** Fallow runs the project's gates on the session's branch, compared with the session's base (where it started, or its last update from the starting branch), and shows each gate's outcome with its output.
 5. **Given** a session whose gates have not run on its latest commit, **When** the engineer looks at it, **Then** it says "Not verified by Fallow" and names what was not checked; after the gates pass it says they passed on that commit, never in the words or colors of a verified loop (no independent checker looked at it); after any later change it says "Not verified by Fallow" again.
@@ -139,6 +142,25 @@ When the work is done, the engineer closes the session, with "Close session" in 
 4. **Given** a runtime's own exit command typed in a session, **When** it is sent, **Then** it means nothing special to Fallow; only Fallow's close closes a session.
 5. **Given** a session whose assistant is working, **When** the engineer closes it, **Then** Fallow asks to stop the turn first, naming it.
 
+---
+
+### User Story 7 - From a discussion to a feature (Priority: P2)
+
+The engineer talks a feature through with the assistant ("users should be able to export their data; what would that take here?"). When it has been discussed enough, the assistant suggests making it a feature, with a title and a short brief of what was settled; the engineer can also type `/feature` at any time. The engineer reads the brief, edits it if they like, picks the lead (the project's default is preset) and confirms. Fallow starts the feature, commits the brief in its folder, opens its spec session with that lead, and runs specify with the brief as the description. The lead comes back with the spec and its open questions; from there it goes on as today (clarify, plan, tasks, lock), and that lead answers the builders' questions in the feature's loop. The session stays open.
+
+**Why this priority**: it makes the assistant the one place to start, for a fix or a feature, and gives the lead a concrete start instead of a blank page.
+
+**Independent Test**: on the fake runtime, discuss a feature in a session until the assistant suggests it; confirm with an edited brief; check that the feature exists, its brief is committed in its folder as edited, its spec session runs specify with the brief, the session stays open and shows a link to the feature, and nothing was started before the confirmation.
+
+**Acceptance Scenarios**:
+
+1. **Given** a session in which the assistant suggests a feature, **When** its turn ends, **Then** the session shows "Make this a feature" with the suggested title and brief; nothing is started until the engineer confirms.
+2. **Given** `/feature` typed in a session, **When** it is sent, **Then** the assistant is asked for a title and brief from the discussion so far, and the same confirmation shows.
+3. **Given** the confirmation, **When** the engineer edits the title or the brief, picks a lead and confirms, **Then** Fallow creates the feature, commits the brief as edited in the feature's folder, opens its spec session with the chosen lead, and runs specify with the brief as the description.
+4. **Given** a feature started from a session, **When** the engineer looks at the session, **Then** it shows a link to the feature, and the feature's spec session shows the session it came from.
+5. **Given** the confirmation, **When** the engineer cancels, **Then** nothing is created and the discussion goes on.
+6. **Given** a feature started from a session, **When** its loop runs, **Then** the questions of its builders go to the lead of its spec session, as for any feature.
+
 ### Edge Cases
 
 - **The engineer's branch moves while a session is open** (another session merged, the engineer committed): the session keeps its own starting point; the session shows that its starting branch moved, and the engineer may ask the assistant to bring its branch up to date. Bringing it up to date moves the session's base to that update, so Changes and the gates' baseline count from there and the engineer's own commits never show as the session's changes; a merge of the session into the starting branch does not move the base, and undoing the turn that brought it up to date moves the base back to where it was before that turn.
@@ -155,7 +177,10 @@ When the work is done, the engineer closes the session, with "Close session" in 
 - **Undo after a merge or push the engineer asked for**: undo resets only the session's own branch and working copy; what was merged or pushed elsewhere stays, and the session says so before undoing.
 - **A command the assistant ran wrote outside its working copy** (a global package, a file elsewhere): Fallow cannot undo or see it; the session says that undo and Changes cover only the working copy.
 - **The project has no gates declared**: the Gates panel says so, and the session stays "Not verified by Fallow".
-- **The project folder is not a git repository**: the assistant's tab says a session needs one, and offers nothing else.
+- **The project folder is not a git repository**: the middle column says a session needs one; features can still be started with "+ New feature".
+- **Spec Kit is not installed in the project** when a feature is made from a session: the feature is created and the brief committed, and its spec session says specify could not start, as "+ New feature" does today.
+- **The assistant suggests a feature again for the same discussion**: the session shows the feature already started from it, and the engineer decides whether to start another.
+- **The brief is empty or the assistant gives none**: the confirmation asks the engineer to write one; a feature is not started without a title and a brief.
 - **The runtime of the chosen assistant cannot take images**: attaching one is refused before sending, saying so.
 - **The assistant cannot start** (runtime missing, not signed in): the session shows why and what to do, keeps its working copy, and the message can be sent again.
 - **The session's branch name is already taken**: Fallow picks another and shows it; it never overwrites a branch.
@@ -168,15 +193,15 @@ When the work is done, the engineer closes the session, with "Close session" in 
 
 **The page**
 
-- **FR-001**: The project page's middle column MUST have two tabs, "Plan with the lead" (today's project conversation, unchanged) and "Code with the assistant". The left column (Features, Files) and the top bar MUST stay as they are; the top bar's lead picker stays the lead's.
-- **FR-002**: "Code with the assistant" MUST be a dropdown: clicking it only opens the list; picking an item opens that session; "+ New session" starts one. The list MUST show each open session with its name, the open one ticked and on top, a mark while its assistant works, and its number of changed files; "Closed sessions…" at the bottom. Sessions MUST NOT appear anywhere else (no row of sessions, nothing in the left column).
-- **FR-003**: The rail MUST show the panels of the tab the engineer is on: for the assistant, Changes and Gates of the open session; for the lead, the panels of today.
+- **FR-001**: The project page's middle column MUST be the assistant: the session open last, or a new one when there is none. Opening a feature from the left column shows its spec session there, as today. The left column (Features, Files) and the top bar MUST stay as they are; the top bar's lead picker stays the lead's and applies to "+ New feature".
+- **FR-002**: The top of the middle column MUST be a dropdown with the open session's name: clicking it only opens the list; picking an item opens that session; "+ New session" starts one. The list MUST show each open session with its name, the open one ticked and on top, a mark while its assistant works, and its number of changed files; "Closed sessions…" at the bottom. Sessions MUST NOT appear anywhere else (no row of sessions, nothing in the left column).
+- **FR-003**: The rail MUST show the panels of what the middle column shows: for a session, its Changes and Gates; for a feature's spec session, the panels of today.
 - **FR-004**: A session MUST be named after its first message until the engineer renames it in its header. Its header MUST show its branch, the branch and commit it started from, whether web access is on, "Open in my editor" (the session's working copy) and "Close session".
 
 **The assistant**
 
 - **FR-005**: Fallow MUST provide a new agent kind, **Assistant**, and ship a default agent `assistant`. Any runtime that implements the runtime contract, with any model, MUST be usable as an assistant. The engineer MUST be able to pick the assistant when starting a session, with a default per project.
-- **FR-006**: The assistant's conversation MUST offer what the lead's conversation offers: the chat, the `/` menu, the working indicator, the activity as it happens, and stopping a turn.
+- **FR-006**: The assistant's conversation MUST offer what a conversation with the lead offers: the chat, the `/` menu, the working indicator, the activity as it happens, and stopping a turn.
 - **FR-007**: At the start of a session, Fallow MUST hand the content of the project's instruction files for coding agents, as they are in the session's working copy, to the assistant as plain text, whatever the runtime, and show which files it handed; when one of them changes in the working copy during the session, Fallow MUST hand it again at the next turn. It MUST NOT rely on a runtime reading such files by its own convention.
 - **FR-008**: The assistant's rights MUST be fixed by Fallow from its kind, whatever its definition says: it edits files only in its session's working copy (and, on the engineer's word, the project's branches and the engineer's folder, FR-016); the gates and the project's approved commands run without asking; any other command MUST be asked of the engineer in the chat, per command, unless the engineer allowed other commands "until I switch back" for that session, which they can switch back at any time. Even then, a command that force-pushes, deletes or rewrites a branch other than the session's own, discards uncommitted changes, or changes the engineer's folder MUST be asked per command, naming what it affects (constitution II). Fallow judges a command as it is written; a command whose working directory or target it cannot tell is asked per command. What a script does inside is not seen; each request MUST say so, and so MUST the session when the engineer turns "until I switch back" on. "Until I switch back" MUST NOT outlive a restart of Fallow. Options that make an agent skip its own permission checks MUST NOT be used.
 - **FR-009**: Web access MUST be on for the assistant by default. The engineer MUST be able to turn it off for a session when the assistant's runtime supports that through the runtime contract; otherwise the session MUST say it cannot. Every web request the assistant makes as a tool call MUST show in the activity; requests made by the commands it runs show only as those commands, and the session MUST NOT imply more. No other agent kind gains web access through this feature.
@@ -200,7 +225,7 @@ When the work is done, the engineer closes the session, with "Close session" in 
 **Checking the work**
 
 - **FR-019**: The Changes panel MUST list every file changed on the session's branch since the session's base (where it started, or its last update from the starting branch), with what changed in each and the turn that changed it.
-- **FR-020**: With the assistant's tab on, the Files tab MUST show the open session's working copy, changed files marked (added, modified), folders with the number of changes inside, and a filter showing only changed files. A file MUST open read-only in the middle, with the conversation beside it, with "Open in my editor", and for a changed file a choice between its changes and the whole file, saying which turns changed it and by whom (the assistant or the engineer).
+- **FR-020**: While a session is open, the Files tab MUST show the open session's working copy, changed files marked (added, modified), folders with the number of changes inside, and a filter showing only changed files. A file MUST open read-only in the middle, with the conversation beside it, with "Open in my editor", and for a changed file a choice between its changes and the whole file, saying which turns changed it and by whom (the assistant or the engineer).
 - **FR-021**: The engineer MUST be able to run the project's gates on a session's branch at any time; Fallow runs them, compared with the session's base (where it started, or its last update from the starting branch), and shows each gate's outcome and output. The assistant's own runs of tests or other commands MUST NOT be shown as gate outcomes.
 - **FR-022**: A session's result MUST be shown as "Not verified by Fallow", naming what was not checked, until the gates ran on its latest commit; after they passed, as passed on that commit without an independent check, never in the words or colors of a verified loop; after any later change, as "Not verified by Fallow" again.
 
@@ -216,9 +241,18 @@ When the work is done, the engineer closes the session, with "Close session" in 
 - **FR-027**: Every session counts as an agent while its assistant works, against the same setting for how many agents may work at once that loops use; a message that has to wait for a free slot MUST say so.
 - **FR-028**: A session's state MUST be decided from what Fallow observes (its own records, git, the gates), never from how one runtime is known to behave (constitution IX), and the whole behaviour MUST be testable on the fake runtime.
 
-**The lead's tab, for consistency**
+**A feature's spec session, for consistency**
 
-- **FR-029**: A file opened from the Files tab with the lead's tab on MUST also show with the conversation beside it, as in the assistant's tab.
+- **FR-029**: A file opened from the Files tab while a feature's spec session is open MUST also show with the conversation beside it, as in a session.
+
+**From a discussion to a feature**
+
+- **FR-030**: The assistant MUST be able to suggest that the discussion become a feature, with a title and a brief, through a structured part of its answer that the runtime contract defines for every runtime; Fallow tells every assistant, in plain text, when to suggest it. Fallow MUST NOT infer a suggestion from the answer's free text (constitution IX).
+- **FR-031**: `/feature` in a session MUST ask the assistant for a title and a brief from the discussion so far, and show the same confirmation.
+- **FR-032**: Nothing MUST be started before the engineer confirms. The confirmation MUST show the title and the brief, both editable, and the lead, preset to the project's default and changeable; a feature MUST NOT be started without a title and a brief.
+- **FR-033**: On confirmation, Fallow MUST create the feature, commit the brief as confirmed in the feature's folder, open its spec session with the chosen lead, and run specify there with the brief as the description. If specify cannot start, the feature stays created and its spec session says why.
+- **FR-034**: The session MUST stay open after the handover and show a link to each feature started from it; the feature's spec session MUST show the session it came from. The assistant MUST NOT write spec documents itself: the brief is Fallow's to commit, on the engineer's confirmation.
+- **FR-035**: Fallow MUST NOT start new project conversations with the lead. Those already held MUST stay readable, read-only, under "Earlier conversations with the lead…" at the bottom of the session dropdown. `/specify <title>` in a project conversation is replaced by `/feature` in a session; "+ New feature" stays.
 
 ### Key Entities
 
@@ -227,6 +261,7 @@ When the work is done, the engineer closes the session, with "Close session" in 
 - **Waiting message**: a message typed while the assistant works, with its attachments, in order.
 - **Observed git change**: a change Fallow saw to a branch of the project or of its remotes: the branch, before and after, the kind of change, its source, and when.
 - **Gate run (session)**: the gates run on a session's commit against the session's base, with each outcome.
+- **Feature brief**: the title and the text of what a session's discussion settled about a feature, as the engineer confirmed it; committed in the feature's folder, the description specify runs on, linking the feature to the session it came from.
 
 ## Success Criteria *(mandatory)*
 
@@ -242,22 +277,23 @@ When the work is done, the engineer closes the session, with "Close session" in 
 - **SC-008**: After Fallow restarts, 100% of open sessions are back with their conversation, working copy and branch, and no turn is repeated.
 - **SC-009**: With 4 sessions working at the same time and no other agent, Fallow's own process stays within the constitution's memory budget for 4 concurrent agent steps (200 MB), and an assistant's activity appears on the page within 2 seconds (p95); both measured by benchmarks with scripted sessions that run in CI.
 - **SC-010**: On the fake runtime, a small fix goes from "+ New session" to merged into the engineer's branch with two messages (the fix, the merge) and one approval (the merge command), and nothing else asked of the engineer.
+- **SC-011**: On the fake runtime, a feature goes from a session's suggestion to its spec session running specify on the brief with one confirmation by the engineer and nothing else asked; the brief committed in the feature's folder is exactly the confirmed text in 100% of runs, and nothing is started in 100% of cancelled confirmations.
 
 ## Assumptions
 
-- **Tab names**: "Plan with the lead" and "Code with the assistant", as in the approved mockup; they say what each is for.
 - **Setup of a new working copy**: in the first version, the assistant installs dependencies when the engineer asks; a per-project setup command that Fallow runs when a session starts comes later.
-- **A file beside the lead's conversation too** (FR-029): both tabs behave alike, as the mockup suggested.
-- **The top bar's lead picker** stays the lead's: it picks who leads a new feature; the assistant is picked when a session starts.
+- **A file beside a feature's conversation too** (FR-029): sessions and spec sessions behave alike.
+- **The brief's place**: a file in the feature's folder beside its spec, committed by Fallow (constitution VI: Fallow writes the handovers of a project's features); its exact name is a plan decision.
+- **The top bar's lead picker** stays the lead's: it picks who leads a feature started with "+ New feature"; a feature started from a session takes the lead picked in its confirmation; the assistant is picked when a session starts.
 - **Merged** means every commit of the session's branch is on another branch of the project (local or the remote's as git last saw it); a squash merge on a remote is not recognized as merged, so Fallow asks before discarding.
 - **Undone commits** of the assistant's turns are dropped when the session closes, without asking again: undoing them was the engineer's choice. Undone commits holding the engineer's own edits count as unmerged work at close: Fallow asks first (FR-024).
 - **A closed session cannot be reopened** in the first version; its branch, when kept, can be used from a new session or the engineer's own tools.
 - **The project's instruction files** are those coding agents commonly read at a project's root (such as `CLAUDE.md`, `AGENTS.md`); the exact list is a plan decision, extendable per project.
 - **The fake runtime** gains what a session needs (images, web requests as activity) so the behaviour is tested without a real model.
-- **Not in the first version**: switching models within a session, a terminal in Fallow, turning a session into a feature, reopening a closed session, a per-project setup command.
+- **Not in the first version**: switching models within a session, a terminal in Fallow, reopening a closed session, a per-project setup command, continuing an earlier project conversation with the lead.
 
 ## Dependencies
 
-- 009 (the lead's conversation, the `/` menu, the working indicator, the Files tab, read-only file view): reused.
+- 009 (conversations with the lead, the `/` menu, the working indicator, the Files tab, read-only file view): reused; its project conversation is retired (FR-035), and its `/specify` from the project conversation becomes `/feature` from a session.
 - 010 (the remote and the engineer's own tools): a pull request the engineer asks the assistant for uses the same tools; Fallow's own publishing of loops is unchanged.
-- Constitution 6.3.0/6.3.1: II (the assistant acts on the engineer's word), V (web and remote traffic on by default for the assistant), VI (the assistant's rights, FR-008; to be amended to name the assistant), IX (runtime-agnostic).
+- Constitution 6.4.0: II (the assistant acts on the engineer's word), III (the brief committed as the feature's starting point), V (web and remote traffic on by default for the assistant), VI (the assistant's rights, FR-008, amended in 6.4.0), IX (runtime-agnostic; the feature suggestion in the runtime contract).
