@@ -12,7 +12,7 @@ CARGO_PROFILE_DEV_DEBUG=0 CARGO_INCREMENTAL=0 CARGO_TARGET_DIR=target/wip \
 
 Two features in one project change the same line of `shop/receipt.py`. Merge the first. The second's
 loop page shows `target.moved`, `conflicts: ["shop/receipt.py"]`, `offer: ["bring_up_to_date",
-"stop"]`, no `merge`. Bring it up to date: a repair step on `update-1` names the file; after it, the
+"stop"]`, no `merge`. Bring it up to date: a repair step on `update-1` names the file (variants: the builder commits itself; resolves to one side); after it, the
 gates run against the first feature's merge, both stories are checked again, the loop is ready with a
 new verified commit, and it merges without conflict. The target never held a conflict.
 
@@ -26,7 +26,7 @@ offered.
 Q1 with the second loop locked Free: no action needed until the merge. With Normal: "Needs you"
 shows `update`. With a budget too small: it asks.
 
-## Q4 The merge line and the limit (US2 scenarios 4-5)
+## Q4 The merge line and the limit (US2 scenarios 2-3)
 
 Two Free loops ready for the same target: the second waits "in line to merge after" the first and is
 verified again once. Then, with `update_limit = 1`, move the target from outside Fallow (a commit in

@@ -44,9 +44,9 @@ checked with: <n> commits" and the commits.
 | Request | Body | Effect |
 |---|---|---|
 | `POST /api/loops/<id>/update` | `{}` | Bring up to date (also "Verify again on the latest <target>"); refused when not offered. |
-| `POST /api/loops/<id>/merge` | `{ "without_latest_check": true }` (optional) | Merge; with the flag, only when `merge_unchecked` is offered; refused when the merge would conflict. |
+| `POST /api/loops/<id>/merge` | `{ "without_latest_check": true }` (optional) | Merge; with the flag, only when `merge_unchecked` is offered; refused when the merge would conflict. While another loop holds the turn, accepted and queued: the reply is `{ "in_line_after": "<feature>" }`, and the merge runs (rechecked) when the turn comes. |
 | `POST /api/loops/<id>/publish` | `{ "without_latest_check": true }` (optional) | As 010; with the flag only when `publish_unchecked` is offered. |
-| `POST /api/loops/<id>/leave-pr` | `{}` | Leave the pull request as it is (labelled as not verified with the newer commits). |
+| `POST /api/loops/<id>/leave-pr` | `{}` | Leave the pull request as it is (recorded with the newer commits not verified with, and labelled so). |
 | `POST /api/loops/<id>/wait` | `{ "for": <run id> }` | Wait for that loop (after the current step); refused when it would close a cycle (the reply names the loop already waiting) or the pull request is open. |
 | `DELETE /api/loops/<id>/wait` | | Stop waiting. |
 

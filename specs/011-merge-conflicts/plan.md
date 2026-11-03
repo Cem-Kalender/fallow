@@ -10,10 +10,13 @@
 
 - **Knowing the target moved** by ancestry, and whether a merge would conflict, by an in-memory trial
   merge (`git merge-tree`), never touching the target or the engineer's folder (R-1).
-- **An update**: the target merged into the loop's own branch in its build worktree; a conflict goes
-  to a builder as a repair step on its own part; the feature's locked documents changed on the
-  target stop it for the engineer ("Lock again" / "Stop") (R-2). Then every story is reopened and the
-  gates run against the target merged in, reusing the relock machinery (R-3).
+- **An update**: git computes the merge (`merge-tree`) and Fallow commits it (`commit-tree`, two
+  parents) onto the loop's own branch; a conflict goes to a builder as a repair step that starts on a
+  working commit holding the conflicted files, and Fallow makes the merge commit from the resolved
+  tree. No merge is ever in progress in a working copy. The feature's locked documents changed on the
+  target stop it for the engineer ("Lock again" / "Stop") (R-2). Then every story's phases are
+  reopened and the gates run against the target merged in, reusing the round and count machinery
+  without the relock's builder repairs (R-3).
 - **Who starts it** follows the level: Free by itself, Normal and Strict ask (R-4).
 - **A merge line** per target, rebuilt from the loops' logs, so loops do not overtake each other
   while one holds its turn (R-5); **overtaken updates** counted against a limit set at the lock
@@ -38,14 +41,14 @@ for pull requests, as 010.
 `update_limit`, `run_after`. All optional with defaults (data-model.md); logs from before 011 load
 unchanged.
 
-**Testing**: `cargo test` without network or model (quickstart Q1–Q6): the fake runtime plays the
+**Testing**: `cargo test` without network or model (quickstart Q1–Q6; Q7 by hand): the fake runtime plays the
 conflict repair; two features in one project (a generalized `lock_calc_in` and a second calc
 feature); a bare remote and `fallow-fake-host` with `mergeable`/`mergeStateStatus` and `strict`.
 New `tests/us11_update.rs`, `us11_line.rs`, `us11_publish_update.rs`, `us11_overlap.rs`; unit tests
 for the trial merge, the conflict-marker check, `push_forward`'s refusals, the cycle check, path
 extraction; `no_egress_no_push.rs` allows the second push site and still forbids force. Page checks
 with headless Chrome over CDP (the loop page's offers and labels, the lock form's overlap and limit).
-Every test from 007 to 010 stays green.
+Every test from 007 to 010 stays green; 010's tests are audited for FR-011a (a remote target ahead of the local one).
 
 **Target Platform**: Windows 10/11 first; also Linux and macOS.
 
@@ -83,14 +86,14 @@ Checked against v6.5.0.
 | II. The Engineer Decides | Updates start by the level the engineer chose; at a limit or a cap the engineer decides; every choice is a recorded steering action. Never a push to the target, never forced, never a second pull request; a published loop is never stopped while its pull request is open. | PASS |
 | III. Coordination in Code | The line, the waits and the updates are the engine's code and the loops' logs; agents do not coordinate. Every project is a git repository (6.5.0): updates and checks are git. | PASS |
 | IV. Simplest Setup First | No new agent kind: the conflict goes to the pipeline's builder as a repair; checking again reuses the relock path. | PASS |
-| V. Local and Private | Local checks are local git. For a published loop, `git fetch` of the target and `gh pr view` are the engineer's own tools publishing a run, as V lists. Nothing new leaves the machine. | PASS |
-| VI. Least Privilege | Updates write only to the loop's own working copy and branch; builders never touch locked documents (R-2). | PASS |
+| V. Local and Private | Local checks are local git. For a published loop, `ls-remote` and a fetch of the target commit by its sha (no ref of the engineer written), and `gh pr view`, are the engineer's own tools publishing a run: the pull request cannot be updated or the push checked without the target commit (R-7 argues it; a PATCH clarification of V if the owner wants it named). Nothing leaves the machine but the loop's own branch. | PASS |
+| VI. Least Privilege | Updates write only to the loop's own branch, its working copy and a Fallow-private working ref; the engineer's refs are never written (the fetch is by sha). Builders never touch locked documents: the repair starts on a commit that already holds the target's changes, so the tidy judges only the builder's own edits (R-2). | PASS |
 | VII. Runs Survive | Every new state is an event; a merge in progress is on disk and its repair re-queued; the line is rebuilt on load (R-9). | PASS |
 | VIII. Small and Measured | No dependencies; local git on a thread, bounded frequency; no new budget claims beyond SC-006, which a test times. | PASS |
 | IX. Runtime-Agnostic | Decided from git, the gates and the checker's verdict; the repair prompt is plain text; all of it tested on the fake runtime. | PASS |
 
-**Re-check after Phase 1 design**: PASS. The contracts add six requests, fields on the loop read and
-the lock, and events; the only network is the engineer's tools for published loops, as V lists.
+**Re-check after Phase 1 design**: PASS. The contracts add four requests, extend two (merge, publish)
+and the lock, add one read (overlap), fields on the loop read, and events; the only network is the engineer's tools for published loops, as V lists.
 
 ## Project Structure
 
@@ -111,13 +114,13 @@ specs/011-merge-conflicts/
 ### Source Code (repository root)
 
 ```text
-src/verify/git.rs        # merge_tree (trial merge, R-1) with the scratch fallback; unmerged paths; conflict markers
+src/verify/git.rs        # merge_tree (exit codes, tree and paths; scratch fallback), commit_tree with two parents, conflict markers, fetch by sha
 src/run/
 ├── events.rs            # Updated, UpdateMerged, UpdateDropped, Overtaken, Lined, Unlined, Overlap, WaitsFor, WaitEnded; unchecked; update_limit, run_after; Steering kinds
-├── state.rs             # LoopState.update, updates, update_limit, overtaken, base_commit, lined_at, touched, task_paths, overlaps, waits_for; folding Updated like Relocked for every story
-├── update.rs            # NEW: starting an update (R-2), the repair prompt, verifying the resolution, docs_changed
-├── feature.rs           # step(): an update in progress; baseline at base_commit; waits_for blocks starting steps
-├── machine.rs           # merge(): recheck (FR-003) and without_latest_check; publish(): recheck remote (FR-011a); drive in Publishing during an update; Done::Update*
+├── state.rs             # LoopState.update, fresh_seq, updates, update_limit, overtaken, base_commit, lined_at, touched, task_paths, overlaps, waits_for; UpdateMerged reopens every story (R-3); baseline by commit
+├── update.rs            # NEW: computing and committing an update (R-2), the working commit and ref, the repair prompt, the marker check, docs_changed, resuming (R-9)
+├── feature.rs           # step(): an update in progress; baseline at base_commit; waits_for blocks starting steps; repairs_of/allowed_more/fresh_since read fresh_seq; finish() in Publishing hands over to push_forward; Touched from verified steps
+├── machine.rs           # merge(): recheck (FR-003), queue when another holds the turn, without_latest_check; publish(): recheck remote (FR-011a); Done::PushForward; limits in Publishing as NeedsEngineer
 ├── engine.rs            # target watch thread; lines; who starts (R-4); overtaken (R-6); overlap at lock and while running (R-8); Request::Update/LeavePr/Wait/StopWaiting; lock's update_limit, run_after
 └── dashboard.rs         # needs-you: update, update_limit, docs_changed, overlap
 src/publish/
