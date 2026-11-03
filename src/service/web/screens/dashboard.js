@@ -54,6 +54,21 @@
         <div class="row wrap gap-8 mt-14"><a class="btn btn2" href="${loopHref(n)}">Review &amp; merge</a></div>
       </div>`;
     }
+    // 011: the target moved (Normal, Strict), the limit of overtaken updates, the documents
+    // changed on the target (contracts/web-api.md).
+    const UPDATE = {
+      update: [`${n.target || "The target"} moved · bring it up to date`, "Bring up to date"],
+      update_limit: [`Updated ${n.updates || 0} times and overtaken · your decision`, "Decide"],
+      docs_changed: ["The target changed this feature's documents", "Lock again or stop"],
+    }[n.kind];
+    if (UPDATE) {
+      return h`<div class="card pad-16 needs">
+        <div class="row between wrap gap-8"><span class="pill orange">${UPDATE[0]}</span><span class="tiny muted">${ago(n.at)}</span></div>
+        <div class="small muted mt-10">${where.join(" · ")}</div>
+        <div class="b mt-4 lh">${n.text}</div>
+        <div class="row wrap gap-8 mt-14"><a class="btn" href="${loopHref(n)}">${UPDATE[1]}</a></div>
+      </div>`;
+    }
     if (n.task) where.push(n.task);
     return h`<div class="card pad-16 needs">
       <div class="row between wrap gap-8"><span class="pill orange">${n.what ? n.what[0].toUpperCase() + n.what.slice(1) : "Needs you"}</span><span class="tiny muted">${ago(n.at)}</span></div>

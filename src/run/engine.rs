@@ -65,6 +65,11 @@ struct Watched {
     error: Option<String>,
 }
 
+/// 011 (FR-010): a loop locked Free brings itself up to date, unless `[updates] auto = false`.
+fn update_by_itself(l: &super::state::LoopState) -> bool {
+    l.level == Level::Free && l.switches.auto
+}
+
 /// 011: how a loop waiting in its merge line says so (`Run::waiting`).
 const IN_LINE: &str = "in line to merge after ";
 
@@ -458,6 +463,9 @@ pub struct Engine {
     /// 011: the target watch per loop (research R-1): when it last asked, whether a read is
     /// running, for which verified commit, and what it read.
     watched: BTreeMap<u64, Watched>,
+    /// 011: the target commit each loop was last asked about or brought up to date for by
+    /// itself (R-4), so a watch read again does not ask again.
+    asked_tip: BTreeMap<u64, String>,
 }
 
 /// 010: how often a project's protection is read again: a known value once a minute, an unknown
@@ -502,6 +510,7 @@ impl Engine {
             pr_checked: BTreeMap::new(),
             auto_waits: BTreeMap::new(),
             ready_seen: std::collections::BTreeSet::new(),
+            asked_tip: BTreeMap::new(),
             watched: BTreeMap::new(),
             data,
             runs: BTreeMap::new(),
@@ -1795,6 +1804,86 @@ impl Engine {
         Ok(())
     }
 
+    /// 011 (research R-4, FR-010): the watch found the target moved for a ready loop, outside
+    /// its merge line: a Free loop brings itself up to date, unless a limit is used up; Normal and
+    /// Strict (or `[updates] auto = false`) ask first. Asked once per target commit.
+    fn target_moved_for(&mut self, id: u64) {
+        let Some(m) = self
+            .watched
+            .get(&id)
+            .filter(|w| {
+                self.runs
+                    .get(&id)
+                    .is_some_and(|r| r.state.integrated.as_deref() == Some(w.integrated.as_str()))
+            })
+            .and_then(|w| w.read.clone())
+        else {
+            return;
+        };
+        if !m.moved || m.gone || !m.docs_changed.is_empty() {
+            return;
+        }
+        if self.asked_tip.get(&id) == Some(&m.target_commit) {
+            return;
+        }
+        let tx = self.ctx.tx.clone();
+        let Some(r) = self.runs.get_mut(&id) else {
+            return;
+        };
+        let Some(l) = r.state.feature_loop.clone() else {
+            return;
+        };
+        if r.state.stage != Stage::Ready
+            || l.outcome.is_none()
+            || l.update.is_some()
+            || l.lined_at.is_some()
+            || l.unlocked
+            || r.state.needs.is_some()
+            || r.is_busy()
+        {
+            return;
+        }
+        self.asked_tip.insert(id, m.target_commit.clone());
+        let n = m.commits.len();
+        let moved = format!(
+            "{} moved since this loop was verified ({n} commit{}{})",
+            r.state.target,
+            if n == 1 { "" } else { "s" },
+            if m.conflicts.is_empty() {
+                String::new()
+            } else {
+                format!(", conflicting in {}", m.conflicts.join(", "))
+            }
+        );
+        let result = if let Some((which, used)) = r.state.limit_hit(super::time::unix_now()) {
+            // FR-010: a limit used up asks whatever the level, naming it.
+            r.append(Event::NeedsEngineer {
+                why: format!(
+                    "{moved}. The {which} limit is used up ({used}): raise it to bring the loop up to date, or stop."
+                ),
+                options: vec!["raise the limit".into(), "stop".into()],
+            })
+        } else if update_by_itself(&l) {
+            super::update::start(r, tx, &m.target_commit, false, false)
+        } else {
+            r.append(Event::NeedsEngineer {
+                why: format!(
+                    "{moved}. Bring it up to date: {} is merged into the loop's own branch in its own working copy{}, then the gates and every story are checked again.",
+                    r.state.target,
+                    if m.conflicts.is_empty() {
+                        ""
+                    } else {
+                        ", a builder resolves the conflicts"
+                    }
+                ),
+                options: vec!["bring up to date".into(), "stop".into()],
+            })
+        };
+        if let Err(e) = result {
+            self.console.push(format!("run {id}: {e}"));
+        }
+    }
+
     /// 011: a merge the engineer asked for (FR-009a, research R-5): it joins its target's merge
     /// line and runs, checked again, when its turn comes; "without the latest check" only at the
     /// limit of overtaken updates and when it would not conflict (FR-009).
@@ -2077,8 +2166,24 @@ impl Engine {
                     ),
                     options,
                 })
-            } else {
+            } else if let Some((which, used)) = r.state.limit_hit(super::time::unix_now()) {
+                r.append(Event::NeedsEngineer {
+                    why: format!(
+                        "{target} moved before the merge. The {which} limit is used up ({used}): raise it to bring the loop up to date, or stop."
+                    ),
+                    options: vec!["raise the limit".into(), "stop".into()],
+                })
+            } else if update_by_itself(&l) {
                 super::update::start(r, tx, &tip, false, true)
+            } else {
+                // Normal and Strict ask first; the loop leaves the line while it waits, its merge
+                // still asked for (FR-009a, FR-010).
+                r.append(Event::NeedsEngineer {
+                    why: format!(
+                        "{target} moved before the merge. Bring it up to date: {target} is merged into the loop's own branch in its own working copy, then the gates and every story are checked again, and the merge goes on."
+                    ),
+                    options: vec!["bring up to date".into(), "stop".into()],
+                })
             }
         };
         if let Err(e) = result {
@@ -3240,6 +3345,7 @@ impl Engine {
             self.watch(id, false);
         }
         self.turns();
+        self.target_moved_for(id);
         let was_ready = self.ready_seen.contains(&id);
         if ready && !was_ready {
             self.ready_seen.insert(id);

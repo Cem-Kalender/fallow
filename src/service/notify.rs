@@ -65,6 +65,10 @@ pub fn notice(item: &Value, page: Option<&str>) -> Notice {
                 "{feature}: updated {} times and overtaken; your decision",
                 item["updates"].as_u64().unwrap_or(0)
             ),
+            Some("update") => format!(
+                "{feature}: {} moved; bring it up to date",
+                item["target"].as_str().unwrap_or("the target")
+            ),
             Some("merged_unchecked") => {
                 let n = item["unchecked"].as_u64().unwrap_or(0);
                 format!(
@@ -188,6 +192,13 @@ mod tests_011 {
         assert_eq!(
             notice(&b, None).body,
             "011-x merged without the latest check (1 commit)"
+        );
+        let mut c = json!({ "project": "p", "project_name": "shop", "feature": "011-x" });
+        c["kind"] = json!("update");
+        c["target"] = json!("main");
+        assert_eq!(
+            notice(&c, None).body,
+            "011-x: main moved; bring it up to date"
         );
     }
 }

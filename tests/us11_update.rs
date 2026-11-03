@@ -6,6 +6,7 @@ mod common;
 
 use common::*;
 use fallow::run::engine::{Msg, Request};
+use fallow::run::events::Level;
 use fallow::studio::Req;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
@@ -67,7 +68,27 @@ fn calc2_loop_ok() -> String {
 /// the second loop's target moved under it with a conflict in calc/__init__.py. `after` are the
 /// scenario's steps for what follows (the update's repair, the checks again).
 fn conflicting(root: &Path, after: &str) -> (fallow::service::ToolEngine, PathBuf, u64, u64) {
+    conflicting_at(root, after, None, 5.0, "")
+}
+
+/// `conflicting`, with 002-calc2 locked at `level` with a budget of `usd`, and `squad` added to
+/// the project's squad file before the locks.
+fn conflicting_at(
+    root: &Path,
+    after: &str,
+    level: Option<Level>,
+    usd: f64,
+    squad: &str,
+) -> (fallow::service::ToolEngine, PathBuf, u64, u64) {
     let repo = repo(root);
+    if !squad.is_empty() {
+        let path = repo.join(".fallow").join("squad.toml");
+        let mut text = std::fs::read_to_string(&path).unwrap_or_default();
+        text.push_str(squad);
+        std::fs::write(&path, text).unwrap();
+        git(&repo, &["add", "."]);
+        git(&repo, &["commit", "-q", "-m", "squad"]);
+    }
     let scenario = root.join("scenario.toml");
     std::fs::write(
         &scenario,
@@ -93,8 +114,8 @@ fn conflicting(root: &Path, after: &str) -> (fallow::service::ToolEngine, PathBu
         "repo",
         "002-calc2",
         None,
-        Some((5.0, 60)),
-        None,
+        Some((usd, 60)),
+        level,
         LockExtra::default(),
     );
     wait_for(tx, b, "002-calc2 ready", |v| v["stage"] == "ready");
@@ -565,10 +586,14 @@ fn a_merge_right_after_the_target_moved_is_not_tried() {
     ) {
         // The watch had read the move and its conflict.
         Err(why) => assert!(why.contains("moved"), "{why}"),
-        // Asked before the watch read it: in its line, brought up to date first.
+        // Asked before the watch read it: in its line, brought up to date first; at Normal it
+        // asks before the update (FR-010).
         Ok(_) => {
-            wait_for(tx, b, "brought up to date first", |v| {
+            wait_for(tx, b, "brought up to date first, or asked", |v| {
                 v["feature_loop"]["updates"] == 1
+                    || v["needs_engineer"]
+                        .as_str()
+                        .is_some_and(|n| n.contains("Bring it up to date"))
             });
         }
     }
@@ -687,4 +712,100 @@ fn serve_the_011_demo() {
     println!("serving {url} for {secs} s");
     std::thread::sleep(std::time::Duration::from_secs(secs));
     drop(e);
+}
+
+/// US3 scenario 1 (Q3): a loop locked Free whose target moved brings itself up to date, verifies
+/// again and is ready, with no action of the engineer; each step is recorded.
+#[test]
+fn a_free_loop_brings_itself_up_to_date() {
+    let root = scratch("u-free");
+    let after = format!(
+        "{}{}",
+        conflict_repair_step(1, "calc/__init__.py", &calc_resolved(), true),
+        check_step("US1", true, "")
+    );
+    let (e, _repo, _a, b) = conflicting_at(&root, &after, Some(Level::Free), 5.0, "");
+    let tx = &e.tx;
+    let r = wait_for(tx, b, "ready again by itself", |v| {
+        v["stage"] == "ready"
+            && v["feature_loop"]["update"].is_null()
+            && v["feature_loop"]["updates"] == 1
+    });
+    assert!(
+        !r["steering"].to_string().contains("\"update\""),
+        "no action of the engineer: {}",
+        r["steering"]
+    );
+    assert!(
+        r["feature_loop"]["update_steps"]
+            .to_string()
+            .contains("bringing the loop up to date")
+    );
+    drop(e);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// US3 scenario 2 (Q3): Normal, Strict, and Free with `[updates] auto = false` wait for the
+/// engineer, shown under "Needs you" as `update`; nothing starts.
+#[test]
+fn normal_strict_and_auto_off_ask_first() {
+    for (name, level, squad) in [
+        ("u-normal", Level::Normal, ""),
+        ("u-strict", Level::Strict, ""),
+        ("u-autooff", Level::Free, "[updates]\nauto = false\n"),
+    ] {
+        let root = scratch(name);
+        let (e, _repo, _a, b) = conflicting_at(&root, "", Some(level), 5.0, squad);
+        let tx = &e.tx;
+        wait_for(tx, b, "the question", |v| {
+            v["needs_engineer"]
+                .as_str()
+                .is_some_and(|n| n.contains("Bring it up to date"))
+        });
+        let d = ask(tx, Request::Dashboard).unwrap().to_string();
+        assert!(d.contains("\"kind\":\"update\""), "{name}: {d}");
+        std::thread::sleep(std::time::Duration::from_secs(2));
+        let v = wait_for(tx, b, "still waiting", |_| true);
+        assert_eq!(v["feature_loop"]["updates"], 0, "{name}: nothing started");
+        drop(e);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+}
+
+/// US3 scenario 3, FR-010: a Free loop whose budget is used up asks, naming the limit.
+#[test]
+fn a_free_loop_over_its_budget_asks() {
+    let root = scratch("u-budget");
+    let (e, _repo, _a, b) = conflicting_at(&root, "", Some(Level::Free), 0.04, "");
+    let tx = &e.tx;
+    let v = wait_for(tx, b, "the question", |v| {
+        v["needs_engineer"]
+            .as_str()
+            .is_some_and(|n| n.contains("limit is used up"))
+    });
+    assert_eq!(v["feature_loop"]["updates"], 0, "nothing started");
+    drop(e);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// FR-007: the budget used up during an update stops it there; the loop asks, nothing merged.
+#[test]
+fn a_budget_used_up_during_an_update_stops_it() {
+    let root = scratch("u-budget2");
+    let after = format!(
+        "{}{}",
+        conflict_repair_step(1, "calc/__init__.py", &calc_resolved(), true),
+        check_step("US1", true, "")
+    );
+    let (e, repo, _a, b) = conflicting_at(&root, &after, Some(Level::Free), 0.045, "");
+    let tx = &e.tx;
+    let main_before = git(&repo, &["rev-parse", "main"]);
+    let v = wait_for(tx, b, "stopped at the limit", |v| {
+        v["feature_loop"]["updates"] == 1 && v["limit_reached"].is_string()
+    });
+    assert_ne!(v["stage"], "ready");
+    assert!(v["needs_engineer"].is_string(), "{}", v["needs_engineer"]);
+    assert_eq!(git(&repo, &["rev-parse", "main"]), main_before);
+    drop(e);
+    let _ = std::fs::remove_dir_all(&root);
 }
