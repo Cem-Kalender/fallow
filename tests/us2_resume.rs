@@ -164,7 +164,7 @@ fn a_loop_survives_stops_at_every_kind_of_step_and_at_ready() {
     assert_eq!(v["feature_loop"]["outcome"][0], true);
 
     // The merge still goes through after all that.
-    ask(&e.tx, Request::Merge { id }).unwrap();
+    merge_when_read(&e.tx, id).unwrap();
     wait_for(&e.tx, id, "merged", |v| v["stage"] == "done");
     assert!(git(&repo, &["show", "main:calc/__init__.py"]).contains("def sub"));
     drop(e);

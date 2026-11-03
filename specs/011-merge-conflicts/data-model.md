@@ -16,7 +16,7 @@ unchanged.
 | `LeftPullRequest` | `unchecked: [commit]` | "Leave the pull request as it is" at the limit. |
 | `Touched` | `files: [path]` | Files an accepted step changed (from `work_done`'s list). |
 | `Overtaken` | `n`, `target_commit` | The target moved again while the loop held its turn (R-6). |
-| `Lined` | `at` | Joined the merge line of its target (`at`: when its merge was asked for, or when it took its turn again after waiting). |
+| `Lined` | (none: the record's own time) | Joined the merge line of its target, when its merge was asked for or when it took its turn again after waiting. |
 | `Unlined` | `why` | Left it. |
 | `Overlap` | `with` (run id), `files: [path]` | Another unfinished loop touches the same files. |
 | `WaitsFor` | `run` (run id), `from` (`lock` or `engineer`) | Does not start steps until that loop is merged, stopped or deleted. |

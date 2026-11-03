@@ -205,7 +205,7 @@ fn a_new_lock_reopens_only_the_affected_story() {
     for t in ["T001", "T002", "T003", "T004"] {
         assert!(tasks.contains(&format!("- [X] {t}")), "{t} ticked: {tasks}");
     }
-    ask(tx, Request::Merge { id }).unwrap();
+    merge_when_read(tx, id).unwrap();
     wait_for(tx, id, "merged", |v| v["stage"] == "done");
     assert!(git(&repo, &["show", "main:calc/__init__.py"]).contains("# ints only"));
     drop(e);
@@ -285,7 +285,7 @@ fn a_new_lock_while_paused_at_ready_is_built_and_checked_before_any_merge() {
     )
     .unwrap();
     // Nothing merges what the new lock has not been built and checked against.
-    let why = ask(tx, Request::Merge { id }).unwrap_err();
+    let why = merge_when_read(tx, id).unwrap_err();
     assert!(
         why.contains("not ready") || why.contains("not finished"),
         "{why}"
@@ -300,7 +300,7 @@ fn a_new_lock_while_paused_at_ready_is_built_and_checked_before_any_merge() {
         "the change was built"
     );
     assert_eq!(steps_of(&v, "review", "US1").len(), 2, "and checked again");
-    ask(tx, Request::Merge { id }).unwrap();
+    merge_when_read(tx, id).unwrap();
     wait_for(tx, id, "merged", |v| v["stage"] == "done");
     assert!(git(&repo, &["show", "main:calc/__init__.py"]).contains("# ints only"));
     drop(e);

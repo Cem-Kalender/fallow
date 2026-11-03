@@ -123,7 +123,7 @@ fn a_locked_feature_runs_task_by_task_to_one_merge() {
 
     // One merge: exactly the gated commit onto main.
     let gated = v["integrated"].as_str().unwrap().to_string();
-    ask(tx, Request::Merge { id }).unwrap();
+    merge_when_read(tx, id).unwrap();
     let v = wait_for(tx, id, "merged", |v| v["stage"] == "done");
     assert!(v["merged"].is_string());
     let main = git(&repo, &["rev-parse", "main"]);

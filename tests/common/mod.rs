@@ -495,6 +495,22 @@ pub fn leave_side_file_step(n: u32, file: &str, text: &str) -> String {
     conflict_repair_step(n, file, text, false)
 }
 
+/// Asks to merge once the loop's remote has been read (010: nothing is offered before it is,
+/// and a merge asked for meanwhile is refused with "reading the remote first").
+pub fn merge_when_read(tx: &Sender<Msg>, id: u64) -> Result<Value, String> {
+    let end = Instant::now() + Duration::from_secs(60);
+    while Instant::now() < end {
+        if let Ok(v) = ask(tx, Request::Loop { id }) {
+            let r = &v["publish"]["remote"];
+            if r["state"] != "checking" && r["protected"] != "checking" {
+                break;
+            }
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    ask(tx, Request::Merge { id })
+}
+
 /// A lead turn that runs analyze again, with no finding: for a scenario whose documents change
 /// after the first analyze (an unlock), which must be analyzed again before the lock (T086).
 #[allow(dead_code)]

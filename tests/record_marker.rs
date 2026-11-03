@@ -92,7 +92,7 @@ fn a_record_holds_no_text_of_the_loop() {
     wait_for(tx, id, "ready to merge", |v| v["stage"] == "ready");
     let record = root.join("data/records/v1").join(format!("loop-{id}.json"));
     assert!(!record.exists(), "a loop is recorded when it ends");
-    ask(tx, Request::Merge { id }).unwrap();
+    merge_when_read(tx, id).unwrap();
     wait_for(tx, id, "merged", |v| v["stage"] == "done");
     let end = std::time::Instant::now() + std::time::Duration::from_secs(10);
     while !record.exists() && std::time::Instant::now() < end {

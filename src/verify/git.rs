@@ -761,7 +761,8 @@ fn git_full(
 
 /// The arguments that make Fallow the author when the repository names none.
 fn author_args(dir: &Path) -> Vec<&'static str> {
-    if git(dir, &["config", "user.email"]).is_ok_and(|e| !e.trim().is_empty()) {
+    let set = |k: &str| git(dir, &["config", k]).is_ok_and(|v| !v.trim().is_empty());
+    if set("user.email") && set("user.name") {
         Vec::new()
     } else {
         vec![
@@ -785,6 +786,18 @@ pub fn git_version(dir: &Path) -> Option<(u32, u32)> {
 
 /// Updates need `merge-tree --write-tree` (research R-1).
 pub const MERGE_TREE_GIT: (u32, u32) = (2, 38);
+
+/// Why an update cannot run with the git found, if it cannot.
+pub fn version_refusal(found: Option<(u32, u32)>) -> Option<String> {
+    match found {
+        Some(v) if v >= MERGE_TREE_GIT => None,
+        Some((a, b)) => Some(format!(
+            "updates need git {}.{} or newer (found {a}.{b})",
+            MERGE_TREE_GIT.0, MERGE_TREE_GIT.1
+        )),
+        None => Some("could not read git's version".into()),
+    }
+}
 
 /// A path a merge could not resolve: `Text` when the merged file holds conflict markers,
 /// `NonText` otherwise (modify/delete, binary, rename, file/directory: git kept one side or added
@@ -813,17 +826,14 @@ pub struct MergeTree {
 /// `git merge-tree --write-tree ours theirs`: exit 0 clean, 1 conflicts, anything else an error.
 /// Refused below git 2.38, naming the version found.
 pub fn merge_tree(dir: &Path, ours: &str, theirs: &str) -> Result<MergeTree, String> {
-    match git_version(dir) {
-        Some(v) if v >= MERGE_TREE_GIT => {}
-        Some((a, b)) => {
-            return Err(format!(
-                "updates need git {}.{} or newer (found {a}.{b})",
-                MERGE_TREE_GIT.0, MERGE_TREE_GIT.1
-            ));
-        }
-        None => return Err("could not read git's version".into()),
+    if let Some(why) = version_refusal(git_version(dir)) {
+        return Err(why);
     }
-    let (code, out, err) = git_full(dir, &["merge-tree", "--write-tree", ours, theirs], &[])?;
+    let (code, out, err) = git_full(
+        dir,
+        &["-c", "core.quotePath=false", "merge-tree", "--write-tree", ours, theirs],
+        &[],
+    )?;
     if code != 0 && code != 1 {
         return Err(if err.is_empty() { format!("git merge-tree exited {code}") } else { err });
     }
@@ -893,8 +903,20 @@ pub fn would_conflict(
         return merge_tree(dir, integrated, target_tip)
             .map(|m| m.conflicts.into_iter().map(|c| c.path).collect());
     }
-    let _ = worktree_remove(dir, scratch);
+    // A fresh folder each time: a leftover checkout must never be merged into (review).
+    let scratch = scratch.join(format!(
+        "trial-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_nanos())
+    ));
+    let scratch = scratch.as_path();
     worktree_add(dir, scratch, None, integrated)?;
+    if rev(scratch, "HEAD")? != rev(dir, integrated)? {
+        let _ = worktree_remove(dir, scratch);
+        return Err("the trial merge's worktree is not at the verified commit".into());
+    }
     let author = author_args(dir);
     let mut args: Vec<&str> = author.clone();
     args.extend(["merge", "--no-commit", "--no-ff", "-q", target_tip]);
@@ -941,7 +963,7 @@ pub fn tree_with_paths_from(
     let _ = std::fs::remove_file(index_file);
     run(&["read-tree", tree])?;
     for p in paths {
-        let _ = run(&["rm", "-r", "-q", "--cached", "--ignore-unmatch", "--", p]);
+        run(&["rm", "-r", "-q", "-f", "--cached", "--ignore-unmatch", "--", p])?;
         let listed = git(dir, &["ls-tree", "-r", "--name-only", from_commit, "--", p])?;
         if !listed.trim().is_empty() {
             let spec = format!("{from_commit}:{p}");
@@ -1110,6 +1132,34 @@ mod update_tests {
         assert_eq!(show(&d, &c, "doc.md").unwrap().as_deref(), Some("Ours\n"));
         assert_eq!(show(&d, &c, "c.txt").unwrap().as_deref(), Some("c\n"));
         let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn a_directory_and_a_missing_path_are_taken_from_the_other_commit() {
+        let (d, l, t) = diverged(
+            "dirs",
+            &[("specs/f/spec.md", Some("ours spec\n")), ("specs/f/tasks.md", Some("ours tasks\n"))],
+            &[("specs/f/spec.md", Some("theirs spec\n")), ("specs/f/extra.md", Some("theirs only\n")), ("gone.txt", Some("theirs\n"))],
+        );
+        let m = merge_tree(&d, &l, &t).unwrap();
+        let idx = d.join(".git").join("fallow-update-index");
+        let kept = tree_with_paths_from(&d, &m.tree, &l, &["specs/f".into(), "gone.txt".into()], &idx).unwrap();
+        let c = commit_tree(&d, &kept, &[&l, &t], "kept").unwrap();
+        assert_eq!(show(&d, &c, "specs/f/spec.md").unwrap().as_deref(), Some("ours spec\n"));
+        assert_eq!(show(&d, &c, "specs/f/tasks.md").unwrap().as_deref(), Some("ours tasks\n"));
+        assert_eq!(show(&d, &c, "specs/f/extra.md").unwrap(), None, "the directory is ours as a whole");
+        assert_eq!(show(&d, &c, "gone.txt").unwrap(), None, "a path absent there is removed");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn an_old_git_is_refused_by_name() {
+        assert_eq!(version_refusal(Some((2, 45))), None);
+        assert_eq!(
+            version_refusal(Some((2, 37))).as_deref(),
+            Some("updates need git 2.38 or newer (found 2.37)")
+        );
+        assert!(version_refusal(None).is_some());
     }
 
     #[test]

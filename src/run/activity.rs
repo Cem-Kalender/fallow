@@ -218,9 +218,9 @@ fn fallow_lines(run: &Run, last_line: &BTreeMap<u32, u64>) -> Vec<Value> {
             .join("\n");
         out.push(check(at, g.part.clone(), text, result, detail));
     }
-    // 010: every publishing step (FR-018).
+    // 010: every publishing step (FR-018); 011: every update's step (FR-008).
     if let Some(l) = run.state.feature_loop.as_ref() {
-        for (at, text, ok) in &l.publish_steps {
+        for (at, text, ok) in l.publish_steps.iter().chain(l.update_steps.iter()) {
             out.push(check(
                 ms_of(at) + 999,
                 None,
