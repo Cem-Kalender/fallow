@@ -2164,7 +2164,8 @@ impl Engine {
         let result = if git::is_ancestor(&repo, &tip, &integrated) {
             super::machine::merge(r, tx, Vec::new())
         } else {
-            let counted = !l.switches.line || l.turn_updates > 0;
+            // The engineer's own "bring up to date" is no overtaking (phase 5 review L2).
+            let counted = (!l.switches.line || l.turn_updates > 0) && !l.update_asked;
             let at_limit = counted && l.overtaken + 1 >= l.update_limit;
             if counted {
                 if let Err(e) = r.append(Event::Overtaken {
