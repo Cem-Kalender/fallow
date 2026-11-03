@@ -1793,11 +1793,19 @@ impl Engine {
             .state
             .feature_loop
             .as_ref()
-            .is_some_and(|l| l.merge_pending && l.lined_at.is_none());
+            .is_some_and(|l| l.merge_pending);
         if at_limit || merge_pending {
-            r.append(Event::Lined {
-                at_ms: super::time::unix_ms(),
-            })?;
+            // Still in line (asked a moment ago): its turn makes the update (review 3).
+            let lined = r
+                .state
+                .feature_loop
+                .as_ref()
+                .is_some_and(|l| l.lined_at.is_some());
+            if !lined {
+                r.append(Event::Lined {
+                    at_ms: super::time::unix_ms(),
+                })?;
+            }
             self.turns();
             return Ok(());
         }

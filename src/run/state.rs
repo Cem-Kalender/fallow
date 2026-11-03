@@ -739,6 +739,7 @@ impl RunState {
                 ) {
                     if let Some(f) = self.feature_loop.as_mut() {
                         f.merge_pending = false;
+                        f.update_asked = false;
                     }
                 }
                 if *kind == SteeringKind::Publish {
@@ -1041,6 +1042,7 @@ impl RunState {
             } => {
                 if let Some(f) = self.feature_loop.as_mut() {
                     f.merge_pending = false;
+                    f.update_asked = false;
                     f.unlocked = false;
                     f.fresh_seq = l.seq;
                     // The base follows the new lock until an update merged a target in.
@@ -1461,6 +1463,7 @@ impl RunState {
                     f.turn_updates = 0;
                     if UNLINED_FOR_GOOD.contains(&why.as_str()) {
                         f.merge_pending = false;
+                        f.update_asked = false;
                     }
                 }
             }

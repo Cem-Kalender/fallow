@@ -329,6 +329,11 @@ fn not_through(run: &mut Run, u: &UpdateState, why: &str) -> Result<(), String> 
     run.append(Event::Stage {
         to: Stage::Ready,
         why: format!("not brought up to date: {why}"),
+    })?;
+    // Asked, so neither the watch nor the line starts it again by itself (phase 5 review 1).
+    run.append(Event::NeedsEngineer {
+        why: format!("The loop could not be brought up to date: {why}"),
+        options: vec!["bring up to date".into(), "stop".into()],
     })
 }
 

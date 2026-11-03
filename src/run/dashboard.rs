@@ -267,7 +267,7 @@ pub fn needs(run: &Run, project_name: &str) -> Vec<Value> {
             Some("docs_changed")
         } else if l.update.is_none() && n.options.iter().any(|o| o == "bring up to date") {
             Some("update")
-        } else if n.options.iter().any(|o| o == "raise the limit") {
+        } else if s.stage == Stage::Ready && n.options.iter().any(|o| o == "raise the limit") {
             // A limit asked at Ready (FR-010), named, never shown as "Ready to merge" (M3).
             Some("stopped")
         } else {
@@ -275,7 +275,11 @@ pub fn needs(run: &Run, project_name: &str) -> Vec<Value> {
         };
         if let Some(kind) = kind {
             let mut v = base(kind, &n.at);
-            v["key"] = json!(format!("{}:{kind}:{}", s.id, n.at));
+            v["key"] = json!(if kind == "stopped" {
+                format!("{}:needs:{}", s.id, n.at)
+            } else {
+                format!("{}:{kind}:{}", s.id, n.at)
+            });
             v["text"] = json!(n.why);
             v["updates"] = json!(l.updates);
             v["target"] = json!(s.target);

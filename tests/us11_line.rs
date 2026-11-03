@@ -249,13 +249,14 @@ fn merges_into_one_target_take_turns() {
     assert_eq!(reply["in_line_after"], "001-calc", "{reply}");
     let v = loop_view(tx, b);
     assert_eq!(v["line"]["after"], "001-calc", "{}", v["line"]);
-    // The engineer brings b up to date while it waits in line: not in its turn, not counted.
+    // The engineer asks to bring b up to date while it waits in line: its turn makes it, once,
+    // with a's merge underneath (SC-007, phase 5 review 3).
     ask(tx, Request::Update { id: b }).unwrap();
     wait_for(tx, a, "a merged", |v| v["stage"] == "done");
     let r = wait_for(tx, b, "b merged", |v| v["stage"] == "done");
     assert_eq!(
-        r["feature_loop"]["updates"], 2,
-        "the engineer's update, then once for a's merge (SC-007)"
+        r["feature_loop"]["updates"], 1,
+        "verified again once, in its turn (SC-007)"
     );
     assert_eq!(
         r["feature_loop"]["overtaken"], 0,
@@ -321,7 +322,14 @@ fn a_loop_that_waits_leaves_the_line() {
 #[test]
 fn an_overtaken_update_at_the_limit_asks_and_may_merge_unchecked() {
     let root = scratch("l-limit");
-    let after = format!("{}{}", slow_check("US1", 8000), check_step("US2", true, ""));
+    // b (Free) may bring itself up to date at each move of main (US3): spare checks.
+    let after = format!(
+        "{}{}{}{}",
+        slow_check("US1", 8000),
+        check_step("US2", true, ""),
+        check_step("US1", true, ""),
+        check_step("US1", true, "")
+    );
     let extra = LockExtra {
         update_limit: Some(1),
         run_after: None,
@@ -390,11 +398,14 @@ fn an_overtaken_update_at_the_limit_asks_and_may_merge_unchecked() {
 fn verify_again_resets_the_count_and_merges_after() {
     let root = scratch("l-again");
     let after = format!(
-        "{}{}{}{}",
+        "{}{}{}{}{}{}",
         slow_check("US1", 8000),
         check_step("US2", true, ""),
         check_step("US1", true, ""),
-        check_step("US2", true, "")
+        check_step("US2", true, ""),
+        // b (Free) may bring itself up to date at each move of main (US3).
+        check_step("US1", true, ""),
+        check_step("US1", true, "")
     );
     let extra = LockExtra {
         update_limit: Some(1),
