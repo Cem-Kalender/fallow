@@ -139,7 +139,7 @@ with "bring up to date" and "stop" (never "stop" while a pull request is open, F
 
 **Decision**: a line per `(repository, target branch)`, kept in the engine and rebuilt on load from
 `Lined { at }` and `Unlined { why }` in each loop's log; ordered by `at`, then run id. `at` is the time
-the loop became ready with its current result. A loop joins only for a merge the engineer asked for
+its merge was asked for (or the time it took its turn again, at the end of the line, after waiting). A loop joins only for a merge the engineer asked for
 (with the update made right before that merge, when the target moved); a Free loop's own update,
 made before any merge was asked for, runs outside the line. It leaves when merged,
 stopped, deleted, or waiting for anything (needs, a cap, its budget, Paused, Ready waiting for the
@@ -239,9 +239,9 @@ date or to check it before a push").
 **Decision**: `.fallow/squad.toml` gains `[updates]` with `auto` (Free's own updates), `line` (the
 merge line) and `overlap` (the warnings), each a boolean, default `true`, parsed in
 `src/config/squad.rs`. With `auto = false`, a Free loop asks as Normal does; with `line = false`,
-merges are not held (FR-009a off; the recheck before each merge still applies); with `overlap =
-false`, no overlap is computed or shown. The run's comparison record (the recorded-run fields V
-allows) gains the three values. A merge that would conflict is never offered whatever the switches.
+merges are not held (FR-009a off; the recheck before each merge still applies, and every move of the target found there counts as an overtaking, so the limit of R-6 still holds); with `overlap =
+false`, no overlap is computed or shown. `LoopCreated` records the three values in force at the lock (`switches`), so a recorded run says
+which parts were off; the squad file's contract (004's `contracts/squad-file.md`) gains `[updates]`. A merge that would conflict is never offered whatever the switches.
 
 ## R-9 Restart
 

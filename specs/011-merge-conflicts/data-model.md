@@ -16,14 +16,14 @@ unchanged.
 | `LeftPullRequest` | `unchecked: [commit]` | "Leave the pull request as it is" at the limit. |
 | `Touched` | `files: [path]` | Files an accepted step changed (from `work_done`'s list). |
 | `Overtaken` | `n`, `target_commit` | The target moved again while the loop held its turn (R-6). |
-| `Lined` | `at` | Joined the merge line of its target. |
+| `Lined` | `at` | Joined the merge line of its target (`at`: when its merge was asked for, or when it took its turn again after waiting). |
 | `Unlined` | `why` | Left it. |
 | `Overlap` | `with` (run id), `files: [path]` | Another unfinished loop touches the same files. |
 | `WaitsFor` | `run` (run id), `from` (`lock` or `engineer`) | Does not start steps until that loop is merged, stopped or deleted. |
 | `WaitEnded` | `run`, `why` | The wait is over. |
 | `Merged` (existing) | + `unchecked: [commit]` | Target commits a "Merge without the latest check" was not verified with. |
 | `Published` (existing) | + `unchecked: [commit]` | The same for "Publish without the latest check". |
-| `LoopCreated` (existing) | + `update_limit` (default 3), + `run_after: Option<run id>` | The lock's settings. |
+| `LoopCreated` (existing) | + `update_limit` (default 3), + `run_after: Option<run id>`, + `switches: { auto, line, overlap }` (from `.fallow/squad.toml` `[updates]`, default all true) | The lock's settings and the parts switched off for this run (FR-016c). |
 | `Steering` (existing) | + kinds `Update`, `MergeUnchecked`, `PublishUnchecked`, `LeavePullRequest`, `WaitFor`, `StopWaiting` | Recorded steering actions (II). |
 
 ## LoopState (`src/run/state.rs`)
