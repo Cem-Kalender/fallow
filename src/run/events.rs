@@ -624,7 +624,11 @@ pub struct Switches {
 
 impl Default for Switches {
     fn default() -> Self {
-        Switches { auto: true, line: true, overlap: true }
+        Switches {
+            auto: true,
+            line: true,
+            overlap: true,
+        }
     }
 }
 

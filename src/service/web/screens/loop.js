@@ -35,6 +35,33 @@
   const CHECK = { passed: "green", failed: "red", waiting: "yellow", skipped: "grey" };
   const PR_STATE = { open: "open", merged: "merged", closed: "closed without merging" };
 
+  // 011: the target moved under the loop, and an update in progress (contracts/web-api.md).
+  function targetArea(v) {
+    const t = v.target || {};
+    const u = v.update;
+    const offer = v.offer || [];
+    const lines = [];
+    if (t.gone) {
+      lines.push(h`<div class="notice">The target branch ${v.base_branch} is gone: nothing is merged. Stop the loop, or unlock the feature and lock it from another branch.</div>`);
+    } else if (t.moved && !u) {
+      const n = (t.commits || []).length;
+      lines.push(h`<div class="notice"><b>${v.base_branch} moved since this loop was verified</b>: ${n} commit${n === 1 ? "" : "s"}${(t.conflicts || []).length ? h`, which conflict with this feature in <span class="mono">${t.conflicts.join(", ")}</span>` : ""}.
+        ${(t.docs_changed || []).length ? h` It changed this feature's documents (<span class="mono">${t.docs_changed.join(", ")}</span>): lock again with them, or stop.` : h` The loop is brought up to date in its own working copy and verified again before anything is merged.`}
+        ${offer.includes("bring_up_to_date") ? h` <button class="btn btn2 sm" data-act="update">Bring up to date</button>` : ""}${offer.includes("lock_again") ? h` <button class="btn btn2 sm" data-act="lock-again">Lock again</button>` : ""}</div>`);
+      lines.push(h`<ul class="small muted plain">${(t.commits || []).map((c) => h`<li><span class="mono tiny">${short(c.sha)}</span> ${c.subject} <span class="pill ${c.from ? "blue" : "grey"}">${c.from || "outside Fallow"}</span></li>`)}</ul>`);
+    }
+    if (u) {
+      const step = (u.docs_changed || []).length ? "waiting for you (the documents changed)" : !u.working && !u.merged ? "merging" : !u.merged ? "resolving the conflicts" : "gates and checking every story again";
+      lines.push(h`<div class="row wrap gap-8"><span class="pill blue">Bringing up to date…</span><span class="small muted">update ${u.n}: ${v.base_branch} at ${short(u.target_commit)} · ${step}${(u.conflicts || []).length ? ` · conflicts: ${u.conflicts.map((c) => c.path).join(", ")}` : ""}</span></div>`);
+    }
+    if ((v.updates || 0) > 0 && !u && !t.moved) lines.push(h`<div class="small muted">Brought up to date ${v.updates} time${v.updates === 1 ? "" : "s"}; verified again on top of ${v.base_branch}.</div>`);
+    // The builder's own account of conflicts without markers (the update in progress, else the
+    // last one): shown, never taken as evidence.
+    const rs = v.resolutions || [];
+    if (rs.length) lines.push(h`<div class="small"><span class="muted">How the builder says it resolved what had no markers (the gates and the stories checked the result, not this):</span><ul class="plain">${rs.map((r) => h`<li><span class="mono">${r.path}</span>: ${r.how}</li>`)}</ul></div>`);
+    return lines.length ? h`<section class="card pad-12 col gap-6" aria-label="The target">${lines}</section>` : raw("");
+  }
+
   function publishArea(v) {
     const p = v.publish;
     if (!p) return raw("");
@@ -549,6 +576,8 @@
       const [commit, by] = x.detail.split(" ");
       return by === "(when_verified)" ? `published ${short(commit)} on its own when verified` : `published ${short(commit)} as a pull request`;
     }
+    // 011: the target's commit an update or "Lock again" was asked with.
+    if (["update", "lock_again"].includes(x.kind) && x.detail) return `${x.kind === "update" ? "brought up to date with" : "locked again for"} ${x.target || "the target"} at ${short(x.detail)}`;
     return `${x.kind.replace(/_/g, " ")}${x.detail ? `: ${x.detail}` : ""}`;
   }
 
@@ -579,7 +608,11 @@
     const offer = pub ? pub.offer || [] : ["local_merge"];
     const busyPublishing = v.busy === "publish";
     // 010: what the remote allows (FR-005 to FR-007): a pull request, a local merge, or both.
-    const publishButtons = merge && !busyPublishing ? h`${offer.includes("pull_request") ? h`<button class="btn" data-act="publish">Push and open a pull request</button>` : ""}${offer.includes("local_merge") ? h`<button class="btn${offer.includes("pull_request") ? " btn2" : ""}" data-act="merge">${offer.includes("pull_request") ? "Merge locally" : v.stage === "ready" ? "Merge" : "Merge anyway…"}</button>` : ""}` : "";
+    // 011: only what can succeed (FR-003): no merge or publication while the target moved.
+    const can = v.offer || null;
+    const mayPublish = !can || can.includes("publish") || v.stage === "done_unverified";
+    const mayMerge = !can || can.includes("merge") || v.stage === "done_unverified";
+    const publishButtons = merge && !busyPublishing ? h`${offer.includes("pull_request") && mayPublish ? h`<button class="btn" data-act="publish">Push and open a pull request</button>` : ""}${offer.includes("local_merge") && mayMerge ? h`<button class="btn${offer.includes("pull_request") ? " btn2" : ""}" data-act="merge">${offer.includes("pull_request") ? "Merge locally" : v.stage === "ready" ? "Merge" : "Merge anyway…"}</button>` : ""}` : "";
     app.innerHTML = h`<div class="page col gap-16">
       <div class="row wrap gap-20 loop-head">
         <div><div class="small muted">${v.project} · locked at <span class="mono tiny">${short(v.lock_commit)}</span> · pipeline <a href="#/pipelines">${v.pipeline ? v.pipeline.name : "?"}</a></div>
@@ -596,6 +629,7 @@
       </div>
       ${steerLine(v)}
       ${v.stage === "done_unverified" ? h`<div class="notice">Done, not verified by Fallow: ${(v.outcome && v.outcome[1] || []).join(", ")}. Review the work yourself before merging.</div>` : ""}
+      ${targetArea(v)}
       ${publishArea(v)}
       ${liveGraph(v)}
       ${banner(v)}
@@ -792,6 +826,28 @@
         state.detail = null;
         render(app);
         return refresh(app);
+      case "update": {
+        const v = state.view;
+        const t = v.target || {};
+        const ok = await confirm({
+          title: "Bring this loop up to date?",
+          text: `${v.base_branch} is merged into the loop's own branch, in its own working copy; ${(t.conflicts || []).length ? "a builder resolves the conflicts; " : ""}the gates run again and every story is checked again. Your folder and ${v.base_branch} are not touched.`,
+          items: [`${v.base_branch} at ${short(t.target_commit)} into ${v.build_branch}`],
+          ok: "Bring up to date",
+        });
+        if (ok) run("update", {});
+        return;
+      }
+      case "lock-again": {
+        const v = state.view;
+        try {
+          const out = await post(`/api/loops/${id}/lock-again`, {});
+          // The spec session opens with Fallow's message in its box, for you and the lead.
+          try { sessionStorage.setItem("fallow.prefill", out.message); } catch (_) { /* not kept */ }
+          location.hash = `#/p/${encodeURIComponent(out.project || v.project)}/f/${encodeURIComponent(out.feature || v.feature)}`;
+        } catch (e) { alertLine(e.message); }
+        return;
+      }
       case "pause":
         return run("pause");
       case "resume":

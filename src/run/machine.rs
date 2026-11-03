@@ -453,7 +453,8 @@ pub fn on_done(run: &mut Run, ctx: &Ctx, done: Done) -> Result<(), String> {
             if run.state.stage != Stage::Publishing {
                 return Ok(());
             }
-            let changed = st.state != pb.state || st.checks != pb.checks || st.merged_at != pb.merged_at;
+            let changed =
+                st.state != pb.state || st.checks != pb.checks || st.merged_at != pb.merged_at;
             if changed {
                 run.append(Event::PullRequestState {
                     state: st.state,
@@ -603,7 +604,9 @@ pub fn pause(run: &mut Run) -> Result<(), String> {
         return Err("the loop is already paused".into());
     }
     if run.busy == Some(Busy::Publish) || run.state.stage == Stage::Publishing {
-        return Err("a loop being published or with its pull request open has nothing to pause".into());
+        return Err(
+            "a loop being published or with its pull request open has nothing to pause".into(),
+        );
     }
     run.append(Event::Steering {
         kind: SteeringKind::Pause,
@@ -729,7 +732,9 @@ pub fn merge(run: &mut Run, tx: std::sync::mpsc::Sender<Msg>) -> Result<(), Stri
             let moved = git::rev(&repo, &format!("refs/heads/{target}"))
                 .is_ok_and(|tip| !git::is_ancestor(&repo, &tip, &commit));
             let r = if moved {
-                Err(format!("{MOVED}{target} moved since this loop was verified"))
+                Err(format!(
+                    "{MOVED}{target} moved since this loop was verified"
+                ))
             } else {
                 crate::publish::local::merge(&repo, &target, &commit, &scratch)
             };
@@ -804,7 +809,12 @@ pub fn publish(
         title,
         body: body_file,
     };
-    let (tx, settings, id, who) = (ctx.tx.clone(), ctx.settings.clone(), run.id(), by.to_string());
+    let (tx, settings, id, who) = (
+        ctx.tx.clone(),
+        ctx.settings.clone(),
+        run.id(),
+        by.to_string(),
+    );
     let spawned = std::thread::Builder::new()
         .name(format!("publish-{id}"))
         .spawn(move || {
@@ -833,9 +843,11 @@ fn feature_title(run: &Run) -> String {
     };
     super::feature::doc_at(run, &l.lock_commit, "spec.md")
         .and_then(|t| {
-            t.lines()
-                .find_map(|x| x.strip_prefix("# "))
-                .map(|h| h.trim_start_matches("Feature Specification:").trim().to_string())
+            t.lines().find_map(|x| x.strip_prefix("# ")).map(|h| {
+                h.trim_start_matches("Feature Specification:")
+                    .trim()
+                    .to_string()
+            })
         })
         .filter(|t| !t.is_empty())
         .unwrap_or_else(|| l.feature.clone())
@@ -855,7 +867,9 @@ pub fn stop(run: &mut Run, reason: Option<String>) -> Result<(), String> {
     }
     // 010: its pull request is followed to its end (FR-015: stop once it is closed).
     if run.state.stage == Stage::Publishing {
-        return Err("its pull request is open: close it on the remote first, then stop the loop".into());
+        return Err(
+            "its pull request is open: close it on the remote first, then stop the loop".into(),
+        );
     }
     // Every running step ends, and the lead's calls for their questions too.
     run.stop_all();

@@ -166,7 +166,8 @@ pub fn compute(
         &[loop_head],
         &format!("Fallow: update {n} of {feature}, conflicts with {target} at {short} to resolve"),
     )?;
-    let branch = git::create_numbered_branch(repo, &format!("fallow/{feature}/update-{n}"), &working)?;
+    let branch =
+        git::create_numbered_branch(repo, &format!("fallow/{feature}/update-{n}"), &working)?;
     Ok(Computed::Conflicted {
         working,
         branch,
@@ -182,7 +183,12 @@ pub fn part(n: u32) -> String {
 /// Starts an update of the loop to `target_commit` (research R-2): records it, takes a ready
 /// loop back to building (FR-003a), and computes the merge on a thread; its end comes back as
 /// `Done::Update`.
-pub fn start(run: &mut Run, tx: Sender<Msg>, target_commit: &str, remote: bool) -> Result<(), String> {
+pub fn start(
+    run: &mut Run,
+    tx: Sender<Msg>,
+    target_commit: &str,
+    remote: bool,
+) -> Result<(), String> {
     let l = run
         .state
         .feature_loop
@@ -221,7 +227,16 @@ pub fn start(run: &mut Run, tx: Sender<Msg>, target_commit: &str, remote: bool) 
             why: format!("bringing {feature} up to date with {target}"),
         })?;
     }
-    computing(run, tx, n, &feature, &loop_head, target_commit, &target, reconciled)
+    computing(
+        run,
+        tx,
+        n,
+        &feature,
+        &loop_head,
+        target_commit,
+        &target,
+        reconciled,
+    )
 }
 
 /// Computes update `n` on a thread.
@@ -373,7 +388,9 @@ pub fn resolved(
         wrong.push(format!("{p} still holds a conflict marker: {line}"));
     }
     for f in git::side_files(&repo, commit, &all) {
-        wrong.push(format!("{f} is a file git added beside a conflict: remove it"));
+        wrong.push(format!(
+            "{f} is a file git added beside a conflict: remove it"
+        ));
     }
     let told: Vec<String> = result["resolutions"]
         .as_array()
@@ -381,7 +398,11 @@ pub fn resolved(
         .flatten()
         .filter_map(|r| r["path"].as_str().map(|p| p.replace('\\', "/")))
         .collect();
-    for c in u.conflicts.iter().filter(|c| c.kind == ConflictKindRec::NonText) {
+    for c in u
+        .conflicts
+        .iter()
+        .filter(|c| c.kind == ConflictKindRec::NonText)
+    {
         if !told.contains(&c.path) {
             wrong.push(format!(
                 "{} had a conflict without markers: say how you resolved it in `resolutions`",
@@ -501,7 +522,10 @@ pub fn resume(run: &mut Run, tx: Sender<Msg>) -> Result<(), String> {
         return Ok(());
     }
     if let Some(head) = already_merged(run, &u) {
-        return run.append(Event::UpdateMerged { n: u.n, commit: head });
+        return run.append(Event::UpdateMerged {
+            n: u.n,
+            commit: head,
+        });
     }
     let reconciled = l.reconciled_target.clone();
     computing(

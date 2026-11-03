@@ -124,7 +124,11 @@ pub struct UpdateSwitches {
 
 impl Default for UpdateSwitches {
     fn default() -> Self {
-        UpdateSwitches { auto: true, line: true, overlap: true }
+        UpdateSwitches {
+            auto: true,
+            line: true,
+            overlap: true,
+        }
     }
 }
 
@@ -165,7 +169,9 @@ impl Squad {
                             file: file.into(),
                             line: None,
                             level: Level::Warning,
-                            message: format!("unknown key updates.{k}: auto, line and overlap are known"),
+                            message: format!(
+                                "unknown key updates.{k}: auto, line and overlap are known"
+                            ),
                         });
                         continue;
                     }
@@ -335,9 +341,20 @@ builder = ["Bash(npm run lint:*)"]
             "[updates]\nauto = false\noverlap = false\nlinee = true\n\n[[gate]]\nname = \"t\"\ncommand = \"x\"\n",
             &mut n,
         );
-        assert_eq!(s.updates, UpdateSwitches { auto: false, line: true, overlap: false });
+        assert_eq!(
+            s.updates,
+            UpdateSwitches {
+                auto: false,
+                line: true,
+                overlap: false
+            }
+        );
         assert_eq!(s.gates.len(), 1, "the rest of the file is kept");
-        assert!(n.iter().any(|x| x.message.contains("unknown key updates.linee")), "{n:?}");
+        assert!(
+            n.iter()
+                .any(|x| x.message.contains("unknown key updates.linee")),
+            "{n:?}"
+        );
         let d = Squad::parse("squad.toml", "", &mut Vec::new());
         assert_eq!(d.updates, UpdateSwitches::default());
     }

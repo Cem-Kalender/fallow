@@ -343,7 +343,9 @@ fn studio_route(
             Err(e) => Some(Err(e)),
         },
         ("GET", ["api", "projects", p]) => r(Req::Project { id: p.to_string() }),
-        ("POST", ["api", "projects", p, "remote", "check"]) => r(Req::CheckRemote { id: p.to_string() }),
+        ("POST", ["api", "projects", p, "remote", "check"]) => {
+            r(Req::CheckRemote { id: p.to_string() })
+        }
         ("DELETE", ["api", "features", p, f]) => {
             Some(confirmed().map(|()| Request::DeleteFeature {
                 project: p.to_string(),
@@ -770,6 +772,7 @@ fn handle(mut req: tiny_http::Request, tx: &Sender<Msg>, port: u16, secret: &str
                 ["publish"] => Request::Publish { id: i },
                 // 011: bring the loop up to date with its target (contracts/web-api.md).
                 ["update"] => Request::Update { id: i },
+                ["lock-again"] => Request::LockAgain { id: i },
                 ["questions", q, "answer"] => Request::QuestionAnswer {
                     id: i,
                     q: percent_decode(q),

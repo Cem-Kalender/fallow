@@ -777,7 +777,9 @@ fn author_args(dir: &Path) -> Vec<&'static str> {
 /// The installed git's version, `(major, minor)`.
 pub fn git_version(dir: &Path) -> Option<(u32, u32)> {
     let v = git(dir, &["--version"]).ok()?;
-    let nums = v.split_whitespace().find(|w| w.starts_with(|c: char| c.is_ascii_digit()))?;
+    let nums = v
+        .split_whitespace()
+        .find(|w| w.starts_with(|c: char| c.is_ascii_digit()))?;
     let mut it = nums.split('.');
     let major = it.next()?.parse().ok()?;
     let minor = it.next()?.parse().ok()?;
@@ -831,11 +833,22 @@ pub fn merge_tree(dir: &Path, ours: &str, theirs: &str) -> Result<MergeTree, Str
     }
     let (code, out, err) = git_full(
         dir,
-        &["-c", "core.quotePath=false", "merge-tree", "--write-tree", ours, theirs],
+        &[
+            "-c",
+            "core.quotePath=false",
+            "merge-tree",
+            "--write-tree",
+            ours,
+            theirs,
+        ],
         &[],
     )?;
     if code != 0 && code != 1 {
-        return Err(if err.is_empty() { format!("git merge-tree exited {code}") } else { err });
+        return Err(if err.is_empty() {
+            format!("git merge-tree exited {code}")
+        } else {
+            err
+        });
     }
     let mut lines = out.lines();
     let tree = lines
@@ -845,7 +858,11 @@ pub fn merge_tree(dir: &Path, ours: &str, theirs: &str) -> Result<MergeTree, Str
         .ok_or("git merge-tree wrote no tree")?
         .to_string();
     if code == 0 {
-        return Ok(MergeTree { tree, clean: true, conflicts: Vec::new() });
+        return Ok(MergeTree {
+            tree,
+            clean: true,
+            conflicts: Vec::new(),
+        });
     }
     // Conflicted file info: "<mode> <object> <stage>\t<path>", up to the blank line before the
     // informational messages.
@@ -868,17 +885,27 @@ pub fn merge_tree(dir: &Path, ours: &str, theirs: &str) -> Result<MergeTree, Str
             .is_ok_and(|text| text.lines().any(is_marker));
         conflicts.push(Conflict {
             path,
-            kind: if markers { ConflictKind::Text } else { ConflictKind::NonText },
+            kind: if markers {
+                ConflictKind::Text
+            } else {
+                ConflictKind::NonText
+            },
         });
     }
-    Ok(MergeTree { tree, clean: false, conflicts })
+    Ok(MergeTree {
+        tree,
+        clean: false,
+        conflicts,
+    })
 }
 
 /// A path as git prints it, without C-style quoting for the simple cases.
 fn unquote(p: &str) -> String {
     let p = p.trim();
     if p.len() >= 2 && p.starts_with('"') && p.ends_with('"') {
-        p[1..p.len() - 1].replace("\\\"", "\"").replace("\\\\", "\\")
+        p[1..p.len() - 1]
+            .replace("\\\"", "\"")
+            .replace("\\\\", "\\")
     } else {
         p.to_string()
     }
@@ -921,7 +948,9 @@ pub fn would_conflict(
     worktree_add(dir, scratch, None, integrated).map_err(cleanup)?;
     let at = rev(scratch, "HEAD").map_err(cleanup)?;
     if at != rev(dir, integrated).map_err(cleanup)? {
-        return Err(cleanup("the trial merge's worktree is not at the verified commit".into()));
+        return Err(cleanup(
+            "the trial merge's worktree is not at the verified commit".into(),
+        ));
     }
     let author = author_args(dir);
     let mut args: Vec<&str> = author.clone();
@@ -929,10 +958,16 @@ pub fn would_conflict(
     let merged = git(scratch, &args);
     let conflicts: Vec<String> = git(
         scratch,
-        &["-c", "core.quotePath=false", "diff", "--name-only", "--diff-filter=U"],
+        &[
+            "-c",
+            "core.quotePath=false",
+            "diff",
+            "--name-only",
+            "--diff-filter=U",
+        ],
     )
-        .map(|s| s.lines().map(str::to_string).collect())
-        .unwrap_or_default();
+    .map(|s| s.lines().map(str::to_string).collect())
+    .unwrap_or_default();
     let _ = git(scratch, &["merge", "--abort"]);
     let _ = cleanup(String::new());
     match (merged, conflicts.is_empty()) {
@@ -943,7 +978,12 @@ pub fn would_conflict(
 
 /// `git commit-tree tree -p <parent>… -m message`: a commit made by Fallow (as the repository's
 /// author, or as Fallow when none is configured); no hook runs.
-pub fn commit_tree(dir: &Path, tree: &str, parents: &[&str], message: &str) -> Result<String, String> {
+pub fn commit_tree(
+    dir: &Path,
+    tree: &str,
+    parents: &[&str],
+    message: &str,
+) -> Result<String, String> {
     let author = author_args(dir);
     let mut args: Vec<&str> = author;
     args.extend(["commit-tree", tree]);
@@ -972,19 +1012,40 @@ pub fn tree_with_paths_from(
     let _ = std::fs::remove_file(index_file);
     run(&["read-tree", tree])?;
     for p in paths {
-        run(&["rm", "-r", "-q", "-f", "--cached", "--ignore-unmatch", "--", p])?;
+        run(&[
+            "rm",
+            "-r",
+            "-q",
+            "-f",
+            "--cached",
+            "--ignore-unmatch",
+            "--",
+            p,
+        ])?;
         let listed = git(dir, &["ls-tree", "-r", "--name-only", from_commit, "--", p])?;
         if !listed.trim().is_empty() {
             let spec = format!("{from_commit}:{p}");
             let kind = git(dir, &["cat-file", "-t", &spec])?;
             if kind.trim() == "tree" {
-                run(&["read-tree", &format!("--prefix={}/", p.trim_end_matches('/')), &spec])?;
+                run(&[
+                    "read-tree",
+                    &format!("--prefix={}/", p.trim_end_matches('/')),
+                    &spec,
+                ])?;
             } else {
                 let line = git(dir, &["ls-tree", from_commit, "--", p])?;
-                let (meta, _) = line.trim().split_once('\t').ok_or("ls-tree gave no entry")?;
+                let (meta, _) = line
+                    .trim()
+                    .split_once('\t')
+                    .ok_or("ls-tree gave no entry")?;
                 let mut m = meta.split_whitespace();
                 let (mode, _, oid) = (m.next().unwrap_or(""), m.next(), m.next().unwrap_or(""));
-                run(&["update-index", "--add", "--cacheinfo", &format!("{mode},{oid},{p}")])?;
+                run(&[
+                    "update-index",
+                    "--add",
+                    "--cacheinfo",
+                    &format!("{mode},{oid},{p}"),
+                ])?;
             }
         }
     }
@@ -1026,7 +1087,11 @@ pub fn create_new_branch(dir: &Path, name: &str, at: &str) -> Result<(), String>
 /// The first of `base`, `base-2` … `base-9` not taken, created at `at`.
 pub fn create_numbered_branch(dir: &Path, base: &str, at: &str) -> Result<String, String> {
     for n in 1..=9 {
-        let name = if n == 1 { base.to_string() } else { format!("{base}-{n}") };
+        let name = if n == 1 {
+            base.to_string()
+        } else {
+            format!("{base}-{n}")
+        };
         if create_new_branch(dir, &name, at).is_ok() {
             return Ok(name);
         }
@@ -1036,9 +1101,12 @@ pub fn create_numbered_branch(dir: &Path, base: &str, at: &str) -> Result<String
 
 /// `git log --oneline from..to -- path`, for the repair prompt (what each side changed).
 pub fn log_paths(dir: &Path, from: &str, to: &str, path: &str) -> Vec<String> {
-    git(dir, &["log", "--oneline", &format!("{from}..{to}"), "--", path])
-        .map(|s| s.lines().map(str::to_string).collect())
-        .unwrap_or_default()
+    git(
+        dir,
+        &["log", "--oneline", &format!("{from}..{to}"), "--", path],
+    )
+    .map(|s| s.lines().map(str::to_string).collect())
+    .unwrap_or_default()
 }
 
 /// 011: puts the worktree `dir` at `commit`, detached (an update's repair starts there).
@@ -1056,7 +1124,11 @@ pub fn checkout_forward(dir: &Path, branch: &str, commit: &str) -> Result<(), St
 /// 011: the parents of `commit`, in order.
 pub fn parents(dir: &Path, commit: &str) -> Result<Vec<String>, String> {
     let line = git(dir, &["rev-list", "--parents", "-n", "1", commit])?;
-    Ok(line.split_whitespace().skip(1).map(str::to_string).collect())
+    Ok(line
+        .split_whitespace()
+        .skip(1)
+        .map(str::to_string)
+        .collect())
 }
 
 /// 011: the first line of `commit`'s message.
@@ -1071,9 +1143,17 @@ pub fn tree_of(dir: &Path, commit: &str) -> Result<String, String> {
 
 /// The commits on `to`'s first-parent line since `from`, oldest first (FR-002).
 pub fn first_parent_commits(dir: &Path, from: &str, to: &str) -> Vec<String> {
-    git(dir, &["rev-list", "--reverse", "--first-parent", &format!("{from}..{to}")])
-        .map(|s| s.lines().map(str::to_string).collect())
-        .unwrap_or_default()
+    git(
+        dir,
+        &[
+            "rev-list",
+            "--reverse",
+            "--first-parent",
+            &format!("{from}..{to}"),
+        ],
+    )
+    .map(|s| s.lines().map(str::to_string).collect())
+    .unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -1114,9 +1194,20 @@ mod update_tests {
     }
 
     /// A base with `a.txt` and `doc.md`; branch `loop` and `main` diverge from it.
-    fn diverged(name: &str, ours: &[(&str, Option<&str>)], theirs: &[(&str, Option<&str>)]) -> (PathBuf, String, String) {
+    fn diverged(
+        name: &str,
+        ours: &[(&str, Option<&str>)],
+        theirs: &[(&str, Option<&str>)],
+    ) -> (PathBuf, String, String) {
         let d = repo(name);
-        commit(&d, &[("a.txt", Some("one\ntwo\nthree\n")), ("doc.md", Some("Title\n=======\n"))], "base");
+        commit(
+            &d,
+            &[
+                ("a.txt", Some("one\ntwo\nthree\n")),
+                ("doc.md", Some("Title\n=======\n")),
+            ],
+            "base",
+        );
         run(&d, &["checkout", "-q", "-b", "loop"]);
         let l = commit(&d, ours, "ours");
         run(&d, &["checkout", "-q", "main"]);
@@ -1126,7 +1217,11 @@ mod update_tests {
 
     #[test]
     fn a_clean_merge_is_computed_and_committed_with_two_parents() {
-        let (d, l, t) = diverged("clean", &[("a.txt", Some("ONE\ntwo\nthree\n"))], &[("b.txt", Some("new\n"))]);
+        let (d, l, t) = diverged(
+            "clean",
+            &[("a.txt", Some("ONE\ntwo\nthree\n"))],
+            &[("b.txt", Some("new\n"))],
+        );
         let m = merge_tree(&d, &l, &t).unwrap();
         assert!(m.clean && m.conflicts.is_empty());
         let c = commit_tree(&d, &m.tree, &[&l, &t], "merged").unwrap();
@@ -1139,29 +1234,58 @@ mod update_tests {
 
     #[test]
     fn a_text_conflict_gives_a_tree_with_markers_usable_by_commit_tree() {
-        let (d, l, t) = diverged("text", &[("a.txt", Some("one\nOURS\nthree\n"))], &[("a.txt", Some("one\nTHEIRS\nthree\n"))]);
+        let (d, l, t) = diverged(
+            "text",
+            &[("a.txt", Some("one\nOURS\nthree\n"))],
+            &[("a.txt", Some("one\nTHEIRS\nthree\n"))],
+        );
         let m = merge_tree(&d, &l, &t).unwrap();
         assert!(!m.clean);
-        assert_eq!(m.conflicts, vec![Conflict { path: "a.txt".into(), kind: ConflictKind::Text }]);
+        assert_eq!(
+            m.conflicts,
+            vec![Conflict {
+                path: "a.txt".into(),
+                kind: ConflictKind::Text
+            }]
+        );
         let working = commit_tree(&d, &m.tree, &[&l], "working").unwrap();
         let marks = marker_lines(&d, &working, &["a.txt".into()]);
         assert_eq!(marks.len(), 2, "{marks:?}");
-        assert!(would_conflict(&d, &l, &t, &d.join("scratch")).unwrap() == vec!["a.txt".to_string()]);
+        assert!(
+            would_conflict(&d, &l, &t, &d.join("scratch")).unwrap() == vec!["a.txt".to_string()]
+        );
         let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]
     fn a_modify_delete_conflict_is_non_text_and_a_markdown_underline_is_no_marker() {
-        let (d, l, t) = diverged("moddel", &[("a.txt", Some("one\nOURS\nthree\n"))], &[("a.txt", None)]);
+        let (d, l, t) = diverged(
+            "moddel",
+            &[("a.txt", Some("one\nOURS\nthree\n"))],
+            &[("a.txt", None)],
+        );
         let m = merge_tree(&d, &l, &t).unwrap();
-        assert_eq!(m.conflicts, vec![Conflict { path: "a.txt".into(), kind: ConflictKind::NonText }]);
-        assert!(marker_lines(&d, &l, &["doc.md".into()]).is_empty(), "======= is not a marker");
+        assert_eq!(
+            m.conflicts,
+            vec![Conflict {
+                path: "a.txt".into(),
+                kind: ConflictKind::NonText
+            }]
+        );
+        assert!(
+            marker_lines(&d, &l, &["doc.md".into()]).is_empty(),
+            "======= is not a marker"
+        );
         let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]
     fn paths_are_taken_from_another_commit_into_a_tree() {
-        let (d, l, t) = diverged("paths", &[("doc.md", Some("Ours\n"))], &[("doc.md", Some("Theirs\n")), ("c.txt", Some("c\n"))]);
+        let (d, l, t) = diverged(
+            "paths",
+            &[("doc.md", Some("Ours\n"))],
+            &[("doc.md", Some("Theirs\n")), ("c.txt", Some("c\n"))],
+        );
         let m = merge_tree(&d, &l, &t).unwrap();
         let idx = d.join(".git").join("fallow-update-index");
         let kept = tree_with_paths_from(&d, &m.tree, &l, &["doc.md".into()], &idx).unwrap();
@@ -1175,17 +1299,45 @@ mod update_tests {
     fn a_directory_and_a_missing_path_are_taken_from_the_other_commit() {
         let (d, l, t) = diverged(
             "dirs",
-            &[("specs/f/spec.md", Some("ours spec\n")), ("specs/f/tasks.md", Some("ours tasks\n"))],
-            &[("specs/f/spec.md", Some("theirs spec\n")), ("specs/f/extra.md", Some("theirs only\n")), ("gone.txt", Some("theirs\n"))],
+            &[
+                ("specs/f/spec.md", Some("ours spec\n")),
+                ("specs/f/tasks.md", Some("ours tasks\n")),
+            ],
+            &[
+                ("specs/f/spec.md", Some("theirs spec\n")),
+                ("specs/f/extra.md", Some("theirs only\n")),
+                ("gone.txt", Some("theirs\n")),
+            ],
         );
         let m = merge_tree(&d, &l, &t).unwrap();
         let idx = d.join(".git").join("fallow-update-index");
-        let kept = tree_with_paths_from(&d, &m.tree, &l, &["specs/f".into(), "gone.txt".into()], &idx).unwrap();
+        let kept = tree_with_paths_from(
+            &d,
+            &m.tree,
+            &l,
+            &["specs/f".into(), "gone.txt".into()],
+            &idx,
+        )
+        .unwrap();
         let c = commit_tree(&d, &kept, &[&l, &t], "kept").unwrap();
-        assert_eq!(show(&d, &c, "specs/f/spec.md").unwrap().as_deref(), Some("ours spec\n"));
-        assert_eq!(show(&d, &c, "specs/f/tasks.md").unwrap().as_deref(), Some("ours tasks\n"));
-        assert_eq!(show(&d, &c, "specs/f/extra.md").unwrap(), None, "the directory is ours as a whole");
-        assert_eq!(show(&d, &c, "gone.txt").unwrap(), None, "a path absent there is removed");
+        assert_eq!(
+            show(&d, &c, "specs/f/spec.md").unwrap().as_deref(),
+            Some("ours spec\n")
+        );
+        assert_eq!(
+            show(&d, &c, "specs/f/tasks.md").unwrap().as_deref(),
+            Some("ours tasks\n")
+        );
+        assert_eq!(
+            show(&d, &c, "specs/f/extra.md").unwrap(),
+            None,
+            "the directory is ours as a whole"
+        );
+        assert_eq!(
+            show(&d, &c, "gone.txt").unwrap(),
+            None,
+            "a path absent there is removed"
+        );
         let _ = std::fs::remove_dir_all(&d);
     }
 
@@ -1201,9 +1353,19 @@ mod update_tests {
 
     #[test]
     fn numbered_branches_never_take_a_taken_name() {
-        let (d, l, _) = diverged("branches", &[("a.txt", Some("x\n"))], &[("b.txt", Some("y\n"))]);
-        assert_eq!(create_numbered_branch(&d, "fallow/f/update-1", &l).unwrap(), "fallow/f/update-1");
-        assert_eq!(create_numbered_branch(&d, "fallow/f/update-1", &l).unwrap(), "fallow/f/update-1-2");
+        let (d, l, _) = diverged(
+            "branches",
+            &[("a.txt", Some("x\n"))],
+            &[("b.txt", Some("y\n"))],
+        );
+        assert_eq!(
+            create_numbered_branch(&d, "fallow/f/update-1", &l).unwrap(),
+            "fallow/f/update-1"
+        );
+        assert_eq!(
+            create_numbered_branch(&d, "fallow/f/update-1", &l).unwrap(),
+            "fallow/f/update-1-2"
+        );
         assert!(create_new_branch(&d, "fallow/f/update-1", &l).is_err());
         assert!(git_version(&d).is_some());
         let _ = std::fs::remove_dir_all(&d);

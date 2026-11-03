@@ -75,7 +75,9 @@ pub fn refspec(commit: &str, branch: &str, target: &str) -> Result<String, Strin
         ));
     }
     if commit.is_empty() || commit.starts_with('+') || dest.is_empty() || dest.starts_with('+') {
-        return Err(format!("refused: not a plain push of one commit ({commit} to {dest})"));
+        return Err(format!(
+            "refused: not a plain push of one commit ({commit} to {dest})"
+        ));
     }
     Ok(format!("{commit}:refs/heads/{dest}"))
 }
@@ -90,7 +92,11 @@ mod tests {
 
     #[test]
     fn the_target_branch_and_forced_pushes_are_refused_before_git_runs() {
-        assert!(refspec("abc", "main", "main").unwrap_err().contains("never pushes to the target"));
+        assert!(
+            refspec("abc", "main", "main")
+                .unwrap_err()
+                .contains("never pushes to the target")
+        );
         assert!(refspec("abc", "refs/heads/Main", "main").is_err());
         assert!(refspec("+abc", "fallow/x/build", "main").is_err());
         assert!(refspec("abc", "+fallow/x/build", "main").is_err());

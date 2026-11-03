@@ -49,7 +49,10 @@ fn main() {
         .ok()
         .and_then(|t| serde_json::from_str(&t).ok())
         .unwrap_or_else(|| json!({}));
-    let sub = match (args.first().map(String::as_str), args.get(1).map(String::as_str)) {
+    let sub = match (
+        args.first().map(String::as_str),
+        args.get(1).map(String::as_str),
+    ) {
         (Some("auth"), _) => "auth".to_string(),
         (Some("api"), _) => "api".to_string(),
         (Some("pr"), Some(s)) => format!("pr {s}"),
@@ -78,14 +81,22 @@ fn main() {
                     "github.com\n  ✓ Logged in to github.com account {login} (keyring)\n  - Active account: true\n"
                 ))
             } else {
-                Err("You are not logged into any GitHub hosts. To log in, run: gh auth login".into())
+                Err(
+                    "You are not logged into any GitHub hosts. To log in, run: gh auth login"
+                        .into(),
+                )
             }
         }
         "api" => api(&state, args.get(1).map(String::as_str).unwrap_or("")),
         "pr create" => {
             let repo = opt("--repo").unwrap_or_default();
             let prs = state["prs"].as_array().cloned().unwrap_or_default();
-            let number = prs.iter().filter_map(|p| p["number"].as_u64()).max().unwrap_or(0) + 1;
+            let number = prs
+                .iter()
+                .filter_map(|p| p["number"].as_u64())
+                .max()
+                .unwrap_or(0)
+                + 1;
             let body = opt("--body-file")
                 .and_then(|f| std::fs::read_to_string(f).ok())
                 .unwrap_or_default();
@@ -95,7 +106,12 @@ fn main() {
                 .args(["ls-remote", "origin", &format!("refs/heads/{head}")])
                 .output()
                 .ok()
-                .and_then(|o| String::from_utf8_lossy(&o.stdout).split_whitespace().next().map(str::to_string));
+                .and_then(|o| {
+                    String::from_utf8_lossy(&o.stdout)
+                        .split_whitespace()
+                        .next()
+                        .map(str::to_string)
+                });
             let mut prs = prs;
             prs.push(json!({
                 "number": number, "head": head, "base": opt("--base"),
@@ -173,17 +189,35 @@ fn api(state: &Value, endpoint: &str) -> Result<String, String> {
     match parts.as_slice() {
         ["repos", o, r, "rules", "branches", b] => {
             let key = format!("{o}/{r}:{b}");
-            let pick = if state["rules"][&key].is_null() { *b } else { key.as_str() };
+            let pick = if state["rules"][&key].is_null() {
+                *b
+            } else {
+                key.as_str()
+            };
             let rules: Vec<Value> = state["rules"][pick]
                 .as_array()
                 .cloned()
                 .unwrap_or_default()
                 .into_iter()
-                .map(|t| if t.is_string() { json!({ "type": t }) } else { t })
+                .map(|t| {
+                    if t.is_string() {
+                        json!({ "type": t })
+                    } else {
+                        t
+                    }
+                })
                 .collect();
             Ok(Value::from(rules).to_string())
         }
-        ["repos", o, r, "branches", b, "protection", "required_status_checks"] => {
+        [
+            "repos",
+            o,
+            r,
+            "branches",
+            b,
+            "protection",
+            "required_status_checks",
+        ] => {
             match state["strict"][format!("{o}/{r}:{b}")]
                 .as_bool()
                 .or(state["strict"][*b].as_bool())
@@ -217,12 +251,25 @@ mod tests {
         let rules: Value =
             serde_json::from_str(&api(&state, "repos/o/r/rules/branches/main").unwrap()).unwrap();
         assert_eq!(rules[0]["type"], "pull_request");
-        assert_eq!(rules[1]["parameters"]["strict_required_status_checks_policy"], true);
+        assert_eq!(
+            rules[1]["parameters"]["strict_required_status_checks_policy"],
+            true
+        );
         let rsc: Value = serde_json::from_str(
-            &api(&state, "repos/o/r/branches/main/protection/required_status_checks").unwrap(),
+            &api(
+                &state,
+                "repos/o/r/branches/main/protection/required_status_checks",
+            )
+            .unwrap(),
         )
         .unwrap();
         assert_eq!(rsc["strict"], true);
-        assert!(api(&state, "repos/o/r/branches/dev/protection/required_status_checks").is_err());
+        assert!(
+            api(
+                &state,
+                "repos/o/r/branches/dev/protection/required_status_checks"
+            )
+            .is_err()
+        );
     }
 }

@@ -66,9 +66,21 @@ fn a_project_without_a_remote_says_so() {
 #[test]
 fn protection_is_read_from_the_rules_or_the_branch_flag() {
     for (name, state, want) in [
-        ("r-rule", json!({ "login": "octo", "rules": { "main": ["pull_request"] }, "protected": { "main": false } }), "yes"),
-        ("r-flag", json!({ "login": "octo", "protected": { "main": true } }), "yes"),
-        ("r-open", json!({ "login": "octo", "rules": { "main": ["deletion"] }, "protected": { "main": false } }), "no"),
+        (
+            "r-rule",
+            json!({ "login": "octo", "rules": { "main": ["pull_request"] }, "protected": { "main": false } }),
+            "yes",
+        ),
+        (
+            "r-flag",
+            json!({ "login": "octo", "protected": { "main": true } }),
+            "yes",
+        ),
+        (
+            "r-open",
+            json!({ "login": "octo", "rules": { "main": ["deletion"] }, "protected": { "main": false } }),
+            "no",
+        ),
     ] {
         let root = scratch(name);
         let (e, id, _) = project(&root, hosted(state));
@@ -90,13 +102,18 @@ fn protection_is_read_from_the_rules_or_the_branch_flag() {
 fn what_cannot_be_read_is_unknown_with_the_reason_never_a_guess() {
     // Not signed in.
     let root = scratch("r-signed-out");
-    let (e, id, _) = project(&root, hosted(json!({ "signed_in": false, "protected": { "main": true } })));
+    let (e, id, _) = project(
+        &root,
+        hosted(json!({ "signed_in": false, "protected": { "main": true } })),
+    );
     let r = settled(&e, &id);
     assert_eq!(r["protected"], "unknown", "{r}");
     assert!(r["why"].as_str().unwrap().contains("gh auth login"), "{r}");
     let log = fake_host_log(&root.join("host.json"));
     assert!(
-        log.iter().flatten().all(|a| a != "token" && a != "--show-token"),
+        log.iter()
+            .flatten()
+            .all(|a| a != "token" && a != "--show-token"),
         "never a token: {log:?}"
     );
     drop(e);
@@ -107,7 +124,13 @@ fn what_cannot_be_read_is_unknown_with_the_reason_never_a_guess() {
     let (e, id, _) = project(&root, hosted(json!({ "login": "octo" })));
     let r = settled(&e, &id);
     assert_eq!(r["protected"], "unknown", "{r}");
-    assert!(r["why"].as_str().unwrap().contains("main is not on acme/shop yet"), "{r}");
+    assert!(
+        r["why"]
+            .as_str()
+            .unwrap()
+            .contains("main is not on acme/shop yet"),
+        "{r}"
+    );
     drop(e);
     let _ = std::fs::remove_dir_all(&root);
 }
@@ -139,9 +162,15 @@ fn the_remote_is_the_one_the_target_tracks() {
         let address = "https://github.com/acme-org/shop.git";
         git(repo, &["remote", "add", "upstream", address]);
         let local = up.display().to_string().replace('\\', "/");
-        git(repo, &["config", &format!("url.{local}.insteadOf"), address]);
+        git(
+            repo,
+            &["config", &format!("url.{local}.insteadOf"), address],
+        );
         git(repo, &["push", "-q", "-u", "upstream", "main"]);
-        fake_host(root, json!({ "login": "octo", "protected": { "main": true } }));
+        fake_host(
+            root,
+            json!({ "login": "octo", "protected": { "main": true } }),
+        );
     });
     let r = settled(&e, &id);
     assert_eq!(r["remote"], "upstream", "{r}");
@@ -153,11 +182,20 @@ fn the_remote_is_the_one_the_target_tracks() {
 #[test]
 fn the_project_answers_at_once_and_keeps_the_last_value_when_it_cannot_check() {
     let root = scratch("r-slow");
-    let (e, id, _) = project(&root, hosted(json!({ "login": "octo", "protected": { "main": true }, "sleep_ms": { "api": 3000 } })));
+    let (e, id, _) = project(
+        &root,
+        hosted(
+            json!({ "login": "octo", "protected": { "main": true }, "sleep_ms": { "api": 3000 } }),
+        ),
+    );
     let t = Instant::now();
     let r = view(&e, &id)["remote"].clone();
     // Not held by the hosting tool (which takes 3 s here): it answers while the read runs.
-    assert!(t.elapsed() < Duration::from_millis(2800), "{:?}", t.elapsed());
+    assert!(
+        t.elapsed() < Duration::from_millis(2800),
+        "{:?}",
+        t.elapsed()
+    );
     assert_eq!(r["protected"], "checking", "{r}");
     assert!(r["checking"] == true || r["state"] == "checking", "{r}");
     let r = settled(&e, &id);
@@ -173,7 +211,11 @@ fn the_project_answers_at_once_and_keeps_the_last_value_when_it_cannot_check() {
     std::thread::sleep(Duration::from_secs(5));
     sreq(&e.tx, Req::CheckRemote { id: id.clone() }).unwrap();
     let r = settled(&e, &id);
-    assert_eq!((r["protected"].as_str(), r["stale"].as_bool()), (Some("yes"), Some(true)), "{r}");
+    assert_eq!(
+        (r["protected"].as_str(), r["stale"].as_bool()),
+        (Some("yes"), Some(true)),
+        "{r}"
+    );
     assert_eq!(r["checked_at"], checked, "{r}");
     assert!(r["why"].as_str().unwrap().contains("502"), "{r}");
     s["fail"] = json!({});

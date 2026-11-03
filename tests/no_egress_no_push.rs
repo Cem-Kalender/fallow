@@ -13,12 +13,24 @@ use std::path::{Path, PathBuf};
 const RULES: &[(&str, &str, Option<&str>)] = &[
     ("TcpStream::connect", "an outgoing TCP connection", None),
     ("UdpSocket::bind", "a UDP socket", None),
-    ("Command::new(\"gh\")", "the GitHub CLI run outside the hosting adapter", None),
-    ("command(\"gh\")", "the GitHub CLI run outside the hosting adapter", None),
+    (
+        "Command::new(\"gh\")",
+        "the GitHub CLI run outside the hosting adapter",
+        None,
+    ),
+    (
+        "command(\"gh\")",
+        "the GitHub CLI run outside the hosting adapter",
+        None,
+    ),
     // Git's push: an argument list starting with "push", only in the one push of a loop's branch.
     ("[\"push\"", "a git push", Some("publish/push.rs")),
     // Running git or the hosting tool for publishing: only in the publish module.
-    ("publish::run::", "running the hosting tool outside publishing", Some("publish/")),
+    (
+        "publish::run::",
+        "running the hosting tool outside publishing",
+        Some("publish/"),
+    ),
 ];
 
 /// Never in `src/publish/`: a force, or anything but reading and opening a pull request.

@@ -273,7 +273,11 @@ fn an_agent_that_could_not_be_started_uses_no_repair_and_goes_again_as_the_same_
     // The program is back (the update is done): npm's shim and the `.exe` it starts.
     let bin = shims.join("bin");
     std::fs::create_dir_all(&bin).unwrap();
-    std::fs::copy(env!("CARGO_BIN_EXE_fallow-fake-agent"), bin.join("agent.exe")).unwrap();
+    std::fs::copy(
+        env!("CARGO_BIN_EXE_fallow-fake-agent"),
+        bin.join("agent.exe"),
+    )
+    .unwrap();
     std::fs::write(
         &shim,
         "@ECHO off\r\nGOTO start\r\n:find_dp0\r\nSET dp0=%~dp0\r\nEXIT /b\r\n:start\r\nSETLOCAL\r\nCALL :find_dp0\r\n\"%dp0%\\bin\\agent.exe\"   %*\r\n",

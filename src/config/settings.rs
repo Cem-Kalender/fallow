@@ -194,15 +194,13 @@ impl Settings {
     /// Parses a settings file over the built-in settings.
     pub fn parse(file: &str, text: &str, notices: &mut Vec<Notice>) -> Settings {
         let mut s = Settings::default();
-        let Some(raw) =
-            super::merge::parse::<Raw>(
-                file,
-                text,
-                &["defaults", "roles", "agents", "hosting"],
-                &[],
-                notices,
-            )
-        else {
+        let Some(raw) = super::merge::parse::<Raw>(
+            file,
+            text,
+            &["defaults", "roles", "agents", "hosting"],
+            &[],
+            notices,
+        ) else {
             return s;
         };
         s.defaults = raw.defaults;

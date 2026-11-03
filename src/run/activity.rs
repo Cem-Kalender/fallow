@@ -359,8 +359,18 @@ fn fallow_lines(run: &Run, last_line: &BTreeMap<u32, u64>) -> Vec<Value> {
                 ),
             ),
             SteeringKind::Merge => ("steer", "You merged the feature".into()),
-            SteeringKind::Publish if st.detail.as_deref().is_some_and(|d| d.ends_with("(when_verified)")) => continue,
-            SteeringKind::Publish => ("steer", "You published the feature as a pull request".into()),
+            SteeringKind::Publish
+                if st
+                    .detail
+                    .as_deref()
+                    .is_some_and(|d| d.ends_with("(when_verified)")) =>
+            {
+                continue;
+            }
+            SteeringKind::Publish => (
+                "steer",
+                "You published the feature as a pull request".into(),
+            ),
             SteeringKind::Unlock => ("steer", "You unlocked the feature".into()),
             _ => continue,
         };
@@ -705,6 +715,14 @@ pub fn view(run: &Run, ctx: &Ctx) -> Result<Value, String> {
         }
     }
     commits.reverse();
+    // 011: each update's merge commit, the latest first (FR-008).
+    for (n, c, target) in l.update_merges.iter().rev() {
+        let short: String = target.chars().take(7).collect();
+        commits.insert(
+            0,
+            json!({ "commit": c, "task": format!("update {n}"), "text": format!("{} at {short} merged in", run.state.target) }),
+        );
+    }
     // The phases and their tasks, for the tree.
     let phases: Vec<Value> = l
         .phases

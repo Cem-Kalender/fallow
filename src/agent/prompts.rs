@@ -258,7 +258,12 @@ pub struct UpdateConflictCx<'a> {
 }
 
 /// 011: the repair of an update's conflicts (research R-2), plain text for any runtime (IX).
-pub fn update_conflicts(part: &str, feature: &str, target: &str, conflicts: &[UpdateConflictCx]) -> String {
+pub fn update_conflicts(
+    part: &str,
+    feature: &str,
+    target: &str,
+    conflicts: &[UpdateConflictCx],
+) -> String {
     let mut s = header("repair", Some(part));
     s.push_str(&format!(
         "You are the builder of feature {feature}. Fallow is bringing this feature's work up to date with {target}, which moved since the feature was verified: other work was merged there. Merging {target} into this worktree conflicts.
@@ -282,19 +287,27 @@ Resolve these conflicts: this feature's criteria and the work already on {target
             ));
         }
         if !c.ours.is_empty() {
-            s.push_str("  This feature changed it in:
-");
+            s.push_str(
+                "  This feature changed it in:
+",
+            );
             for l in c.ours.iter().take(10) {
-                s.push_str(&format!("    {l}
-"));
+                s.push_str(&format!(
+                    "    {l}
+"
+                ));
             }
         }
         if !c.theirs.is_empty() {
-            s.push_str(&format!("  {target} changed it in:
-"));
+            s.push_str(&format!(
+                "  {target} changed it in:
+"
+            ));
             for l in c.theirs.iter().take(10) {
-                s.push_str(&format!("    {l}
-"));
+                s.push_str(&format!(
+                    "    {l}
+"
+                ));
             }
         }
     }
@@ -306,8 +319,10 @@ Run the tests. Do not change the feature's spec documents. Fallow commits your c
 For every conflict without markers, say how you resolved it in `resolutions`: `[{\"path\": \"…\", \"how\": \"…\"}]`.
 ");
     }
-    s.push_str("
-Return `status: done`, the `files` you changed and a `summary`.");
+    s.push_str(
+        "
+Return `status: done`, the `files` you changed and a `summary`.",
+    );
     s
 }
 
@@ -544,8 +559,18 @@ mod tests {
             "002-calc2",
             "main",
             &[
-                UpdateConflictCx { path: "calc/__init__.py", text: true, ours: &ours, theirs: &theirs },
-                UpdateConflictCx { path: "old.py", text: false, ours: &[], theirs: &[] },
+                UpdateConflictCx {
+                    path: "calc/__init__.py",
+                    text: true,
+                    ours: &ours,
+                    theirs: &theirs,
+                },
+                UpdateConflictCx {
+                    path: "old.py",
+                    text: false,
+                    ours: &[],
+                    theirs: &[],
+                },
             ],
         );
         assert!(t.starts_with("Fallow step: repair (part update-1)"), "{t}");

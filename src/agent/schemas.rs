@@ -249,7 +249,11 @@ mod tests {
         assert_eq!(r["type"], "array");
         assert_eq!(r["items"]["required"], json!(["path", "how"]));
         assert!(
-            !s["required"].as_array().unwrap().iter().any(|v| v == "resolutions"),
+            !s["required"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|v| v == "resolutions"),
             "optional"
         );
     }

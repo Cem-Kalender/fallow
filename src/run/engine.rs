@@ -106,6 +106,11 @@ pub enum Request {
     Update {
         id: u64,
     },
+    /// 011: the target changed the feature's documents: unlock it and open its spec session
+    /// with a message showing the target's version (FR-005).
+    LockAgain {
+        id: u64,
+    },
     Stop {
         id: u64,
         reason: Option<String>,
@@ -634,7 +639,9 @@ impl Engine {
                         self.pr_reads.insert(run, (Instant::now(), false));
                         let e = self.pr_checked.entry(run).or_default();
                         match r {
-                            Ok(_) => *e = (Some(super::time::rfc3339(super::time::unix_now())), None),
+                            Ok(_) => {
+                                *e = (Some(super::time::rfc3339(super::time::unix_now())), None)
+                            }
                             Err(why) => e.1 = Some(why.clone()),
                         }
                     }
@@ -1018,7 +1025,11 @@ impl Engine {
             let Some(l) = r.state.feature_loop.as_ref() else {
                 continue;
             };
-            if let Some(pb) = l.publication.as_ref().filter(|p| p.state == crate::publish::host::PrStatus::Merged) {
+            if let Some(pb) = l
+                .publication
+                .as_ref()
+                .filter(|p| p.state == crate::publish::host::PrStatus::Merged)
+            {
                 let name = self
                     .studio
                     .store
@@ -1240,7 +1251,9 @@ impl Engine {
             // 10 s, doubled after each read that failed in a row, up to a minute.
             (REMOTE_UNKNOWN * 2u32.pow(slot.2.min(3))).min(REMOTE_KNOWN)
         };
-        let fresh = slot.1.is_some_and(|t| at.duration_since(t) < Duration::from_secs(5));
+        let fresh = slot
+            .1
+            .is_some_and(|t| at.duration_since(t) < Duration::from_secs(5));
         let due = !slot.0.checking
             && (slot.1.is_none_or(|t| at.duration_since(t) >= wait) || (now && !fresh));
         if due {
@@ -1321,7 +1334,11 @@ impl Engine {
             found.why = slot.0.why.clone();
         }
         if let Some(read) = read {
-            slot.2 = if read.protected.is_ok() { 0 } else { slot.2 + 1 };
+            slot.2 = if read.protected.is_ok() {
+                0
+            } else {
+                slot.2 + 1
+            };
             if found.state == "checking" {
                 // Not even the git part could be read (a thread that could not start).
                 found.state = "unreadable".into();
@@ -1378,7 +1395,10 @@ impl Engine {
             .iter()
             .filter(|(_, r)| {
                 r.state.stage == Stage::Ready
-                    && r.state.feature_loop.as_ref().is_some_and(|l| l.publish_pending)
+                    && r.state
+                        .feature_loop
+                        .as_ref()
+                        .is_some_and(|l| l.publish_pending)
             })
             .map(|(id, _)| *id)
             .collect();
@@ -1391,11 +1411,19 @@ impl Engine {
             };
             let target = r.state.target.clone();
             let (branch, commit) = (
-                r.state.feature_loop.as_ref().map(|l| l.build_branch.clone()).unwrap_or_default(),
+                r.state
+                    .feature_loop
+                    .as_ref()
+                    .map(|l| l.build_branch.clone())
+                    .unwrap_or_default(),
                 r.state.integrated.clone().unwrap_or_default(),
             );
             r.busy = Some(Busy::Publish);
-            let (tx, settings, dir) = (self.ctx.tx.clone(), self.ctx.settings.clone(), p.path.clone());
+            let (tx, settings, dir) = (
+                self.ctx.tx.clone(),
+                self.ctx.settings.clone(),
+                p.path.clone(),
+            );
             let spawned = std::thread::Builder::new()
                 .name(format!("reconcile-{id}"))
                 .spawn(move || {
@@ -1411,12 +1439,21 @@ impl Engine {
                         else {
                             return Err(interrupted());
                         };
-                        let host = crate::publish::host::host_for(service, &settings).ok_or_else(interrupted)?;
+                        let host = crate::publish::host::host_for(service, &settings)
+                            .ok_or_else(interrupted)?;
                         for n in 1..=9 {
-                            let b = if n == 1 { branch.clone() } else { format!("{branch}-{n}") };
+                            let b = if n == 1 {
+                                branch.clone()
+                            } else {
+                                format!("{branch}-{n}")
+                            };
                             // Only this loop's: its head at exactly the verified commit.
-                            if let Ok(Some((pr, crate::publish::host::PrStatus::Open | crate::publish::host::PrStatus::Merged, Some(head)))) =
-                                host.find(&dir, repo, &b)
+                            if let Ok(Some((
+                                pr,
+                                crate::publish::host::PrStatus::Open
+                                | crate::publish::host::PrStatus::Merged,
+                                Some(head),
+                            ))) = host.find(&dir, repo, &b)
                             {
                                 if head != commit {
                                     continue;
@@ -1491,7 +1528,11 @@ impl Engine {
                 ..Watched::default()
             };
         }
-        let every = if now { Duration::from_secs(10) } else { Duration::from_secs(30) };
+        let every = if now {
+            Duration::from_secs(10)
+        } else {
+            Duration::from_secs(30)
+        };
         if w.running || w.asked.is_some_and(|t| t.elapsed() < every) {
             return;
         }
@@ -1587,7 +1628,9 @@ impl Engine {
                 // The target branch is gone: nothing is merged; stop, or unlock and lock the
                 // feature from another branch (spec edge case).
                 Some(m) if m.gone => offer.push("stop"),
-                Some(m) if m.moved && !m.docs_changed.is_empty() => offer.extend(["lock_again", "stop"]),
+                Some(m) if m.moved && !m.docs_changed.is_empty() => {
+                    offer.extend(["lock_again", "stop"])
+                }
                 Some(m) if m.moved => offer.extend(["bring_up_to_date", "stop"]),
                 _ => {
                     for o in publish["offer"].as_array().into_iter().flatten() {
@@ -1606,6 +1649,61 @@ impl Engine {
         (target, json!(offer))
     }
 
+    /// 011: "Lock again" (FR-005): the feature is unlocked (its loop waits, the update dropped
+    /// at the new lock) and the page opens its spec session with this message pre-filled: the
+    /// target's version of the changed documents against the loop's, for the engineer and the
+    /// lead to bring in, then lock again.
+    fn lock_again(&mut self, id: u64) -> Result<Value, String> {
+        let r = self
+            .runs
+            .get(&id)
+            .ok_or_else(|| format!("there is no loop {id}"))?;
+        if r.state.stage == Stage::Publishing || r.busy == Some(Busy::Publish) {
+            return Err("its pull request is open: close it on the remote first (FR-016b)".into());
+        }
+        let l = r
+            .state
+            .feature_loop
+            .as_ref()
+            .ok_or("only a feature's loop")?;
+        let held = l.update.as_ref().filter(|u| !u.docs_changed.is_empty());
+        let read = self
+            .watched
+            .get(&id)
+            .and_then(|w| w.read.as_ref())
+            .filter(|m| m.moved && !m.docs_changed.is_empty());
+        let (tip, paths) = match (held, read) {
+            (Some(u), _) => (u.target_commit.clone(), u.docs_changed.clone()),
+            (None, Some(m)) => (m.target_commit.clone(), m.docs_changed.clone()),
+            (None, None) => return Err("the target did not change this feature's documents".into()),
+        };
+        let repo = r.state.repo.clone();
+        let ours = git::rev(&repo, &format!("refs/heads/{}", l.build_branch))?;
+        let (project, feature, target) =
+            (l.project.clone(), l.feature.clone(), r.state.target.clone());
+        let mut msg = format!(
+            "Fallow: {target} changed this feature's documents since the loop was locked. Bring in what should stay, then lock again.\n"
+        );
+        for p in &paths {
+            let diff = git::diff_between(&repo, &ours, &tip, p).unwrap_or_default();
+            msg.push_str(&format!(
+                "\n{p} ({target}'s version against the locked one):\n```diff\n{}\n```\n",
+                crate::agent::clip(&diff, 6_000)
+            ));
+        }
+        if !l.unlocked {
+            self.unlock(&project, &feature)?;
+        }
+        if let Some(r) = self.runs.get_mut(&id) {
+            r.append(Event::Steering {
+                kind: SteeringKind::LockAgain,
+                target: Some(target),
+                detail: Some(tip),
+            })?;
+        }
+        Ok(json!({ "project": project, "feature": feature, "message": msg }))
+    }
+
     /// 011: brings a ready loop up to date with its target (FR-004): recorded as the engineer's
     /// steering, then the update starts.
     fn update(&mut self, id: u64) -> Result<(), String> {
@@ -1616,7 +1714,10 @@ impl Engine {
             .filter(|m| m.moved)
             .map(|m| m.target_commit.clone());
         let tx = self.ctx.tx.clone();
-        let r = self.runs.get_mut(&id).ok_or_else(|| format!("there is no loop {id}"))?;
+        let r = self
+            .runs
+            .get_mut(&id)
+            .ok_or_else(|| format!("there is no loop {id}"))?;
         let tip = match tip {
             Some(t) => t,
             None => git::rev(&r.state.repo, &format!("refs/heads/{}", r.state.target))?,
@@ -1713,8 +1814,12 @@ impl Engine {
         // Read again when the loop has just become ready (FR-003).
         let first = !self.auto_waits.contains_key(&id);
         let remote = self.loop_remote(id, first);
-        if remote.as_ref().is_some_and(|x| x.checking || x.state == "checking") {
-            self.auto_waits.insert(id, "reading the remote first".into());
+        if remote
+            .as_ref()
+            .is_some_and(|x| x.checking || x.state == "checking")
+        {
+            self.auto_waits
+                .insert(id, "reading the remote first".into());
             return;
         }
         self.auto_waits.remove(&id);
@@ -1740,7 +1845,12 @@ impl Engine {
         if r.state.stage != Stage::Publishing {
             return;
         }
-        let Some(pb) = r.state.feature_loop.as_ref().and_then(|l| l.publication.clone()) else {
+        let Some(pb) = r
+            .state
+            .feature_loop
+            .as_ref()
+            .and_then(|l| l.publication.clone())
+        else {
             return;
         };
         let every = every.min(pr_poll());
@@ -2318,7 +2428,9 @@ impl Engine {
             return Err("the loop is being published; unlock it after that".into());
         }
         if r.state.stage == Stage::Publishing {
-            return Err("its pull request is open: close it on the remote first, then unlock".into());
+            return Err(
+                "its pull request is open: close it on the remote first, then unlock".into(),
+            );
         }
         r.append(Event::Steering {
             kind: SteeringKind::Unlock,
@@ -2395,17 +2507,46 @@ impl Engine {
             super::relock::Side::Commit(&prep.commit),
         )?;
         let a = super::relock::affected(&docs);
+        // 011: a "Lock again" after the target changed the documents: what the engineer
+        // reconciled against is recorded, so the same change is not flagged again (R-2).
+        let watched_tip = self
+            .watched
+            .get(&id)
+            .and_then(|w| w.read.as_ref())
+            .filter(|m| m.moved && !m.docs_changed.is_empty())
+            .map(|m| m.target_commit.clone());
         let r = self
             .runs
             .get_mut(&id)
             .ok_or("the feature's loop is missing")?;
+        let held = r
+            .state
+            .feature_loop
+            .as_ref()
+            .and_then(|l| l.update.clone())
+            .filter(|u| !u.docs_changed.is_empty())
+            .map(|u| u.target_commit);
+        let reconciled_target = held.clone().or(watched_tip);
+        if r.state
+            .feature_loop
+            .as_ref()
+            .is_some_and(|l| l.update.is_some())
+        {
+            super::update::drop_update(r, "locked again")?;
+        }
         r.append(Event::Relocked {
             lock: prep.lock,
             commit: prep.commit.clone(),
             affected: a.stories.clone(),
             phases: prep.phases.clone(),
-            reconciled_target: None,
+            reconciled_target: reconciled_target.clone(),
         })?;
+        // What the watch read before is for the old lock: read again.
+        self.watched.remove(&id);
+        let r = self
+            .runs
+            .get_mut(&id)
+            .ok_or("the feature's loop is missing")?;
         for w in &a.why {
             r.append(Event::Note { text: w.clone() })?;
         }
@@ -2423,6 +2564,7 @@ impl Engine {
             commit: prep.commit.clone(),
             at: super::time::rfc3339(super::time::unix_now()),
             affected: a.stories.clone(),
+            reconciled_target: reconciled_target.or(old.reconciled_target.clone()),
             ..old
         };
         self.studio.lock_record(project, feature, rec, id)?;
@@ -2446,7 +2588,9 @@ impl Engine {
         if let Some(id) = self.live_loop(project, feature) {
             return self.relock(project, feature, id);
         }
-        let update_limit = extra.update_limit.unwrap_or_else(crate::run::events::update_limit);
+        let update_limit = extra
+            .update_limit
+            .unwrap_or_else(crate::run::events::update_limit);
         if !(1..=20).contains(&update_limit) {
             return Err(format!(
                 "updates overtaken before you decide: {update_limit} is not between 1 and 20"
@@ -2844,7 +2988,10 @@ impl Engine {
                 .map(|()| json!({})),
             Request::Merge { id } if self.target_gone(id) => Err(format!(
                 "the target branch {} is gone: nothing is merged. Stop the loop, or unlock the feature and lock it from another branch.",
-                self.runs.get(&id).map(|r| r.state.target.clone()).unwrap_or_default()
+                self.runs
+                    .get(&id)
+                    .map(|r| r.state.target.clone())
+                    .unwrap_or_default()
             )),
             Request::Merge { id } if self.target_moved(id).is_some() => Err(format!(
                 "the target moved since this loop was verified{}: bring it up to date first",
@@ -2854,6 +3001,7 @@ impl Engine {
                     .unwrap_or_default()
             )),
             Request::Update { id } => self.update(id).map(|()| json!({})),
+            Request::LockAgain { id } => self.lock_again(id),
             Request::Merge { id } => {
                 // 010: a protected target takes a pull request, not a local merge (FR-006).
                 let refused = self.publish_view(id).and_then(|p| {
@@ -2893,7 +3041,14 @@ impl Engine {
                     let (target, offer) = self.target_view(id, &v["publish"]);
                     v["target"] = target;
                     v["offer"] = offer;
-                    if let Some(l) = self.runs.get(&id).and_then(|r| r.state.feature_loop.as_ref()) {
+                    if let Some(r) = self.runs.get(&id) {
+                        v["resolutions"] = update_resolutions(r);
+                    }
+                    if let Some(l) = self
+                        .runs
+                        .get(&id)
+                        .and_then(|r| r.state.feature_loop.as_ref())
+                    {
                         v["update"] = json!(l.update);
                         v["updates"] = json!(l.updates);
                         v["update_limit"] = json!(l.update_limit);
@@ -3063,4 +3218,25 @@ pub fn view(r: &Run) -> Value {
     v["interventions"] = json!(r.state.interventions());
     v["minutes_used"] = json!(r.state.minutes_used(super::time::unix_now()));
     v
+}
+
+/// 011: the builder's own account of the non-text conflicts of the update in progress, else of
+/// the last one: its last accepted repair's `resolutions` (shown, never taken as evidence).
+fn update_resolutions(r: &Run) -> Value {
+    let Some(l) = r.state.feature_loop.as_ref() else {
+        return json!([]);
+    };
+    let n = l.update.as_ref().map_or(l.updates, |u| u.n);
+    let part = format!("update-{n}");
+    r.state
+        .steps
+        .values()
+        .rev()
+        .filter(|s| s.part.as_deref() == Some(part.as_str()))
+        .filter(|s| s.verified.as_ref().is_some_and(|v| v.0))
+        .find_map(|s| match &s.end {
+            Some(StepEnd::Result { value }) => value.get("resolutions").cloned(),
+            _ => None,
+        })
+        .unwrap_or_else(|| json!([]))
 }

@@ -148,6 +148,10 @@
     try {
       const w = sessionStorage.getItem("fallow.alert");
       if (w) { sessionStorage.removeItem("fallow.alert"); alertLine(w); }
+      // 011: "Lock again" opens the spec session with Fallow's message in the box.
+      const pre = sessionStorage.getItem("fallow.prefill");
+      const say = document.getElementById("say");
+      if (pre && say) { sessionStorage.removeItem("fallow.prefill"); say.value = pre; say.focus(); }
     } catch (_) { /* nothing kept */ }
     // Always: a screen without a conversation leaves the menu with none (009 review).
     if (Fallow.menu) {

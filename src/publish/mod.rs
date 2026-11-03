@@ -148,7 +148,10 @@ impl Remote {
 /// and/or `local_merge`.
 pub fn offer(remote: Option<&Remote>) -> (Vec<&'static str>, String) {
     let Some(r) = remote else {
-        return (vec!["local_merge"], "the project is not on a git branch".into());
+        return (
+            vec!["local_merge"],
+            "the project is not on a git branch".into(),
+        );
     };
     // Nothing until the remote is read: a protected target must never get a local merge.
     if r.state == "checking" || r.protected == "checking" {
@@ -158,7 +161,9 @@ pub fn offer(remote: Option<&Remote>) -> (Vec<&'static str>, String) {
         "none" => (vec!["local_merge"], "no remote: the merge is local".into()),
         "no_target" => (
             vec!["local_merge"],
-            r.why.clone().unwrap_or_else(|| "no remote for the target branch".into()),
+            r.why
+                .clone()
+                .unwrap_or_else(|| "no remote for the target branch".into()),
         ),
         "unsupported" => (
             vec!["local_merge"],
@@ -181,15 +186,15 @@ pub fn offer(remote: Option<&Remote>) -> (Vec<&'static str>, String) {
                 r.place()
             ),
         ),
-        _ if r.target_missing() => (
-            vec!["local_merge"],
-            r.why.clone().unwrap_or_default(),
-        ),
+        _ if r.target_missing() => (vec!["local_merge"], r.why.clone().unwrap_or_default()),
         _ => (
             vec!["pull_request", "local_merge"],
             format!(
                 "protection unknown{}: a local merge may not be pushable",
-                r.why.as_deref().map(|w| format!(" ({w})")).unwrap_or_default()
+                r.why
+                    .as_deref()
+                    .map(|w| format!(" ({w})"))
+                    .unwrap_or_default()
             ),
         ),
     }
@@ -218,7 +223,10 @@ pub fn when_verified(
         return Err(format!(
             "not published on its own: the protection of {} could not be read{}",
             r.place(),
-            r.why.as_deref().map(|w| format!(" ({w})")).unwrap_or_default()
+            r.why
+                .as_deref()
+                .map(|w| format!(" ({w})"))
+                .unwrap_or_default()
         ));
     }
     Ok(())
@@ -233,8 +241,18 @@ mod offer_tests {
         Remote {
             state: state.into(),
             remote: Some("origin".into()),
-            service: Some(if state == "unsupported" { "gitlab.com" } else { "github" }.into()),
-            repo: Some(host::Repo { owner: "acme".into(), name: "shop".into() }),
+            service: Some(
+                if state == "unsupported" {
+                    "gitlab.com"
+                } else {
+                    "github"
+                }
+                .into(),
+            ),
+            repo: Some(host::Repo {
+                owner: "acme".into(),
+                name: "shop".into(),
+            }),
             target: Some("main".into()),
             protected: protected.into(),
             why: why.map(str::to_string),
@@ -248,19 +266,36 @@ mod offer_tests {
     #[test]
     fn what_is_offered_follows_the_remote() {
         assert_eq!(offer(None).0, ["local_merge"]);
-        assert!(offer(Some(&remote("known", "checking", None))).0.is_empty(), "nothing while reading");
-        assert_eq!(offer(Some(&remote("none", "unknown", None))).0, ["local_merge"]);
+        assert!(
+            offer(Some(&remote("known", "checking", None))).0.is_empty(),
+            "nothing while reading"
+        );
+        assert_eq!(
+            offer(Some(&remote("none", "unknown", None))).0,
+            ["local_merge"]
+        );
         let (o, why) = offer(Some(&remote("unsupported", "unknown", None)));
         assert_eq!(o, ["local_merge"]);
         assert!(why.contains("gitlab.com: Fallow can only merge locally there"));
         let (o, why) = offer(Some(&remote("known", "yes", None)));
         assert_eq!(o, ["pull_request"]);
         assert!(why.contains("main on acme/shop is protected"), "{why}");
-        assert_eq!(offer(Some(&remote("known", "no", None))).0, ["pull_request", "local_merge"]);
-        let (o, why) = offer(Some(&remote("known", "unknown", Some("not signed in to github.com"))));
+        assert_eq!(
+            offer(Some(&remote("known", "no", None))).0,
+            ["pull_request", "local_merge"]
+        );
+        let (o, why) = offer(Some(&remote(
+            "known",
+            "unknown",
+            Some("not signed in to github.com"),
+        )));
         assert_eq!(o, ["pull_request", "local_merge"]);
         assert!(why.contains("may not be pushable"), "{why}");
-        let (o, why) = offer(Some(&remote("known", "unknown", Some("main is not on acme/shop yet"))));
+        let (o, why) = offer(Some(&remote(
+            "known",
+            "unknown",
+            Some("main is not on acme/shop yet"),
+        )));
         assert_eq!(o, ["local_merge"]);
         assert!(why.contains("not on acme/shop yet"), "{why}");
     }
@@ -269,12 +304,35 @@ mod offer_tests {
     fn a_loop_publishes_itself_only_verified_with_a_known_protection() {
         let yes = remote("known", "yes", None);
         assert!(when_verified(WhenVerified::PullRequest, true, Some(&yes)).is_ok());
-        assert!(when_verified(WhenVerified::PullRequest, true, Some(&remote("known", "no", None))).is_ok());
+        assert!(
+            when_verified(
+                WhenVerified::PullRequest,
+                true,
+                Some(&remote("known", "no", None))
+            )
+            .is_ok()
+        );
         assert!(when_verified(WhenVerified::Wait, true, Some(&yes)).is_err());
-        assert!(when_verified(WhenVerified::PullRequest, false, Some(&yes)).unwrap_err().contains("not verified"));
-        let e = when_verified(WhenVerified::PullRequest, true, Some(&remote("known", "unknown", Some("not signed in")))).unwrap_err();
+        assert!(
+            when_verified(WhenVerified::PullRequest, false, Some(&yes))
+                .unwrap_err()
+                .contains("not verified")
+        );
+        let e = when_verified(
+            WhenVerified::PullRequest,
+            true,
+            Some(&remote("known", "unknown", Some("not signed in"))),
+        )
+        .unwrap_err();
         assert!(e.contains("could not be read"), "{e}");
-        assert!(when_verified(WhenVerified::PullRequest, true, Some(&remote("none", "unknown", None))).is_err());
+        assert!(
+            when_verified(
+                WhenVerified::PullRequest,
+                true,
+                Some(&remote("none", "unknown", None))
+            )
+            .is_err()
+        );
         assert!(when_verified(WhenVerified::PullRequest, true, None).is_err());
     }
 }
@@ -325,8 +383,13 @@ pub fn publish(job: &Job, settings: &crate::config::Settings) -> Result<Done, Fa
     else {
         return Err(fail("check", "no remote to publish to".into(), None));
     };
-    let host = host::host_for(service, settings)
-        .ok_or_else(|| fail("check", format!("{service}: Fallow can only merge locally there"), None))?;
+    let host = host::host_for(service, settings).ok_or_else(|| {
+        fail(
+            "check",
+            format!("{service}: Fallow can only merge locally there"),
+            None,
+        )
+    })?;
     // The protection read again: a target not on the remote takes no pull request. Otherwise
     // a protection that cannot be read only informs (FR-007): the pull request is tried.
     let read = read_protection(&job.repo, r, settings);

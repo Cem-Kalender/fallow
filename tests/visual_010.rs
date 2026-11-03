@@ -29,7 +29,15 @@ fn serve_the_010_demo() {
         .unwrap_or(40);
     std::fs::create_dir_all(&root).unwrap();
     // One project per state of the remote; `calc` has a feature to lock and publish.
-    let names = ["plain", "guarded", "open", "elsewhere", "unknown", "slow", "calc"];
+    let names = [
+        "plain",
+        "guarded",
+        "open",
+        "elsewhere",
+        "unknown",
+        "slow",
+        "calc",
+    ];
     let repos: Vec<PathBuf> = names.iter().map(|n| repo_named(&root, n)).collect();
     for (n, r) in names.iter().zip(&repos) {
         let address = match *n {
@@ -48,7 +56,11 @@ fn serve_the_010_demo() {
         }),
     );
     let scenario = root.join("scenario.toml");
-    std::fs::write(&scenario, format!("{}{}", lead_writes_calc(), calc_loop_ok())).unwrap();
+    std::fs::write(
+        &scenario,
+        format!("{}{}", lead_writes_calc(), calc_loop_ok()),
+    )
+    .unwrap();
     let e = start_studio(&root, &scenario, None);
     let tx = &e.tx;
     let mut ids = Vec::new();

@@ -80,13 +80,20 @@ fn a_step_whose_agent_never_began_is_given_its_instruction_after_a_restart() {
     let bin = shims.join("bin");
     std::fs::create_dir_all(&bin).unwrap();
     let e = restart(e, &root, || {
-        std::fs::copy(env!("CARGO_BIN_EXE_fallow-fake-agent"), bin.join("agent.exe")).unwrap();
+        std::fs::copy(
+            env!("CARGO_BIN_EXE_fallow-fake-agent"),
+            bin.join("agent.exe"),
+        )
+        .unwrap();
     });
     let v = wait_for(&e.tx, id, "T001 accepted", |v| {
         v["feature_loop"]["tasks"]["T001"]["state"] == "accepted"
     });
     let b = steps_of(&v, "build", "T001");
-    assert!(b.len() >= 2, "the step cut short and the one after it: {b:?}");
+    assert!(
+        b.len() >= 2,
+        "the step cut short and the one after it: {b:?}"
+    );
     let prompt = |s: &Value| {
         std::fs::read_to_string(
             root.join("data/runs")

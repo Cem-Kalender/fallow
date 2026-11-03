@@ -69,8 +69,20 @@ pub fn run_full(
     // grandchild holding them open cannot hold Fallow past the limit.
     let (tx, rx) = mpsc::channel::<(bool, String)>();
     for (is_out, pipe) in [
-        (true, child.stdout.take().map(|p| Box::new(p) as Box<dyn Read + Send>)),
-        (false, child.stderr.take().map(|p| Box::new(p) as Box<dyn Read + Send>)),
+        (
+            true,
+            child
+                .stdout
+                .take()
+                .map(|p| Box::new(p) as Box<dyn Read + Send>),
+        ),
+        (
+            false,
+            child
+                .stderr
+                .take()
+                .map(|p| Box::new(p) as Box<dyn Read + Send>),
+        ),
     ] {
         let tx = tx.clone();
         std::thread::spawn(move || {
@@ -108,7 +120,9 @@ pub fn run_full(
     let (mut out, mut err) = (String::new(), String::new());
     let mut got = 0;
     for _ in 0..2 {
-        let left = limit.saturating_sub(started.elapsed()).max(Duration::from_secs(2));
+        let left = limit
+            .saturating_sub(started.elapsed())
+            .max(Duration::from_secs(2));
         match rx.recv_timeout(left) {
             Ok((true, s)) => out = s,
             Ok((false, s)) => err = s,
@@ -118,7 +132,9 @@ pub fn run_full(
     }
     if status.success() && got < 2 {
         // Something it started still holds its output: what it said is not complete.
-        return Err(format!("{name} finished, but its output could not be read in time"));
+        return Err(format!(
+            "{name} finished, but its output could not be read in time"
+        ));
     }
     if status.success() {
         return Ok((out, err));
@@ -162,7 +178,12 @@ mod tests {
         let dir = std::env::temp_dir();
         let t = Instant::now();
         let r = if cfg!(windows) {
-            run("ping", &s(&["-n", "30", "127.0.0.1"]), &dir, Duration::from_millis(500))
+            run(
+                "ping",
+                &s(&["-n", "30", "127.0.0.1"]),
+                &dir,
+                Duration::from_millis(500),
+            )
         } else {
             run("sleep", &s(&["30"]), &dir, Duration::from_millis(500))
         };

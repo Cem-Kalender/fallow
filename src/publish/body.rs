@@ -16,7 +16,10 @@ pub fn body(view: &Value) -> String {
 
     // Acceptance criteria, per story.
     out.push_str("## Acceptance criteria\n\n");
-    let stories = view["checks"]["stories"].as_array().cloned().unwrap_or_default();
+    let stories = view["checks"]["stories"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
     if stories.is_empty() {
         out.push_str("No user story with acceptance scenarios was checked.\n\n");
     }
@@ -44,7 +47,11 @@ pub fn body(view: &Value) -> String {
                 one_line(c["text"].as_str().unwrap_or(""))
             ));
             if let (Some(ran), Some(result)) = (c["ran"].as_str(), c["result"].as_str()) {
-                out.push_str(&format!("  - ran `{}`: {}\n", one_line(ran), one_line(result)));
+                out.push_str(&format!(
+                    "  - ran `{}`: {}\n",
+                    one_line(ran),
+                    one_line(result)
+                ));
             }
         }
         out.push('\n');
@@ -52,7 +59,10 @@ pub fn body(view: &Value) -> String {
 
     // Gates against the baseline.
     out.push_str("## Gates (run by Fallow against the baseline)\n\n");
-    let gates = view["checks"]["gates"].as_array().cloned().unwrap_or_default();
+    let gates = view["checks"]["gates"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
     if gates.is_empty() {
         out.push_str("No gate ran.\n");
     }
@@ -86,7 +96,11 @@ pub fn body(view: &Value) -> String {
     if !decisions.is_empty() {
         out.push_str("## Decisions\n\n");
         for q in decisions {
-            let by = if q["by_lead"] == true { "the lead" } else { "the engineer" };
+            let by = if q["by_lead"] == true {
+                "the lead"
+            } else {
+                "the engineer"
+            };
             out.push_str(&format!(
                 "- {} → {} ({by}{})\n",
                 one_line(q["text"].as_str().unwrap_or("")),
@@ -186,12 +200,24 @@ mod tests {
     #[test]
     fn the_text_holds_every_criterion_the_gates_and_whose_merge_it_is() {
         let b = body(&view(true));
-        for want in ["US1-1", "US1-2", "✅ passed", "python -m calc add 1 2", "**tests**", "baseline: passed",
-                     "Floats? → Ints only (the lead, `1234567`)", "builder (maker, claude sonnet)", "1 repair(s)",
-                     "Verified by Fallow. The merge is the engineer's."] {
+        for want in [
+            "US1-1",
+            "US1-2",
+            "✅ passed",
+            "python -m calc add 1 2",
+            "**tests**",
+            "baseline: passed",
+            "Floats? → Ints only (the lead, `1234567`)",
+            "builder (maker, claude sonnet)",
+            "1 repair(s)",
+            "Verified by Fallow. The merge is the engineer's.",
+        ] {
             assert!(b.contains(want), "{want} in:\n{b}");
         }
         let b = body(&view(false));
-        assert!(b.contains("Not verified by Fallow: US2 not checked."), "{b}");
+        assert!(
+            b.contains("Not verified by Fallow: US2 not checked."),
+            "{b}"
+        );
     }
 }

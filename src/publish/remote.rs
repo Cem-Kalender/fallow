@@ -39,13 +39,19 @@ pub fn find(repo: &Path, target: &str) -> Remote {
         return empty("none");
     }
     // The remote and branch `target` tracks; otherwise `origin`, with the same name.
-    let tracked = git(repo, &["config", "--get", &format!("branch.{target}.remote")])
-        .filter(|r| remotes.contains(r));
+    let tracked = git(
+        repo,
+        &["config", "--get", &format!("branch.{target}.remote")],
+    )
+    .filter(|r| remotes.contains(r));
     let (name, there) = match tracked {
         Some(r) => {
-            let merge = git(repo, &["config", "--get", &format!("branch.{target}.merge")])
-                .map(|m| m.trim_start_matches("refs/heads/").to_string())
-                .unwrap_or_else(|| target.to_string());
+            let merge = git(
+                repo,
+                &["config", "--get", &format!("branch.{target}.merge")],
+            )
+            .map(|m| m.trim_start_matches("refs/heads/").to_string())
+            .unwrap_or_else(|| target.to_string());
             (r, merge)
         }
         None if remotes.iter().any(|r| r == "origin") => ("origin".to_string(), target.to_string()),
@@ -58,7 +64,8 @@ pub fn find(repo: &Path, target: &str) -> Remote {
             return r;
         }
     };
-    let address = git(repo, &["config", "--get", &format!("remote.{name}.url")]).unwrap_or_default();
+    let address =
+        git(repo, &["config", "--get", &format!("remote.{name}.url")]).unwrap_or_default();
     let mut r = empty("known");
     r.remote = Some(name);
     r.target = Some(there);
@@ -153,8 +160,14 @@ mod tests {
         assert_eq!(p("https://github.com/acme/shop.git"), gh("acme", "shop"));
         assert_eq!(p("https://github.com/acme/shop"), gh("acme", "shop"));
         assert_eq!(p("https://github.com/acme/shop/"), gh("acme", "shop"));
-        assert_eq!(p("HTTPS://WWW.GitHub.com/acme/shop.git"), gh("acme", "shop"));
-        assert_eq!(p("https://user@github.com/acme/shop.git"), gh("acme", "shop"));
+        assert_eq!(
+            p("HTTPS://WWW.GitHub.com/acme/shop.git"),
+            gh("acme", "shop")
+        );
+        assert_eq!(
+            p("https://user@github.com/acme/shop.git"),
+            gh("acme", "shop")
+        );
         assert_eq!(p("git@github.com:acme/shop.git"), gh("acme", "shop"));
         assert_eq!(p("github.com:acme/shop.git"), gh("acme", "shop"));
         assert_eq!(p("ssh://git@github.com/acme/shop.git"), gh("acme", "shop"));
@@ -189,9 +202,17 @@ mod tests {
         g(&["remote", "add", "mirror", "https://example.org/x/y.git"]);
         let r = find(&dir, "main");
         assert_eq!(r.state, "no_target", "{r:?}");
-        g(&["remote", "add", "origin", "https://github.com/acme/shop.git"]);
+        g(&[
+            "remote",
+            "add",
+            "origin",
+            "https://github.com/acme/shop.git",
+        ]);
         let r = find(&dir, "main");
-        assert_eq!((r.state.as_str(), r.remote.as_deref()), ("known", Some("origin")));
+        assert_eq!(
+            (r.state.as_str(), r.remote.as_deref()),
+            ("known", Some("origin"))
+        );
         assert_eq!(r.protected, "checking");
         g(&["remote", "add", "upstream", "git@gitlab.com:acme/shop.git"]);
         g(&["config", "branch.main.remote", "upstream"]);
@@ -199,7 +220,10 @@ mod tests {
         let r = find(&dir, "main");
         assert_eq!(r.remote.as_deref(), Some("upstream"));
         assert_eq!(r.target.as_deref(), Some("trunk"));
-        assert_eq!((r.state.as_str(), r.service.as_deref()), ("unsupported", Some("gitlab.com")));
+        assert_eq!(
+            (r.state.as_str(), r.service.as_deref()),
+            ("unsupported", Some("gitlab.com"))
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

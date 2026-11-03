@@ -537,11 +537,7 @@ fn fresh_since(run: &Run) -> u64 {
         .max()
         .unwrap_or(0);
     // 011: the latest new lock or update (research R-3).
-    let fresh = run
-        .state
-        .feature_loop
-        .as_ref()
-        .map_or(0, |l| l.fresh_seq);
+    let fresh = run.state.feature_loop.as_ref().map_or(0, |l| l.fresh_seq);
     retry.max(fresh)
 }
 
@@ -1001,24 +997,13 @@ fn repairs_of(run: &Run, part: &str) -> u32 {
                 && !s.reason.starts_with(RELOCK)
                 && !s.reason.starts_with(OVERRULE)
         })
-        .filter(|s| {
-            s.queued_seq
-                > run
-                    .state
-                    .feature_loop
-                    .as_ref()
-                    .map_or(0, |l| l.fresh_seq)
-        })
+        .filter(|s| s.queued_seq > run.state.feature_loop.as_ref().map_or(0, |l| l.fresh_seq))
         .count() as u32
 }
 
 /// How many more repairs the engineer allowed `part` since the latest new lock.
 fn allowed_more(run: &Run, part: &str) -> u32 {
-    let relock = run
-        .state
-        .feature_loop
-        .as_ref()
-        .map_or(0, |l| l.fresh_seq);
+    let relock = run.state.feature_loop.as_ref().map_or(0, |l| l.fresh_seq);
     run.state
         .steering
         .iter()
@@ -2395,7 +2380,10 @@ fn start(run: &mut Run, ctx: &Ctx, n: u32) -> Result<(), String> {
         if !wt.join(".git").exists() {
             git::worktree_add(&repo, &wt, Some(&l.build_branch), &l.lock_commit)?;
         }
-        let working = u.working.clone().ok_or("the update's working commit is not made yet")?;
+        let working = u
+            .working
+            .clone()
+            .ok_or("the update's working commit is not made yet")?;
         // A repair round goes on from the last attempt, as any repair does; the working commit
         // is checked out only when the worktree does not build on it (the first round, or after
         // something moved it away).
@@ -2887,7 +2875,9 @@ fn work_done(run: &mut Run, step: &Step, value: &Value) -> Result<(), String> {
                 // 011: an update's repair works on the working commit, off the branch.
                 Some(working) => {
                     if !git::is_ancestor(&run.state.repo, &working, &commit) {
-                        reasons.push(format!("commit {commit} does not build on the update's working commit"));
+                        reasons.push(format!(
+                            "commit {commit} does not build on the update's working commit"
+                        ));
                     }
                 }
                 None => {

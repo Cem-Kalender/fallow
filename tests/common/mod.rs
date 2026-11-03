@@ -364,7 +364,16 @@ pub fn lock_feature_in(
     budget: Option<(f64, u64)>,
     level: Option<fallow::run::events::Level>,
 ) -> u64 {
-    lock_feature_with(tx, project, title, feature, pipeline, budget, level, LockExtra::default())
+    lock_feature_with(
+        tx,
+        project,
+        title,
+        feature,
+        pipeline,
+        budget,
+        level,
+        LockExtra::default(),
+    )
 }
 
 /// 011: the lock's other settings (`update_limit`, `run_after`) for `lock_feature_with`.
@@ -611,7 +620,10 @@ pub fn bare_remote_in(root: &Path, repo: &Path, address: &str, folder: &str) -> 
     git(&bare, &["init", "-q", "--bare", "-b", "main"]);
     let local = bare.display().to_string().replace('\\', "/");
     git(repo, &["remote", "add", "origin", address]);
-    git(repo, &["config", &format!("url.{local}.insteadOf"), address]);
+    git(
+        repo,
+        &["config", &format!("url.{local}.insteadOf"), address],
+    );
     git(repo, &["push", "-q", "-u", "origin", "main"]);
     bare
 }
@@ -620,7 +632,12 @@ pub fn bare_remote_in(root: &Path, repo: &Path, address: &str, folder: &str) -> 
 pub fn remote_head(root: &Path, branch: &str) -> Option<String> {
     let out = std::process::Command::new("git")
         .current_dir(root.join("remote.git"))
-        .args(["rev-parse", "--verify", "-q", &format!("refs/heads/{branch}")])
+        .args([
+            "rev-parse",
+            "--verify",
+            "-q",
+            &format!("refs/heads/{branch}"),
+        ])
         .output()
         .ok()?;
     out.status

@@ -181,7 +181,10 @@ pub fn affected(docs: &[Doc]) -> Affected {
         }
     }
     for (name, lines) in elsewhere {
-        let named: BTreeSet<String> = lines.iter().flat_map(|l| crate::speckit::tasks::paths_in(l)).collect();
+        let named: BTreeSet<String> = lines
+            .iter()
+            .flat_map(|l| crate::speckit::tasks::paths_in(l))
+            .collect();
         let hit: Vec<&String> = all
             .iter()
             .filter(|s| {

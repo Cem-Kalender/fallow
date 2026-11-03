@@ -263,7 +263,10 @@ fn a_restart_while_both_run_resumes_each_in_its_own_session() {
             .and_then(|a| a.as_array().map(|a| a.is_empty()))
             .unwrap_or(true)
         {
-            assert!(std::time::Instant::now() < end, "step {n} never got to work");
+            assert!(
+                std::time::Instant::now() < end,
+                "step {n} never got to work"
+            );
             std::thread::sleep(std::time::Duration::from_millis(50));
         }
     }

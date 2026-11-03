@@ -429,7 +429,10 @@ mod tests {
             state: "known".into(),
             remote: Some("origin".into()),
             service: Some("github".into()),
-            repo: Some(crate::publish::host::Repo { owner: "acme".into(), name: "shop".into() }),
+            repo: Some(crate::publish::host::Repo {
+                owner: "acme".into(),
+                name: "shop".into(),
+            }),
             target: Some("main".into()),
             protected: "yes".into(),
             why: None,

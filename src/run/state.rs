@@ -259,6 +259,8 @@ pub struct LoopState {
     pub unchecked: Vec<String>,
     /// 011: each update's steps, for the history (FR-008): when, what, and whether it went well.
     pub update_steps: Vec<(String, String, bool)>,
+    /// 011: each merged update's number, merge commit and the target commit it merged in.
+    pub update_merges: Vec<(u32, String, String)>,
 }
 
 /// 011: an update of the loop in progress (data-model.md).
@@ -528,8 +530,11 @@ impl RunState {
                     if let Some(f) = self.feature_loop.as_mut() {
                         if f.update.as_ref().is_some_and(|u| u.merged) {
                             let n = f.update.take().map_or(0, |u| u.n);
-                            f.update_steps
-                                .push((l.at.clone(), format!("Update {n}: verified again, ready"), true));
+                            f.update_steps.push((
+                                l.at.clone(),
+                                format!("Update {n}: verified again, ready"),
+                                true,
+                            ));
                         }
                     }
                 }
@@ -852,6 +857,7 @@ impl RunState {
                     switches: *switches,
                     unchecked: Vec::new(),
                     update_steps: Vec::new(),
+                    update_merges: Vec::new(),
                 });
             }
             Event::Task {
@@ -1146,7 +1152,8 @@ impl RunState {
                                 _ => "pull request",
                             },
                             match pushed {
-                                Some((b, c)) => format!(" ({b} was pushed at {})", &c[..c.len().min(7)]),
+                                Some((b, c)) =>
+                                    format!(" ({b} was pushed at {})", &c[..c.len().min(7)]),
                                 None => String::new(),
                             }
                         ),
@@ -1182,12 +1189,30 @@ impl RunState {
                             _ => {
                                 let list: Vec<String> = checks
                                     .iter()
-                                    .map(|c| format!("{} {}", c.name, serde_json::to_value(c.state).ok().and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default()))
+                                    .map(|c| {
+                                        format!(
+                                            "{} {}",
+                                            c.name,
+                                            serde_json::to_value(c.state)
+                                                .ok()
+                                                .and_then(|v| v.as_str().map(str::to_string))
+                                                .unwrap_or_default()
+                                        )
+                                    })
                                     .collect();
-                                format!("Pull request #{n}: checks {}", if list.is_empty() { "none yet".into() } else { list.join(", ") })
+                                format!(
+                                    "Pull request #{n}: checks {}",
+                                    if list.is_empty() {
+                                        "none yet".into()
+                                    } else {
+                                        list.join(", ")
+                                    }
+                                )
                             }
                         };
-                        let ok = !checks.iter().any(|c| c.state == crate::publish::host::CheckState::Failed)
+                        let ok = !checks
+                            .iter()
+                            .any(|c| c.state == crate::publish::host::CheckState::Failed)
                             && *state != crate::publish::host::PrStatus::Closed;
                         f.publish_steps.push((l.at.clone(), what, ok));
                     }
@@ -1243,8 +1268,12 @@ impl RunState {
                     let files: Vec<&str> = conflicts.iter().map(|c| c.path.as_str()).collect();
                     f.update_steps.push((
                         l.at.clone(),
-                        format!("Update {n}: conflicts in {}; a builder resolves them", files.join(", ")),
-                        false,
+                        format!(
+                            "Update {n}: conflicts in {}; a builder resolves them",
+                            files.join(", ")
+                        ),
+                        // The usual way of an update with conflicts, not a failure.
+                        true,
                     ));
                 }
             }
@@ -1269,6 +1298,8 @@ impl RunState {
                         u.merged = true;
                         u.working = None;
                         f.base_commit = u.target_commit.clone();
+                        f.update_merges
+                            .push((*n, commit.clone(), u.target_commit.clone()));
                     }
                     f.outcome = None;
                     // Every story's phases are checked again (research R-3); `affected` is left
@@ -1296,8 +1327,11 @@ impl RunState {
                     if f.update.as_ref().is_some_and(|u| u.n == *n) {
                         f.update = None;
                     }
-                    f.update_steps
-                        .push((l.at.clone(), format!("Update {n} dropped: {why}"), false));
+                    f.update_steps.push((
+                        l.at.clone(),
+                        format!("Update {n} dropped: {why}"),
+                        false,
+                    ));
                 }
             }
             Event::PushedForward { from, to } => {

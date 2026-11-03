@@ -56,7 +56,9 @@ impl Host for GitHub {
         })?;
         // gh 2.40 and later write to stdout ("account <login>"), older ones to stderr ("as
         // <login>").
-        Ok(login_of(&out).or_else(|| login_of(&err)).unwrap_or_default())
+        Ok(login_of(&out)
+            .or_else(|| login_of(&err))
+            .unwrap_or_default())
     }
 
     /// Protected only when it can tell: an error or an answer it cannot read is never "not
@@ -64,7 +66,11 @@ impl Host for GitHub {
     fn protected(&self, dir: &Path, repo: &Repo, branch: &str) -> Result<bool, String> {
         let slug = repo.slug();
         // The branch first: a 404 tells a branch not pushed yet from a repository out of reach.
-        let flag = match self.gh(dir, &["api", &format!("repos/{slug}/branches/{branch}")], READ) {
+        let flag = match self.gh(
+            dir,
+            &["api", &format!("repos/{slug}/branches/{branch}")],
+            READ,
+        ) {
             Ok(text) => serde_json::from_str::<Value>(&text)
                 .ok()
                 .and_then(|v| v["protected"].as_bool())
@@ -85,15 +91,19 @@ impl Host for GitHub {
             return Ok(true);
         }
         // Rulesets: a rule requiring a pull request, or restricting updates.
-        let text = self.gh(dir, &["api", &format!("repos/{slug}/rules/branches/{branch}")], READ)?;
+        let text = self.gh(
+            dir,
+            &["api", &format!("repos/{slug}/rules/branches/{branch}")],
+            READ,
+        )?;
         let rules: Value = serde_json::from_str(&text)
             .map_err(|_| format!("could not read the rules of {branch} on {slug}"))?;
         let rules = rules
             .as_array()
             .ok_or_else(|| format!("could not read the rules of {branch} on {slug}"))?;
-        Ok(rules.iter().any(|r| {
-            matches!(r["type"].as_str(), Some("pull_request" | "update"))
-        }))
+        Ok(rules
+            .iter()
+            .any(|r| matches!(r["type"].as_str(), Some("pull_request" | "update"))))
     }
 
     fn open(
@@ -110,8 +120,18 @@ impl Host for GitHub {
         let out = self.gh(
             dir,
             &[
-                "pr", "create", "--repo", &slug, "--base", base, "--head", head, "--title", title,
-                "--body-file", &body,
+                "pr",
+                "create",
+                "--repo",
+                &slug,
+                "--base",
+                base,
+                "--head",
+                head,
+                "--title",
+                title,
+                "--body-file",
+                &body,
             ],
             WRITE,
         )?;
@@ -166,16 +186,18 @@ impl Host for GitHub {
                 .as_str()
                 .is_none_or(|o| o.eq_ignore_ascii_case(&repo.owner))
         };
-        Ok(v.as_array().and_then(|a| a.iter().find(ours)).and_then(|p| {
-            Some((
-                PullRequest {
-                    number: p["number"].as_u64()?,
-                    url: p["url"].as_str()?.to_string(),
-                },
-                status_of(p["state"].as_str()?),
-                p["headRefOid"].as_str().map(str::to_string),
-            ))
-        }))
+        Ok(v.as_array()
+            .and_then(|a| a.iter().find(ours))
+            .and_then(|p| {
+                Some((
+                    PullRequest {
+                        number: p["number"].as_u64()?,
+                        url: p["url"].as_str()?.to_string(),
+                    },
+                    status_of(p["state"].as_str()?),
+                    p["headRefOid"].as_str().map(str::to_string),
+                ))
+            }))
     }
 }
 
@@ -268,8 +290,13 @@ mod tests {
             login_of("github.com\n  ✓ Logged in to github.com as octo (oauth_token)\n").as_deref(),
             Some("octo")
         );
-        let pr = pull_request_of("\nCreating pull request…\nhttps://github.com/acme/shop/pull/42\n").unwrap();
-        assert_eq!((pr.number, pr.url.as_str()), (42, "https://github.com/acme/shop/pull/42"));
+        let pr =
+            pull_request_of("\nCreating pull request…\nhttps://github.com/acme/shop/pull/42\n")
+                .unwrap();
+        assert_eq!(
+            (pr.number, pr.url.as_str()),
+            (42, "https://github.com/acme/shop/pull/42")
+        );
     }
 
     #[test]
@@ -282,7 +309,11 @@ mod tests {
             {"__typename":"StatusContext","context":"ci/legacy","state":"PENDING","targetUrl":"https://x/2"}]}"#;
         let s = state_of(out).unwrap();
         assert_eq!(s.state, PrStatus::Open);
-        let got: Vec<(&str, CheckState)> = s.checks.iter().map(|c| (c.name.as_str(), c.state)).collect();
+        let got: Vec<(&str, CheckState)> = s
+            .checks
+            .iter()
+            .map(|c| (c.name.as_str(), c.state))
+            .collect();
         assert_eq!(
             got,
             [
@@ -296,7 +327,10 @@ mod tests {
         assert_eq!(s.checks[0].url.as_deref(), Some("https://x/1"));
         assert_eq!(s.checks[1].url, None);
         let m = state_of(r#"{"state":"MERGED","mergedAt":"2026-11-02T21:00:00Z","url":"u","statusCheckRollup":[]}"#).unwrap();
-        assert_eq!((m.state, m.merged_at.as_deref()), (PrStatus::Merged, Some("2026-11-02T21:00:00Z")));
+        assert_eq!(
+            (m.state, m.merged_at.as_deref()),
+            (PrStatus::Merged, Some("2026-11-02T21:00:00Z"))
+        );
     }
 
     #[test]
@@ -313,7 +347,15 @@ mod tests {
             .filter(|l| !l.trim_start().starts_with("//"))
             .collect::<Vec<_>>()
             .join("\n");
-        for bad in ["\"token\"", "--show-token", "\"merge\"", "\"review\"", "--approve", "\"close\"", "\"edit\""] {
+        for bad in [
+            "\"token\"",
+            "--show-token",
+            "\"merge\"",
+            "\"review\"",
+            "--approve",
+            "\"close\"",
+            "\"edit\"",
+        ] {
             assert!(!code.contains(bad), "{bad}");
         }
     }
