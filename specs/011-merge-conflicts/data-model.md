@@ -11,7 +11,7 @@ unchanged.
 | `UpdateConflicted` | `n`, `working` (commit), `branch` (its actual name), `conflicts: [{ path, kind: text \| non_text }]` | The merge conflicts; the repair starts on the working commit, kept on the loop's own branch `fallow/<feature>/update-<n>` (`-2`, `-3`… when taken; the name used is recorded) (R-2). |
 | `UpdateDocsChanged` | `n`, `paths: [path]` | The feature's locked documents changed on the target; nothing merged (R-2). |
 | `UpdateMerged` | `n`, `commit` | Fallow's two-parent merge commit is on the loop's branch; the working branch deleted. Folded (R-3): every story's phases back to Pending with `reopened`, `outcome` cleared; `affected` untouched; `base_commit` = the target commit. |
-| `UpdateDropped` | `n`, `why` | Dropped (pull request merged or closed, loop stopped, locked again); its working branch deleted, if any. |
+| `UpdateDropped` | `n`, `why` | Dropped (pull request merged or closed, loop stopped, locked again); its working branch deleted, if any (Fallow's own scratch branch holding only its computed merge, never the engineer's work, so no confirmation is asked: II's confirmation covers the engineer's branches). |
 | `PushedForward` | `from`, `to` | The loop's branch on the remote moved forward; `Publication.commit` = `to`. |
 | `LeftPullRequest` | `unchecked: [commit]` | "Leave the pull request as it is" at the limit. |
 | `Touched` | `files: [path]` | Files an accepted step changed (from `work_done`'s list). |
@@ -41,12 +41,11 @@ unchanged.
 | `task_paths` | `BTreeSet<path>` | paths named in the locked tasks |
 | `overlaps` | `Vec<Overlap { with, files }>` | `Overlap` |
 | `waits_for` | `Option<run id>` | `WaitsFor` / `WaitEnded` |
-| `moved` | `Option<Moved { target_commit, commits, conflicts, from }>` (not logged: the last R-1 result) | the target watch |
 
 ## Engine (in memory, rebuilt on load)
 
 - `lines: BTreeMap<(repo, target), Vec<(at, run id)>>` from `lined_at`, ordered by `at` then run id.
-- `moved` results per loop from the target watch thread (R-1), with the time of the read.
+- `moved` per loop: `Moved { target_commit, commits, conflicts, docs_changed, from }`, the last R-1 result from the target watch thread, with the time of the read (not logged).
 
 ## Lock record (`src/project/mod.rs`)
 

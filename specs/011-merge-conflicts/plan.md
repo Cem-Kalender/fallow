@@ -87,14 +87,14 @@ Checked against v6.5.1.
 | I. Verified, Not Trusted | Only a commit whose gates ran on top of the target and whose stories were all checked again is offered (R-3). The builder's conflict resolution is checked by Fallow (no marker, no `~side` file, every non-text path accounted for), and then verified by the gates on the merge commit and every story checked again; the builder's own account of its resolutions (`resolutions`) is shown to the engineer, never taken as evidence. "Without the latest check" is the engineer's choice, recorded with the commits it was not verified with, and labelled as not verified everywhere (R-6). | PASS |
 | II. The Engineer Decides | Updates start by the level the engineer chose; at a limit or a cap the engineer decides; every choice is a recorded steering action. Never a push to the target, never forced, never a second pull request; a published loop is never stopped while its pull request is open. | PASS |
 | III. Coordination in Code | The line, the waits and the updates are the engine's code and the loops' logs; agents do not coordinate. Every project is a git repository (6.5.0): updates and checks are git. | PASS |
-| IV. Simplest Setup First | No new agent kind: the conflict goes to the pipeline's builder as a repair; checking again reuses the relock path. | PASS |
+| IV. Simplest Setup First | No new agent kind: the conflict goes to the pipeline's builder as a repair; checking again reuses the relock path. Each part that acts on its own (Free's updates, the merge line, the overlap warnings) can be switched off per project in `.fallow/squad.toml` `[updates]`, and a recorded run records which were off (FR-016c, R-8b). | PASS |
 | V. Local and Private | Local checks are local git. For a published loop, `ls-remote` and a fetch of the target commit by its sha (no ref of the engineer written), and `gh pr view`, are the engineer's own tools publishing a run: the pull request cannot be updated or the push checked without the target commit (as V names it since 6.5.1). Nothing leaves the machine but the loop's own branch. | PASS |
 | VI. Least Privilege | Updates write only to the loop's own branches (its build branch and, during a conflict, `fallow/<feature>/update-<n>`) and its working copy; the fetch by sha writes no ref. Builders never touch locked documents: the repair starts on a commit that already holds the target's changes, so the tidy judges only the builder's own edits (R-2). | PASS |
 | VII. Runs Survive | Every new state is an event; a merge in progress is on disk and its repair re-queued; the line is rebuilt on load (R-9). | PASS |
 | VIII. Small and Measured | No dependencies; local git on a thread, bounded frequency; no new budget claims beyond SC-006, which a test times. | PASS |
 | IX. Runtime-Agnostic | Decided from git, the gates and the checker's verdict; the repair prompt is plain text; all of it tested on the fake runtime. | PASS |
 
-**Re-check after Phase 1 design**: PASS. The contracts add four requests, extend two (merge, publish)
+**Re-check after Phase 1 design**: PASS. The contracts add five requests (update, leave-pr, lock-again, wait, stop waiting), extend two (merge, publish)
 and the lock, add one read (overlap), fields on the loop read, and events; the only network is the engineer's tools for published loops, as V lists.
 
 ## Project Structure
@@ -118,7 +118,7 @@ specs/011-merge-conflicts/
 ```text
 src/verify/git.rs        # merge_tree (exit codes, tree and paths; scratch fallback), commit_tree with two parents, conflict markers, fetch by sha
 src/run/
-├── events.rs            # Updated, UpdateMerged, UpdateDropped, Overtaken, Lined, Unlined, Overlap, WaitsFor, WaitEnded; unchecked; update_limit, run_after; Steering kinds
+├── events.rs            # Updated, UpdateConflicted, UpdateDocsChanged, UpdateMerged, UpdateDropped, PushedForward, LeftPullRequest, Touched, Overtaken, Lined, Unlined, Overlap, WaitsFor, WaitEnded; unchecked; update_limit, run_after; Steering kinds
 ├── state.rs             # LoopState.update, fresh_seq, updates, update_limit, overtaken, base_commit, lined_at, touched, task_paths, overlaps, waits_for; UpdateMerged reopens every story (R-3); baseline by commit
 ├── update.rs            # NEW: computing and committing an update (R-2), the working commit and its branch, the repair prompt, the marker check, docs_changed, resuming (R-9)
 ├── feature.rs           # step(): an update in progress (build worktree detached at the working commit; take_answers skipped meanwhile; on_branch check for update parts until merged; every declared gate on the merge commit; the update repair on the last phase in a new session); baseline at base_commit; waits_for blocks starting steps; repairs_of/allowed_more/fresh_since read fresh_seq; finish() in Publishing hands over to push_forward; Touched from work_done's changed list
@@ -130,6 +130,7 @@ src/publish/
 ├── mod.rs               # fetching the remote target; behind/required
 └── host/{mod.rs,github.rs}   # mergeable, mergeStateStatus; protection's strict
 src/speckit/tasks.rs     # paths_in (moved from run/relock.rs, public)
+src/config/squad.rs      # [updates] auto, line, overlap (R-8b)
 src/agent/schemas.rs     # the step result's optional `resolutions` (path, how), plain JSON, for an update's repair; specs/007-fallow-studio/contracts/runtime.md documents it (IX); the fake runtime plays it
 src/service/
 ├── http.rs              # the new routes; lock's update_limit/run_after; overlap read

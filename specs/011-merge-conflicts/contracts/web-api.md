@@ -37,7 +37,7 @@ the pull request on the remote first.
 The page's labels: `bring_up_to_date` "Bring up to date"; `verify_again` "Verify again on the latest
 <target>"; `merge_unchecked` "Merge without the latest check"; `publish_unchecked` "Publish without
 the latest check"; `leave_pr` "Leave the pull request as it is"; `lock_again` "Lock again";
-`wait_for` "Wait for <feature>". Under `merge_unchecked`, `publish_unchecked` and `leave_pr`: "not
+`wait_for` "Wait for <feature>"; `stop_waiting` "Stop waiting". Under `merge_unchecked`, `publish_unchecked` and `leave_pr`: "not
 checked with: <n> commits" and the commits.
 
 ## Requests
@@ -50,9 +50,7 @@ checked with: <n> commits" and the commits.
 | `POST /api/loops/<id>/leave-pr` | `{}` | Leave the pull request as it is (recorded with the newer commits not verified with, and labelled so). |
 | `POST /api/loops/<id>/wait` | `{ "for": <run id> }` | Wait for that loop (after the current step); refused when it would close a cycle (the reply names the loop already waiting) or the pull request is open. |
 | `DELETE /api/loops/<id>/wait` | | Stop waiting. |
-
-"Lock again" opens the feature's spec session (the page's existing route); the lock there is the
-existing relock.
+| `POST /api/loops/<id>/lock-again` | `{}` | Opens the feature's spec session with Fallow's message showing the target's version of the changed documents; the lock there is the existing relock, which ends the held update. Refused while the pull request is open (FR-016b). |
 
 ## The lock
 

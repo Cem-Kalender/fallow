@@ -88,9 +88,10 @@ which the loop writes itself, merges like any file.
   `reconciled_target`) **and** its content there differs from `loop_head`'s. A target that never had the feature's directory, or gained the same
   documents, does not count. If any path counts, the update is not made (`UpdateDocsChanged`, nothing
   merged) and the loop waits for the engineer with "Lock again" and "Stop" (FR-005). Other protected paths (the
-  constitution, `.fallow/`) are merged in like any change: they are not this feature's locked
-  documents, the builder never edits them (the tidy restores the base's version), and the loop page
-  notes that they changed.
+  constitution, `.fallow/`) changed only on the target merge in like any change and the loop page
+  notes it; changed on both sides (the lock changed them too) so that they conflict, they are handled
+  like the feature's documents: the update stops with `UpdateDocsChanged` naming them, never handed
+  to a builder, who may not edit them (the docs check of R-2 covers them for that case).
 - **"Lock again"** opens the feature's spec session with a message from Fallow showing the target's
   version of the changed documents against the locked ones; the engineer and the lead bring them in
   and lock again (the existing relock, `engine.relock`). The new lock records the target commit it was
@@ -138,8 +139,9 @@ with "bring up to date" and "stop" (never "stop" while a pull request is open, F
 
 **Decision**: a line per `(repository, target branch)`, kept in the engine and rebuilt on load from
 `Lined { at }` and `Unlined { why }` in each loop's log; ordered by `at`, then run id. `at` is the time
-the loop became ready with its current result. A loop joins when it becomes ready and wants its turn
-(an update for its merge is starting, or the engineer asked to merge), and leaves when merged,
+the loop became ready with its current result. A loop joins only for a merge the engineer asked for
+(with the update made right before that merge, when the target moved); a Free loop's own update,
+made before any merge was asked for, runs outside the line. It leaves when merged,
 stopped, deleted, or waiting for anything (needs, a cap, its budget, Paused, Ready waiting for the
 engineer's Merge, a wait for another loop: FR-009a). It *holds its turn* when it is first.
 
@@ -154,8 +156,10 @@ update to its push (FR-007).
 
 **Decision**: `update_limit` (default 3, 1 to 20) is a lock setting, carried like `when_verified`:
 lock form → `Request::Lock` → `LoopCreated.update_limit` → `LoopState` and `LockRec`.
-`LoopState.overtaken` counts updates outrun: when the loop is ready again after an update and R-1
-finds the target moved again *while it held its turn*, `Overtaken` is appended (locally the line kept
+`LoopState.overtaken` counts updates outrun. The test is made at the merge's recheck (FR-003),
+while the loop holds its turn: if the target's tip is no longer the `target_commit` its last update
+merged in, `Overtaken` is appended and another update starts (or the limit's choices, below). The
+30 s watch does not count anything: a move it sees while the loop waits is just another update (locally the line kept
 other loops out, so the move came from outside Fallow; for a publication, any move of the remote
 target between the update's start and the push). Reset by `Merged`, `Published`,
 `PushedForward` and the engineer's "Verify again on the latest <target>" (`Steering::Update`).
@@ -229,6 +233,15 @@ date or to check it before a push").
   the lock brought, i.e. the feature's documents, already covered by that check and by the loop's
   version being kept, is committed straight onto its branch (no gates or checker: nothing is
   built).
+
+## R-8b Switching the parts off (constitution IV)
+
+**Decision**: `.fallow/squad.toml` gains `[updates]` with `auto` (Free's own updates), `line` (the
+merge line) and `overlap` (the warnings), each a boolean, default `true`, parsed in
+`src/config/squad.rs`. With `auto = false`, a Free loop asks as Normal does; with `line = false`,
+merges are not held (FR-009a off; the recheck before each merge still applies); with `overlap =
+false`, no overlap is computed or shown. The run's comparison record (the recorded-run fields V
+allows) gains the three values. A merge that would conflict is never offered whatever the switches.
 
 ## R-9 Restart
 
