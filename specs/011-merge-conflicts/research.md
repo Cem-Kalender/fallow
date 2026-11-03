@@ -29,12 +29,17 @@ matched against the commits other loops of the project recorded in `Merged`/`Pub
 
 **Decision**: an update never runs `git merge` in a working copy. Fallow computes it with
 `git merge-tree --write-tree <loop_head> <target_commit>`, which yields a tree; when there are
-conflicts, that tree holds the conflicted files with conflict markers in them. In that tree, the
-feature's locked documents (its spec directory) and any protected path the lock itself set are
-always taken as the lock has them (a temporary index: `read-tree` the merged tree, the lock commit's
-version of those paths read in over it, `write-tree`): the target's changes to them never reach the
-loop's branch, conflicting or not, so the builder is never asked to resolve a path it may not edit.
-Whether the target changed them is the separate question below (`UpdateDocsChanged`).
+conflicts, that tree holds the conflicted files with conflict markers in them.
+
+The order is fixed: **first** the check on the feature's locked documents (below); if it finds a
+change, the update stops there with `UpdateDocsChanged` and nothing is computed or committed. Only
+when it passes is the merge computed, and then, in the merged tree, the feature's spec directory
+except `handover/` is taken as the loop's branch has it (`loop_head`'s version, which holds the lock
+and the answers merged into `spec.md` since; a temporary index: `read-tree` the merged tree, those
+paths read in from `loop_head`, `write-tree`). That rule only ever covers target changes the engineer
+already declined (up to `reconciled_target`) or ones identical to the loop's version, so nothing is
+silently overridden; and the builder is never asked to resolve a path it may not edit. `handover/`,
+which the loop writes itself, merges like any file.
 
 - **Without a conflict**: Fallow makes the merge commit itself:
   `git commit-tree <tree> -p <loop_head> -p <target_commit> -m "Fallow: <feature> brought up to date
@@ -73,10 +78,10 @@ Whether the target changed them is the separate question below (`UpdateDocsChang
     records `UpdateMerged`; the working ref is deleted. Whatever the builder did with commits (its own, none, a resolution equal to
     one side) does not matter: Fallow takes the tree.
 - **The feature's own locked documents** (its `spec.md`, `plan.md`, `tasks.md` and the other files
-  of its spec directory): a path counts as changed when the target changed it since the point last
-  reconciled (`merge-base(loop_head, target_commit)`, or, after a "Lock again", the target commit that
-  lock was reconciled against, recorded on the lock as `reconciled_target`) **and** its content
-  there differs from the lock's. A target that never had the feature's directory, or gained the same
+  of its spec directory): a path (the spec directory except `handover/`) counts as changed when the
+  target changed it since the point last reconciled (`merge-base(loop_head, target_commit)`, or,
+  after a "Lock again", the target commit that lock was reconciled against, recorded on the lock as
+  `reconciled_target`) **and** its content there differs from `loop_head`'s. A target that never had the feature's directory, or gained the same
   documents, does not count. If any path counts, the update is not made (`UpdateDocsChanged`, nothing
   merged) and the loop waits for the engineer with "Lock again" and "Stop" (FR-005). Other protected paths (the
   constitution, `.fallow/`) are merged in like any change: they are not this feature's locked
@@ -230,7 +235,8 @@ otherwise computed again from the recorded `loop_head` (the same inputs give the
 `UpdateConflicted` and its ref, a repair step cut short → the build worktree detached at the ref
 again and the step re-queued by `requeue_cut_short`; a repair accepted but no `UpdateMerged` → Fallow
 makes the merge commit from the accepted tree; `UpdateMerged` with the build worktree still detached →
-checked out on the loop's branch again. A forward push whose `PushedForward` was not
+checked out on the loop's branch again; a working ref still there after `UpdateMerged` or
+`UpdateDropped` → deleted. A forward push whose `PushedForward` was not
 written is found by `push_forward` itself (the remote already at `to` means done). The line is
 rebuilt from `Lined`/`Unlined`.
 
