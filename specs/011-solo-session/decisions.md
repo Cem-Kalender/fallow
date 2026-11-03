@@ -61,7 +61,7 @@ applies.
 - **Web access on by default** for the assistant (constitution 6.3.0, V); off for every other
   kind unless its definition allows it; each request shows in the activity.
 - **In the first version** (plus the handover to a feature, 2026-11-03):
-  1. Undo this turn (back to the previous turn's commit on the session's branch);
+  1. Undo (back to before any turn since 2026-11-03; first decided as the last turn only);
   2. pasting or attaching a screenshot;
   3. a message typed while the assistant works waits and is sent when the turn ends;
   4. the project's own instruction files (such as `CLAUDE.md`, `AGENTS.md`) handed to the
