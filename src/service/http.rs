@@ -768,8 +768,14 @@ fn handle(mut req: tiny_http::Request, tx: &Sender<Msg>, port: u16, secret: &str
                 ["merge"] | ["stop"] | ["publish"] if !confirmed => {
                     return json_reply(req, Reply::Err("this needs {\"confirm\": true}".into()));
                 }
-                ["merge"] => Request::Merge { id: i },
-                ["publish"] => Request::Publish { id: i },
+                ["merge"] => Request::Merge {
+                    id: i,
+                    without_latest_check: body["without_latest_check"] == true,
+                },
+                ["publish"] => Request::Publish {
+                    id: i,
+                    without_latest_check: body["without_latest_check"] == true,
+                },
                 // 011: bring the loop up to date with its target (contracts/web-api.md).
                 ["update"] => Request::Update { id: i },
                 ["lock-again"] => Request::LockAgain { id: i },

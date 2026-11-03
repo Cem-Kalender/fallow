@@ -41,6 +41,10 @@
     const u = v.update;
     const offer = v.offer || [];
     const lines = [];
+    // 011 FR-009a, FR-007: the merge line and the updates overtaken.
+    if (v.line && v.line.after) lines.push(h`<div class="row wrap gap-8"><span class="pill yellow">In line</span><span class="small">In line to merge after <b>${v.line.after}</b> (place ${v.line.position}): the merge runs, checked again, when its turn comes.</span></div>`);
+    if ((v.overtaken || 0) > 0) lines.push(h`<div class="small">Overtaken ${v.overtaken} of ${v.update_limit} in a row by commits on ${v.base_branch} from outside Fallow.</div>`);
+    if (v.stage === "done" && (v.unchecked || []).length) lines.push(h`<div class="notice"><b>Merged without the latest check</b>: not verified on top of ${v.base_branch} as it was then. Not checked with: ${v.unchecked.length} commit${v.unchecked.length === 1 ? "" : "s"} <span class="mono tiny">${v.unchecked.map(short).join(", ")}</span>.</div>`);
     if (t.error && !u && v.stage === "ready") lines.push(h`<div class="small muted">${v.base_branch} could not be read (${t.error}); a merge checks it again first.</div>`);
     if (t.reading && !u && v.stage === "ready") lines.push(h`<div class="small muted">Reading ${v.base_branch} before anything is offered to merge…</div>`);
     if (t.gone) {
@@ -619,7 +623,7 @@
     app.innerHTML = h`<div class="page col gap-16">
       <div class="row wrap gap-20 loop-head">
         <div><div class="small muted">${v.project} · locked at <span class="mono tiny">${short(v.lock_commit)}</span> · pipeline <a href="#/pipelines">${v.pipeline ? v.pipeline.name : "?"}</a></div>
-          <h1 class="page-title">${v.feature} ${STAGE[v.stage] || h`<span class="pill grey">${v.stage}</span>`}</h1></div>
+          <h1 class="page-title">${v.feature} ${v.stage === "done" && (v.unchecked || []).length ? h`<span class="pill orange">Merged without the latest check</span>` : STAGE[v.stage] || h`<span class="pill grey">${v.stage}</span>`}</h1></div>
         <span class="grow"></span>
         <div class="row wrap gap-20 small body-ink totals">
           <span><b>${v.used.minutes}</b> of ${v.budget.minutes} min</span><span><b>${money(v.used.usd)}</b> of ${money(v.budget.usd)}</span>
@@ -841,6 +845,18 @@
         if (ok) run("update", {});
         return;
       }
+      case "merge-unchecked": {
+        const v = state.view;
+        const commits = (v.target && v.target.commits) || [];
+        const ok = await confirm({
+          title: "Merge without the latest check?",
+          text: `The commit as last verified is merged into ${v.base_branch}, labelled "not verified on top of ${v.base_branch} as it is now". Not checked with: ${commits.length} commit${commits.length === 1 ? "" : "s"}.`,
+          items: commits.map((c) => `${short(c.sha)} ${c.subject}`),
+          ok: "Merge without the latest check",
+        });
+        if (ok) run("merge", { confirm: true, without_latest_check: true });
+        return;
+      }
       case "lock-again": {
         const v = state.view;
         try {
@@ -934,7 +950,8 @@
         if (o === "raise the limit") return act("limits", el);
         if (o === "stop") return act("stop", el);
         if (o === "merge again") return act("merge", el);
-        if (o === "bring up to date") return act("update", el);
+        if (o === "bring up to date" || o.startsWith("verify again on the latest")) return act("update", el);
+        if (o === "merge without the latest check") return act("merge-unchecked", el);
         if (o === "lock again") return act("lock-again", el);
         if (o === "answer") {
           const text = await confirm({ title: "Answer the builder", text: state.view.needs.why, ok: "Send the answer", input: { label: "Your answer", value: "" } });

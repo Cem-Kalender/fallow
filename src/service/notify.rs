@@ -35,6 +35,7 @@ fn what(item: &Value) -> &'static str {
         Some("unverified") => "done, not verified by Fallow: review it before merging",
         Some("pr_open") => "pull request opened: review and merge it on the remote",
         Some("pr_merged") => "merged on the remote",
+        Some("docs_changed") => "the target changed this feature's documents: lock again or stop",
         _ => match item["what"].as_str() {
             Some("stopped at a limit") => "stopped at a limit",
             Some("stopped at the repair cap") => "stopped at the repair cap",
@@ -58,7 +59,21 @@ pub fn notice(item: &Value, page: Option<&str>) -> Notice {
         } else {
             format!("Fallow · {project}")
         },
-        body: format!("{feature}: {}", what(item)),
+        body: match item["kind"].as_str() {
+            // 011 (contracts/web-api.md): counts only, never commits or code.
+            Some("update_limit") => format!(
+                "{feature}: updated {} times and overtaken; your decision",
+                item["updates"].as_u64().unwrap_or(0)
+            ),
+            Some("merged_unchecked") => {
+                let n = item["unchecked"].as_u64().unwrap_or(0);
+                format!(
+                    "{feature} merged without the latest check ({n} commit{})",
+                    if n == 1 { "" } else { "s" }
+                )
+            }
+            _ => format!("{feature}: {}", what(item)),
+        },
         url: format!("{}{hash}", page.unwrap_or("")),
     }
 }
@@ -149,4 +164,30 @@ fn enc(s: &str) -> String {
             _ => format!("%{b:02X}"),
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests_011 {
+    use super::*;
+    use serde_json::json;
+
+    /// 011 (contracts/web-api.md): counts only, the project and the feature, never code (V).
+    #[test]
+    fn the_limit_and_an_unchecked_merge_are_said_in_fixed_words() {
+        let base = json!({ "project": "p", "project_name": "shop", "feature": "011-x" });
+        let mut a = base.clone();
+        a["kind"] = json!("update_limit");
+        a["updates"] = json!(3);
+        assert_eq!(
+            notice(&a, None).body,
+            "011-x: updated 3 times and overtaken; your decision"
+        );
+        let mut b = base;
+        b["kind"] = json!("merged_unchecked");
+        b["unchecked"] = json!(1);
+        assert_eq!(
+            notice(&b, None).body,
+            "011-x merged without the latest check (1 commit)"
+        );
+    }
 }

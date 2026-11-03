@@ -391,7 +391,7 @@ fn an_update_folds_into_the_loop_and_reopens_every_story() {
             n: 1,
             target_commit: "t2".into(),
         },
-        Event::Lined,
+        Event::Lined { at_ms: 1 },
         Event::Overlap {
             with: 7,
             files: vec!["calc/__init__.py".into()],

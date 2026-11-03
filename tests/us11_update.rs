@@ -168,7 +168,16 @@ fn a_conflicting_loop_is_brought_up_to_date_verified_again_and_merged() {
     assert!(offer.iter().any(|o| o == "bring_up_to_date"), "{offer:?}");
     assert!(!offer.iter().any(|o| o == "merge"), "{offer:?}");
     // A merge asked for anyway is refused, nothing touched (FR-003).
-    assert!(ask(tx, Request::Merge { id: b }).is_err());
+    assert!(
+        ask(
+            tx,
+            Request::Merge {
+                id: b,
+                without_latest_check: false
+            }
+        )
+        .is_err()
+    );
     assert_eq!(git(&repo, &["rev-parse", "main"]), main_before);
     // Bring it up to date: a repair on update-1 naming the file; while it runs, not ready.
     ask(tx, Request::Update { id: b }).unwrap();
@@ -179,7 +188,14 @@ fn a_conflicting_loop_is_brought_up_to_date_verified_again_and_merged() {
     });
     assert_ne!(s["stage"], "ready", "FR-003a: not ready during an update");
     assert!(
-        ask(tx, Request::Merge { id: b }).is_err(),
+        ask(
+            tx,
+            Request::Merge {
+                id: b,
+                without_latest_check: false
+            }
+        )
+        .is_err(),
         "the old commit is not merged"
     );
     let prompt = std::fs::read_dir(
@@ -295,7 +311,16 @@ fn the_repair_cap_stops_an_update_for_the_engineer() {
             .is_some_and(|n| n.contains("still not resolved"))
     });
     assert_ne!(v["stage"], "ready");
-    assert!(ask(tx, Request::Merge { id: b }).is_err());
+    assert!(
+        ask(
+            tx,
+            Request::Merge {
+                id: b,
+                without_latest_check: false
+            }
+        )
+        .is_err()
+    );
     assert_eq!(git(&repo, &["rev-parse", "main"]), main_before);
     drop(e);
     let _ = std::fs::remove_dir_all(&root);
@@ -395,7 +420,14 @@ fn a_gone_target_is_said_and_nothing_merges() {
         std::thread::sleep(std::time::Duration::from_millis(200));
     };
     assert_eq!(v["offer"], serde_json::json!(["stop"]));
-    let why = ask(tx, Request::Merge { id: b }).unwrap_err();
+    let why = ask(
+        tx,
+        Request::Merge {
+            id: b,
+            without_latest_check: false,
+        },
+    )
+    .unwrap_err();
     assert!(why.contains("is gone"), "{why}");
     drop(e);
     let _ = std::fs::remove_dir_all(&root);
@@ -515,25 +547,29 @@ fn conflicting_readme(
     (e, repo, a, b)
 }
 
-/// FR-003: the target is checked again right before merging, whatever the page last read: a
-/// merge asked for before the watch saw the move is refused or ends with nothing merged.
+/// FR-003, FR-009a: the target is checked again right before merging, whatever the page last
+/// read: a merge asked for after the target moved merges nothing; the loop is brought up to
+/// date first (the update made right before the merge asked for).
 #[test]
 fn a_merge_right_after_the_target_moved_is_not_tried() {
     let root = scratch("u-recheck");
     let (e, repo, _a, b) = conflicting(&root, "");
     let tx = &e.tx;
     let main_before = git(&repo, &["rev-parse", "main"]);
-    match ask(tx, Request::Merge { id: b }) {
-        // The watch had read the move already.
+    match ask(
+        tx,
+        Request::Merge {
+            id: b,
+            without_latest_check: false,
+        },
+    ) {
+        // The watch had read the move and its conflict.
         Err(why) => assert!(why.contains("moved"), "{why}"),
-        // Asked before the watch read it: the merge thread checks again and merges nothing.
+        // Asked before the watch read it: in its line, brought up to date first.
         Ok(_) => {
-            let v = wait_for(tx, b, "the refusal", |v| {
-                v["needs_engineer"]
-                    .as_str()
-                    .is_some_and(|n| n.contains("Nothing was merged"))
+            wait_for(tx, b, "brought up to date first", |v| {
+                v["feature_loop"]["updates"] == 1
             });
-            assert_eq!(v["stage"], "ready");
         }
     }
     assert_eq!(git(&repo, &["rev-parse", "main"]), main_before);

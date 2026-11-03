@@ -249,6 +249,29 @@ pub fn needs(run: &Run, project_name: &str) -> Vec<Value> {
             out.push(v);
         }
     }
+    // 011: the limit of overtaken updates reached (a ready loop that asks) and an update held
+    // because the target changed the feature's documents (contracts/web-api.md).
+    if let Some(n) = s.needs.as_ref() {
+        let kind = if l.overtaken > 0 && l.overtaken >= l.update_limit {
+            Some("update_limit")
+        } else if l
+            .update
+            .as_ref()
+            .is_some_and(|u| !u.docs_changed.is_empty())
+        {
+            Some("docs_changed")
+        } else {
+            None
+        };
+        if let Some(kind) = kind {
+            let mut v = base(kind, &n.at);
+            v["key"] = json!(format!("{}:{kind}:{}", s.id, n.at));
+            v["text"] = json!(n.why);
+            v["updates"] = json!(l.updates);
+            out.push(v);
+            return out;
+        }
+    }
     if s.stage == Stage::Ready && l.outcome.is_some() {
         let verified = l.outcome.as_ref().is_some_and(|o| o.0);
         let mut v = base(if verified { "ready" } else { "unverified" }, &s.stage_at);

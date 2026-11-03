@@ -566,8 +566,11 @@ pub enum Event {
         n: u32,
         target_commit: String,
     },
-    /// 011: joined the merge line of its target (at the record's time).
-    Lined,
+    /// 011: joined the merge line of its target.
+    Lined {
+        /// When, in milliseconds since the epoch: the line's order (research R-5).
+        at_ms: u64,
+    },
     /// 011: left the merge line.
     Unlined {
         why: String,
@@ -788,7 +791,7 @@ impl Event {
             Event::LeftPullRequest { .. } => "left_pull_request",
             Event::Touched { .. } => "touched",
             Event::Overtaken { .. } => "overtaken",
-            Event::Lined => "lined",
+            Event::Lined { .. } => "lined",
             Event::Unlined { .. } => "unlined",
             Event::Overlap { .. } => "overlap",
             Event::WaitsFor { .. } => "waits_for",

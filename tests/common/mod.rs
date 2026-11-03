@@ -538,7 +538,13 @@ pub fn merge_when_read(tx: &Sender<Msg>, id: u64) -> Result<Value, String> {
         }
         std::thread::sleep(Duration::from_millis(100));
     }
-    ask(tx, Request::Merge { id })
+    ask(
+        tx,
+        Request::Merge {
+            id,
+            without_latest_check: false,
+        },
+    )
 }
 
 /// A lead turn that runs analyze again, with no finding: for a scenario whose documents change

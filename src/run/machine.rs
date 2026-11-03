@@ -484,10 +484,11 @@ pub fn on_done(run: &mut Run, ctx: &Ctx, done: Done) -> Result<(), String> {
         Done::Merge(r) => match r {
             // A merge that went through is recorded whatever the stage: it happened.
             Ok(commit) => {
+                let unchecked = std::mem::take(&mut run.merge_unchecked);
                 run.append(Event::Merged {
                     commit,
                     how: "local".into(),
-                    unchecked: Vec::new(),
+                    unchecked,
                 })?;
                 if run.state.stage.is_final() {
                     return Ok(());
@@ -496,6 +497,17 @@ pub fn on_done(run: &mut Run, ctx: &Ctx, done: Done) -> Result<(), String> {
                     to: Stage::Done,
                     why: "merged by the engineer".into(),
                 })
+            }
+            // In its merge line: the line's turn handles it (an update, or the limit).
+            Err(e)
+                if e.starts_with(MOVED)
+                    && run
+                        .state
+                        .feature_loop
+                        .as_ref()
+                        .is_some_and(|l| l.lined_at.is_some()) =>
+            {
+                Ok(())
             }
             Err(e) if e.starts_with(MOVED) => run.append(Event::NeedsEngineer {
                 why: format!(
@@ -691,7 +703,11 @@ pub fn retry(run: &mut Run) -> Result<(), String> {
 }
 
 /// The engineer's merge of the verified result (FR-009).
-pub fn merge(run: &mut Run, tx: std::sync::mpsc::Sender<Msg>) -> Result<(), String> {
+pub fn merge(
+    run: &mut Run,
+    tx: std::sync::mpsc::Sender<Msg>,
+    unchecked: Vec<String>,
+) -> Result<(), String> {
     if run.state.stage != Stage::Ready {
         return Err("the run is not ready to merge".into());
     }
@@ -715,11 +731,16 @@ pub fn merge(run: &mut Run, tx: std::sync::mpsc::Sender<Msg>) -> Result<(), Stri
         .integrated
         .clone()
         .ok_or("nothing is integrated")?;
-    run.append(Event::Steering {
-        kind: SteeringKind::Merge,
-        target: Some(run.state.target.clone()),
-        detail: Some(commit.clone()),
-    })?;
+    // The engineer's click is recorded by the caller (011: a merge in line runs later).
+    if run.state.feature_loop.is_none() {
+        run.append(Event::Steering {
+            kind: SteeringKind::Merge,
+            target: Some(run.state.target.clone()),
+            detail: Some(commit.clone()),
+        })?;
+    }
+    let skip_recheck = !unchecked.is_empty();
+    run.merge_unchecked = unchecked;
     run.busy = Some(Busy::Merge);
     let repo = run.state.repo.clone();
     let target = run.state.target.clone();
@@ -730,8 +751,10 @@ pub fn merge(run: &mut Run, tx: std::sync::mpsc::Sender<Msg>) -> Result<(), Stri
         .spawn(move || {
             // 011 FR-003: the target is checked again right before merging; moved since the
             // loop was verified, nothing is merged and the loop is brought up to date first.
-            let moved = git::rev(&repo, &format!("refs/heads/{target}"))
-                .is_ok_and(|tip| !git::is_ancestor(&repo, &tip, &commit));
+            // Without the latest check (FR-009), the engineer decided: not checked again.
+            let moved = !skip_recheck
+                && git::rev(&repo, &format!("refs/heads/{target}"))
+                    .is_ok_and(|tip| !git::is_ancestor(&repo, &tip, &commit));
             let r = if moved {
                 Err(format!(
                     "{MOVED}{target} moved since this loop was verified"

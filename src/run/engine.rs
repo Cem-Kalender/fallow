@@ -65,6 +65,9 @@ struct Watched {
     error: Option<String>,
 }
 
+/// 011: how a loop waiting in its merge line says so (`Run::waiting`).
+const IN_LINE: &str = "in line to merge after ";
+
 /// 011: the lock's settings beyond 010's.
 #[derive(Debug, Clone, Default)]
 pub struct LockExtra {
@@ -101,6 +104,8 @@ pub enum Request {
     },
     Merge {
         id: u64,
+        /// 011: "Merge without the latest check", only at the limit of overtaken updates.
+        without_latest_check: bool,
     },
     /// 011: bring the loop up to date with its target (also "Verify again on the latest").
     Update {
@@ -151,6 +156,8 @@ pub enum Request {
     /// 010: push the loop's verified commit and open a pull request (FR-008, FR-009).
     Publish {
         id: u64,
+        /// 011: "Publish without the latest check" (T030).
+        without_latest_check: bool,
     },
     /// 007: a loop's screen, its feed, and one task's story (US3).
     Loop {
@@ -292,6 +299,8 @@ pub struct Run {
     pub activity: u64,
     /// Why the next step has not started: no free slot, or not enough memory.
     pub waiting: Option<String>,
+    /// 011: the target's commits a merge without the latest check was not verified with.
+    pub merge_unchecked: Vec<String>,
 }
 
 impl Run {
@@ -525,6 +534,7 @@ impl Engine {
                         activity: 0,
                         running: BTreeMap::new(),
                         waiting: None,
+                        merge_unchecked: Vec::new(),
                     };
                     e.runs.insert(id, run);
                 }
@@ -1041,6 +1051,25 @@ impl Engine {
                     "at": pb.merged_at,
                 }));
             }
+        }
+        // 011: a merge without the latest check, once (FR-009).
+        for r in self.runs.values() {
+            let Some(l) = r.state.feature_loop.as_ref() else {
+                continue;
+            };
+            if r.state.merged.is_none() || l.unchecked.is_empty() {
+                continue;
+            }
+            let name = self
+                .studio
+                .store
+                .get(&l.project)
+                .map_or_else(|| l.project.clone(), |p| p.name.clone());
+            items.push(json!({
+                "kind": "merged_unchecked", "key": format!("{}:merged_unchecked", r.id()),
+                "run": r.id(), "project": l.project, "project_name": name, "feature": l.feature,
+                "at": r.state.stage_at, "unchecked": l.unchecked.len(),
+            }));
         }
         let store = &self.studio.store;
         self.notifier
@@ -1585,14 +1614,17 @@ impl Engine {
         }
     }
 
-    /// 011: the conflicting files when the loop's target moved past its verified commit (empty
-    /// when it moved without a conflict); `None` when it did not move or was not read yet.
-    fn target_moved(&self, id: u64) -> Option<Vec<String>> {
-        let r = self.runs.get(&id)?;
-        let w = self.watched.get(&id)?;
-        let m = w.read.as_ref()?;
-        (m.moved && r.state.integrated.as_deref() == Some(w.integrated.as_str()))
-            .then(|| m.conflicts.clone())
+    /// 011: the files the loop's target would conflict in, as the watch last read it for the
+    /// commit the loop verified (empty when it did not move, moved cleanly, or was not read).
+    fn conflicts_known(&self, id: u64) -> Vec<String> {
+        let (Some(r), Some(w)) = (self.runs.get(&id), self.watched.get(&id)) else {
+            return Vec::new();
+        };
+        w.read
+            .as_ref()
+            .filter(|m| m.moved && r.state.integrated.as_deref() == Some(w.integrated.as_str()))
+            .map(|m| m.conflicts.clone())
+            .unwrap_or_default()
     }
 
     /// 011: whether the watch found the loop's target branch gone.
@@ -1739,14 +1771,285 @@ impl Engine {
         }
         // Refused before anything is recorded (review 1).
         super::update::can_start(r, false)?;
+        let at_limit = r
+            .state
+            .feature_loop
+            .as_ref()
+            .is_some_and(|l| l.overtaken > 0 && l.overtaken >= l.update_limit);
         r.append(Event::Steering {
             kind: SteeringKind::Update,
             target: Some(r.state.target.clone()),
             detail: Some(tip.clone()),
         })?;
+        // "Verify again on the latest <target>" at the limit: the count starts again and the
+        // loop takes its turn again at the end of its line, for the merge asked for (R-6).
+        if at_limit {
+            r.append(Event::Lined {
+                at_ms: super::time::unix_ms(),
+            })?;
+            self.turns();
+            return Ok(());
+        }
         super::update::start(r, tx, &tip, false)?;
         self.watched.remove(&id);
         Ok(())
+    }
+
+    /// 011: a merge the engineer asked for (FR-009a, research R-5): it joins its target's merge
+    /// line and runs, checked again, when its turn comes; "without the latest check" only at the
+    /// limit of overtaken updates and when it would not conflict (FR-009).
+    fn merge_request(&mut self, id: u64, without_latest_check: bool) -> Result<Value, String> {
+        let tx = self.ctx.tx.clone();
+        let r = self
+            .runs
+            .get_mut(&id)
+            .ok_or_else(|| format!("there is no loop {id}"))?;
+        let Some(l) = r.state.feature_loop.clone() else {
+            // Not a feature's loop: merged as before.
+            return super::machine::merge(r, tx, Vec::new()).map(|()| json!({}));
+        };
+        if r.state.stage != Stage::Ready {
+            return Err("the run is not ready to merge".into());
+        }
+        if l.unlocked {
+            return Err("the feature is unlocked: lock it again before merging".into());
+        }
+        if l.outcome.is_none() {
+            return Err("the loop has not finished checking this result".into());
+        }
+        if l.update.is_some() {
+            return Err("the loop is being brought up to date".into());
+        }
+        if r.is_busy() {
+            return Err("a merge or a step is already running".into());
+        }
+        let integrated = r.state.integrated.clone().ok_or("nothing is integrated")?;
+        if without_latest_check {
+            if l.overtaken < l.update_limit {
+                return Err("merging without the latest check is offered only at the limit of overtaken updates".into());
+            }
+            let repo = r.state.repo.clone();
+            let tip = git::rev(&repo, &format!("refs/heads/{}", r.state.target))?;
+            let conflicts = git::merge_tree(&repo, &integrated, &tip)?.conflicts;
+            if !conflicts.is_empty() {
+                return Err(format!(
+                    "it would conflict in {}: verify again on the latest {} instead",
+                    conflicts
+                        .iter()
+                        .map(|c| c.path.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                    r.state.target
+                ));
+            }
+            // The target's commits the result was not verified with (constitution I: said).
+            let unchecked = git::first_parent_commits(&repo, &integrated, &tip);
+            r.append(Event::Steering {
+                kind: SteeringKind::MergeUnchecked,
+                target: Some(r.state.target.clone()),
+                detail: Some(integrated),
+            })?;
+            if l.lined_at.is_some() {
+                r.append(Event::Unlined {
+                    why: "merging without the latest check".into(),
+                })?;
+            }
+            return super::machine::merge(r, tx, unchecked).map(|()| json!({}));
+        }
+        r.append(Event::Steering {
+            kind: SteeringKind::Merge,
+            target: Some(r.state.target.clone()),
+            detail: Some(integrated),
+        })?;
+        if l.lined_at.is_none() {
+            r.append(Event::Lined {
+                at_ms: super::time::unix_ms(),
+            })?;
+        }
+        self.turns();
+        Ok(match self.line_of(id) {
+            Some((_, Some(after))) => json!({ "in_line_after": after }),
+            _ => json!({}),
+        })
+    }
+
+    /// 011: the merge lines (research R-5): per repository and target, the loops whose merge was
+    /// asked for, by when, then run id; a loop alone when its line switch is off.
+    fn lines(&self) -> BTreeMap<String, Vec<(String, u64)>> {
+        let mut lines: BTreeMap<String, Vec<(String, u64)>> = BTreeMap::new();
+        for (id, r) in &self.runs {
+            let Some(l) = r.state.feature_loop.as_ref() else {
+                continue;
+            };
+            let Some(at) = l.lined_at.clone() else {
+                continue;
+            };
+            let mut key = format!("{}\n{}", r.state.repo.display(), r.state.target);
+            if !l.switches.line {
+                key.push_str(&format!("\n{id}"));
+            }
+            lines.entry(key).or_default().push((at, *id));
+        }
+        for line in lines.values_mut() {
+            line.sort();
+        }
+        lines
+    }
+
+    /// 011: the loop's place in its line (0 holds the turn) and the feature right before it.
+    fn line_of(&self, id: u64) -> Option<(usize, Option<String>)> {
+        self.lines().into_values().find_map(|line| {
+            let pos = line.iter().position(|(_, i)| *i == id)?;
+            let before = pos
+                .checked_sub(1)
+                .and_then(|p| self.runs.get(&line[p].1))
+                .and_then(|r| r.state.feature_loop.as_ref())
+                .map(|l| l.feature.clone());
+            Some((pos, before))
+        })
+    }
+
+    /// 011: the lines move on (FR-009a): a loop waiting for anything leaves its line; the first
+    /// of each line takes its turn; the others wait, saying after whom.
+    fn turns(&mut self) {
+        let ids: Vec<u64> = self
+            .runs
+            .iter()
+            .filter(|(_, r)| {
+                r.state
+                    .feature_loop
+                    .as_ref()
+                    .is_some_and(|l| l.lined_at.is_some())
+            })
+            .map(|(id, _)| *id)
+            .collect();
+        for id in ids {
+            let Some(r) = self.runs.get_mut(&id) else {
+                continue;
+            };
+            let l = r.state.feature_loop.as_ref();
+            let why = if r.state.stage.is_final() {
+                Some("ended")
+            } else if r.state.needs.is_some() {
+                Some("waiting for you")
+            } else if super::feature::paused_by_engineer(r) {
+                Some("paused")
+            } else if l.is_some_and(|l| l.unlocked) {
+                Some("unlocked")
+            } else if r.state.limit_reached.is_some() {
+                Some("at its limit")
+            } else if l.is_some_and(|l| l.waits_for.is_some()) {
+                Some("waiting for another loop")
+            } else {
+                None
+            };
+            if let Some(why) = why {
+                if r.waiting.as_deref().is_some_and(|w| w.starts_with(IN_LINE)) {
+                    r.waiting = None;
+                }
+                let _ = r.append(Event::Unlined { why: why.into() });
+            }
+        }
+        for line in self.lines().into_values() {
+            let mut before: Option<String> = None;
+            for (pos, (_, id)) in line.iter().enumerate() {
+                let feature = self
+                    .runs
+                    .get(id)
+                    .and_then(|r| r.state.feature_loop.as_ref())
+                    .map(|l| l.feature.clone())
+                    .unwrap_or_default();
+                if pos == 0 {
+                    if let Some(r) = self.runs.get_mut(id) {
+                        if r.waiting.as_deref().is_some_and(|w| w.starts_with(IN_LINE)) {
+                            r.waiting = None;
+                        }
+                    }
+                    self.take_turn(*id);
+                } else if let Some(r) = self.runs.get_mut(id) {
+                    r.waiting = Some(format!("{IN_LINE}{}", before.clone().unwrap_or_default()));
+                }
+                before = Some(feature);
+            }
+        }
+    }
+
+    /// 011: the loop holding its line's turn: merges what it verified when the target has not
+    /// moved (the merge checks it once more); when it moved, it is brought up to date first, and
+    /// a move after an update made in this turn is an overtaken update, up to the lock's limit,
+    /// where the engineer decides (FR-007, research R-6).
+    fn take_turn(&mut self, id: u64) {
+        let tx = self.ctx.tx.clone();
+        let Some(r) = self.runs.get_mut(&id) else {
+            return;
+        };
+        let Some(l) = r.state.feature_loop.clone() else {
+            return;
+        };
+        if r.is_busy()
+            || l.update.is_some()
+            || r.state.stage != Stage::Ready
+            || l.outcome.is_none()
+            || r.state.needs.is_some()
+        {
+            // Being brought up to date, merging, or repairing after its update: it holds.
+            return;
+        }
+        let repo = r.state.repo.clone();
+        let target = r.state.target.clone();
+        let (Ok(tip), Some(integrated)) = (
+            git::rev(&repo, &format!("refs/heads/{target}")),
+            r.state.integrated.clone(),
+        ) else {
+            return;
+        };
+        let result = if git::is_ancestor(&repo, &tip, &integrated) {
+            super::machine::merge(r, tx, Vec::new())
+        } else {
+            let counted = !l.switches.line || l.turn_updates > 0;
+            let at_limit = counted && l.overtaken + 1 >= l.update_limit;
+            if counted {
+                if let Err(e) = r.append(Event::Overtaken {
+                    n: l.updates,
+                    target_commit: tip.clone(),
+                }) {
+                    self.console.push(format!("run {id}: {e}"));
+                    return;
+                }
+            }
+            if at_limit {
+                let conflicts = git::merge_tree(&repo, &integrated, &tip)
+                    .map(|m| !m.conflicts.is_empty())
+                    .unwrap_or(true);
+                let mut options = vec![format!("verify again on the latest {target}")];
+                if !conflicts {
+                    options.push("merge without the latest check".into());
+                }
+                options.push("stop".into());
+                r.append(Event::NeedsEngineer {
+                    why: format!(
+                        "{}: updated {} times and overtaken {} in a row by commits on {target} from outside Fallow; your decision",
+                        l.feature,
+                        l.updates,
+                        l.overtaken + 1
+                    ),
+                    options,
+                })
+            } else {
+                super::update::start(r, tx, &tip, false)
+            }
+        };
+        if let Err(e) = result {
+            if let Some(r) = self.runs.get_mut(&id) {
+                if r.state.needs.is_none() {
+                    let _ = r.append(Event::NeedsEngineer {
+                        why: format!("The merge could not go on: {e}"),
+                        options: vec!["merge again".into(), "stop".into()],
+                    });
+                }
+            }
+        }
+        self.watched.remove(&id);
     }
 
     /// 010: what publishing a loop offers, why, the remote, the account, the pull request and
@@ -2715,6 +3018,7 @@ impl Engine {
             activity: 0,
             running: BTreeMap::new(),
             waiting: None,
+            merge_unchecked: Vec::new(),
         };
         run.append(Event::LoopCreated {
             project: p.id.clone(),
@@ -2890,6 +3194,7 @@ impl Engine {
         if ready {
             self.watch(id, false);
         }
+        self.turns();
         let was_ready = self.ready_seen.contains(&id);
         if ready && !was_ready {
             self.ready_seen.insert(id);
@@ -3011,23 +3316,25 @@ impl Engine {
             Request::Retry { id } => run_mut(self, id)
                 .and_then(super::machine::retry)
                 .map(|()| json!({})),
-            Request::Merge { id } if self.target_gone(id) => Err(format!(
+            Request::Merge { id, .. } if self.target_gone(id) => Err(format!(
                 "the target branch {} is gone: nothing is merged. Stop the loop, or unlock the feature and lock it from another branch.",
                 self.runs
                     .get(&id)
                     .map(|r| r.state.target.clone())
                     .unwrap_or_default()
             )),
-            Request::Merge { id } if self.target_moved(id).is_some() => Err(format!(
-                "the target moved since this loop was verified{}: bring it up to date first",
-                self.target_moved(id)
-                    .filter(|c| !c.is_empty())
-                    .map(|c| format!(" and would conflict in {}", c.join(", ")))
-                    .unwrap_or_default()
+            // FR-003: a merge that would conflict is not tried; one that moved without a
+            // conflict joins the line and is brought up to date first (FR-009a).
+            Request::Merge { id, .. } if !self.conflicts_known(id).is_empty() => Err(format!(
+                "the target moved since this loop was verified and would conflict in {}: bring it up to date first",
+                self.conflicts_known(id).join(", ")
             )),
             Request::Update { id } => self.update(id).map(|()| json!({})),
             Request::LockAgain { id } => self.lock_again(id),
-            Request::Merge { id } => {
+            Request::Merge {
+                id,
+                without_latest_check,
+            } => {
                 // 010: a protected target takes a pull request, not a local merge (FR-006).
                 let refused = self.publish_view(id).and_then(|p| {
                     let offer = p["offer"].as_array().cloned().unwrap_or_default();
@@ -3037,15 +3344,16 @@ impl Engine {
                 });
                 match refused {
                     Some(why) => Err(format!("no local merge here: {why}")),
-                    None => {
-                        let ctx_tx = self.ctx.tx.clone();
-                        run_mut(self, id)
-                            .and_then(|r| super::machine::merge(r, ctx_tx))
-                            .map(|()| json!({}))
-                    }
+                    None => self.merge_request(id, without_latest_check),
                 }
             }
-            Request::Publish { id } => self.publish(id, "engineer").map(|()| json!({})),
+            Request::Publish {
+                id,
+                without_latest_check: true,
+            } => Err(format!(
+                "loop {id}: publishing without the latest check is offered only at the limit of overtaken updates"
+            )),
+            Request::Publish { id, .. } => self.publish(id, "engineer").map(|()| json!({})),
             Request::Stop { id, reason } => run_mut(self, id)
                 .and_then(|r| super::machine::stop(r, reason))
                 .map(|()| json!({})),
@@ -3068,6 +3376,18 @@ impl Engine {
                     v["offer"] = offer;
                     if let Some(r) = self.runs.get(&id) {
                         v["resolutions"] = update_resolutions(r);
+                    }
+                    // 011: the merge line (FR-009a) and a merge without the latest check (FR-009).
+                    v["line"] = match self.line_of(id) {
+                        Some((pos, after)) => json!({ "position": pos + 1, "after": after }),
+                        None => Value::Null,
+                    };
+                    if let Some(l) = self
+                        .runs
+                        .get(&id)
+                        .and_then(|r| r.state.feature_loop.as_ref())
+                    {
+                        v["unchecked"] = json!(l.unchecked);
                     }
                     if let Some(l) = self
                         .runs

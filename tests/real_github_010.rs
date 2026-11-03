@@ -105,7 +105,14 @@ fn publish_to_a_real_protected_github_repository() {
 
     // SC-003: the publication, timed from the engineer's confirmed action.
     let t0 = Instant::now();
-    ask(tx, Request::Publish { id }).unwrap();
+    ask(
+        tx,
+        Request::Publish {
+            id,
+            without_latest_check: false,
+        },
+    )
+    .unwrap();
     let l = loop {
         let l = ask(tx, Request::Loop { id }).unwrap();
         if !l["publish"]["publication"]["pr_url"].is_null() {

@@ -244,6 +244,9 @@ pub struct LoopState {
     pub reconciled_target: Option<String>,
     /// 011: when the loop joined its target's merge line; `None` when not in it.
     pub lined_at: Option<String>,
+    /// 011: updates started while the loop held a place in the line since it joined it; a move
+    /// found at the merge's recheck after one counts as overtaken (research R-6).
+    pub turn_updates: u32,
     /// 011: files the loop's accepted steps changed.
     pub touched: BTreeSet<String>,
     /// 011: files the locked tasks name.
@@ -853,6 +856,7 @@ impl RunState {
                     base_commit: lock_commit.clone(),
                     reconciled_target: None,
                     lined_at: None,
+                    turn_updates: 0,
                     touched: BTreeSet::new(),
                     task_paths: task_paths(phases),
                     overlaps: Vec::new(),
@@ -1231,6 +1235,9 @@ impl RunState {
                 if let Some(f) = self.feature_loop.as_mut() {
                     f.fresh_seq = l.seq;
                     f.updates += 1;
+                    if f.lined_at.is_some() {
+                        f.turn_updates += 1;
+                    }
                     let prior_outcome = f.outcome.take();
                     f.update = Some(UpdateState {
                         prior_outcome,
@@ -1393,14 +1400,17 @@ impl RunState {
                     ));
                 }
             }
-            Event::Lined => {
+            Event::Lined { at_ms } => {
                 if let Some(f) = self.feature_loop.as_mut() {
-                    f.lined_at = Some(l.at.clone());
+                    // Zero-padded, so the line sorts by it (research R-5).
+                    f.lined_at = Some(format!("{at_ms:016}"));
+                    f.turn_updates = 0;
                 }
             }
             Event::Unlined { .. } => {
                 if let Some(f) = self.feature_loop.as_mut() {
                     f.lined_at = None;
+                    f.turn_updates = 0;
                 }
             }
             Event::Overlap { with, files } => {

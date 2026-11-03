@@ -102,9 +102,23 @@ fn a_protected_target_takes_a_pull_request_of_exactly_the_verified_commit() {
         l["publish"]
     );
     // No local merge onto a protected target.
-    let e2 = ask(tx, Request::Merge { id }).unwrap_err();
+    let e2 = ask(
+        tx,
+        Request::Merge {
+            id,
+            without_latest_check: false,
+        },
+    )
+    .unwrap_err();
     assert!(e2.contains("protected"), "{e2}");
-    ask(tx, Request::Publish { id }).unwrap();
+    ask(
+        tx,
+        Request::Publish {
+            id,
+            without_latest_check: false,
+        },
+    )
+    .unwrap();
     let l = wait_loop(tx, id, "publishing", |v| v["stage"] == "publishing");
     let pb = &l["publish"]["publication"];
     assert_eq!(pb["branch"], BRANCH, "{pb}");
@@ -148,7 +162,14 @@ fn a_protected_target_takes_a_pull_request_of_exactly_the_verified_commit() {
         }
     }
     // A second publication while it is open is refused, showing the open one.
-    let e3 = ask(tx, Request::Publish { id }).unwrap_err();
+    let e3 = ask(
+        tx,
+        Request::Publish {
+            id,
+            without_latest_check: false,
+        },
+    )
+    .unwrap_err();
     assert!(e3.contains("open"), "{e3}");
     assert_eq!(
         l["publish"]["offer"],
@@ -187,7 +208,14 @@ fn an_open_target_offers_both_and_the_local_merge_pushes_nothing() {
         l["publish"]
     );
     let main_before = remote_head(&root, "main");
-    ask(tx, Request::Merge { id }).unwrap();
+    ask(
+        tx,
+        Request::Merge {
+            id,
+            without_latest_check: false,
+        },
+    )
+    .unwrap();
     wait_for(tx, id, "merged", |v| v["stage"] == "done");
     assert_eq!(
         remote_head(&root, "main"),
@@ -228,9 +256,15 @@ fn a_target_not_on_the_remote_offers_only_the_local_merge() {
         l["publish"]
     );
     assert!(
-        ask(tx, Request::Publish { id })
-            .unwrap_err()
-            .contains("no pull request here")
+        ask(
+            tx,
+            Request::Publish {
+                id,
+                without_latest_check: false
+            }
+        )
+        .unwrap_err()
+        .contains("no pull request here")
     );
     drop(e);
     let _ = std::fs::remove_dir_all(&root);
@@ -262,7 +296,14 @@ fn a_taken_branch_is_never_overwritten_and_a_failed_pull_request_can_be_tried_ag
     let v = ready(tx, id);
     let commit = v["integrated"].as_str().unwrap().to_string();
     settled(tx, id);
-    ask(tx, Request::Publish { id }).unwrap();
+    ask(
+        tx,
+        Request::Publish {
+            id,
+            without_latest_check: false,
+        },
+    )
+    .unwrap();
     let l = wait_loop(tx, id, "the failure", |v| !v["publish"]["failed"].is_null());
     let f = &l["publish"]["failed"];
     assert_eq!(f["step"], "pull_request", "{f}");
@@ -286,7 +327,14 @@ fn a_taken_branch_is_never_overwritten_and_a_failed_pull_request_can_be_tried_ag
     let mut s = host_state(&state);
     s["fail"] = json!({});
     set_host_state(&state, &s);
-    ask(tx, Request::Publish { id }).unwrap();
+    ask(
+        tx,
+        Request::Publish {
+            id,
+            without_latest_check: false,
+        },
+    )
+    .unwrap();
     let l = wait_loop(tx, id, "publishing", |v| v["stage"] == "publishing");
     assert_eq!(l["publish"]["publication"]["branch"], format!("{BRANCH}-2"));
     assert_eq!(host_state(&state)["prs"].as_array().unwrap().len(), 1);
@@ -402,7 +450,14 @@ fn a_publication_cut_short_by_a_restart_never_opens_a_second_pull_request() {
     let tx = &e.tx;
     ready(tx, id);
     settled(tx, id);
-    ask(tx, Request::Publish { id }).unwrap();
+    ask(
+        tx,
+        Request::Publish {
+            id,
+            without_latest_check: false,
+        },
+    )
+    .unwrap();
     let state = root.join("host.json");
     let end = Instant::now() + Duration::from_secs(60);
     while pr_creates(&root).is_empty() {
@@ -444,7 +499,14 @@ fn a_publication_cut_short_by_a_restart_never_opens_a_second_pull_request() {
     let tx = &e.tx;
     ready(tx, id);
     settled(tx, id);
-    ask(tx, Request::Publish { id }).unwrap();
+    ask(
+        tx,
+        Request::Publish {
+            id,
+            without_latest_check: false,
+        },
+    )
+    .unwrap();
     let end = Instant::now() + Duration::from_secs(60);
     while pr_creates(&root).is_empty() {
         assert!(Instant::now() < end, "pr create never started");
@@ -490,7 +552,14 @@ fn published(
     );
     ready(&e.tx, id);
     settled(&e.tx, id);
-    ask(&e.tx, Request::Publish { id }).unwrap();
+    ask(
+        &e.tx,
+        Request::Publish {
+            id,
+            without_latest_check: false,
+        },
+    )
+    .unwrap();
     wait_loop(&e.tx, id, "publishing", |v| v["stage"] == "publishing");
     let _ = repo;
     (e, root.clone(), id, root.join("host.json"))
@@ -633,7 +702,14 @@ fn a_pull_request_closed_without_merging_puts_the_loop_back_to_ready() {
         l["publish"]
     );
     // Published again: a new pull request from the same branch, at the same commit.
-    ask(tx, Request::Publish { id }).unwrap();
+    ask(
+        tx,
+        Request::Publish {
+            id,
+            without_latest_check: false,
+        },
+    )
+    .unwrap();
     let l = wait_loop(tx, id, "published again", |v| {
         v["stage"] == "publishing" && v["publish"]["publication"]["pr_number"] == 2
     });
@@ -666,11 +742,24 @@ fn the_loop_publishes_to_its_own_target_whatever_is_checked_out() {
         l["publish"]
     );
     assert!(
-        ask(tx, Request::Merge { id })
-            .unwrap_err()
-            .contains("protected")
+        ask(
+            tx,
+            Request::Merge {
+                id,
+                without_latest_check: false
+            }
+        )
+        .unwrap_err()
+        .contains("protected")
     );
-    ask(tx, Request::Publish { id }).unwrap();
+    ask(
+        tx,
+        Request::Publish {
+            id,
+            without_latest_check: false,
+        },
+    )
+    .unwrap();
     wait_loop(tx, id, "publishing", |v| v["stage"] == "publishing");
     let creates = pr_creates(&root);
     assert_eq!(arg(&creates[0], "--base"), Some("main"), "{creates:?}");
@@ -693,7 +782,14 @@ fn a_pull_request_opened_despite_an_error_counts_once() {
     let tx = &e.tx;
     ready(tx, id);
     settled(tx, id);
-    ask(tx, Request::Publish { id }).unwrap();
+    ask(
+        tx,
+        Request::Publish {
+            id,
+            without_latest_check: false,
+        },
+    )
+    .unwrap();
     let l = wait_loop(tx, id, "published", |v| {
         v["stage"] == "publishing" || !v["publish"]["failed"].is_null()
     });
@@ -729,7 +825,14 @@ fn a_loop_being_published_or_with_its_pull_request_open_is_not_stopped_paused_or
     let tx = &e.tx;
     ready(tx, id);
     settled(tx, id);
-    ask(tx, Request::Publish { id }).unwrap();
+    ask(
+        tx,
+        Request::Publish {
+            id,
+            without_latest_check: false,
+        },
+    )
+    .unwrap();
     let e1 = ask(tx, Request::Stop { id, reason: None }).unwrap_err();
     assert!(e1.contains("being published"), "{e1}");
     assert!(ask(tx, Request::Pause { id }).is_err());
