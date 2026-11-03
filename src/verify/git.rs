@@ -912,20 +912,29 @@ pub fn would_conflict(
             .map_or(0, |d| d.as_nanos())
     ));
     let scratch = scratch.as_path();
-    worktree_add(dir, scratch, None, integrated)?;
-    if rev(scratch, "HEAD")? != rev(dir, integrated)? {
+    // Always removed, whatever fails on the way (review).
+    let cleanup = |e: String| {
         let _ = worktree_remove(dir, scratch);
-        return Err("the trial merge's worktree is not at the verified commit".into());
+        let _ = std::fs::remove_dir_all(scratch);
+        e
+    };
+    worktree_add(dir, scratch, None, integrated).map_err(cleanup)?;
+    let at = rev(scratch, "HEAD").map_err(cleanup)?;
+    if at != rev(dir, integrated).map_err(cleanup)? {
+        return Err(cleanup("the trial merge's worktree is not at the verified commit".into()));
     }
     let author = author_args(dir);
     let mut args: Vec<&str> = author.clone();
     args.extend(["merge", "--no-commit", "--no-ff", "-q", target_tip]);
     let merged = git(scratch, &args);
-    let conflicts: Vec<String> = git(scratch, &["diff", "--name-only", "--diff-filter=U"])
+    let conflicts: Vec<String> = git(
+        scratch,
+        &["-c", "core.quotePath=false", "diff", "--name-only", "--diff-filter=U"],
+    )
         .map(|s| s.lines().map(str::to_string).collect())
         .unwrap_or_default();
     let _ = git(scratch, &["merge", "--abort"]);
-    let _ = worktree_remove(dir, scratch);
+    let _ = cleanup(String::new());
     match (merged, conflicts.is_empty()) {
         (Err(e), true) => Err(e),
         _ => Ok(conflicts),

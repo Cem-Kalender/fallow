@@ -45,7 +45,6 @@ pub enum Done {
     PrState(Result<crate::publish::host::PrState, String>),
 }
 
-/// A request from the page or the command line.
 /// 011: the lock's settings beyond 010's.
 #[derive(Debug, Clone, Default)]
 pub struct LockExtra {
@@ -53,6 +52,7 @@ pub struct LockExtra {
     pub run_after: Option<u64>,
 }
 
+/// A request from the page or the command line.
 #[derive(Debug)]
 pub enum Request {
     List,
