@@ -348,16 +348,33 @@ pub fn lock_calc_in(
         .to_string();
     git(&repo, &["add", "."]);
     git(&repo, &["commit", "-q", "-m", "spec kit"]);
+    lock_feature_in(tx, &project, "Calc", "001-calc", pipeline, budget, level)
+}
+
+/// Works out a feature of a project already added (the scenario's next two lead turns: the
+/// documents, then analyze) and locks it; returns the loop's id (011: two features in one
+/// project).
+#[allow(dead_code)]
+pub fn lock_feature_in(
+    tx: &Sender<Msg>,
+    project: &str,
+    title: &str,
+    feature: &str,
+    pipeline: Option<&str>,
+    budget: Option<(f64, u64)>,
+    level: Option<fallow::run::events::Level>,
+) -> u64 {
+    let project = project.to_string();
     let f = sreq(
         tx,
         Req::NewFeature {
             project: project.clone(),
-            title: "Calc".into(),
+            title: title.into(),
             lead: None,
         },
     )
     .unwrap();
-    assert_eq!(f["feature"], "001-calc");
+    assert_eq!(f["feature"], feature);
     let conv = f["conversation"].as_str().unwrap().to_string();
     sreq(
         tx,
@@ -381,7 +398,7 @@ pub fn lock_calc_in(
         tx,
         Request::Lock {
             project,
-            feature: "001-calc".into(),
+            feature: feature.into(),
             pipeline: pipeline.map(str::to_string),
             level,
             budget_usd: budget.map(|b| b.0),
@@ -391,6 +408,67 @@ pub fn lock_calc_in(
     )
     .unwrap();
     l["loop"].as_u64().unwrap()
+}
+
+// ---- 011: a second feature on the same file, and merge-conflict repairs -------------------
+
+pub const CALC2_SPEC: &str = "# Feature Specification: Calc2\n\n## User Scenarios & Testing\n\n### User Story 1 - Multiply (Priority: P1)\n\n**Acceptance Scenarios**:\n\n1. **Given** two numbers, **When** multiplying 2 and 3, **Then** the result is 6.\n2. **Given** a string, **When** multiplying 'a' and 1, **Then** a TypeError is raised (must fail)\n";
+pub const CALC2_PLAN: &str = "# Plan\n\n## Commands\n\n- `python -m calc`\n";
+pub const CALC2_TASKS: &str = "# Tasks: Calc2\n\n## Phase 1: User Story 1 - Multiply\n\n- [ ] T001 [US1] mul() in calc/__init__.py\n- [ ] T002 [US1] Tests for mul\n";
+
+/// The lead's two turns for `002-calc2`: the documents, then analyze.
+pub fn lead_writes_calc2() -> String {
+    format!(
+        "[[step]]\nkind = \"lead_turn\"\nfiles = [{{ path = \"specs/002-calc2/spec.md\", text = {} }}, {{ path = \"specs/002-calc2/plan.md\", text = {} }}, {{ path = \"specs/002-calc2/tasks.md\", text = {} }}]\noutput = {{ reply = \"Written.\", step = \"tasks\" }}\n\n[[step]]\nkind = \"lead_turn\"\noutput = {{ reply = \"Analyzed.\", step = \"analyze\", findings = [] }}\n\n",
+        lit(CALC2_SPEC),
+        lit(CALC2_PLAN),
+        lit(CALC2_TASKS)
+    )
+}
+
+/// A commit on `branch` of `repo` (checked out there) from "outside Fallow".
+pub fn commit_on(repo: &Path, branch: &str, path: &str, text: &str, msg: &str) -> String {
+    let current = git(repo, &["rev-parse", "--abbrev-ref", "HEAD"]);
+    assert_eq!(current, branch, "commit_on expects {branch} checked out");
+    let p = repo.join(path);
+    if let Some(d) = p.parent() {
+        std::fs::create_dir_all(d).unwrap();
+    }
+    std::fs::write(&p, text).unwrap();
+    git(repo, &["add", path]);
+    git(repo, &["commit", "-q", "-m", msg]);
+    git(repo, &["rev-parse", "HEAD"])
+}
+
+/// The builder's repair of an update's conflicts (part `update-<n>`): writes `file` with `text`,
+/// with its own commit or not.
+pub fn conflict_repair_step(n: u32, file: &str, text: &str, commit: bool) -> String {
+    let c = if commit {
+        "commit = \"resolve the conflicts\"\n".to_string()
+    } else {
+        String::new()
+    };
+    format!(
+        "[[step]]\nkind = \"repair\"\npart = \"update-{n}\"\nfiles = [{{ path = {file:?}, text = {} }}]\n{c}output = {{ status = \"done\", files = [{file:?}], summary = \"resolved\" }}\n\n",
+        lit(text)
+    )
+}
+
+/// The builder's repair of a non-text conflict: deletes `file` or writes it with `text`, and
+/// reports how in `resolutions` (011 research R-2).
+pub fn nontext_repair_step(n: u32, file: &str, text: Option<&str>, how: &str) -> String {
+    let act = match text {
+        Some(t) => format!("files = [{{ path = {file:?}, text = {} }}]\n", lit(t)),
+        None => format!("delete = [{file:?}]\n"),
+    };
+    format!(
+        "[[step]]\nkind = \"repair\"\npart = \"update-{n}\"\n{act}output = {{ status = \"done\", files = [{file:?}], summary = \"resolved\", resolutions = [{{ path = {file:?}, how = {how:?} }}] }}\n\n"
+    )
+}
+
+/// A repair that resolves `file`'s markers but leaves git's `<path>~<side>` file behind.
+pub fn leave_side_file_step(n: u32, file: &str, text: &str) -> String {
+    conflict_repair_step(n, file, text, false)
 }
 
 /// A lead turn that runs analyze again, with no finding: for a scenario whose documents change

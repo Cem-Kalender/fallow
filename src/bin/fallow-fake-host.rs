@@ -7,10 +7,17 @@
 //! ```json
 //! {
 //!   "login": "octo", "signed_in": true,
-//!   "rules": { "main": ["pull_request"] },          // per branch (or "owner/repo:branch")
+//!   "rules": { "main": ["pull_request"] },          // per branch (or "owner/repo:branch"); an
+//!                                                   // entry may be a full rule object, e.g.
+//!                                                   // { "type": "required_status_checks",
+//!                                                   //   "parameters": { "strict_required_status_checks_policy": true } }
 //!   "protected": { "main": true, "dev": false },    // classic flag; a branch in neither → 404
+//!   "strict": { "main": true },                     // classic required_status_checks.strict
+//!                                                   // (absent → 404, as for a reader without admin)
 //!   "prs": [{ "number": 1, "head": "h", "base": "main", "title": "t", "body": "…",
 //!             "state": "open", "merged_at": null,
+//!             "mergeable": "MERGEABLE",            // MERGEABLE | CONFLICTING | UNKNOWN (default MERGEABLE)
+//!             "merge_state": "CLEAN",              // mergeStateStatus: CLEAN | BEHIND | DIRTY | BLOCKED
 //!             "checks": [{ "name": "test", "status": "COMPLETED", "conclusion": "SUCCESS",
 //!                          "detailsUrl": "https://…" }] }],
 //!   "fail": { "pr create": "message" },             // auth, api, pr create, pr view, pr list
@@ -110,6 +117,8 @@ fn main() {
                     "mergedAt": p["merged_at"],
                     "url": format!("https://github.com/{repo}/pull/{n}"),
                     "statusCheckRollup": p["checks"],
+                    "mergeable": p["mergeable"].as_str().unwrap_or("MERGEABLE"),
+                    "mergeStateStatus": p["merge_state"].as_str().unwrap_or("CLEAN"),
                 })
                 .to_string()),
                 None => Err(format!("no pull requests found for branch \"{n}\"")),
@@ -170,9 +179,18 @@ fn api(state: &Value, endpoint: &str) -> Result<String, String> {
                 .cloned()
                 .unwrap_or_default()
                 .into_iter()
-                .map(|t| json!({ "type": t }))
+                .map(|t| if t.is_string() { json!({ "type": t }) } else { t })
                 .collect();
             Ok(Value::from(rules).to_string())
+        }
+        ["repos", o, r, "branches", b, "protection", "required_status_checks"] => {
+            match state["strict"][format!("{o}/{r}:{b}")]
+                .as_bool()
+                .or(state["strict"][*b].as_bool())
+            {
+                Some(strict) => Ok(json!({ "strict": strict, "contexts": [] }).to_string()),
+                None => Err("gh: Not Found (HTTP 404)".into()),
+            }
         }
         ["repos", o, r, "branches", b] => match state["protected"][format!("{o}/{r}:{b}")]
             .as_bool()
@@ -182,5 +200,29 @@ fn api(state: &Value, endpoint: &str) -> Result<String, String> {
             None => Err("gh: Branch not found (HTTP 404)".into()),
         },
         _ => Err(format!("gh: Not Found (HTTP 404) for {endpoint}")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn strict_and_rule_objects_are_answered_as_github_does() {
+        let state = json!({
+            "rules": { "main": ["pull_request", { "type": "required_status_checks",
+                "parameters": { "strict_required_status_checks_policy": true } }] },
+            "strict": { "main": true },
+        });
+        let rules: Value =
+            serde_json::from_str(&api(&state, "repos/o/r/rules/branches/main").unwrap()).unwrap();
+        assert_eq!(rules[0]["type"], "pull_request");
+        assert_eq!(rules[1]["parameters"]["strict_required_status_checks_policy"], true);
+        let rsc: Value = serde_json::from_str(
+            &api(&state, "repos/o/r/branches/main/protection/required_status_checks").unwrap(),
+        )
+        .unwrap();
+        assert_eq!(rsc["strict"], true);
+        assert!(api(&state, "repos/o/r/branches/dev/protection/required_status_checks").is_err());
     }
 }

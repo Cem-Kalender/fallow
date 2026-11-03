@@ -16,6 +16,7 @@
 //! system = "text"                # optional: only a call whose --append-system-prompt has it
 //! forked = false                # optional: only a call that forks (true) or does not (false)
 //! files = [{ path = "shop/x.py", text = "..." }]   # with old = "..." it is an Edit
+//! delete = ["shop/old.py"]       # files removed (after `files`, before the commit)
 //! commit = "message"             # git add -A; git commit -m
 //! output = { status = "done", commit = "$HEAD", summary = "..." }
 //! cost = 0.05
@@ -67,6 +68,8 @@ struct Step {
     forked: Option<bool>,
     #[serde(default)]
     files: Vec<File>,
+    #[serde(default)]
+    delete: Vec<String>,
     commit: Option<String>,
     output: Option<toml::Value>,
     #[serde(default = "cost")]
@@ -521,6 +524,14 @@ fn main() -> ExitCode {
         emit(json!({"type": "assistant", "message": {"content": [use_]}}));
         emit(json!({"type": "user", "message": {"content": [
             {"type": "tool_result", "tool_use_id": id, "content": "written"}]}}));
+    }
+    for path in &step.delete {
+        let _ = std::fs::remove_file(cwd.join(path));
+        let id = tool_id();
+        emit(json!({"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "id": id, "name": "Bash", "input": {"command": format!("rm {path}")}}]}}));
+        emit(json!({"type": "user", "message": {"content": [
+            {"type": "tool_result", "tool_use_id": id, "content": ""}]}}));
     }
     if let Some(msg) = &step.commit {
         git(&cwd, &["add", "-A"]);
