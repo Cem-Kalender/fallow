@@ -205,3 +205,44 @@ fn a_merge_replaces_fallows_unchanged_spec_kit_copy_but_never_the_engineers_file
         "# Our constitution\n"
     );
 }
+
+/// 011 (constitution I): the merge commit never says "verified" for a result Fallow did not
+/// verify, and says when it was merged without the latest check.
+#[test]
+fn the_merge_commit_says_what_was_verified() {
+    let r = repo("merge-words");
+    let scratch = r.parent().unwrap().join("scratch");
+    let feature = |name: &str| {
+        run(&r, &["checkout", "-q", "-b", name]);
+        std::fs::write(r.join(format!("{name}.txt")), "x\n").unwrap();
+        run(&r, &["add", "."]);
+        run(&r, &["commit", "-q", "-m", name]);
+        let c = git::head(&r).unwrap();
+        run(&r, &["checkout", "-q", "main"]);
+        c
+    };
+    let subject = || {
+        let o = Command::new("git")
+            .current_dir(&r)
+            .args(["log", "-1", "--format=%s", "main"])
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&o.stdout).trim().to_string()
+    };
+    let a = feature("a");
+    fallow::publish::local::merge_as(&r, "main", &a, &scratch, false, Some("US1 not checked"))
+        .unwrap();
+    assert!(
+        subject().contains("not verified by Fallow: US1 not checked"),
+        "{}",
+        subject()
+    );
+    let b = feature("b");
+    fallow::publish::local::merge_as(&r, "main", &b, &scratch, true, None).unwrap();
+    assert!(
+        subject().contains("without the latest check"),
+        "{}",
+        subject()
+    );
+    let _ = std::fs::remove_dir_all(r.parent().unwrap());
+}

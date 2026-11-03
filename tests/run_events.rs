@@ -437,6 +437,7 @@ fn an_update_folds_into_the_loop_and_reopens_every_story() {
     assert!(f.affected.is_empty(), "no relock repair");
     assert_eq!(f.overtaken, 1);
     assert!(f.lined_at.is_some());
+    assert!(f.merge_pending, "a merge asked for in its line");
     assert_eq!(f.overlaps[0].with, 7);
     assert_eq!(f.waits_for, Some((7, WaitFrom::Engineer)));
     assert!(

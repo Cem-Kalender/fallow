@@ -141,8 +141,9 @@ pub fn resume(run: &mut Run) -> Result<(), String> {
                     } else {
                         Vec::new()
                     };
+                    let commit = merge_commit_of(run, &tip).unwrap_or(tip);
                     run.append(Event::Merged {
-                        commit: tip,
+                        commit,
                         how: "local".into(),
                         unchecked,
                     })?;
@@ -760,6 +761,20 @@ pub fn merge(
         })?;
     }
     let skip_recheck = !unchecked.is_empty();
+    // The merge commit says when the loop's result was not verified (constitution I).
+    let not_verified = run
+        .state
+        .feature_loop
+        .as_ref()
+        .and_then(|l| l.outcome.as_ref())
+        .filter(|o| !o.0)
+        .map(|o| {
+            if o.1.is_empty() {
+                "not judged".to_string()
+            } else {
+                o.1.join(", ")
+            }
+        });
     run.merge_unchecked = unchecked;
     run.busy = Some(Busy::Merge);
     let repo = run.state.repo.clone();
@@ -780,7 +795,14 @@ pub fn merge(
                     "{MOVED}{target} moved since this loop was verified"
                 ))
             } else {
-                crate::publish::local::merge_as(&repo, &target, &commit, &scratch, skip_recheck)
+                crate::publish::local::merge_as(
+                    &repo,
+                    &target,
+                    &commit,
+                    &scratch,
+                    skip_recheck,
+                    not_verified.as_deref(),
+                )
             };
             let _ = tx.send(Msg::Done {
                 run: id,
@@ -798,11 +820,22 @@ fn unchecked_in(run: &Run, merged: &str) -> Vec<String> {
     let Some(integrated) = run.state.integrated.as_deref() else {
         return Vec::new();
     };
-    let before = match git::parents(repo, merged) {
+    let merge = merge_commit_of(run, merged).unwrap_or_else(|| merged.to_string());
+    let before = match git::parents(repo, &merge) {
         Ok(p) if p.len() == 2 && p[1] == integrated => p[0].clone(),
-        _ => merged.to_string(),
+        _ => merge,
     };
     git::first_parent_commits(repo, integrated, &before)
+}
+
+/// 011: the merge commit that brought the loop's verified commit into the target, on the
+/// target's first-parent line up to `tip` (later commits may sit on top of it; review F3).
+fn merge_commit_of(run: &Run, tip: &str) -> Option<String> {
+    let repo = &run.state.repo;
+    let integrated = run.state.integrated.as_deref()?;
+    git::first_parent_commits(repo, integrated, tip)
+        .into_iter()
+        .find(|c| git::parents(repo, c).is_ok_and(|p| p.len() == 2 && p[1] == integrated))
 }
 
 /// 010: starts publishing the loop's verified commit as a pull request (FR-008, FR-009), on a

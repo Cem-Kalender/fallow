@@ -720,6 +720,19 @@ impl RunState {
             } => {
                 // An action of the engineer answers what was waiting for them.
                 self.needs = None;
+                // 011: publishing instead, or merging without the latest check, ends the merge
+                // asked for in its line (review F1).
+                if matches!(
+                    kind,
+                    SteeringKind::Publish
+                        | SteeringKind::PublishUnchecked
+                        | SteeringKind::MergeUnchecked
+                        | SteeringKind::LeavePullRequest
+                ) {
+                    if let Some(f) = self.feature_loop.as_mut() {
+                        f.merge_pending = false;
+                    }
+                }
                 if *kind == SteeringKind::Publish {
                     if let Some(f) = self.feature_loop.as_mut() {
                         f.publish_pending = true;
@@ -1358,6 +1371,7 @@ impl RunState {
             }
             Event::UpdateDropped { n, why } => {
                 if let Some(f) = self.feature_loop.as_mut() {
+                    f.turn_updates = 0;
                     if let Some(u) = f.update.take_if(|u| u.n == *n) {
                         // Dropped before anything moved: the loop is as it was (review 3).
                         if !u.merged && u.working.is_none() && f.outcome.is_none() {
