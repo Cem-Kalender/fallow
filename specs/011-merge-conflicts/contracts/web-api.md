@@ -30,8 +30,9 @@ below is a steering action, recorded in the loop's log (constitution II).
 
 `offer` replaces "merge" by what can succeed (FR-003): one or more of `merge`, `publish`,
 `bring_up_to_date`, `verify_again`, `merge_unchecked`, `publish_unchecked`, `leave_pr`,
-`lock_again`, `wait_for`, `stop_waiting`, `stop`. `stop` and `wait_for` are never offered while the
-loop's pull request is open (FR-016b).
+`lock_again`, `wait_for`, `stop_waiting`, `stop`. `stop`, `wait_for` and `lock_again` are never offered while
+the loop's pull request is open (FR-016b; unlock is refused while publishing): the page says to close
+the pull request on the remote first.
 
 The page's labels: `bring_up_to_date` "Bring up to date"; `verify_again` "Verify again on the latest
 <target>"; `merge_unchecked` "Merge without the latest check"; `publish_unchecked` "Publish without
