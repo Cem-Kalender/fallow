@@ -8,10 +8,10 @@ unchanged.
 | Event | Fields | Meaning |
 |---|---|---|
 | `Updated` | `n` (1, 2, …), `target`, `target_commit`, `loop_head`, `remote: bool` | An update started (written before the merge is computed); sets `fresh_seq`. |
-| `UpdateConflicted` | `n`, `working` (commit), `conflicts: [{ path, kind: text \| non_text }]` | The merge conflicts; the repair starts on the working commit under `refs/fallow/update/<run>-<n>` (R-2). |
+| `UpdateConflicted` | `n`, `working` (commit), `conflicts: [{ path, kind: text \| non_text }]` | The merge conflicts; the repair starts on the working commit, kept on the loop's own branch `fallow/<feature>/update-<n>` (R-2). |
 | `UpdateDocsChanged` | `n`, `paths: [path]` | The feature's locked documents changed on the target; nothing merged (R-2). |
-| `UpdateMerged` | `n`, `commit` | Fallow's two-parent merge commit is on the loop's branch; the working ref deleted. Folded (R-3): every story's phases back to Pending with `reopened`, `outcome` cleared; `affected` untouched; `base_commit` = the target commit. |
-| `UpdateDropped` | `n`, `why` | Dropped (pull request merged or closed, loop stopped, locked again); its working ref deleted, if any. |
+| `UpdateMerged` | `n`, `commit` | Fallow's two-parent merge commit is on the loop's branch; the working branch deleted. Folded (R-3): every story's phases back to Pending with `reopened`, `outcome` cleared; `affected` untouched; `base_commit` = the target commit. |
+| `UpdateDropped` | `n`, `why` | Dropped (pull request merged or closed, loop stopped, locked again); its working branch deleted, if any. |
 | `PushedForward` | `from`, `to` | The loop's branch on the remote moved forward; `Publication.commit` = `to`. |
 | `LeftPullRequest` | `unchecked: [commit]` | "Leave the pull request as it is" at the limit. |
 | `Touched` | `files: [path]` | Files an accepted step changed (from `work_done`'s list). |
@@ -60,7 +60,7 @@ the protection read gains `strict: Option<bool>` (requires up to date).
 ## Rules (state transitions)
 
 - Ready → (target moved) → Free: `Updated`; Normal/Strict: `NeedsEngineer [bring up to date, stop]`.
-- `Updated` (no conflict, no docs) → `UpdateMerged` → Part gates on the merge commit (part `update-<n>`; a failure → builder repair) → stories reopened and checked again → Ready.
+- `Updated` (no conflict, no docs) → `UpdateMerged` → every gate the project declares on the merge commit (part `update-<n>`; a failure → builder repair) → stories reopened and checked again → Ready.
 - `Updated` → `UpdateConflicted` → repair step on `update-<n>`, build worktree detached at the working commit → accepted (no markers, no `~<side>` files, every non-text path in `resolutions`) → Fallow's merge commit, branch fast-forwarded → `UpdateMerged` → as above.
 - `Updated` → `UpdateDocsChanged` → `NeedsEngineer [lock again, stop]`; nothing merged.
 - Ready + target moved again while holding the turn → `Overtaken`; `overtaken == update_limit` →

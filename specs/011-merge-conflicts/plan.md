@@ -80,7 +80,7 @@ loops.
 
 *GATE: Must pass before Phase 0 research. Re-checked after Phase 1 design.*
 
-Checked against v6.5.0.
+Checked against v6.5.1.
 
 | Principle | How the design meets it | Status |
 |---|---|---|
@@ -88,8 +88,8 @@ Checked against v6.5.0.
 | II. The Engineer Decides | Updates start by the level the engineer chose; at a limit or a cap the engineer decides; every choice is a recorded steering action. Never a push to the target, never forced, never a second pull request; a published loop is never stopped while its pull request is open. | PASS |
 | III. Coordination in Code | The line, the waits and the updates are the engine's code and the loops' logs; agents do not coordinate. Every project is a git repository (6.5.0): updates and checks are git. | PASS |
 | IV. Simplest Setup First | No new agent kind: the conflict goes to the pipeline's builder as a repair; checking again reuses the relock path. | PASS |
-| V. Local and Private | Local checks are local git. For a published loop, `ls-remote` and a fetch of the target commit by its sha (no ref of the engineer written), and `gh pr view`, are the engineer's own tools publishing a run: the pull request cannot be updated or the push checked without the target commit (R-7 argues it; a PATCH clarification of V if the owner wants it named). Nothing leaves the machine but the loop's own branch. | PASS |
-| VI. Least Privilege | Updates write only to the loop's own branch, its working copy and a Fallow-private working ref; the engineer's refs are never written (the fetch is by sha). Builders never touch locked documents: the repair starts on a commit that already holds the target's changes, so the tidy judges only the builder's own edits (R-2). | PASS |
+| V. Local and Private | Local checks are local git. For a published loop, `ls-remote` and a fetch of the target commit by its sha (no ref of the engineer written), and `gh pr view`, are the engineer's own tools publishing a run: the pull request cannot be updated or the push checked without the target commit (as V names it since 6.5.1). Nothing leaves the machine but the loop's own branch. | PASS |
+| VI. Least Privilege | Updates write only to the loop's own branches (its build branch and, during a conflict, `fallow/<feature>/update-<n>`) and its working copy; the fetch by sha writes no ref. Builders never touch locked documents: the repair starts on a commit that already holds the target's changes, so the tidy judges only the builder's own edits (R-2). | PASS |
 | VII. Runs Survive | Every new state is an event; a merge in progress is on disk and its repair re-queued; the line is rebuilt on load (R-9). | PASS |
 | VIII. Small and Measured | No dependencies; local git on a thread, bounded frequency; no new budget claims beyond SC-006, which a test times. | PASS |
 | IX. Runtime-Agnostic | Decided from git, the gates and the checker's verdict; the repair prompt is plain text; all of it tested on the fake runtime. | PASS |

@@ -21,7 +21,10 @@ The check runs on a thread (as 010's remote reads), never on the engine thread: 
 ready, when its page is read (at most every 10 s), every 30 s for each ready loop (local git only),
 and again inside `machine::merge` right before merging (FR-003).
 
-**Where the target's new commits came from** (FR-002): each commit in `integrated..target_tip` is
+**Where the target's new commits came from** (FR-002): the commits counted are the target's
+first-parent commits since the loop's verified commit (`rev-list --first-parent
+integrated..target_tip`): a loop's merge counts as one, named by its feature; commits from outside
+Fallow are listed one by one. Each is
 matched against the commits other loops of the project recorded in `Merged`/`Published` (and their
 `Integrated` commits): a match names that feature; anything else is "outside Fallow".
 
@@ -49,8 +52,9 @@ which the loop writes itself, merges like any file.
   messages (a second `merge-tree --write-tree` without `--name-only`), so it knows each path's kind:
   *text* (markers in the file) or *non-text* (modify/delete, binary, rename/rename, file/directory,
   where git keeps one side or adds `<path>~<side>` files). It commits the conflicted tree as a
-  *working commit*, a single-parent commit on the loop's head kept under a Fallow-private ref
-  (`refs/fallow/update/<run>-<n>`), never on the loop's branch, and records `UpdateConflicted`.
+  *working commit*, a single-parent commit on the loop's head kept on a branch of the loop's own,
+  `fallow/<feature>/update-<n>` (with `-2`, `-3`… if the name is taken), never on the loop's build
+  branch, and records `UpdateConflicted`.
   The repair step for the builder runs in the build worktree **detached at the working commit**
   (builder steps run in `build_wt`, whose `base` is its head), on the part `update-<n>`, with a
   plain-text prompt naming each path, its kind, and what each side changed
@@ -75,7 +79,7 @@ which the loop writes itself, merges like any file.
   - then Fallow makes the real merge commit with the resolved tree:
     `commit-tree <resolved_tree> -p <loop_head> -p <target_commit>`, checks the build worktree out on
     the loop's branch again (still at `loop_head`) and fast-forwards it to the merge commit, and
-    records `UpdateMerged`; the working ref is deleted. Whatever the builder did with commits (its own, none, a resolution equal to
+    records `UpdateMerged`; the working branch is deleted. Whatever the builder did with commits (its own, none, a resolution equal to
     one side) does not matter: Fallow takes the tree.
 - **The feature's own locked documents** (its `spec.md`, `plan.md`, `tasks.md` and the other files
   of its spec directory): a path (the spec directory except `handover/`) counts as changed when the
@@ -117,7 +121,7 @@ Gates: `LoopState.base_commit` (the target commit last merged in; the lock commi
 replaces `lock_commit` where `step()` decides whether a Baseline run is needed (feature.rs ~330), and
 `RunState::baseline` is looked up by commit (`base_commit`), not "the newest Baseline per gate".
 Accepted tasks are not gated again, so the merged result gets its own gate run: right after
-`UpdateMerged`, `step()` runs the Part gates on the merge commit for the part `update-<n>` (as
+`UpdateMerged`, `step()` runs every gate the project declares (as `gated()` runs them) on the merge commit for the part `update-<n>` (as
 `gated()` does for a task), against the baseline at `base_commit`; a failure becomes a builder repair
 on `update-<n>` (counted as R-3 says), and only once they pass are the stories checked again. The
 merge commit is then a gated commit, so `finish()`'s "changed after the last gate run" check finds
@@ -193,13 +197,14 @@ history, the notification and the pull request's text say so, never as verified 
   - limits and caps in that update become `NeedsEngineer` without a stage change (no
     `pause_for_limit`), and their options never include "stop" (FR-016b);
   - the pull request keeps being polled; a merge or close seen meanwhile stops the update's running
-    steps and drops it (`UpdateDropped`), deleting its working ref; the loop then follows 010.
+    steps and drops it (`UpdateDropped`), deleting its working branch; the loop then follows 010.
 
 **Constitution V**: V lets the engineer's git and remote tools run "to publish a run (push its
 branch, open its pull request, read branch rules and check results)". Fetching the target commit is
 part of publishing the run: the pull request cannot be updated, nor the push checked (FR-011a),
 without the target's commit; it reads only what 010's `ls-remote` already reads, plus its objects.
-This is argued here; if the owner prefers it named, it is a PATCH clarification of V.
+Constitution 6.5.1 names it (V: "fetch the target branch's latest commit to bring the run up to
+date or to check it before a push").
 
 ## R-8 Overlap warnings
 
@@ -229,14 +234,14 @@ This is argued here; if the owner prefers it named, it is a PATCH clarification 
 
 **Decision**: every new state is folded from events. `Updated` (the target commit and the loop's head then, `loop_head`) is written
 before the merge is computed; `UpdateConflicted` or `UpdateDocsChanged` after. On load, an update in
-progress is resumed from what exists, keyed on the working ref, not on commit ids (commits made again
+progress is resumed from what exists, keyed on the working branch, not on commit ids (commits made again
 get new timestamps): `Updated` alone → if the loop's branch head already is a merge whose parents are `loop_head` and
 `target_commit` (the crash came after the fast-forward), `UpdateMerged` is recorded for it;
 otherwise computed again from the recorded `loop_head` (the same inputs give the same tree);
 `UpdateConflicted` and its ref, a repair step cut short → the build worktree detached at the ref
 again and the step re-queued by `requeue_cut_short`; a repair accepted but no `UpdateMerged` → Fallow
 makes the merge commit from the accepted tree; `UpdateMerged` with the build worktree still detached →
-checked out on the loop's branch again; a working ref still there after `UpdateMerged` or
+checked out on the loop's branch again; a working branch still there after `UpdateMerged` or
 `UpdateDropped` → deleted; `UpdateDocsChanged` → the loop waits for the engineer again (nothing was
 merged, nothing to undo). A forward push whose `PushedForward` was not
 written is found by `push_forward` itself (the remote already at `to` means done). The line is

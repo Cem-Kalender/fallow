@@ -1,16 +1,15 @@
 <!--
 Sync Impact Report
 ==================
-Version change: 6.4.0 → 6.5.0
-Bump rationale: MINOR. Every project is a git repository (III), as git is how Fallow's agents
-coordinate and how work is handed over; to make a folder one, on the engineer's click, Fallow may
-write the repository, an ignore file the engineer accepted, and its first commit (VI). Guidance
-materially expanded; nothing removed or loosened. Approved by the project owner on 2026-11-03
-(feature 011, FR-039 to FR-041).
+Version change: 6.5.0 → 6.5.1
+Bump rationale: PATCH. A clarification of V: publishing a run may also fetch the target branch's
+latest commit, to bring the run up to date or to check it before a push (feature 011, a published
+loop whose pull request fell behind or conflicts). Still only the engineer's own tools, only to
+publish a run; nothing added, removed or loosened. Approved by the project owner on 2026-11-03
+(finding D1 of /speckit-analyze for feature 011).
 
 Modified principles:
-  - III. Coordination in Code, Decisions in the Repo: every project is a git repository
-  - VI. Least Privilege: making a folder a git repository among the places Fallow writes to
+  - V. Local and Private by Construction: the second item of the traffic of a run clarified
 
 Added sections: none. Removed sections: none.
 
@@ -18,9 +17,10 @@ Templates requiring updates: none.
 
 Follow-up TODOs: none.
 
-Previous amendments: 6.4.0 (MINOR) VI names the assistant; 6.3.1 (PATCH) V clarified for showing
-a project's remote; 6.3.0 (MINOR) solo sessions in II and V; 6.2.0 (MINOR) IX. Runtime-Agnostic;
-6.1.0 (MINOR) feature 007; 6.0.0 (MAJOR) the constitution replaced for the headless orchestrator.
+Previous amendments: 6.5.0 (MINOR) every project is a git repository (III, VI); 6.4.0 (MINOR) VI names
+the assistant; 6.3.1 (PATCH) V clarified for showing a project's remote; 6.3.0 (MINOR) solo sessions
+in II and V; 6.2.0 (MINOR) IX. Runtime-Agnostic; 6.1.0 (MINOR) feature 007; 6.0.0 (MAJOR) the
+constitution replaced for the headless orchestrator.
 -->
 
 # Fallow Constitution
@@ -118,8 +118,9 @@ the work divides cleanly and measurement says it pays.
 - Fallow itself MUST NOT make network requests. The traffic of a run is:
   - the agents' own traffic to their providers;
   - the engineer's own git and remote tools, which Fallow runs with the engineer's credentials only
-    to publish a run (push its branch, open its pull request, read branch rules and check results),
-    and to show on a project what publishing would do (read the target branch's protection);
+    to publish a run (push its branch, open its pull request, read branch rules and check results,
+    and fetch the target branch's latest commit to bring the run up to date or to check it before a
+    push), and to show on a project what publishing would do (read the target branch's protection);
   - the assistant's own requests to the web and to the project's git remotes, in a solo session;
     on by default for the assistant, and off for every other kind unless its definition allows it.
     Each request shows in the activity like any other tool call.
@@ -242,4 +243,4 @@ breaks silently on the next, and ties the engineer to one supplier.
   section; unjustified violations block merge.
 - Compliance is reviewed at every pull request and at every release.
 
-**Version**: 6.5.0 | **Ratified**: 2026-10-13 | **Last Amended**: 2026-11-03
+**Version**: 6.5.1 | **Ratified**: 2026-10-13 | **Last Amended**: 2026-11-03
