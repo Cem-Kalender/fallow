@@ -1646,7 +1646,9 @@ impl Engine {
                     for o in publish["offer"].as_array().into_iter().flatten() {
                         match o.as_str() {
                             Some("local_merge") => offer.push("merge"),
-                            Some("pull_request") => offer.push("publish"),
+                            // Not while the target is unreadable: a publication does not
+                            // check the target again yet (review L3).
+                            Some("pull_request") if unreadable.is_none() => offer.push("publish"),
                             _ => {}
                         }
                     }

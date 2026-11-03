@@ -17,6 +17,9 @@ below is a steering action, recorded in the loop's log (constitution II).
   "pr": { "conflicting": false, "behind": true, "required": false },   // a published loop only
   "read_at": "2026-11-03T14:02:11Z"
 },
+// Before the target is read: { "moved": false, "reading": true } and `offer` is ["stop"]; when the
+// read failed: { "moved": false, "reading": false, "error": "…" }, `merge` is offered as before
+// (the merge checks the target again) but `publish` is not.
 "update": {                             // null when no update is in progress
   "n": 2, "target_commit": "a1c09e2", "conflicts": ["shop/receipt.py"],
   "step": "resolving the conflicts"     // merging | resolving the conflicts | gates | checking stories | pushing

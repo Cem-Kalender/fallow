@@ -305,6 +305,12 @@ fn computing(
 /// An update that did not go through, the loop's branch not moved: dropped, and the loop goes
 /// back to where it was (ready, its outcome kept), to be brought up to date again (review 3).
 fn not_through(run: &mut Run, u: &UpdateState, why: &str) -> Result<(), String> {
+    // A fast-forward that failed half way leaves the build worktree dirty on the loop's branch:
+    // it is put back to the branch (Fallow's own working copy, never the engineer's folder).
+    let wt = run.worktrees().join("build");
+    if wt.join(".git").exists() && git::branch(&wt).is_some() {
+        let _ = git::discard_changes(&wt);
+    }
     if let Some(b) = &u.branch {
         let _ = git::delete_branch(&run.state.repo, b);
     }
