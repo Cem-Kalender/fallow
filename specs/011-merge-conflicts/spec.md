@@ -34,9 +34,9 @@ Two loops of a project changed the same lines. The first is merged. The second i
 
 1. **Given** a ready loop whose target moved with changes that conflict with it, **When** the engineer opens the loop page, **Then** it says so before any merge is tried, names the conflicting files and the commits on the target that caused it, and offers "Bring up to date" and "Stop"; "Merge" is not offered.
 2. **Given** "Bring up to date", **When** Fallow brings the branch up to date, **Then** it does so in the loop's own working copy, never in the engineer's folder or on the target, and the conflicting files go to a builder as a repair step that names them.
-3. **Given** the builder resolved the conflicts, **When** its step ends, **Then** Fallow checks that no conflict markers remain and that the files are committed, runs the gates against the new starting point (the target as it is now), and has the checker check every user story again; the loop is ready only when all of that passed.
+3. **Given** the builder resolved the conflicts, **When** its step ends, **Then** Fallow checks that no conflict markers remain and that the files are committed, runs the gates against the new starting point (the target as it is now), and has the checker check every user story again, in the pipeline's review rounds; the loop is ready only when all of that passed.
 4. **Given** a loop brought up to date and verified again, **When** the engineer merges, **Then** exactly the new verified commit is merged, without conflict.
-5. **Given** the builder cannot resolve the conflict within the loop's repair cap, **When** the cap is reached, **Then** the loop waits for the engineer with what is left in conflict, as any loop does at its cap; nothing is merged.
+5. **Given** the builder cannot resolve the conflict within the loop's repair cap, **When** the cap is reached (the pipeline's repair cap per task, counted from zero for this update), **Then** the loop waits for the engineer with what is left in conflict, as any loop does at its cap; nothing is merged.
 
 ---
 
@@ -68,7 +68,7 @@ A loop locked with Free brings itself up to date and verifies again on its own, 
 
 1. **Given** a loop locked Free whose target moved, **When** it becomes ready, **Then** it brings itself up to date and verifies again without the engineer, records that it did so and why, and the engineer can see each step.
 2. **Given** a loop locked Normal or Strict whose target moved, **When** it becomes ready, **Then** it waits for the engineer, shown under "Needs you" with "Bring up to date".
-3. **Given** a loop whose budget or repair cap would be exceeded by bringing it up to date, **When** it would start, **Then** it asks the engineer whatever its level, naming the limit.
+3. **Given** a loop whose budget is used up, or that already brought itself up to date 3 times, **When** it would start another update, **Then** it asks the engineer whatever its level, naming the limit.
 
 ---
 
@@ -83,7 +83,7 @@ A loop was published as a pull request (010). Meanwhile the target moved on the 
 **Acceptance Scenarios**:
 
 1. **Given** an open pull request of a loop that conflicts with its target, or whose target requires branches to be up to date, **When** Fallow reads its state, **Then** the loop page says so and offers "Bring up to date"; by the autonomy level as in User Story 3.
-2. **Given** "Bring up to date" on a published loop, **When** the new commit is verified, **Then** Fallow pushes it to the loop's own branch as a move forward from the commit it published, never forced, and the same pull request shows it.
+2. **Given** "Bring up to date" on a published loop, **When** the new commit is verified, **Then** Fallow pushes it to the loop's own branch as a move forward from the last commit Fallow pushed there, never forced, and the same pull request shows it.
 3. **Given** the loop's branch on the remote holds a commit Fallow did not push (someone pushed to it), **When** Fallow would push, **Then** it pushes nothing and says so; the engineer decides.
 4. **Given** a pull request that is only behind, with a target that does not require it to be up to date, **When** the engineer opens the loop page, **Then** it shows that it is behind and offers "Bring up to date" without urging it.
 
@@ -108,12 +108,15 @@ When the engineer locks a feature, Fallow compares the files its tasks name with
 
 - **The same file changed but different lines**: no conflict; User Story 2 applies (the target moved).
 - **The target moved by the engineer's own commits**, not a loop: the same; the loop page names them as "outside Fallow".
-- **A conflict in a locked document** (the feature's own spec, plan or tasks changed on the target): it is not handed to a builder (builders never edit the locked documents); the loop waits for the engineer, naming the documents.
+- **A change on the target to this feature's locked documents** (its spec, plan or tasks), conflicting or not: it is not merged in silently and not handed to a builder (builders never edit the locked documents, and the checker must judge the criteria the engineer locked); the loop waits for the engineer, naming the documents.
 - **A file deleted on one side and changed on the other**, or a binary file in conflict: the builder gets it like any conflict, with what each side did; if it cannot be resolved within the cap, the loop waits for the engineer.
 - **The target moves again while the loop is being brought up to date**: the loop is verified against the target as it was when the update started; at the merge, User Story 1 or 2 applies again; Fallow says how often this happened, so the engineer can choose to make one loop wait.
 - **The engineer's folder has the target checked out with uncommitted changes**: nothing in this feature touches it; the final merge behaves as today.
 - **A waiting loop ("Run after") whose other loop is deleted or its project removed**: it starts by itself, saying why.
 - **Fallow restarts while a loop is being brought up to date or waits for another**: it resumes where it was, without repeating a completed step (constitution VII); a waiting loop keeps waiting.
+- **The target branch is deleted or renamed** (locally, or on the remote for a published loop): nothing is merged or pushed; the loop page says the target is gone, and the engineer decides (stop, or lock again on another branch).
+- **The pull request is merged or closed on the remote while an update runs**: the update is dropped and nothing is pushed; the loop follows the pull request's end as in 010.
+- **A loop stopped during an update**: it is stopped like any loop; its branch keeps what was committed, and nothing is merged or pushed.
 - **Parallel parts within one loop** already integrate their own work (stage "integrating"); this feature concerns the target moving under the loop as a whole.
 - **Files named in tasks are only a forecast**: the warning at the lock says it compares with the files the tasks name and the files changed so far, not with what the loop will change.
 
@@ -125,32 +128,34 @@ When the engineer locks a feature, Fallow compares the files its tasks name with
 
 - **FR-001**: Before offering a merge or a publication, Fallow MUST check whether the target branch moved since the commit the loop was verified on, and whether merging would conflict, without changing the target or the engineer's folder.
 - **FR-002**: When the target moved, the loop page MUST say so: by how many commits, from which features (a loop's merge) or "outside Fallow", and, when it would conflict, which files.
-- **FR-003**: A merge that would conflict MUST NOT be offered; "Bring up to date" and "Stop" MUST be.
+- **FR-003**: A merge that would conflict MUST NOT be offered; "Bring up to date" and "Stop" MUST be. The same check MUST be made again when the merge runs; when the target moved in between, the merge MUST NOT be tried and FR-002 and FR-003 apply.
+- **FR-003a**: While an update runs, the loop MUST NOT be ready: its page shows it as being brought up to date, step by step, and the old verified commit MUST NOT be offered to merge or publish, nor published on its own (010's "When verified").
 
 **Bringing a loop up to date**
 
 - **FR-004**: Bringing a loop up to date MUST merge the target, as it is then, into the loop's own branch in the loop's own working copy; it MUST NOT touch the target branch, the engineer's folder, or another loop's branch.
-- **FR-005**: Conflicting files MUST go to a builder as a repair step that names each file and what each side changed, with the instruction that the feature's criteria and the work already on the target must both keep working. Conflicts in the locked documents MUST NOT go to a builder; the loop waits for the engineer.
-- **FR-006**: After the update, Fallow MUST verify the result as any result: no conflict markers left, the changes committed, the gates run by Fallow against the new starting point (the target as merged in), and every user story checked again by the checker. Only then MUST the loop be ready, with the new verified commit.
-- **FR-007**: A repair for a conflict or for a failure after the update MUST count against the loop's repair cap and its budget; reaching either MUST make the loop wait for the engineer, as at any cap.
+- **FR-005**: Conflicting files MUST go to a builder as a repair step that names each file and what each side changed, with the instruction that the feature's criteria and the work already on the target must both keep working. A change on the target to the feature's own locked documents, conflicting or not, MUST NOT be merged in by the update nor go to a builder; the loop waits for the engineer, naming the documents.
+- **FR-006**: After the update, Fallow MUST verify the result as any result: no conflict markers left, the changes committed, the gates run by Fallow against the new starting point (the target as merged in), and every user story checked again by the checker (the pipeline's review rounds). Only then MUST the loop be ready, with the new verified commit.
+- **FR-007**: An update MUST count as a new task of the loop: its repairs (the conflict, and any failure after it) count against the pipeline's repair cap per task, starting from zero for that update; the review rounds after it count against the pipeline's review rounds, starting from zero; and everything counts against the loop's budget. Reaching a cap or the budget during an update MUST stop it there and make the loop wait for the engineer, as at any cap. A loop MUST NOT bring itself up to date more than 3 times without the engineer; the fourth time it asks.
 - **FR-008**: Each update MUST be recorded in the loop's history: when, what the target was, what conflicted, who resolved it, and the outcome; the engineer can see every step as for any step.
 - **FR-009**: The target moving without a conflict MUST be handled as decided in User Story 2.
 
 **Who starts it**
 
-- **FR-010**: With a loop locked Free, Fallow MUST bring it up to date by itself within the loop's caps and budget. With Normal or Strict, it MUST ask first, under "Needs you", naming what it will do. When the update would exceed a cap or the budget, it MUST ask whatever the level.
+- **FR-010**: With a loop locked Free, Fallow MUST bring it up to date by itself within the loop's caps and budget. With Normal or Strict, it MUST ask first, under "Needs you", naming what it will do (both levels alike here: the update is a new task, and those levels leave starting new work to the engineer). When the loop's remaining budget is used up, or its automatic updates are (FR-007), it MUST ask whatever the level.
 
 **Published loops**
 
 - **FR-011**: For a loop with an open pull request, Fallow MUST show when the pull request conflicts with its target or is behind it, and whether the target requires it to be up to date, from what the hosting service reports.
-- **FR-012**: Bringing a published loop up to date MUST use the target as the remote has it, verify as in FR-006, and push the new verified commit to the loop's own branch as a move forward from the commit Fallow published, never forced, so the same pull request shows it. When the branch on the remote holds a commit Fallow did not push, Fallow MUST push nothing and say so. Nothing is ever pushed to the target (constitution II).
+- **FR-012**: Bringing a published loop up to date MUST use the target as the remote has it, verify as in FR-006, and push the new verified commit to the loop's own branch, so the same pull request shows it. This amends 010 FR-012 for this one case: the loop's branch on the remote MAY be moved forward only when it is exactly at the last commit Fallow pushed to it and the new commit descends from that one; never forced. In every other case (someone else pushed to it, it was deleted), Fallow MUST push nothing, MUST NOT fall back to another branch name or a second pull request, and MUST say so. Nothing is ever pushed to the target (constitution II).
 
 **Warnings**
 
 - **FR-013**: When the engineer locks a feature, Fallow MUST compare the files its tasks name with the files each unfinished loop of the project has changed so far or names in its tasks, and when they overlap, name the loops and files in the lock form, with "Run after <feature>" and "Run now anyway".
-- **FR-014**: A loop locked to run after another MUST wait, shown as waiting for that loop, and start by itself from the target as it is when the other loop is merged, stopped or deleted.
+- **FR-014**: A loop locked to run after another MUST wait, shown as waiting for that loop, and start by itself when the other loop is merged, stopped or deleted. It starts from its lock as any loop; when the target moved since the lock, it is brought up to date first (FR-004 to FR-008), before its first task.
 - **FR-015**: While loops run, when a step's commit of one loop changes files another unfinished loop has changed, Fallow MUST say so on both loop pages, naming the files and the loop, and offer "Wait for <feature>": the loop pauses after its current step and resumes when the other is merged, stopped or deleted.
-- **FR-016**: Warnings MUST NOT block: the engineer can always run anyway.
+- **FR-016**: Warnings MUST NOT block: the engineer can always run anyway. A wait that would make two loops wait for each other (directly or through others) MUST NOT be offered; the page says which loop already waits for this one.
+- **FR-016a**: An unfinished loop, for the warnings, is one in any stage but done or stopped: planning, building, integrating, gating, reviewing, ready, paused, or publishing, including one whose pull request is open.
 
 **Lasting and runtimes**
 
@@ -167,11 +172,11 @@ When the engineer locks a feature, Fallow compares the files its tasks name with
 
 ### Measurable Outcomes
 
-- **SC-001**: In 100% of tests, no merge or publication leaves a conflict or an unverified combination on the target: every merged or published commit had its gates and checker run on top of the target it was merged into.
-- **SC-002**: With two loops changing the same lines, the second reaches ready again with a newly verified commit and merges without conflict, with at most one action of the engineer at Normal ("Bring up to date") and none at Free.
+- **SC-001**: In 100% of tests, no local merge leaves a conflict on the target, and every commit Fallow merges or publishes had its gates and checker run on top of the target as it was when the merge ran or the commit was published (a pull request merged later on the remote, after its target moved again, is the hosting service's to check).
+- **SC-002**: With two loops changing the same lines, the second reaches ready again with a newly verified commit and merges without conflict, with at most one action of the engineer at Normal ("Bring up to date") and none at Free, besides the merge itself.
 - **SC-003**: The target branch and the engineer's folder are unchanged by any update, in 100% of tests.
 - **SC-004**: A published loop brought up to date keeps the same pull request, and its branch on the remote only moves forward, in 100% of tests.
-- **SC-005**: Every overlap between the files named by a locked feature's tasks and the files changed so far by an unfinished loop is reported at the lock, in 100% of tests.
+- **SC-005**: Every overlap between the files named by a locked feature's tasks and the files an unfinished loop has changed so far or names in its tasks is reported at the lock, in 100% of tests.
 - **SC-006**: A loop waiting for another starts within 10 seconds of the other being merged or stopped.
 
 ## Assumptions
@@ -185,6 +190,6 @@ When the engineer locks a feature, Fallow compares the files its tasks name with
 ## Dependencies
 
 - 007 (loops, gates, the checker, repairs, the repair cap and budget, the local merge): reused; its merge-conflict outcome ("merge again" or "stop") is replaced.
-- 010 (publishing, the remote, the engineer's own tools): the pull request's state; pushing the loop's own branch, now also forward from the published commit.
+- 010 (publishing, the remote, the engineer's own tools): the pull request's state; its FR-012 (a taken branch name is never overwritten) is amended for one case, moving the loop's own branch forward from the last commit Fallow pushed to it (FR-012 here).
 - 006 FR-026 (bringing a branch that fell behind up to date), deferred by 010: delivered here. 006 FR-025 (a failing remote check as a repair) stays out.
 - Constitution 6.5.0: I (only a verified commit is offered), II (the engineer decides; never a push to the target, never forced), III (git), VII (runs survive), IX (runtime-agnostic).
