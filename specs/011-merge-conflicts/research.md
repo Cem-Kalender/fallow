@@ -220,9 +220,10 @@ This is argued here; if the owner prefers it named, it is a PATCH clarification 
   <feature>"); "Wait for" lets the current step finish. A wait that would close a cycle (following
   `waits_for` from the other loop reaches this one) is refused, naming the loop already waiting.
 - **A "Run after" loop that built nothing**, when its wait ends and the target moved since its lock:
-  R-2's merge without a conflict is committed straight onto its branch (no gates or checker: nothing
-  is built); a conflict there can only be in files the lock brought, so it is handled as
-  `docs_changed` (the engineer locks again).
+  R-2's docs check runs first, as for any update; then the merge, which can only conflict in files
+  the lock brought, i.e. the feature's documents, already covered by that check and by the loop's
+  version being kept, is committed straight onto its branch (no gates or checker: nothing is
+  built).
 
 ## R-9 Restart
 
@@ -236,7 +237,8 @@ otherwise computed again from the recorded `loop_head` (the same inputs give the
 again and the step re-queued by `requeue_cut_short`; a repair accepted but no `UpdateMerged` → Fallow
 makes the merge commit from the accepted tree; `UpdateMerged` with the build worktree still detached →
 checked out on the loop's branch again; a working ref still there after `UpdateMerged` or
-`UpdateDropped` → deleted. A forward push whose `PushedForward` was not
+`UpdateDropped` → deleted; `UpdateDocsChanged` → the loop waits for the engineer again (nothing was
+merged, nothing to undo). A forward push whose `PushedForward` was not
 written is found by `push_forward` itself (the remote already at `to` means done). The line is
 rebuilt from `Lined`/`Unlined`.
 

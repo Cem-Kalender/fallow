@@ -11,7 +11,7 @@ unchanged.
 | `UpdateConflicted` | `n`, `working` (commit), `conflicts: [{ path, kind: text \| non_text }]` | The merge conflicts; the repair starts on the working commit under `refs/fallow/update/<run>-<n>` (R-2). |
 | `UpdateDocsChanged` | `n`, `paths: [path]` | The feature's locked documents changed on the target; nothing merged (R-2). |
 | `UpdateMerged` | `n`, `commit` | Fallow's two-parent merge commit is on the loop's branch; the working ref deleted. Folded (R-3): every story's phases back to Pending with `reopened`, `outcome` cleared; `affected` untouched; `base_commit` = the target commit. |
-| `UpdateDropped` | `n`, `why` | Dropped (pull request merged or closed, loop stopped, documents changed); its working ref deleted. |
+| `UpdateDropped` | `n`, `why` | Dropped (pull request merged or closed, loop stopped); its working ref deleted, if any. |
 | `PushedForward` | `from`, `to` | The loop's branch on the remote moved forward; `Publication.commit` = `to`. |
 | `LeftPullRequest` | `unchecked: [commit]` | "Leave the pull request as it is" at the limit. |
 | `Touched` | `files: [path]` | Files an accepted step changed (from `work_done`'s list). |
