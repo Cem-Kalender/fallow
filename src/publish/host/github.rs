@@ -139,8 +139,9 @@ impl Host for GitHub {
                 .ok()
                 .and_then(|v| v["strict"].as_bool())
                 .ok_or_else(|| format!("could not read whether {branch} must be up to date")),
-            // No required status checks on a classic protection: not strict.
-            Err(e) if e.contains("404") || e.contains("not enabled") => Ok(false),
+            // GitHub says so when there are none; any other answer (a 404 without the rights to
+            // read it) leaves it unknown, never "not required" (review 7).
+            Err(e) if e.contains("not enabled") || e.contains("not protected") => Ok(false),
             Err(e) => Err(e),
         }
     }

@@ -499,6 +499,9 @@ pub enum Event {
         /// `engineer` or `when_verified`.
         #[serde(default = "engineer")]
         by: String,
+        /// 011 (FR-011a): the remote target's commit when it moved since the loop was verified.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        moved_to: Option<String>,
     },
     /// 010: a loop chosen to publish itself when verified did not, and why (FR-020): final, it
     /// waits for the engineer from then on.

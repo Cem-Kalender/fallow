@@ -325,8 +325,8 @@ fn a_pull_request_merged_during_an_update_ends_it() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
-/// FR-011a: a first publication when the remote target moved: nothing pushed; the loop is
-/// brought up to date first (here Free: by itself), then published.
+/// FR-011a: a first publication when the remote target moved: nothing pushed; the loop asks
+/// (Normal), is brought up to date against the remote target, then published.
 #[test]
 fn a_first_publication_checks_the_remote_target_first() {
     let root = scratch("pu-first");
@@ -360,6 +360,14 @@ fn a_first_publication_checks_the_remote_target_first() {
         },
     )
     .unwrap();
+    // Nothing pushed; at Normal it asks before the update (FR-010).
+    wait_loop(tx, id, "the question", |v| {
+        v["needs"]["why"]
+            .as_str()
+            .is_some_and(|w| w.contains("nothing was pushed"))
+    });
+    assert!(remote_head(&root, BRANCH).is_none(), "nothing pushed");
+    ask(tx, Request::Update { id }).unwrap();
     let v = wait_loop(tx, id, "published after its update", |v| {
         v["stage"] == "publishing"
     });
@@ -520,6 +528,123 @@ fn documents_changed_on_the_remote_while_the_pull_request_is_open() {
     set_pr(&state, |pr| pr["state"] = json!("closed"));
     let v = wait_loop(tx, id, "ready again", |v| v["stage"] == "ready");
     assert!(v["update"].is_null(), "the update dropped with the close");
+    drop(e);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// FR-007: at the limit of a published loop, "Verify again on the latest <target>" brings it up
+/// to date again and pushes forward (phase 6 review 4).
+#[test]
+fn at_the_limit_verify_again_starts_a_new_update() {
+    // The update's first check is slowed so the remote moves again before the push.
+    let after = format!(
+        "{}{}{}{}{}",
+        conflict_repair_step(1, "calc/__init__.py", CALC_INIT_SUB, true),
+        check_step("US1", true, "sleep_ms = 8000"),
+        check_step("US2", true, ""),
+        // "Verify again": a clean update, both stories again.
+        check_step("US1", true, ""),
+        check_step("US2", true, "")
+    );
+    let root = scratch("pu-again");
+    let repo = repo(&root);
+    bare_remote(&root, &repo, ADDRESS);
+    let state = fake_host(&root, host());
+    let scenario = root.join("scenario.toml");
+    std::fs::write(
+        &scenario,
+        format!("{}{}{after}", lead_writes_calc(), calc_loop_ok()),
+    )
+    .unwrap();
+    let e = start_studio(&root, &scenario, None);
+    let tx = &e.tx;
+    sreq(tx, fallow::studio::Req::AddProject { path: repo.clone() }).unwrap();
+    git(&repo, &["add", "."]);
+    git(&repo, &["commit", "-q", "-m", "spec kit"]);
+    git(&repo, &["push", "-q", "origin", "main"]);
+    let id = lock_feature_with(
+        tx,
+        "repo",
+        "Calc",
+        "001-calc",
+        None,
+        Some((5.0, 60)),
+        None,
+        LockExtra {
+            update_limit: Some(1),
+            run_after: None,
+        },
+    );
+    wait_for(tx, id, "ready", |v| v["stage"] == "ready");
+    wait_loop(tx, id, "the remote read", |v| {
+        v["publish"]["remote"]["checking"] != true && v["publish"]["remote"]["state"] != "checking"
+    });
+    ask(
+        tx,
+        Request::Publish {
+            id,
+            without_latest_check: false,
+        },
+    )
+    .unwrap();
+    wait_loop(tx, id, "publishing", |v| v["stage"] == "publishing");
+    let published_at = remote_head(&root, BRANCH).unwrap();
+    remote_commit(&repo, "calc/__init__.py", REMOTE_INIT, "on the remote");
+    set_pr(&state, |pr| pr["mergeable"] = json!("CONFLICTING"));
+    wait_loop(tx, id, "the conflict shown", |v| {
+        v["target"]["pr"]["conflicting"] == true
+    });
+    ask(tx, Request::Update { id }).unwrap();
+    wait_loop(tx, id, "the update merged", |v| {
+        v["update"]["merged"] == true
+    });
+    let late = remote_commit(
+        &repo,
+        "NOTES.md",
+        "later
+",
+        "another change on the remote",
+    );
+    let v = wait_loop(tx, id, "the limit", |v| {
+        v["needs"]["options"]
+            .to_string()
+            .contains("leave the pull request as it is")
+    });
+    assert_eq!(v["overtaken"], 1);
+    assert!(
+        !v["needs"]["options"].to_string().contains("stop"),
+        "{}",
+        v["needs"]
+    );
+    assert_eq!(
+        remote_head(&root, BRANCH).unwrap(),
+        published_at,
+        "nothing pushed"
+    );
+    // Review 4: "Verify again" starts another update, the count starting again.
+    ask(tx, Request::Update { id }).unwrap();
+    let v = wait_loop(tx, id, "pushed forward after verifying again", |v| {
+        v["update"].is_null() && v["updates"] == 2 && v["overtaken"] == 0
+    });
+    assert_ne!(
+        remote_head(&root, BRANCH).unwrap(),
+        published_at,
+        "pushed forward"
+    );
+    assert!(
+        git(
+            &repo,
+            &[
+                "merge-base",
+                "--is-ancestor",
+                &late,
+                &remote_head(&root, BRANCH).unwrap()
+            ]
+        )
+        .is_empty(),
+        "the latest target is underneath"
+    );
+    assert_eq!(v["stage"], "publishing");
     drop(e);
     let _ = std::fs::remove_dir_all(&root);
 }

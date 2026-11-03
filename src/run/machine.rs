@@ -455,6 +455,7 @@ pub fn on_done(run: &mut Run, ctx: &Ctx, done: Done) -> Result<(), String> {
                     why: f.why,
                     pushed: f.pushed,
                     by,
+                    moved_to: f.moved_to,
                 })
             }
         },
@@ -512,10 +513,16 @@ pub fn on_done(run: &mut Run, ctx: &Ctx, done: Done) -> Result<(), String> {
             }
             match st.state {
                 crate::publish::host::PrStatus::Merged => {
+                    let unchecked = run
+                        .state
+                        .feature_loop
+                        .as_ref()
+                        .map(|l| l.unchecked.clone())
+                        .unwrap_or_default();
                     run.append(Event::Merged {
                         commit: pb.commit.clone(),
                         how: "pull request".into(),
-                        unchecked: Vec::new(),
+                        unchecked,
                     })?;
                     run.append(Event::Stage {
                         to: Stage::Done,
@@ -961,6 +968,7 @@ pub fn publish(
             why: format!("cannot start a thread: {e}"),
             pushed: None,
             by: by.to_string(),
+            moved_to: None,
         })?;
     }
     Ok(())

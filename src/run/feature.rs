@@ -2309,8 +2309,13 @@ fn finish(run: &mut Run, pl: &Pipeline) -> Result<(), String> {
         if !after.is_empty() {
             return run.append(Event::NeedsEngineer {
                 why: format!(
-                    "These files changed after the last gate run and were never gated: {}",
-                    after.join(", ")
+                    "These files changed after the last gate run and were never gated: {}{}",
+                    after.join(", "),
+                    if updating_published(run) {
+                        ". Nothing was pushed: close the pull request on the remote first."
+                    } else {
+                        ""
+                    }
                 ),
                 options: vec!["stop".into()],
             });

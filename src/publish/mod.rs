@@ -409,7 +409,7 @@ pub fn publish(job: &Job, settings: &crate::config::Settings) -> Result<Done, Fa
         let at = fetch_target(&job.repo, name, target).map_err(|why| fail("check", why, None))?;
         if !crate::verify::git::is_ancestor(&job.repo, &at, &job.commit) {
             return Err(Failed {
-                step: "check".into(),
+                step: "moved".into(),
                 why: format!(
                     "{target} on {name} moved since this loop was verified (now at {}): it is brought up to date first",
                     &at[..at.len().min(7)]

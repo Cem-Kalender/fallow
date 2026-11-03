@@ -256,6 +256,8 @@ pub struct LoopState {
     /// 011: an update was made for a publication not yet made (FR-011a): Fallow publishes again
     /// when the loop is ready, and a move of the remote target before then counts (FR-007).
     pub publish_turn: bool,
+    /// 011 (FR-011a): the remote target's commit a first publication found it moved to.
+    pub publish_moved: Option<String>,
     /// 011: the target commit that overtook the loop last (for "Leave the pull request as it
     /// is" and "without the latest check").
     pub overtaken_tip: Option<String>,
@@ -913,6 +915,7 @@ impl RunState {
                     merge_pending: false,
                     update_asked: false,
                     publish_turn: false,
+                    publish_moved: None,
                     overtaken_tip: None,
                     touched: BTreeSet::new(),
                     task_paths: task_paths(phases),
@@ -1057,6 +1060,7 @@ impl RunState {
                     f.merge_pending = false;
                     f.update_asked = false;
                     f.publish_turn = false;
+                    f.publish_moved = None;
                     f.unlocked = false;
                     f.fresh_seq = l.seq;
                     // The base follows the new lock until an update merged a target in.
@@ -1166,6 +1170,7 @@ impl RunState {
                 if let Some(f) = self.feature_loop.as_mut() {
                     f.overtaken = 0;
                     f.publish_turn = false;
+                    f.publish_moved = None;
                     f.unchecked = unchecked.clone();
                     f.publication = Some(Publication {
                         remote: remote.clone(),
@@ -1203,8 +1208,15 @@ impl RunState {
                 why,
                 pushed,
                 by,
+                moved_to,
             } => {
                 if let Some(f) = self.feature_loop.as_mut() {
+                    // 011: a publication that failed otherwise ends the publication's turn: it is
+                    // not tried again by itself (review 1).
+                    if moved_to.is_none() {
+                        f.publish_turn = false;
+                    }
+                    f.publish_moved = moved_to.clone();
                     f.publish_failed = Some(PublishFailure {
                         step: step.clone(),
                         why: why.clone(),
@@ -1219,6 +1231,7 @@ impl RunState {
                             "Publishing stopped at the {}: {why}{}",
                             match step.as_str() {
                                 "check" => "check of the remote",
+                                "moved" => "check of the remote target",
                                 "push" => "push",
                                 _ => "pull request",
                             },
@@ -1310,6 +1323,7 @@ impl RunState {
                     f.update_asked = false;
                     if *for_publication {
                         f.publish_turn = true;
+                        f.publish_moved = None;
                     }
                     if *in_turn && f.lined_at.is_some() {
                         f.turn_updates += 1;
@@ -1429,6 +1443,7 @@ impl RunState {
                 if let Some(f) = self.feature_loop.as_mut() {
                     f.overtaken = 0;
                     f.update = None;
+                    f.unchecked.clear();
                     if let Some(p) = f.publication.as_mut() {
                         p.commit = to.clone();
                         p.conflicting = false;
