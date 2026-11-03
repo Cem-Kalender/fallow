@@ -12,7 +12,7 @@ CARGO_PROFILE_DEV_DEBUG=0 CARGO_INCREMENTAL=0 CARGO_TARGET_DIR=target/wip \
 
 Two features in one project change the same line of `shop/receipt.py`. Merge the first. The second's
 loop page shows `target.moved`, `conflicts: ["shop/receipt.py"]`, `offer: ["bring_up_to_date",
-"stop"]`, no `merge`. Bring it up to date: a repair step on `update-1` names the file (variants: the builder commits itself; resolves to one side); after it, the
+"stop"]`, no `merge`. Bring it up to date: a repair step on `update-1` names the file (variants: the builder commits itself; resolves to one side; a file deleted on one side, with `resolutions`; a `~side` file left, refused); after it, the
 gates run against the first feature's merge, both stories are checked again, the loop is ready with a
 new verified commit, and it merges without conflict. The target never held a conflict.
 

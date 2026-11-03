@@ -29,7 +29,12 @@ matched against the commits other loops of the project recorded in `Merged`/`Pub
 
 **Decision**: an update never runs `git merge` in a working copy. Fallow computes it with
 `git merge-tree --write-tree <loop_head> <target_commit>`, which yields a tree; when there are
-conflicts, that tree holds the conflicted files with conflict markers in them.
+conflicts, that tree holds the conflicted files with conflict markers in them. In that tree, the
+feature's locked documents (its spec directory) and any protected path the lock itself set are
+always taken as the lock has them (a temporary index: `read-tree` the merged tree, the lock commit's
+version of those paths read in over it, `write-tree`): the target's changes to them never reach the
+loop's branch, conflicting or not, so the builder is never asked to resolve a path it may not edit.
+Whether the target changed them is the separate question below (`UpdateDocsChanged`).
 
 - **Without a conflict**: Fallow makes the merge commit itself:
   `git commit-tree <tree> -p <loop_head> -p <target_commit> -m "Fallow: <feature> brought up to date
@@ -44,11 +49,17 @@ conflicts, that tree holds the conflicted files with conflict markers in them.
   The repair step for the builder runs in the build worktree **detached at the working commit**
   (builder steps run in `build_wt`, whose `base` is its head), on the part `update-<n>`, with a
   plain-text prompt naming each path, its kind, and what each side changed
-  (`git log --oneline <merge-base>..<side> -- <path>`), and the instruction of FR-005. For this part,
-  `work_done`'s "on the build branch" check is replaced by "descends from the working commit";
-  `take_answers` does not run for it (answers are merged after the update, as usual). The result must
-  report, for every non-text path, how it was resolved (a `resolutions` list in the step's structured
-  result, part of the runtime contract, IX); the loop page shows them. At the step's
+  (`git log --oneline <merge-base>..<side> -- <path>`), and the instruction of FR-005. While the update is not yet
+  merged (`UpdateState.merged` false), `work_done`'s "on the build branch" check is replaced, for the
+  part `update-<n>`, by "descends from the working commit"; once merged, the usual check applies
+  again (gate repairs on `update-<n>` then build on the loop's branch). `take_answers` does not run
+  while the build worktree is detached (answers are merged after the update, as usual). The repair is
+  queued with the loop's last phase, a new session (no earlier conversation to resume) and the
+  update's own prompt as its instruction. The result must
+  report, for every non-text path, how it was resolved (an optional `resolutions` list of plain JSON
+  objects in the step's structured result, part of the runtime contract for every runtime, IX). It is
+  shown to the engineer on the loop page and is **not** evidence: what verifies the resolution is the
+  gate run on the merge commit and every story checked again (R-3), as for any change (I). At the step's
   end the existing tidy runs against that base (so the target's incoming changes, protected paths
   included, are the base, not the builder's edits: `restore_paths` and `locked_changes` judge only
   what the builder changed). Fallow then checks the result:
@@ -59,7 +70,7 @@ conflicts, that tree holds the conflicted files with conflict markers in them.
   - then Fallow makes the real merge commit with the resolved tree:
     `commit-tree <resolved_tree> -p <loop_head> -p <target_commit>`, checks the build worktree out on
     the loop's branch again (still at `loop_head`) and fast-forwards it to the merge commit, and
-    records `UpdateMerged`. Whatever the builder did with commits (its own, none, a resolution equal to
+    records `UpdateMerged`; the working ref is deleted. Whatever the builder did with commits (its own, none, a resolution equal to
     one side) does not matter: Fallow takes the tree.
 - **The feature's own locked documents** (its `spec.md`, `plan.md`, `tasks.md` and the other files
   of its spec directory): a path counts as changed when the target changed it since the point last
@@ -90,8 +101,10 @@ the two-parent commit. Rebasing is ruled out (it rewrites verified, possibly pub
 back to `Pending` with `reopened = Some(seq)`, and `outcome` is cleared. It does **not** touch
 `affected` (which would queue the relock's builder repairs, feature.rs ~1366). A new
 `LoopState.fresh_seq` replaces the direct reads of `relocked_seq` in `repairs_of`, `allowed_more`
-and `fresh_since`; both `Relocked` and `UpdateMerged` set it, so the update's repairs and the review
-rounds after it count from zero (FR-007). `round_bounds` (feature.rs ~531) already reads `reopened`
+and `fresh_since`; `Relocked` sets it, and so does `Updated` (when the update starts), so the update
+counts as one new task from zero (FR-007): its conflict repairs and the gate repairs after the merge
+share the part `update-<n>` and its one cap (`caps.task_repairs`), and the review rounds after it
+count from zero. `round_bounds` (feature.rs ~531) already reads `reopened`
 as the start of a new round, so each checker runs again at its checkpoint; tasks already accepted stay
 accepted, so no builder step runs without a conflict (US2).
 
@@ -208,10 +221,12 @@ This is argued here; if the owner prefers it named, it is a PATCH clarification 
 
 ## R-9 Restart
 
-**Decision**: every new state is folded from events. `Updated` (the target commit only) is written
+**Decision**: every new state is folded from events. `Updated` (the target commit and the loop's head then, `loop_head`) is written
 before the merge is computed; `UpdateConflicted` or `UpdateDocsChanged` after. On load, an update in
 progress is resumed from what exists, keyed on the working ref, not on commit ids (commits made again
-get new timestamps): `Updated` alone → computed again (the same inputs give the same tree);
+get new timestamps): `Updated` alone → if the loop's branch head already is a merge whose parents are `loop_head` and
+`target_commit` (the crash came after the fast-forward), `UpdateMerged` is recorded for it;
+otherwise computed again from the recorded `loop_head` (the same inputs give the same tree);
 `UpdateConflicted` and its ref, a repair step cut short → the build worktree detached at the ref
 again and the step re-queued by `requeue_cut_short`; a repair accepted but no `UpdateMerged` → Fallow
 makes the merge commit from the accepted tree; `UpdateMerged` with the build worktree still detached →
@@ -222,7 +237,8 @@ rebuilt from `Lined`/`Unlined`.
 ## R-10 Tests without a network or a model
 
 **Decision**: the fake runtime plays the conflict repair (a scenario step that writes the resolved
-file; with and without its own commit; one resolving to one side). Two features in one project need
+file; with and without its own commit; one resolving to one side; a non-text conflict, a file
+deleted on one side, with `resolutions` in its result; one leaving a `~side` file, refused). Two features in one project need
 `lock_calc_in` generalized to a feature name and a second calc feature's documents. The fake host
 gains `mergeable`, `mergeStateStatus` and protection `strict`; the bare remote of 010 lets tests move
 the remote target and push a foreign commit to a loop's branch. New `tests/us11_update.rs`,

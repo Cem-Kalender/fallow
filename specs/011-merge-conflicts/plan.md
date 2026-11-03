@@ -84,7 +84,7 @@ Checked against v6.5.0.
 
 | Principle | How the design meets it | Status |
 |---|---|---|
-| I. Verified, Not Trusted | Only a commit whose gates ran on top of the target and whose stories were all checked again is offered (R-3). The builder's conflict resolution is checked by Fallow (no unmerged path, no marker, committed). "Without the latest check" is the engineer's choice, recorded with the commits it was not verified with, and labelled as not verified everywhere (R-6). | PASS |
+| I. Verified, Not Trusted | Only a commit whose gates ran on top of the target and whose stories were all checked again is offered (R-3). The builder's conflict resolution is checked by Fallow (no marker, no `~side` file, every non-text path accounted for), and then verified by the gates on the merge commit and every story checked again; the builder's own account of its resolutions (`resolutions`) is shown to the engineer, never taken as evidence. "Without the latest check" is the engineer's choice, recorded with the commits it was not verified with, and labelled as not verified everywhere (R-6). | PASS |
 | II. The Engineer Decides | Updates start by the level the engineer chose; at a limit or a cap the engineer decides; every choice is a recorded steering action. Never a push to the target, never forced, never a second pull request; a published loop is never stopped while its pull request is open. | PASS |
 | III. Coordination in Code | The line, the waits and the updates are the engine's code and the loops' logs; agents do not coordinate. Every project is a git repository (6.5.0): updates and checks are git. | PASS |
 | IV. Simplest Setup First | No new agent kind: the conflict goes to the pipeline's builder as a repair; checking again reuses the relock path. | PASS |
@@ -121,7 +121,7 @@ src/run/
 ├── events.rs            # Updated, UpdateMerged, UpdateDropped, Overtaken, Lined, Unlined, Overlap, WaitsFor, WaitEnded; unchecked; update_limit, run_after; Steering kinds
 ├── state.rs             # LoopState.update, fresh_seq, updates, update_limit, overtaken, base_commit, lined_at, touched, task_paths, overlaps, waits_for; UpdateMerged reopens every story (R-3); baseline by commit
 ├── update.rs            # NEW: computing and committing an update (R-2), the working commit and ref, the repair prompt, the marker check, docs_changed, resuming (R-9)
-├── feature.rs           # step(): an update in progress (build worktree detached at the working commit; on_branch check for update parts; Part gates on the merge commit); baseline at base_commit; waits_for blocks starting steps; repairs_of/allowed_more/fresh_since read fresh_seq; finish() in Publishing hands over to push_forward; Touched from work_done's changed list
+├── feature.rs           # step(): an update in progress (build worktree detached at the working commit; take_answers skipped meanwhile; on_branch check for update parts until merged; Part gates on the merge commit; the update repair on the last phase in a new session); baseline at base_commit; waits_for blocks starting steps; repairs_of/allowed_more/fresh_since read fresh_seq; finish() in Publishing hands over to push_forward; Touched from work_done's changed list
 ├── machine.rs           # merge(): recheck (FR-003), queue when another holds the turn, without_latest_check; publish(): recheck remote (FR-011a); Done::PushForward; limits in Publishing as NeedsEngineer
 ├── engine.rs            # target watch thread; lines; who starts (R-4); overtaken (R-6); overlap at lock and while running (R-8); Request::Update/LeavePr/Wait/StopWaiting; lock's update_limit, run_after
 └── dashboard.rs         # needs-you: update, update_limit, docs_changed, overlap
@@ -130,7 +130,7 @@ src/publish/
 ├── mod.rs               # fetching the remote target; behind/required
 └── host/{mod.rs,github.rs}   # mergeable, mergeStateStatus; protection's strict
 src/speckit/tasks.rs     # paths_in (moved from run/relock.rs, public)
-src/agent/schemas.rs     # the step result's optional `resolutions` (path, how), for an update's repair; specs/007-fallow-studio/contracts/runtime.md documents it (IX)
+src/agent/schemas.rs     # the step result's optional `resolutions` (path, how), plain JSON, for an update's repair; specs/007-fallow-studio/contracts/runtime.md documents it (IX); the fake runtime plays it
 src/service/
 ├── http.rs              # the new routes; lock's update_limit/run_after; overlap read
 └── notify.rs            # the three notices

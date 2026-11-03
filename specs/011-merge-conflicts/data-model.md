@@ -7,10 +7,10 @@ unchanged.
 
 | Event | Fields | Meaning |
 |---|---|---|
-| `Updated` | `n` (1, 2, …), `target`, `target_commit`, `remote: bool` | An update started (written before the merge is computed). |
+| `Updated` | `n` (1, 2, …), `target`, `target_commit`, `loop_head`, `remote: bool` | An update started (written before the merge is computed); sets `fresh_seq`. |
 | `UpdateConflicted` | `n`, `working` (commit), `conflicts: [{ path, kind: text \| non_text }]` | The merge conflicts; the repair starts on the working commit under `refs/fallow/update/<run>-<n>` (R-2). |
 | `UpdateDocsChanged` | `n`, `paths: [path]` | The feature's locked documents changed on the target; nothing merged (R-2). |
-| `UpdateMerged` | `n`, `commit` | Fallow's two-parent merge commit is on the loop's branch. Folded (R-3): every story's phases back to Pending with `reopened`, `outcome` cleared, `fresh_seq` set; `affected` untouched; `base_commit` = the target commit. |
+| `UpdateMerged` | `n`, `commit` | Fallow's two-parent merge commit is on the loop's branch; the working ref deleted. Folded (R-3): every story's phases back to Pending with `reopened`, `outcome` cleared; `affected` untouched; `base_commit` = the target commit. |
 | `UpdateDropped` | `n`, `why` | Dropped (pull request merged or closed, loop stopped, documents changed); its working ref deleted. |
 | `PushedForward` | `from`, `to` | The loop's branch on the remote moved forward; `Publication.commit` = `to`. |
 | `LeftPullRequest` | `unchecked: [commit]` | "Leave the pull request as it is" at the limit. |
@@ -31,7 +31,7 @@ unchanged.
 | Field | Type | From |
 |---|---|---|
 | `update` | `Option<UpdateState { n, target_commit, conflicts, remote, working, merged, started_seq }>` | `Updated` until the loop is ready (or, published, pushed forward) again, or `UpdateDropped` |
-| `fresh_seq` | `u64` | `Relocked` and `UpdateMerged`; read by `repairs_of`, `allowed_more`, `fresh_since` instead of `relocked_seq` |
+| `fresh_seq` | `u64` | `Relocked` and `Updated`; read by `repairs_of`, `allowed_more`, `fresh_since` instead of `relocked_seq` |
 | `updates` | `u32` | count of `Updated` |
 | `update_limit` | `u32` | `LoopCreated`, default 3 |
 | `overtaken` | `u32` | `Overtaken`; reset by `Merged`, `Published`, `PushedForward`, `Steering::Update` |
