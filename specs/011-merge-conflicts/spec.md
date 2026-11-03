@@ -166,7 +166,7 @@ When the engineer locks a feature, Fallow compares the files its tasks name with
 - **FR-015**: While loops run, when a step's commit of one loop changes files another unfinished loop has changed, Fallow MUST say so on both loop pages, naming the files and the loop, and offer "Wait for <feature>" (except on a loop whose pull request is open, FR-016b): the loop pauses after its current step and resumes when the other is merged, stopped or deleted.
 - **FR-016**: Warnings MUST NOT block: the engineer can always run anyway. A wait that would make two loops wait for each other (directly or through others) MUST NOT be offered; the page says which loop already waits for this one.
 - **FR-016a**: An unfinished loop, for the warnings, is one in any stage but done or stopped: planning, building, integrating, gating, reviewing, ready, paused, or publishing, including one whose pull request is open.
-- **FR-016b**: At any time, a loop whose pull request is open MUST NOT be stopped or paused, and "Stop" and "Wait for" MUST NOT be offered for it; its page says to close the pull request on the remote first (what Fallow already enforces since 010). This holds wherever this spec offers "Stop" or "Wait for" (FR-003, FR-005, FR-015).
+- **FR-016b**: At any time, a loop whose pull request is open MUST NOT be stopped or paused, and "Stop", "Wait for" and "Lock again" MUST NOT be offered for it; its page says to close the pull request on the remote first (what Fallow already enforces since 010). This holds wherever this spec offers "Stop" or "Wait for" (FR-003, FR-005, FR-015).
 
 **Lasting and runtimes**
 
