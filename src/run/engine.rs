@@ -46,6 +46,13 @@ pub enum Done {
 }
 
 /// A request from the page or the command line.
+/// 011: the lock's settings beyond 010's.
+#[derive(Debug, Clone, Default)]
+pub struct LockExtra {
+    pub update_limit: Option<u32>,
+    pub run_after: Option<u64>,
+}
+
 #[derive(Debug)]
 pub enum Request {
     List,
@@ -106,6 +113,11 @@ pub enum Request {
         budget_minutes: Option<u64>,
         /// 010: what the loop does when it ends verified; the level's preset when absent.
         when_verified: Option<WhenVerified>,
+        /// 011: updates in a row that may be overtaken before the engineer decides (1 to 20,
+        /// default 3).
+        update_limit: Option<u32>,
+        /// 011: the loop this one waits for ("Run after").
+        run_after: Option<u64>,
     },
     /// 010: push the loop's verified commit and open a pull request (FR-008, FR-009).
     Publish {
@@ -401,6 +413,8 @@ pub struct Engine {
     pr_checked: BTreeMap<u64, (Option<String>, Option<String>)>,
     /// 010: why a loop did not publish itself when it ended verified (shown on its page).
     auto_waits: BTreeMap<u64, String>,
+    /// 010 FR-003: loops seen ready, so the remote is read once when one becomes ready.
+    ready_seen: std::collections::BTreeSet<u64>,
 }
 
 /// 010: how often a project's protection is read again: a known value once a minute, an unknown
@@ -444,6 +458,7 @@ impl Engine {
             pr_reads: BTreeMap::new(),
             pr_checked: BTreeMap::new(),
             auto_waits: BTreeMap::new(),
+            ready_seen: std::collections::BTreeSet::new(),
             data,
             runs: BTreeMap::new(),
             ctx,
@@ -2177,6 +2192,7 @@ impl Engine {
             commit: prep.commit.clone(),
             affected: a.stories.clone(),
             phases: prep.phases.clone(),
+            reconciled_target: None,
         })?;
         for w in &a.why {
             r.append(Event::Note { text: w.clone() })?;
@@ -2213,9 +2229,16 @@ impl Engine {
         budget_usd: Option<f64>,
         budget_minutes: Option<u64>,
         when_verified: Option<WhenVerified>,
+        extra: LockExtra,
     ) -> Result<Value, String> {
         if let Some(id) = self.live_loop(project, feature) {
             return self.relock(project, feature, id);
+        }
+        let update_limit = extra.update_limit.unwrap_or_else(crate::run::events::update_limit);
+        if !(1..=20).contains(&update_limit) {
+            return Err(format!(
+                "updates overtaken before you decide: {update_limit} is not between 1 and 20"
+            ));
         }
         let prep = self
             .studio
@@ -2325,6 +2348,13 @@ impl Engine {
             budget_minutes: minutes,
             phases: prep.phases.clone(),
             when_verified: when_verified.unwrap_or(WhenVerified::preset(level)),
+            update_limit,
+            run_after: extra.run_after,
+            switches: crate::run::events::Switches {
+                auto: squad.updates.auto,
+                line: squad.updates.line,
+                overlap: squad.updates.overlap,
+            },
         })?;
         run.append(Event::Stage {
             to: Stage::Building,
@@ -2345,6 +2375,9 @@ impl Engine {
             budget_minutes: minutes,
             affected: Vec::new(),
             when_verified: when_verified.unwrap_or(WhenVerified::preset(level)),
+            update_limit: Some(update_limit),
+            run_after: extra.run_after,
+            reconciled_target: None,
         };
         let lock_n = prep.lock;
         let commit = prep.commit.clone();
@@ -2467,6 +2500,19 @@ impl Engine {
                 self.console.push(format!("run {id} needs you: {why}"));
             }
         }
+        // 010 FR-003: the remote is read again when a loop reaches ready, so what the page
+        // offers (and a merge asked for right away) does not wait on a first read.
+        let ready = self
+            .runs
+            .get(&id)
+            .is_some_and(|r| r.state.stage == Stage::Ready && r.state.feature_loop.is_some());
+        let was_ready = self.ready_seen.contains(&id);
+        if ready && !was_ready {
+            self.ready_seen.insert(id);
+            let _ = self.loop_remote(id, true);
+        } else if !ready && was_ready {
+            self.ready_seen.remove(&id);
+        }
     }
 
     fn request(&mut self, r: Request) -> Reply {
@@ -2519,6 +2565,8 @@ impl Engine {
                 budget_usd,
                 budget_minutes,
                 when_verified,
+                update_limit,
+                run_after,
             } => {
                 let out = self.lock(
                     &project,
@@ -2528,6 +2576,10 @@ impl Engine {
                     budget_usd,
                     budget_minutes,
                     when_verified,
+                    LockExtra {
+                        update_limit,
+                        run_after,
+                    },
                 );
                 self.bus.publish(json!({ "type": "studio" }));
                 out

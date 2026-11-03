@@ -364,6 +364,28 @@ pub fn lock_feature_in(
     budget: Option<(f64, u64)>,
     level: Option<fallow::run::events::Level>,
 ) -> u64 {
+    lock_feature_with(tx, project, title, feature, pipeline, budget, level, LockExtra::default())
+}
+
+/// 011: the lock's other settings (`update_limit`, `run_after`) for `lock_feature_with`.
+#[derive(Default, Clone, Copy)]
+pub struct LockExtra {
+    pub update_limit: Option<u32>,
+    pub run_after: Option<u64>,
+}
+
+/// `lock_feature_in` with the lock's other settings.
+#[allow(dead_code, clippy::too_many_arguments)]
+pub fn lock_feature_with(
+    tx: &Sender<Msg>,
+    project: &str,
+    title: &str,
+    feature: &str,
+    pipeline: Option<&str>,
+    budget: Option<(f64, u64)>,
+    level: Option<fallow::run::events::Level>,
+    extra: LockExtra,
+) -> u64 {
     let project = project.to_string();
     let f = sreq(
         tx,
@@ -404,6 +426,8 @@ pub fn lock_feature_in(
             budget_usd: budget.map(|b| b.0),
             budget_minutes: budget.map(|b| b.1),
             when_verified: None,
+            update_limit: extra.update_limit,
+            run_after: extra.run_after,
         },
     )
     .unwrap();

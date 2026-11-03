@@ -11,8 +11,14 @@ Every step returns a structured result that follows a JSON Schema (given with `-
   "commands": [{"command": "python -m unittest tests.test_cart", "result": "Ran 6 tests, OK"}],
   "criteria": [{"criterion": "US1/3", "how": "..."}],
   "question": "q-12 (when blocked by a waiting ask)",
+  "resolutions": [{"path": "shop/old.py", "how": "kept the deletion from main"}],
   "summary": "..." }
 ```
+
+`resolutions` (011, optional, plain JSON, part of the contract every runtime implements): in a repair
+of an update's conflicts, how each non-text conflict (a file deleted on one side, a binary file, a
+rename) was resolved. Fallow checks that every non-text conflict is listed, and shows the list to the
+engineer; it is never evidence: the gates and the checker verify the result.
 
 **What Fallow checks**:
 - `files` against the worktree's real changes (006 R-7);

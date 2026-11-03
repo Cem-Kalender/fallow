@@ -181,7 +181,7 @@ pub fn affected(docs: &[Doc]) -> Affected {
         }
     }
     for (name, lines) in elsewhere {
-        let named: BTreeSet<String> = lines.iter().flat_map(|l| paths_in(l)).collect();
+        let named: BTreeSet<String> = lines.iter().flat_map(|l| crate::speckit::tasks::paths_in(l)).collect();
         let hit: Vec<&String> = all
             .iter()
             .filter(|s| {
@@ -252,23 +252,6 @@ fn changed_lines(old: &str, new: &str) -> Vec<String> {
         .chain(b.iter().filter(|l| !a.contains(l)))
         .filter(|l| !l.trim().is_empty())
         .map(|l| l.to_string())
-        .collect()
-}
-
-/// The file paths a line mentions: words with a `/` or a file extension.
-fn paths_in(line: &str) -> Vec<String> {
-    line.split(|c: char| c.is_whitespace() || "`'\"(),;:[]<>*".contains(c))
-        .map(|w| w.trim_end_matches('.'))
-        .filter(|w| {
-            let ext = w.rsplit_once('.').map(|(a, e)| {
-                !a.is_empty()
-                    && (1..=5).contains(&e.len())
-                    && e.chars().all(|c| c.is_ascii_alphanumeric())
-            });
-            (w.contains('/') && w.len() > 2) || ext == Some(true)
-        })
-        .filter(|w| !w.starts_with("http"))
-        .map(str::to_string)
         .collect()
 }
 

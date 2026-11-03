@@ -614,6 +614,8 @@ fn a_pipeline_the_lead_proposes_is_used_only_once_saved() {
                 budget_usd: Some(5.0),
                 budget_minutes: Some(60),
                 when_verified: None,
+                update_limit: None,
+                run_after: None,
             },
         )
     };

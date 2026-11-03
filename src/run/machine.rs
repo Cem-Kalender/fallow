@@ -126,6 +126,7 @@ pub fn resume(run: &mut Run) -> Result<(), String> {
                     run.append(Event::Merged {
                         commit: tip,
                         how: "local".into(),
+                        unchecked: Vec::new(),
                     })?;
                     return run.append(Event::Stage {
                         to: Stage::Done,
@@ -417,6 +418,7 @@ pub fn on_done(run: &mut Run, ctx: &Ctx, done: Done) -> Result<(), String> {
                     pr_number: d.pr.number,
                     pr_url: d.pr.url,
                     by,
+                    unchecked: Vec::new(),
                 })?;
                 if run.state.stage == Stage::Ready {
                     run.append(Event::Stage {
@@ -461,6 +463,7 @@ pub fn on_done(run: &mut Run, ctx: &Ctx, done: Done) -> Result<(), String> {
                     run.append(Event::Merged {
                         commit: pb.commit.clone(),
                         how: "pull request".into(),
+                        unchecked: Vec::new(),
                     })?;
                     run.append(Event::Stage {
                         to: Stage::Done,
@@ -480,6 +483,7 @@ pub fn on_done(run: &mut Run, ctx: &Ctx, done: Done) -> Result<(), String> {
                 run.append(Event::Merged {
                     commit,
                     how: "local".into(),
+                    unchecked: Vec::new(),
                 })?;
                 if run.state.stage.is_final() {
                     return Ok(());

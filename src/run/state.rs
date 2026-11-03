@@ -1,7 +1,7 @@
 //! A run's state: the fold of its events (data-model.md). Nothing here runs git or agents; the
 //! stage machine (`machine`) reads this state to decide what happens next.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 use serde::Serialize;
@@ -226,6 +226,71 @@ pub struct LoopState {
     pub publish_steps: Vec<(String, String, bool)>,
     /// 010: why the loop did not publish itself when verified (it waits for the engineer).
     pub publish_waited: Option<String>,
+    /// 011: tries and repairs count from this event: the latest new lock or update (research R-3).
+    pub fresh_seq: u64,
+    /// 011: the update in progress, until the loop is ready (or pushed forward) again.
+    pub update: Option<UpdateState>,
+    /// 011: how many updates were started.
+    pub updates: u32,
+    /// 011: how many updates in a row may be overtaken before the engineer decides.
+    pub update_limit: u32,
+    /// 011: updates in a row overtaken (reset by a merge, a publication, a forward push, or the
+    /// engineer's "Verify again on the latest <target>").
+    pub overtaken: u32,
+    /// 011: the target commit last merged in by an update; the lock commit before any. The gate
+    /// baseline is looked up by this commit.
+    pub base_commit: String,
+    /// 011: the target commit the latest "Lock again" was reconciled against.
+    pub reconciled_target: Option<String>,
+    /// 011: when the loop joined its target's merge line; `None` when not in it.
+    pub lined_at: Option<String>,
+    /// 011: files the loop's accepted steps changed.
+    pub touched: BTreeSet<String>,
+    /// 011: files the locked tasks name.
+    pub task_paths: BTreeSet<String>,
+    /// 011: other unfinished loops touching the same files.
+    pub overlaps: Vec<OverlapRec>,
+    /// 011: the loop this one waits for, and who chose it.
+    pub waits_for: Option<(u64, WaitFrom)>,
+    /// 011: the parts switched on for this run.
+    pub switches: Switches,
+    /// 011: target commits a merge or publication "without the latest check" was not verified
+    /// with, or that a pull request left as it is was not verified with.
+    pub unchecked: Vec<String>,
+    /// 011: each update's steps, for the history (FR-008): when, what, and whether it went well.
+    pub update_steps: Vec<(String, String, bool)>,
+}
+
+/// 011: an update of the loop in progress (data-model.md).
+#[derive(Debug, Clone, Serialize)]
+pub struct UpdateState {
+    pub n: u32,
+    pub target: String,
+    pub target_commit: String,
+    pub loop_head: String,
+    pub remote: bool,
+    pub conflicts: Vec<UpdateConflict>,
+    pub working: Option<String>,
+    pub branch: Option<String>,
+    pub docs_changed: Vec<String>,
+    pub merged: bool,
+    pub started_seq: u64,
+}
+
+/// 011: another unfinished loop touching the same files.
+#[derive(Debug, Clone, Serialize)]
+pub struct OverlapRec {
+    pub with: u64,
+    pub files: Vec<String>,
+}
+
+/// The paths the tasks of `phases` name (011 research R-8).
+fn task_paths(phases: &[PhaseSpec]) -> BTreeSet<String> {
+    phases
+        .iter()
+        .flat_map(|p| p.tasks.iter())
+        .flat_map(|t| crate::speckit::tasks::paths_in(&t.text))
+        .collect()
 }
 
 /// 010: a loop's pull request (`Published`) and its latest state (`PullRequestState`).
@@ -459,6 +524,15 @@ impl RunState {
                 self.approved_plan = Some(commit.clone());
             }
             Event::Stage { to, .. } => {
+                if *to == Stage::Ready && self.stage.may_go_to(*to) {
+                    if let Some(f) = self.feature_loop.as_mut() {
+                        if f.update.as_ref().is_some_and(|u| u.merged) {
+                            let n = f.update.take().map_or(0, |u| u.n);
+                            f.update_steps
+                                .push((l.at.clone(), format!("Update {n}: verified again, ready"), true));
+                        }
+                    }
+                }
                 if !self.stage.may_go_to(*to) {
                     self.notes.push(format!(
                         "event {}: {} → {} is not allowed and was ignored",
@@ -634,6 +708,11 @@ impl RunState {
                         f.publish_tried = true;
                     }
                 }
+                if *kind == SteeringKind::Update {
+                    if let Some(f) = self.feature_loop.as_mut() {
+                        f.overtaken = 0;
+                    }
+                }
                 if *kind == SteeringKind::SetAutonomy {
                     if let Some(a) = detail.as_deref().and_then(Autonomy::parse) {
                         self.autonomy = a;
@@ -679,7 +758,16 @@ impl RunState {
             }
             Event::SessionLost { session } => self.lost_sessions.push(session.clone()),
             Event::NeedsCleared { .. } => self.needs = None,
-            Event::Merged { commit, .. } => self.merged = Some(commit.clone()),
+            Event::Merged {
+                commit, unchecked, ..
+            } => {
+                self.merged = Some(commit.clone());
+                if let Some(f) = self.feature_loop.as_mut() {
+                    f.overtaken = 0;
+                    f.lined_at = None;
+                    f.unchecked = unchecked.clone();
+                }
+            }
             Event::Stopped { reason } => self.stopped = Some(reason.clone()),
             Event::Note { text } => self.notes.push(text.clone()),
             Event::LoopCreated {
@@ -695,6 +783,9 @@ impl RunState {
                 budget_minutes,
                 phases,
                 when_verified,
+                update_limit,
+                run_after: _,
+                switches,
             } => {
                 let mut tasks = BTreeMap::new();
                 for p in phases {
@@ -746,6 +837,21 @@ impl RunState {
                     publish_tried: false,
                     publish_steps: Vec::new(),
                     publish_waited: None,
+                    fresh_seq: 0,
+                    update: None,
+                    updates: 0,
+                    update_limit: (*update_limit).clamp(1, 20),
+                    overtaken: 0,
+                    base_commit: lock_commit.clone(),
+                    reconciled_target: None,
+                    lined_at: None,
+                    touched: BTreeSet::new(),
+                    task_paths: task_paths(phases),
+                    overlaps: Vec::new(),
+                    waits_for: None,
+                    switches: *switches,
+                    unchecked: Vec::new(),
+                    update_steps: Vec::new(),
                 });
             }
             Event::Task {
@@ -875,9 +981,21 @@ impl RunState {
                 commit,
                 affected,
                 phases,
+                reconciled_target,
             } => {
                 if let Some(f) = self.feature_loop.as_mut() {
                     f.unlocked = false;
+                    f.fresh_seq = l.seq;
+                    // The base follows the new lock until an update merged a target in.
+                    if f.base_commit == f.lock_commit {
+                        f.base_commit = commit.clone();
+                    }
+                    if reconciled_target.is_some() {
+                        f.reconciled_target = reconciled_target.clone();
+                    }
+                    if !phases.is_empty() {
+                        f.task_paths = task_paths(phases);
+                    }
                     f.lock = *lock;
                     f.prev_lock_commit =
                         Some(std::mem::replace(&mut f.lock_commit, commit.clone()));
@@ -970,8 +1088,11 @@ impl RunState {
                 pr_number,
                 pr_url,
                 by,
+                unchecked,
             } => {
                 if let Some(f) = self.feature_loop.as_mut() {
+                    f.overtaken = 0;
+                    f.unchecked = unchecked.clone();
                     f.publication = Some(Publication {
                         remote: remote.clone(),
                         service: service.clone(),
@@ -1072,6 +1193,204 @@ impl RunState {
                     }
                 }
             }
+            Event::Updated {
+                n,
+                target,
+                target_commit,
+                loop_head,
+                remote,
+            } => {
+                if let Some(f) = self.feature_loop.as_mut() {
+                    f.fresh_seq = l.seq;
+                    f.updates += 1;
+                    f.outcome = None;
+                    f.update = Some(UpdateState {
+                        n: *n,
+                        target: target.clone(),
+                        target_commit: target_commit.clone(),
+                        loop_head: loop_head.clone(),
+                        remote: *remote,
+                        conflicts: Vec::new(),
+                        working: None,
+                        branch: None,
+                        docs_changed: Vec::new(),
+                        merged: false,
+                        started_seq: l.seq,
+                    });
+                    f.update_steps.push((
+                        l.at.clone(),
+                        format!(
+                            "Update {n}: bringing the loop up to date with {target}{} at {}",
+                            if *remote { " on the remote" } else { "" },
+                            short(target_commit)
+                        ),
+                        true,
+                    ));
+                }
+            }
+            Event::UpdateConflicted {
+                n,
+                working,
+                branch,
+                conflicts,
+            } => {
+                if let Some(f) = self.feature_loop.as_mut() {
+                    if let Some(u) = f.update.as_mut().filter(|u| u.n == *n) {
+                        u.working = Some(working.clone());
+                        u.branch = Some(branch.clone());
+                        u.conflicts = conflicts.clone();
+                    }
+                    let files: Vec<&str> = conflicts.iter().map(|c| c.path.as_str()).collect();
+                    f.update_steps.push((
+                        l.at.clone(),
+                        format!("Update {n}: conflicts in {}; a builder resolves them", files.join(", ")),
+                        false,
+                    ));
+                }
+            }
+            Event::UpdateDocsChanged { n, paths } => {
+                if let Some(f) = self.feature_loop.as_mut() {
+                    if let Some(u) = f.update.as_mut().filter(|u| u.n == *n) {
+                        u.docs_changed = paths.clone();
+                    }
+                    f.update_steps.push((
+                        l.at.clone(),
+                        format!(
+                            "Update {n}: the target changed this feature's documents ({}); nothing merged, your decision",
+                            paths.join(", ")
+                        ),
+                        false,
+                    ));
+                }
+            }
+            Event::UpdateMerged { n, commit } => {
+                if let Some(f) = self.feature_loop.as_mut() {
+                    if let Some(u) = f.update.as_mut().filter(|u| u.n == *n) {
+                        u.merged = true;
+                        u.working = None;
+                        f.base_commit = u.target_commit.clone();
+                    }
+                    f.outcome = None;
+                    // Every story's phases are checked again (research R-3); `affected` is left
+                    // as it is, so no relock repair is queued.
+                    for p in &mut f.phases {
+                        let story = p.spec.story.is_some()
+                            || p.spec.tasks.iter().any(|t| t.story.is_some());
+                        if story {
+                            p.state = PhaseState::Pending;
+                            p.reopened = Some(l.seq);
+                        }
+                    }
+                    f.update_steps.push((
+                        l.at.clone(),
+                        format!(
+                            "Update {n}: merged in by Fallow ({}); gates and every story checked again",
+                            short(commit)
+                        ),
+                        true,
+                    ));
+                }
+            }
+            Event::UpdateDropped { n, why } => {
+                if let Some(f) = self.feature_loop.as_mut() {
+                    if f.update.as_ref().is_some_and(|u| u.n == *n) {
+                        f.update = None;
+                    }
+                    f.update_steps
+                        .push((l.at.clone(), format!("Update {n} dropped: {why}"), false));
+                }
+            }
+            Event::PushedForward { from, to } => {
+                if let Some(f) = self.feature_loop.as_mut() {
+                    f.overtaken = 0;
+                    f.update = None;
+                    if let Some(p) = f.publication.as_mut() {
+                        p.commit = to.clone();
+                    }
+                    f.update_steps.push((
+                        l.at.clone(),
+                        format!(
+                            "The loop's branch on the remote moved forward from {} to {}; the pull request shows it",
+                            short(from),
+                            short(to)
+                        ),
+                        true,
+                    ));
+                }
+            }
+            Event::LeftPullRequest { unchecked } => {
+                if let Some(f) = self.feature_loop.as_mut() {
+                    f.unchecked = unchecked.clone();
+                    f.update = None;
+                    f.update_steps.push((
+                        l.at.clone(),
+                        format!(
+                            "The pull request was left as it is: not verified with {} newer commit(s) of the target",
+                            unchecked.len()
+                        ),
+                        false,
+                    ));
+                }
+            }
+            Event::Touched { files } => {
+                if let Some(f) = self.feature_loop.as_mut() {
+                    f.touched.extend(files.iter().cloned());
+                }
+            }
+            Event::Overtaken { n, target_commit } => {
+                if let Some(f) = self.feature_loop.as_mut() {
+                    f.overtaken += 1;
+                    f.update_steps.push((
+                        l.at.clone(),
+                        format!(
+                            "Update {n} was overtaken: the target moved again (now at {}); {} of {} in a row",
+                            short(target_commit),
+                            f.overtaken,
+                            f.update_limit
+                        ),
+                        false,
+                    ));
+                }
+            }
+            Event::Lined => {
+                if let Some(f) = self.feature_loop.as_mut() {
+                    f.lined_at = Some(l.at.clone());
+                }
+            }
+            Event::Unlined { .. } => {
+                if let Some(f) = self.feature_loop.as_mut() {
+                    f.lined_at = None;
+                }
+            }
+            Event::Overlap { with, files } => {
+                if let Some(f) = self.feature_loop.as_mut() {
+                    match f.overlaps.iter_mut().find(|o| o.with == *with) {
+                        Some(o) => {
+                            for file in files {
+                                if !o.files.contains(file) {
+                                    o.files.push(file.clone());
+                                }
+                            }
+                        }
+                        None => f.overlaps.push(OverlapRec {
+                            with: *with,
+                            files: files.clone(),
+                        }),
+                    }
+                }
+            }
+            Event::WaitsFor { run, from } => {
+                if let Some(f) = self.feature_loop.as_mut() {
+                    f.waits_for = Some((*run, *from));
+                }
+            }
+            Event::WaitEnded { run, .. } => {
+                if let Some(f) = self.feature_loop.as_mut() {
+                    if f.waits_for.is_some_and(|(r, _)| r == *run) {
+                        f.waits_for = None;
+                    }
+                }
+            }
         }
     }
 
@@ -1093,11 +1412,26 @@ impl RunState {
 
     /// The baseline result of a gate, if it ran.
     pub fn baseline(&self, gate: &str) -> Option<&GateResult> {
-        self.gate_runs
-            .iter()
-            .rev()
-            .find(|g| g.kind == GateKind::Baseline && g.result.gate == gate)
-            .map(|g| &g.result)
+        let newest = || {
+            self.gate_runs
+                .iter()
+                .rev()
+                .find(|g| g.kind == GateKind::Baseline && g.result.gate == gate)
+                .map(|g| &g.result)
+        };
+        // 011: a loop's baseline is the one on its base (research R-3).
+        match self.feature_loop.as_ref().map(|f| f.base_commit.as_str()) {
+            Some(base) => self
+                .gate_runs
+                .iter()
+                .rev()
+                .find(|g| {
+                    g.kind == GateKind::Baseline && g.result.gate == gate && g.result.commit == base
+                })
+                .map(|g| &g.result)
+                .or_else(newest),
+            None => newest(),
+        }
     }
 
     /// Interventions so far (FR-020).
@@ -1153,4 +1487,9 @@ impl RunState {
         }
         None
     }
+}
+
+/// A commit's short form for the history.
+fn short(c: &str) -> &str {
+    &c[..c.len().min(7)]
 }

@@ -148,6 +148,8 @@ fn a_new_lock_reopens_only_the_affected_story() {
             budget_usd: None,
             budget_minutes: None,
             when_verified: None,
+            update_limit: None,
+            run_after: None,
         },
     )
     .unwrap();
@@ -277,6 +279,8 @@ fn a_new_lock_while_paused_at_ready_is_built_and_checked_before_any_merge() {
             budget_usd: None,
             budget_minutes: None,
             when_verified: None,
+            update_limit: None,
+            run_after: None,
         },
     )
     .unwrap();

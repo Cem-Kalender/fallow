@@ -327,8 +327,9 @@ fn step(run: &mut Run, ctx: &Ctx) -> Result<(), String> {
     if !git::is_ancestor(&run.state.repo, &l.lock_commit, &git::head(&wt)?) {
         return take_lock(run, &l, &wt);
     }
-    // The baseline, on the lock commit, before anything is judged against it; a new lock gets
-    // a new baseline.
+    // The baseline, on the loop's base (the lock commit, or the target commit an update merged
+    // in, 011 research R-3), before anything is judged against it; a new base gets a new
+    // baseline.
     let missing: Vec<GateDef> = machine::gate_defs(run)
         .into_iter()
         .filter(|g| {
@@ -336,7 +337,7 @@ fn step(run: &mut Run, ctx: &Ctx) -> Result<(), String> {
                 && !run.state.gate_runs.iter().any(|r| {
                     r.kind == GateKind::Baseline
                         && r.result.gate == g.name
-                        && r.result.commit == l.lock_commit
+                        && r.result.commit == l.base_commit
                 })
         })
         .collect();
@@ -346,7 +347,7 @@ fn step(run: &mut Run, ctx: &Ctx) -> Result<(), String> {
             ctx,
             GateKind::Baseline,
             None,
-            l.lock_commit.clone(),
+            l.base_commit.clone(),
             missing,
         );
     }
@@ -509,12 +510,13 @@ fn fresh_since(run: &Run) -> u64 {
         .map(|s| s.seq)
         .max()
         .unwrap_or(0);
-    let relock = run
+    // 011: the latest new lock or update (research R-3).
+    let fresh = run
         .state
         .feature_loop
         .as_ref()
-        .map_or(0, |l| l.relocked_seq);
-    retry.max(relock)
+        .map_or(0, |l| l.fresh_seq);
+    retry.max(fresh)
 }
 
 /// Whether any of `changed` matches one of the globs.
@@ -979,7 +981,7 @@ fn repairs_of(run: &Run, part: &str) -> u32 {
                     .state
                     .feature_loop
                     .as_ref()
-                    .map_or(0, |l| l.relocked_seq)
+                    .map_or(0, |l| l.fresh_seq)
         })
         .count() as u32
 }
@@ -990,7 +992,7 @@ fn allowed_more(run: &Run, part: &str) -> u32 {
         .state
         .feature_loop
         .as_ref()
-        .map_or(0, |l| l.relocked_seq);
+        .map_or(0, |l| l.fresh_seq);
     run.state
         .steering
         .iter()

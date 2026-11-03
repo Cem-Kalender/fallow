@@ -50,6 +50,18 @@ fn build() -> Value {
             },
             "question": { "type": "string", "description": "When blocked: the question" },
             "task": { "type": "string", "description": "007: the task this step did (T014)" },
+            "resolutions": {
+                "type": "array",
+                "description": "011: when resolving an update's conflicts, how each non-text conflict (a file deleted on one side, a binary file, a rename) was resolved",
+                "items": {
+                    "type": "object",
+                    "required": ["path", "how"],
+                    "properties": {
+                        "path": { "type": "string" },
+                        "how": { "type": "string" }
+                    }
+                }
+            },
             "summary": { "type": "string" }
         }
     })
@@ -224,4 +236,21 @@ pub fn answer() -> Value {
             "adds_dependency": { "type": "boolean", "description": "The answer adds a dependency" }
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_work_result_may_carry_resolutions() {
+        let s = for_kind(StepKind::Repair).unwrap();
+        let r = &s["properties"]["resolutions"];
+        assert_eq!(r["type"], "array");
+        assert_eq!(r["items"]["required"], json!(["path", "how"]));
+        assert!(
+            !s["required"].as_array().unwrap().iter().any(|v| v == "resolutions"),
+            "optional"
+        );
+    }
 }

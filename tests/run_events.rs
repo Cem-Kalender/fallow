@@ -216,6 +216,9 @@ fn a_loop_folds_its_phases_tasks_questions_and_outcome() {
                 },
             ],
             when_verified: Default::default(),
+            update_limit: 3,
+            run_after: None,
+            switches: Default::default(),
         },
         Event::Phase {
             n: 1,
@@ -257,6 +260,7 @@ fn a_loop_folds_its_phases_tasks_questions_and_outcome() {
             commit: "l2".into(),
             affected: vec!["US1".into()],
             phases: Vec::new(),
+            reconciled_target: None,
         },
         Event::Outcome {
             verified: false,
@@ -294,5 +298,105 @@ fn a_loop_folds_its_phases_tasks_questions_and_outcome() {
         f.outcome,
         Some((false, vec!["no review at checkpoints".to_string()]))
     );
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn an_update_folds_into_the_loop_and_reopens_every_story() {
+    // 011 T005: an update's events (data-model.md), from the lock to ready again.
+    use fallow::run::events::{
+        ConflictKindRec, Level, Logged, PhaseSpec, PhaseState, Switches, TaskSpec,
+        UpdateConflict, WaitFrom,
+    };
+    let task = |id: &str, story: Option<&str>, text: &str| TaskSpec {
+        id: id.into(),
+        story: story.map(str::to_string),
+        parallel: false,
+        text: text.into(),
+    };
+    let events: Vec<Event> = vec![
+        created(),
+        Event::LoopCreated {
+            project: "shop".into(),
+            feature: "011-x".into(),
+            lock: 1,
+            lock_commit: "l1".into(),
+            base_branch: "main".into(),
+            build_branch: "fallow/011-x/build".into(),
+            pipeline: "name = \"standard\"".into(),
+            level: Level::Free,
+            budget_usd: 2.0,
+            budget_minutes: 60,
+            phases: vec![
+                PhaseSpec {
+                    n: 1,
+                    label: "1".into(),
+                    title: "Setup".into(),
+                    story: None,
+                    tasks: vec![task("T001", None, "Create calc/__init__.py")],
+                },
+                PhaseSpec {
+                    n: 2,
+                    label: "2".into(),
+                    title: "User Story 1".into(),
+                    story: Some("US1".into()),
+                    tasks: vec![task("T002", Some("US1"), "add() in calc/__init__.py")],
+                },
+            ],
+            when_verified: Default::default(),
+            update_limit: 2,
+            run_after: None,
+            switches: Switches { auto: true, line: false, overlap: true },
+        },
+        Event::Stage { to: Stage::Building, why: "lock".into() },
+        Event::Touched { files: vec!["calc/__init__.py".into()] },
+        Event::Stage { to: Stage::Ready, why: "verified".into() },
+        Event::Stage { to: Stage::Building, why: "update".into() },
+        Event::Updated {
+            n: 1,
+            target: "main".into(),
+            target_commit: "t1".into(),
+            loop_head: "h1".into(),
+            remote: false,
+        },
+        Event::UpdateConflicted {
+            n: 1,
+            working: "w1".into(),
+            branch: "fallow/011-x/update-1".into(),
+            conflicts: vec![UpdateConflict { path: "calc/__init__.py".into(), kind: ConflictKindRec::Text }],
+        },
+        Event::UpdateMerged { n: 1, commit: "m1".into() },
+        Event::Overtaken { n: 1, target_commit: "t2".into() },
+        Event::Lined,
+        Event::Overlap { with: 7, files: vec!["calc/__init__.py".into()] },
+        Event::WaitsFor { run: 7, from: WaitFrom::Engineer },
+    ];
+    let d = dir("update");
+    let (mut log, _, _) = Log::open(&d).unwrap();
+    for e in events {
+        log.append(e).unwrap();
+    }
+    drop(log);
+    let (_, logged, _) = Log::open(&d).unwrap();
+    let logged: Vec<Logged> = logged;
+    let s = RunState::fold(1, &logged).unwrap();
+    let f = s.feature_loop.as_ref().expect("a loop");
+    assert_eq!(f.update_limit, 2);
+    assert!(!f.switches.line);
+    assert!(f.task_paths.contains("calc/__init__.py"), "{:?}", f.task_paths);
+    assert!(f.touched.contains("calc/__init__.py"));
+    let u = f.update.as_ref().expect("in progress until ready");
+    assert!(u.merged);
+    assert_eq!(u.branch.as_deref(), Some("fallow/011-x/update-1"));
+    assert_eq!(f.base_commit, "t1");
+    assert!(f.phases[0].reopened.is_none(), "the setup phase is not checked again");
+    assert_eq!(f.phases[1].state, PhaseState::Pending, "the story's phase is checked again");
+    assert!(f.phases[1].reopened.is_some());
+    assert!(f.affected.is_empty(), "no relock repair");
+    assert_eq!(f.overtaken, 1);
+    assert!(f.lined_at.is_some());
+    assert_eq!(f.overlaps[0].with, 7);
+    assert_eq!(f.waits_for, Some((7, WaitFrom::Engineer)));
+    assert!(f.update_steps.iter().any(|(_, t, _)| t.contains("conflicts in calc/__init__.py")));
     let _ = std::fs::remove_dir_all(&d);
 }

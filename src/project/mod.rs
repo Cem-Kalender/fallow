@@ -49,6 +49,15 @@ pub struct LockRec {
     /// 010: what the loop does when it ends verified.
     #[serde(default)]
     pub when_verified: crate::run::events::WhenVerified,
+    /// 011: updates in a row that may be overtaken before the engineer decides.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub update_limit: Option<u32>,
+    /// 011: the loop this one waited for ("Run after").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_after: Option<u64>,
+    /// 011: the target commit a "Lock again" was reconciled against.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reconciled_target: Option<String>,
 }
 
 /// A feature of a project, as Fallow knows it (data-model.md, Feature). Its stage is derived.

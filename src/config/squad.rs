@@ -57,6 +57,9 @@ struct Raw {
     gate: Vec<RawGate>,
     roles: BTreeMap<String, RoleChoice>,
     allow: BTreeMap<String, Vec<String>>,
+    /// 011: kept as a table and read by hand, so an unknown key under it is a notice, not a
+    /// whole squad file refused.
+    updates: Option<toml::Table>,
 }
 
 const KNOWN: &[&str] = &[
@@ -69,6 +72,7 @@ const KNOWN: &[&str] = &[
     "gate",
     "roles",
     "allow",
+    "updates",
 ];
 const LEGACY: &[&str] = &[
     "name",
@@ -106,6 +110,22 @@ pub struct Squad {
     pub roles: BTreeMap<String, RoleChoice>,
     /// Role → extra permission rules (`Bash(npm run lint:*)`), research R-4.
     pub allow: BTreeMap<String, Vec<String>>,
+    /// 011: the parts of an update that act on their own, each switchable (FR-016c, R-8b).
+    pub updates: UpdateSwitches,
+}
+
+/// 011: `[updates]` (FR-016c): Free's own updates, the merge line, the overlap warnings.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct UpdateSwitches {
+    pub auto: bool,
+    pub line: bool,
+    pub overlap: bool,
+}
+
+impl Default for UpdateSwitches {
+    fn default() -> Self {
+        UpdateSwitches { auto: true, line: true, overlap: true }
+    }
 }
 
 fn os_command(g: &RawGate) -> String {
@@ -133,6 +153,34 @@ impl Squad {
                 ..Squad::default()
             };
         };
+        let mut updates = UpdateSwitches::default();
+        if let Some(t) = &raw.updates {
+            for (k, v) in t {
+                let slot = match k.as_str() {
+                    "auto" => &mut updates.auto,
+                    "line" => &mut updates.line,
+                    "overlap" => &mut updates.overlap,
+                    _ => {
+                        notices.push(Notice {
+                            file: file.into(),
+                            line: None,
+                            level: Level::Warning,
+                            message: format!("unknown key updates.{k}: auto, line and overlap are known"),
+                        });
+                        continue;
+                    }
+                };
+                match v.as_bool() {
+                    Some(b) => *slot = b,
+                    None => notices.push(Notice {
+                        file: file.into(),
+                        line: None,
+                        level: Level::Warning,
+                        message: format!("updates.{k} must be true or false; kept on"),
+                    }),
+                }
+            }
+        }
         let mut err = |m: String| {
             notices.push(Notice {
                 file: file.into(),
@@ -204,6 +252,7 @@ impl Squad {
                 .into_iter()
                 .filter(|(r, _)| ROLES.contains(&r.as_str()))
                 .collect(),
+            updates,
         }
     }
 }
@@ -276,5 +325,20 @@ builder = ["Bash(npm run lint:*)"]
         assert_eq!(s.gates.len(), 1);
         assert_eq!(s.gates[0].failures, Failures::Auto);
         assert_eq!(n.iter().filter(|x| x.level == Level::Error).count(), 2);
+    }
+
+    #[test]
+    fn updates_switches_parse_with_notices_for_unknown_keys() {
+        let mut n = Vec::new();
+        let s = Squad::parse(
+            "squad.toml",
+            "[updates]\nauto = false\noverlap = false\nlinee = true\n\n[[gate]]\nname = \"t\"\ncommand = \"x\"\n",
+            &mut n,
+        );
+        assert_eq!(s.updates, UpdateSwitches { auto: false, line: true, overlap: false });
+        assert_eq!(s.gates.len(), 1, "the rest of the file is kept");
+        assert!(n.iter().any(|x| x.message.contains("unknown key updates.linee")), "{n:?}");
+        let d = Squad::parse("squad.toml", "", &mut Vec::new());
+        assert_eq!(d.updates, UpdateSwitches::default());
     }
 }

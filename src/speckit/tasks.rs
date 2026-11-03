@@ -216,6 +216,23 @@ pub fn tick(text: &str, id: &str) -> Option<String> {
     done.then(|| out.concat())
 }
 
+/// The file paths a line mentions (011: also the files a locked feature's tasks name): words with a `/` or a file extension.
+pub fn paths_in(line: &str) -> Vec<String> {
+    line.split(|c: char| c.is_whitespace() || "`'\"(),;:[]<>*".contains(c))
+        .map(|w| w.trim_end_matches('.'))
+        .filter(|w| {
+            let ext = w.rsplit_once('.').map(|(a, e)| {
+                !a.is_empty()
+                    && (1..=5).contains(&e.len())
+                    && e.chars().all(|c| c.is_ascii_alphanumeric())
+            });
+            (w.contains('/') && w.len() > 2) || ext == Some(true)
+        })
+        .filter(|w| !w.starts_with("http"))
+        .map(str::to_string)
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -339,5 +356,13 @@ mod tests {
         assert!(t.contains("- [ ] T011"));
         assert!(tick(&t, "T010").is_none(), "already ticked");
         assert!(tick(TASKS, "T404").is_none());
+    }
+
+    #[test]
+    fn paths_named_in_a_task_line_are_found() {
+        assert_eq!(
+            paths_in("- [ ] T002 [US1] add() in calc/__init__.py and `shop/x.rs`."),
+            vec!["calc/__init__.py".to_string(), "shop/x.rs".to_string()]
+        );
     }
 }

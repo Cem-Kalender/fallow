@@ -570,6 +570,8 @@ fn a_loop_question_goes_to_the_feature_sessions_lead() {
             budget_usd: Some(5.0),
             budget_minutes: Some(60),
             when_verified: None,
+            update_limit: None,
+            run_after: None,
         },
     )
     .unwrap();

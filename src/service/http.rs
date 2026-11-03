@@ -552,8 +552,18 @@ fn studio_route(
                     None => return Some(Err(format!("when_verified {w:?}: wait or pull_request"))),
                 },
             };
+            let update_limit = match body.get("update_limit") {
+                None | Some(Value::Null) => None,
+                Some(v) => match v.as_u64() {
+                    Some(n) if (1..=20).contains(&n) => Some(n as u32),
+                    _ => return Some(Err("update_limit: a number from 1 to 20".into())),
+                },
+            };
+            let run_after = body.get("run_after").and_then(Value::as_u64);
             Some(Ok(Request::Lock {
                 when_verified,
+                update_limit,
+                run_after,
                 project: p.to_string(),
                 feature: f.to_string(),
                 pipeline: s("pipeline"),

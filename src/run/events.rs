@@ -217,6 +217,20 @@ pub enum SteeringKind {
     Unlock,
     /// 010: publishing as a pull request, by the engineer or when verified as chosen at the lock.
     Publish,
+    /// 011: bring the loop up to date (also "Verify again on the latest <target>").
+    Update,
+    /// 011: merge without the latest check, at the limit of overtaken updates.
+    MergeUnchecked,
+    /// 011: publish without the latest check, at the limit.
+    PublishUnchecked,
+    /// 011: leave the pull request as it is, at the limit.
+    LeavePullRequest,
+    /// 011: lock again after the target changed the feature's documents.
+    LockAgain,
+    /// 011: wait for another loop.
+    WaitFor,
+    /// 011: stop waiting for another loop.
+    StopWaiting,
 }
 
 impl SteeringKind {
@@ -367,6 +381,9 @@ pub enum Event {
     Merged {
         commit: String,
         how: String,
+        /// 011: target commits a "Merge without the latest check" was not verified with.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        unchecked: Vec<String>,
     },
     Stopped {
         reason: Option<String>,
@@ -391,6 +408,15 @@ pub enum Event {
         /// 010: what happens when the loop ends verified.
         #[serde(default)]
         when_verified: WhenVerified,
+        /// 011: how many updates in a row may be overtaken before the engineer decides.
+        #[serde(default = "update_limit")]
+        update_limit: u32,
+        /// 011: the loop this one waits for, chosen at the lock ("Run after").
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        run_after: Option<u64>,
+        /// 011: the parts switched on for this run (`.fallow/squad.toml` `[updates]`).
+        #[serde(default)]
+        switches: Switches,
     },
     Task {
         id: String,
@@ -437,6 +463,9 @@ pub enum Event {
         /// The phases of the new lock's `tasks.md` (it may have changed).
         #[serde(default)]
         phases: Vec<PhaseSpec>,
+        /// 011: the target commit a "Lock again" was reconciled against.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reconciled_target: Option<String>,
     },
     /// How a loop ended: verified (ready to merge), or done but not verified, naming what was
     /// not checked (FR-015).
@@ -456,6 +485,9 @@ pub enum Event {
         pr_number: u64,
         pr_url: String,
         by: String,
+        /// 011: target commits a "Publish without the latest check" was not verified with.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        unchecked: Vec<String>,
     },
     /// 010: publishing failed at `step` (`check`, `push`, `pull_request`); what was pushed, if
     /// anything, is named (FR-012).
@@ -482,6 +514,127 @@ pub enum Event {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         merged_at: Option<String>,
     },
+    /// 011: an update started (research R-2), written before the merge is computed.
+    Updated {
+        n: u32,
+        target: String,
+        target_commit: String,
+        loop_head: String,
+        #[serde(default)]
+        remote: bool,
+    },
+    /// 011: the update's merge conflicts; the repair starts on `working`, kept on the loop's own
+    /// branch `branch`.
+    UpdateConflicted {
+        n: u32,
+        working: String,
+        branch: String,
+        conflicts: Vec<UpdateConflict>,
+    },
+    /// 011: the target changed the feature's locked documents; nothing merged.
+    UpdateDocsChanged {
+        n: u32,
+        paths: Vec<String>,
+    },
+    /// 011: Fallow's two-parent merge commit is on the loop's branch.
+    UpdateMerged {
+        n: u32,
+        commit: String,
+    },
+    /// 011: the update was dropped (a pull request merged or closed, the loop stopped, locked
+    /// again).
+    UpdateDropped {
+        n: u32,
+        why: String,
+    },
+    /// 011: the loop's branch on the remote moved forward from `from` to `to`.
+    PushedForward {
+        from: String,
+        to: String,
+    },
+    /// 011: "Leave the pull request as it is" at the limit.
+    LeftPullRequest {
+        #[serde(default)]
+        unchecked: Vec<String>,
+    },
+    /// 011: files an accepted step changed (the overlap warnings).
+    Touched {
+        files: Vec<String>,
+    },
+    /// 011: the target moved again while the loop held its turn.
+    Overtaken {
+        n: u32,
+        target_commit: String,
+    },
+    /// 011: joined the merge line of its target (at the record's time).
+    Lined,
+    /// 011: left the merge line.
+    Unlined {
+        why: String,
+    },
+    /// 011: another unfinished loop touches the same files.
+    Overlap {
+        with: u64,
+        files: Vec<String>,
+    },
+    /// 011: does not start steps until loop `run` is merged, stopped or deleted.
+    WaitsFor {
+        run: u64,
+        from: WaitFrom,
+    },
+    /// 011: the wait is over.
+    WaitEnded {
+        run: u64,
+        why: String,
+    },
+}
+
+/// 011: a conflicting path of an update, as recorded.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UpdateConflict {
+    pub path: String,
+    pub kind: ConflictKindRec,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConflictKindRec {
+    Text,
+    NonText,
+}
+
+/// 011: who made a loop wait for another.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WaitFrom {
+    Lock,
+    Engineer,
+}
+
+/// 011: the parts of an update that act on their own, each switchable per project (FR-016c).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Switches {
+    #[serde(default = "yes")]
+    pub auto: bool,
+    #[serde(default = "yes")]
+    pub line: bool,
+    #[serde(default = "yes")]
+    pub overlap: bool,
+}
+
+impl Default for Switches {
+    fn default() -> Self {
+        Switches { auto: true, line: true, overlap: true }
+    }
+}
+
+fn yes() -> bool {
+    true
+}
+
+/// 011: the default number of overtaken updates before the engineer decides.
+pub fn update_limit() -> u32 {
+    3
 }
 
 fn engineer() -> String {
@@ -622,6 +775,20 @@ impl Event {
             Event::PublishFailed { .. } => "publish_failed",
             Event::PullRequestState { .. } => "pull_request_state",
             Event::PublishWaited { .. } => "publish_waited",
+            Event::Updated { .. } => "updated",
+            Event::UpdateConflicted { .. } => "update_conflicted",
+            Event::UpdateDocsChanged { .. } => "update_docs_changed",
+            Event::UpdateMerged { .. } => "update_merged",
+            Event::UpdateDropped { .. } => "update_dropped",
+            Event::PushedForward { .. } => "pushed_forward",
+            Event::LeftPullRequest { .. } => "left_pull_request",
+            Event::Touched { .. } => "touched",
+            Event::Overtaken { .. } => "overtaken",
+            Event::Lined => "lined",
+            Event::Unlined { .. } => "unlined",
+            Event::Overlap { .. } => "overlap",
+            Event::WaitsFor { .. } => "waits_for",
+            Event::WaitEnded { .. } => "wait_ended",
         }
     }
 }
