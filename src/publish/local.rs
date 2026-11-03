@@ -9,13 +9,29 @@ use crate::verify::git;
 /// merge happens there and needs a clean working tree; otherwise it happens in a temporary
 /// worktree at `scratch`, which is removed afterwards. Returns the new tip of `target`.
 pub fn merge(repo: &Path, target: &str, commit: &str, scratch: &Path) -> Result<String, String> {
+    merge_as(repo, target, commit, scratch, false)
+}
+
+/// `merge`; `unchecked`: the engineer merged without the latest check (011 FR-009), and the merge
+/// commit says so, never "verified" alone.
+pub fn merge_as(
+    repo: &Path,
+    target: &str,
+    commit: &str,
+    scratch: &Path,
+    unchecked: bool,
+) -> Result<String, String> {
     if !git::commit_exists(repo, commit) {
         return Err(format!("commit {commit} is not in the repository"));
     }
-    let msg = format!(
-        "Merge {} (verified by Fallow, merged by the engineer)",
-        &commit[..commit.len().min(10)]
-    );
+    let short = &commit[..commit.len().min(10)];
+    let msg = if unchecked {
+        format!(
+            "Merge {short} (verified by Fallow without the latest check: not verified on top of {target} as it was; merged by the engineer)"
+        )
+    } else {
+        format!("Merge {short} (verified by Fallow, merged by the engineer)")
+    };
     if git::branch(repo).as_deref() == Some(target) {
         if !git::tracked_changes(repo)?.is_empty() {
             return Err(format!(

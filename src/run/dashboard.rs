@@ -252,7 +252,10 @@ pub fn needs(run: &Run, project_name: &str) -> Vec<Value> {
     // 011: the limit of overtaken updates reached (a ready loop that asks) and an update held
     // because the target changed the feature's documents (contracts/web-api.md).
     if let Some(n) = s.needs.as_ref() {
-        let kind = if l.overtaken > 0 && l.overtaken >= l.update_limit {
+        let kind = if l.overtaken > 0
+            && l.overtaken >= l.update_limit
+            && n.options.iter().any(|o| o.starts_with("verify again"))
+        {
             Some("update_limit")
         } else if l
             .update

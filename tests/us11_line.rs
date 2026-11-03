@@ -224,11 +224,12 @@ fn a_target_that_moved_without_conflict_is_verified_again() {
 #[test]
 fn merges_into_one_target_take_turns() {
     let root = scratch("l-line");
-    // a's update (both stories, the first slowed), then b's.
+    // a's update (both stories, the first slowed), then b's two.
     let after = format!(
-        "{}{}{}",
+        "{}{}{}{}",
         slow_check("US1", 8000),
         check_step("US2", true, ""),
+        check_step("US1", true, ""),
         check_step("US1", true, "")
     );
     let (e, repo, a, b) = two_ready(&root, &after, Some(Level::Free), LockExtra::default());
@@ -248,13 +249,18 @@ fn merges_into_one_target_take_turns() {
     assert_eq!(reply["in_line_after"], "001-calc", "{reply}");
     let v = loop_view(tx, b);
     assert_eq!(v["line"]["after"], "001-calc", "{}", v["line"]);
+    // The engineer brings b up to date while it waits in line: not in its turn, not counted.
+    ask(tx, Request::Update { id: b }).unwrap();
     wait_for(tx, a, "a merged", |v| v["stage"] == "done");
     let r = wait_for(tx, b, "b merged", |v| v["stage"] == "done");
     assert_eq!(
-        r["feature_loop"]["updates"], 1,
-        "verified again once (SC-007)"
+        r["feature_loop"]["updates"], 2,
+        "the engineer's update, then once for a's merge (SC-007)"
     );
-    assert_eq!(r["feature_loop"]["overtaken"], 0);
+    assert_eq!(
+        r["feature_loop"]["overtaken"], 0,
+        "nothing overtook it in its turn"
+    );
     let ra = wait_for(tx, a, "a", |_| true);
     assert_eq!(ra["feature_loop"]["updates"], 1);
     assert_eq!(
@@ -268,15 +274,18 @@ fn merges_into_one_target_take_turns() {
 }
 
 /// FR-009a: a loop that waits for the engineer (here: paused) leaves the line; the one behind
-/// goes on.
+/// goes on; when the first goes on, it takes its turn again and merges.
 #[test]
 fn a_loop_that_waits_leaves_the_line() {
     let root = scratch("l-leave");
+    // a's first update, b's, then a's second (after its wait).
     let after = format!(
-        "{}{}{}",
+        "{}{}{}{}{}",
         slow_check("US1", 8000),
         check_step("US2", true, ""),
-        check_step("US1", true, "")
+        check_step("US1", true, ""),
+        check_step("US1", true, ""),
+        check_step("US2", true, "")
     );
     let (e, repo, a, b) = two_ready(&root, &after, Some(Level::Free), LockExtra::default());
     let tx = &e.tx;
@@ -298,6 +307,9 @@ fn a_loop_that_waits_leaves_the_line() {
     });
     wait_for(tx, b, "b merged", |v| v["stage"] == "done");
     assert_ne!(wait_for(tx, a, "a", |_| true)["stage"], "done");
+    ask(tx, Request::GoOn { id: a }).unwrap();
+    let r = wait_for(tx, a, "a merged after its wait", |v| v["stage"] == "done");
+    assert_eq!(r["feature_loop"]["updates"], 2, "once more for b's merge");
     drop(e);
     let _ = std::fs::remove_dir_all(&root);
 }
@@ -359,6 +371,15 @@ fn an_overtaken_update_at_the_limit_asks_and_may_merge_unchecked() {
     assert_eq!(r["feature_loop"]["unchecked"], serde_json::json!([late]));
     let lv = loop_view(tx, a);
     assert_eq!(lv["unchecked"], serde_json::json!([late]));
+    assert!(
+        r["feature_loop"]["update_steps"]
+            .to_string()
+            .contains("Merged without the latest check"),
+        "{}",
+        r["feature_loop"]["update_steps"]
+    );
+    let subject = git(&repo, &["log", "-1", "--format=%s", "main"]);
+    assert!(subject.contains("without the latest check"), "{subject}");
     assert_ne!(git(&repo, &["rev-parse", "main"]), main_before);
     drop(e);
     let _ = std::fs::remove_dir_all(&root);

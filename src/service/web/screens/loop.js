@@ -584,6 +584,8 @@
       return by === "(when_verified)" ? `published ${short(commit)} on its own when verified` : `published ${short(commit)} as a pull request`;
     }
     // 011: the target's commit an update or "Lock again" was asked with.
+    if (x.kind === "merge") return "asked to merge";
+    if (x.kind === "merge_unchecked") return "merged without the latest check";
     if (["update", "lock_again"].includes(x.kind) && x.detail) return `${x.kind === "update" ? "brought up to date with" : "locked again for"} ${x.target || "the target"} at ${short(x.detail)}`;
     return `${x.kind.replace(/_/g, " ")}${x.detail ? `: ${x.detail}` : ""}`;
   }

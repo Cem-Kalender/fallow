@@ -120,16 +120,31 @@ pub fn resume(run: &mut Run) -> Result<(), String> {
         .state
         .steering
         .iter()
-        .any(|s| s.kind == SteeringKind::Merge);
+        .any(|s| matches!(s.kind, SteeringKind::Merge | SteeringKind::MergeUnchecked));
     if run.state.stage == Stage::Ready && asked && run.state.merged.is_none() {
         if let Some(c) = run.state.integrated.clone() {
             let target = format!("refs/heads/{}", run.state.target);
             if let Ok(tip) = git::rev(&run.state.repo, &target) {
                 if git::is_ancestor(&run.state.repo, &c, &tip) {
+                    // 011: the last merge asked for was without the latest check: said again.
+                    let unchecked_asked = run
+                        .state
+                        .steering
+                        .iter()
+                        .rev()
+                        .find(|s| {
+                            matches!(s.kind, SteeringKind::Merge | SteeringKind::MergeUnchecked)
+                        })
+                        .is_some_and(|s| s.kind == SteeringKind::MergeUnchecked);
+                    let unchecked = if unchecked_asked {
+                        unchecked_in(run, &tip)
+                    } else {
+                        Vec::new()
+                    };
                     run.append(Event::Merged {
                         commit: tip,
                         how: "local".into(),
-                        unchecked: Vec::new(),
+                        unchecked,
                     })?;
                     return run.append(Event::Stage {
                         to: Stage::Done,
@@ -484,7 +499,12 @@ pub fn on_done(run: &mut Run, ctx: &Ctx, done: Done) -> Result<(), String> {
         Done::Merge(r) => match r {
             // A merge that went through is recorded whatever the stage: it happened.
             Ok(commit) => {
-                let unchecked = std::mem::take(&mut run.merge_unchecked);
+                // The target's commits the result was not verified with, as merged (review 8).
+                let unchecked = if std::mem::take(&mut run.merge_unchecked).is_empty() {
+                    Vec::new()
+                } else {
+                    unchecked_in(run, &commit)
+                };
                 run.append(Event::Merged {
                     commit,
                     how: "local".into(),
@@ -760,7 +780,7 @@ pub fn merge(
                     "{MOVED}{target} moved since this loop was verified"
                 ))
             } else {
-                crate::publish::local::merge(&repo, &target, &commit, &scratch)
+                crate::publish::local::merge_as(&repo, &target, &commit, &scratch, skip_recheck)
             };
             let _ = tx.send(Msg::Done {
                 run: id,
@@ -769,6 +789,20 @@ pub fn merge(
         })
         .map_err(|e| format!("cannot start a thread: {e}"))?;
     Ok(())
+}
+
+/// 011: the target's first-parent commits that the merge `merged` brought in beside the loop's
+/// verified commit: what a merge without the latest check was not verified with.
+fn unchecked_in(run: &Run, merged: &str) -> Vec<String> {
+    let repo = &run.state.repo;
+    let Some(integrated) = run.state.integrated.as_deref() else {
+        return Vec::new();
+    };
+    let before = match git::parents(repo, merged) {
+        Ok(p) if p.len() == 2 && p[1] == integrated => p[0].clone(),
+        _ => merged.to_string(),
+    };
+    git::first_parent_commits(repo, integrated, &before)
 }
 
 /// 010: starts publishing the loop's verified commit as a pull request (FR-008, FR-009), on a

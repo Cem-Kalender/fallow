@@ -522,6 +522,9 @@ pub enum Event {
         loop_head: String,
         #[serde(default)]
         remote: bool,
+        /// Started by the loop holding its line's turn, for the merge asked for (R-6).
+        #[serde(default)]
+        in_turn: bool,
     },
     /// 011: the update's merge conflicts; the repair starts on `working`, kept on the loop's own
     /// branch `branch`.

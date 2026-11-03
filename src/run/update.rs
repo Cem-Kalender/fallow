@@ -216,6 +216,7 @@ pub fn start(
     tx: Sender<Msg>,
     target_commit: &str,
     remote: bool,
+    in_turn: bool,
 ) -> Result<(), String> {
     can_start(run, remote)?;
     let l = run
@@ -236,6 +237,7 @@ pub fn start(
         target_commit: target_commit.to_string(),
         loop_head: loop_head.clone(),
         remote,
+        in_turn,
     })?;
     if local_ready {
         run.append(Event::Stage {

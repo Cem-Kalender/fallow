@@ -247,6 +247,9 @@ pub struct LoopState {
     /// 011: updates started while the loop held a place in the line since it joined it; a move
     /// found at the merge's recheck after one counts as overtaken (research R-6).
     pub turn_updates: u32,
+    /// 011: a merge the engineer asked for and not made: the loop takes its turn again at the end
+    /// of its line when it goes on after a wait (FR-009a).
+    pub merge_pending: bool,
     /// 011: files the loop's accepted steps changed.
     pub touched: BTreeSet<String>,
     /// 011: files the locked tasks name.
@@ -265,6 +268,10 @@ pub struct LoopState {
     /// 011: each merged update's number, merge commit and the target commit it merged in.
     pub update_merges: Vec<(u32, String, String)>,
 }
+
+/// 011: why a loop leaves its line for good: the merge asked for is not made later (others are
+/// waits, after which it takes its turn again).
+pub const UNLINED_FOR_GOOD: [&str; 3] = ["ended", "publishing", "merging without the latest check"];
 
 /// 011: an update of the loop in progress (data-model.md).
 #[derive(Debug, Clone, Serialize)]
@@ -776,7 +783,20 @@ impl RunState {
                 if let Some(f) = self.feature_loop.as_mut() {
                     f.overtaken = 0;
                     f.lined_at = None;
+                    f.merge_pending = false;
                     f.unchecked = unchecked.clone();
+                    if !unchecked.is_empty() {
+                        f.update_steps.push((
+                            l.at.clone(),
+                            format!(
+                                "Merged without the latest check: not verified with {} commit{} of the target ({})",
+                                unchecked.len(),
+                                if unchecked.len() == 1 { "" } else { "s" },
+                                unchecked.iter().map(|c| short(c)).collect::<Vec<_>>().join(", ")
+                            ),
+                            false,
+                        ));
+                    }
                 }
             }
             Event::Stopped { reason } => self.stopped = Some(reason.clone()),
@@ -857,6 +877,7 @@ impl RunState {
                     reconciled_target: None,
                     lined_at: None,
                     turn_updates: 0,
+                    merge_pending: false,
                     touched: BTreeSet::new(),
                     task_paths: task_paths(phases),
                     overlaps: Vec::new(),
@@ -997,6 +1018,7 @@ impl RunState {
                 reconciled_target,
             } => {
                 if let Some(f) = self.feature_loop.as_mut() {
+                    f.merge_pending = false;
                     f.unlocked = false;
                     f.fresh_seq = l.seq;
                     // The base follows the new lock until an update merged a target in.
@@ -1231,11 +1253,12 @@ impl RunState {
                 target_commit,
                 loop_head,
                 remote,
+                in_turn,
             } => {
                 if let Some(f) = self.feature_loop.as_mut() {
                     f.fresh_seq = l.seq;
                     f.updates += 1;
-                    if f.lined_at.is_some() {
+                    if *in_turn && f.lined_at.is_some() {
                         f.turn_updates += 1;
                     }
                     let prior_outcome = f.outcome.take();
@@ -1405,12 +1428,16 @@ impl RunState {
                     // Zero-padded, so the line sorts by it (research R-5).
                     f.lined_at = Some(format!("{at_ms:016}"));
                     f.turn_updates = 0;
+                    f.merge_pending = true;
                 }
             }
-            Event::Unlined { .. } => {
+            Event::Unlined { why } => {
                 if let Some(f) = self.feature_loop.as_mut() {
                     f.lined_at = None;
                     f.turn_updates = 0;
+                    if UNLINED_FOR_GOOD.contains(&why.as_str()) {
+                        f.merge_pending = false;
+                    }
                 }
             }
             Event::Overlap { with, files } => {

@@ -358,7 +358,13 @@ fn fallow_lines(run: &Run, last_line: &BTreeMap<u32, u64>) -> Vec<Value> {
                     st.detail.as_deref().unwrap_or("")
                 ),
             ),
-            SteeringKind::Merge => ("steer", "You merged the feature".into()),
+            SteeringKind::Merge => ("steer", "You asked to merge the feature".into()),
+            // 011 FR-009: never in the words of a verified merge.
+            SteeringKind::MergeUnchecked => (
+                "steer",
+                "You merged without the latest check: not verified on top of the target as it is now"
+                    .into(),
+            ),
             SteeringKind::Publish
                 if st
                     .detail

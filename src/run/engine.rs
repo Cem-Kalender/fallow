@@ -1790,7 +1790,7 @@ impl Engine {
             self.turns();
             return Ok(());
         }
-        super::update::start(r, tx, &tip, false)?;
+        super::update::start(r, tx, &tip, false, false)?;
         self.watched.remove(&id);
         Ok(())
     }
@@ -1930,6 +1930,8 @@ impl Engine {
             let l = r.state.feature_loop.as_ref();
             let why = if r.state.stage.is_final() {
                 Some("ended")
+            } else if r.state.stage == Stage::Publishing || r.busy == Some(Busy::Publish) {
+                Some("publishing")
             } else if r.state.needs.is_some() {
                 Some("waiting for you")
             } else if super::feature::paused_by_engineer(r) {
@@ -1948,6 +1950,34 @@ impl Engine {
                     r.waiting = None;
                 }
                 let _ = r.append(Event::Unlined { why: why.into() });
+            }
+        }
+        // A merge asked for and not made: when the loop goes on after a wait, it takes its turn
+        // again at the end of its line (FR-009a).
+        let back: Vec<u64> = self
+            .runs
+            .iter()
+            .filter(|(_, r)| {
+                r.state.feature_loop.as_ref().is_some_and(|l| {
+                    l.merge_pending
+                        && l.lined_at.is_none()
+                        && l.update.is_none()
+                        && l.outcome.is_some()
+                        && !l.unlocked
+                        && l.waits_for.is_none()
+                }) && r.state.stage == Stage::Ready
+                    && r.state.needs.is_none()
+                    && r.state.limit_reached.is_none()
+                    && !super::feature::paused_by_engineer(r)
+                    && !r.is_busy()
+            })
+            .map(|(id, _)| *id)
+            .collect();
+        for id in back {
+            if let Some(r) = self.runs.get_mut(&id) {
+                let _ = r.append(Event::Lined {
+                    at_ms: super::time::unix_ms(),
+                });
             }
         }
         for line in self.lines().into_values() {
@@ -1997,11 +2027,18 @@ impl Engine {
         }
         let repo = r.state.repo.clone();
         let target = r.state.target.clone();
-        let (Ok(tip), Some(integrated)) = (
-            git::rev(&repo, &format!("refs/heads/{target}")),
-            r.state.integrated.clone(),
-        ) else {
+        let Some(integrated) = r.state.integrated.clone() else {
             return;
+        };
+        let tip = match git::rev(&repo, &format!("refs/heads/{target}")) {
+            Ok(t) => t,
+            Err(e) => {
+                let _ = r.append(Event::NeedsEngineer {
+                    why: format!("{target} cannot be read: {e}. Nothing was merged."),
+                    options: vec!["merge again".into(), "stop".into()],
+                });
+                return;
+            }
         };
         let result = if git::is_ancestor(&repo, &tip, &integrated) {
             super::machine::merge(r, tx, Vec::new())
@@ -2026,9 +2063,14 @@ impl Engine {
                     options.push("merge without the latest check".into());
                 }
                 options.push("stop".into());
+                let by = if l.switches.line {
+                    "from outside Fallow"
+                } else {
+                    "(the merge line is off: other loops' merges count too)"
+                };
                 r.append(Event::NeedsEngineer {
                     why: format!(
-                        "{}: updated {} times and overtaken {} in a row by commits on {target} from outside Fallow; your decision",
+                        "{}: updated {} times and overtaken {} in a row by commits on {target} {by}; your decision",
                         l.feature,
                         l.updates,
                         l.overtaken + 1
@@ -2036,7 +2078,7 @@ impl Engine {
                     options,
                 })
             } else {
-                super::update::start(r, tx, &tip, false)
+                super::update::start(r, tx, &tip, false, true)
             }
         };
         if let Err(e) = result {
