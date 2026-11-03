@@ -58,7 +58,7 @@ The target moved since the loop started, but nothing conflicts. The verified com
 
 ### User Story 3 - The autonomy level decides who starts it (Priority: P2)
 
-A loop locked with Free brings itself up to date and verifies again on its own, within its caps and budget, and the engineer finds it ready again (or waiting, with why). With Normal or Strict, Fallow asks first: the loop page and "Needs you" show "Bring up to date" with what it will do. When the loop's budget is used up, or it already brought itself up to date 3 times, Fallow asks whatever the level.
+A loop locked with Free brings itself up to date and verifies again on its own, within its caps and budget, and the engineer finds it ready again (or waiting, with why). With Normal or Strict, Fallow asks first: the loop page and "Needs you" show "Bring up to date" with what it will do. When the loop's budget is used up, or it already brought itself up to date 3 times in a row, Fallow asks whatever the level.
 
 **Why this priority**: it decides whether this is a click or nothing at all, but the mechanism comes first.
 
@@ -68,7 +68,7 @@ A loop locked with Free brings itself up to date and verifies again on its own, 
 
 1. **Given** a loop locked Free whose target moved, **When** it becomes ready, **Then** it brings itself up to date and verifies again without the engineer, records that it did so and why, and the engineer can see each step.
 2. **Given** a loop locked Normal or Strict whose target moved, **When** it becomes ready, **Then** it waits for the engineer, shown under "Needs you" with "Bring up to date".
-3. **Given** a loop whose budget is used up, or that already brought itself up to date 3 times, **When** it would start another update, **Then** it asks the engineer whatever its level, naming the limit.
+3. **Given** a loop whose budget is used up, or that already brought itself up to date 3 times in a row, **When** it would start another update, **Then** it asks the engineer whatever its level, naming the limit.
 
 ---
 
@@ -115,8 +115,8 @@ When the engineer locks a feature, Fallow compares the files its tasks name with
 - **A waiting loop ("Run after") whose other loop is deleted or its project removed**: it starts by itself, saying why.
 - **Fallow restarts while a loop is being brought up to date or waits for another**: it resumes where it was, without repeating a completed step (constitution VII); a waiting loop keeps waiting.
 - **The target branch is deleted or renamed** (locally, or on the remote for a published loop): nothing is merged or pushed; the loop page says the target is gone, and the engineer decides (stop, or lock again on another branch).
-- **The pull request is merged or closed on the remote while an update runs**: the update is dropped and nothing is pushed; the loop follows the pull request's end as in 010.
-- **A loop stopped during an update**: it is stopped like any loop; its branch keeps what was committed, and nothing is merged or pushed.
+- **The pull request is merged or closed on the remote while an update runs**: the update's running steps are stopped, what they left uncommitted is dropped, nothing is pushed, and this is recorded; the loop follows the pull request's end as in 010.
+- **A loop stopped during an update** (one not published): it is stopped like any loop; its branch keeps what was committed, and nothing is merged or pushed. A published loop with its pull request open cannot be stopped or paused, as in 010 (FR-015 there): "Stop" and "Wait for" are not offered for it, and the page says to close the pull request on the remote first.
 - **Parallel parts within one loop** already integrate their own work (stage "integrating"); this feature concerns the target moving under the loop as a whole.
 - **Files named in tasks are only a forecast**: the warning at the lock says it compares with the files the tasks name and the files changed so far, not with what the loop will change.
 
@@ -126,7 +126,7 @@ When the engineer locks a feature, Fallow compares the files its tasks name with
 
 **Knowing that the target moved**
 
-- **FR-001**: Before offering a merge or a publication, Fallow MUST check whether the target branch moved since the commit the loop was verified on, and whether merging would conflict, without changing the target or the engineer's folder.
+- **FR-001**: Before offering a merge or a publication, Fallow MUST check whether the target branch moved since the commit the loop was verified on (it moved when it holds commits that the verified commit does not contain), and whether merging would conflict, without changing the target or the engineer's folder.
 - **FR-002**: When the target moved, the loop page MUST say so: by how many commits, from which features (a loop's merge) or "outside Fallow", and, when it would conflict, which files.
 - **FR-003**: A merge that would conflict MUST NOT be offered; "Bring up to date" and "Stop" MUST be. The same check MUST be made again when the merge runs; when the target moved in between, the merge MUST NOT be tried and FR-002 and FR-003 apply.
 - **FR-003a**: While an update runs, the loop MUST NOT be ready: its page shows it as being brought up to date, step by step, and the old verified commit MUST NOT be offered to merge or publish, nor published on its own (010's "When verified"). A loop that was ready goes back to building for the update's task and returns to ready when it is verified; a published loop stays publishing, its pull request still followed (a merge or close on the remote is seen during the update), and returns to it with the new commit.
@@ -147,7 +147,7 @@ When the engineer locks a feature, Fallow compares the files its tasks name with
 **Published loops**
 
 - **FR-011**: For a loop with an open pull request, Fallow MUST show when the pull request conflicts with its target or is behind it, and whether the target requires it to be up to date, from what the hosting service reports.
-- **FR-011a**: Before Fallow pushes a loop's commit for a pull request (010's first publication, or after an update), it MUST check the target as the remote has it then, as FR-001 does locally; when it moved since the commit was verified, the push MUST NOT happen and FR-002 and FR-003 apply.
+- **FR-011a**: Before Fallow pushes a loop's commit for a pull request (010's first publication, or after an update), it MUST check the target as the remote has it then, as FR-001 does locally; when it moved since the commit was verified, the push MUST NOT happen and FR-002 and FR-003 apply, and the update then merges the target as the remote has it (as FR-012 does), so that the check passes after it.
 - **FR-012**: Bringing a published loop up to date MUST use the target as the remote has it, verify as in FR-006, and push the new verified commit to the loop's own branch, so the same pull request shows it. This amends 010 FR-012 for this one case: the loop's branch on the remote MAY be moved forward only when it is exactly at the last commit Fallow pushed to it and the new commit descends from that one; never forced. In every other case (someone else pushed to it, it was deleted), Fallow MUST push nothing, MUST NOT fall back to another branch name or a second pull request, and MUST say so. Nothing is ever pushed to the target (constitution II).
 
 **Warnings**
