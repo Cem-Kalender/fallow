@@ -30,7 +30,7 @@ unchanged.
 
 | Field | Type | From |
 |---|---|---|
-| `update` | `Option<UpdateState { n, target_commit, conflicts, remote, working, merged, started_seq }>` | `Updated` until the loop is ready (or, published, pushed forward) again, or `UpdateDropped` |
+| `update` | `Option<UpdateState { n, target_commit, conflicts, remote, working, merged, started_seq }>` | `Updated` until the loop is ready (or, published, pushed forward) again, or `UpdateDropped` (also appended by a relock that lands while an update is held: "locked again") |
 | `fresh_seq` | `u64` | `Relocked` and `Updated`; read by `repairs_of`, `allowed_more`, `fresh_since` instead of `relocked_seq` |
 | `updates` | `u32` | count of `Updated` |
 | `update_limit` | `u32` | `LoopCreated`, default 3 |
