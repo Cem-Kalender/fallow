@@ -32,13 +32,15 @@
 **Language/Version**: Rust stable, edition 2024, MSRV 1.85 (as before).
 
 **Primary Dependencies**: no new crates, no JavaScript libraries. git as a subprocess (2.38+ for
-`merge-tree --write-tree`, with a scratch-worktree fallback for older git, R-1); the engineer's `gh`
+`merge-tree --write-tree`: the check has a scratch-worktree fallback for older git, an update is
+refused with a message, R-1); the engineer's `gh`
 for pull requests, as 010.
 
-**Storage**: the loop's event log gains `Updated`, `UpdateMerged`, `UpdateDropped`, `Overtaken`,
-`Lined`, `Unlined`, `Overlap`, `WaitsFor`, `WaitEnded`; `Merged`/`Published` gain `unchecked`;
+**Storage**: the loop's event log gains `Updated`, `UpdateConflicted`, `UpdateDocsChanged`,
+`UpdateMerged`, `UpdateDropped`, `PushedForward`, `LeftPullRequest`, `Touched`, `Overtaken`, `Lined`,
+`Unlined`, `Overlap`, `WaitsFor`, `WaitEnded`; `Merged`/`Published` gain `unchecked`;
 `LoopCreated` gains `update_limit` and `run_after`; new `Steering` kinds. `LockRec` gains
-`update_limit`, `run_after`. All optional with defaults (data-model.md); logs from before 011 load
+`update_limit`, `run_after`, `reconciled_target`. All optional with defaults (data-model.md); logs from before 011 load
 unchanged.
 
 **Testing**: `cargo test` without network or model (quickstart Q1–Q6; Q7 by hand): the fake runtime plays the
@@ -119,7 +121,7 @@ src/run/
 ├── events.rs            # Updated, UpdateMerged, UpdateDropped, Overtaken, Lined, Unlined, Overlap, WaitsFor, WaitEnded; unchecked; update_limit, run_after; Steering kinds
 ├── state.rs             # LoopState.update, fresh_seq, updates, update_limit, overtaken, base_commit, lined_at, touched, task_paths, overlaps, waits_for; UpdateMerged reopens every story (R-3); baseline by commit
 ├── update.rs            # NEW: computing and committing an update (R-2), the working commit and ref, the repair prompt, the marker check, docs_changed, resuming (R-9)
-├── feature.rs           # step(): an update in progress; baseline at base_commit; waits_for blocks starting steps; repairs_of/allowed_more/fresh_since read fresh_seq; finish() in Publishing hands over to push_forward; Touched from verified steps
+├── feature.rs           # step(): an update in progress (build worktree detached at the working commit; on_branch check for update parts; Part gates on the merge commit); baseline at base_commit; waits_for blocks starting steps; repairs_of/allowed_more/fresh_since read fresh_seq; finish() in Publishing hands over to push_forward; Touched from work_done's changed list
 ├── machine.rs           # merge(): recheck (FR-003), queue when another holds the turn, without_latest_check; publish(): recheck remote (FR-011a); Done::PushForward; limits in Publishing as NeedsEngineer
 ├── engine.rs            # target watch thread; lines; who starts (R-4); overtaken (R-6); overlap at lock and while running (R-8); Request::Update/LeavePr/Wait/StopWaiting; lock's update_limit, run_after
 └── dashboard.rs         # needs-you: update, update_limit, docs_changed, overlap

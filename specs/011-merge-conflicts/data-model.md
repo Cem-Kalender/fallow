@@ -7,12 +7,14 @@ unchanged.
 
 | Event | Fields | Meaning |
 |---|---|---|
-| `Updated` | `n` (1, 2, …), `target`, `target_commit`, `conflicts: [path]`, `docs_changed: [path]`, `remote: bool`, `working: Option<commit>` | An update started (written before the merge is computed). With conflicts, `working` is the working commit under `refs/fallow/update/<run>-<n>` the repair starts on (R-2). With `docs_changed`, nothing is merged. |
+| `Updated` | `n` (1, 2, …), `target`, `target_commit`, `remote: bool` | An update started (written before the merge is computed). |
+| `UpdateConflicted` | `n`, `working` (commit), `conflicts: [{ path, kind: text \| non_text }]` | The merge conflicts; the repair starts on the working commit under `refs/fallow/update/<run>-<n>` (R-2). |
+| `UpdateDocsChanged` | `n`, `paths: [path]` | The feature's locked documents changed on the target; nothing merged (R-2). |
 | `UpdateMerged` | `n`, `commit` | Fallow's two-parent merge commit is on the loop's branch. Folded (R-3): every story's phases back to Pending with `reopened`, `outcome` cleared, `fresh_seq` set; `affected` untouched; `base_commit` = the target commit. |
 | `UpdateDropped` | `n`, `why` | Dropped (pull request merged or closed, loop stopped, documents changed); its working ref deleted. |
 | `PushedForward` | `from`, `to` | The loop's branch on the remote moved forward; `Publication.commit` = `to`. |
 | `LeftPullRequest` | `unchecked: [commit]` | "Leave the pull request as it is" at the limit. |
-| `Touched` | `files: [path]` | Files a verified step changed (computed on the step's thread). |
+| `Touched` | `files: [path]` | Files an accepted step changed (from `work_done`'s list). |
 | `Overtaken` | `n`, `target_commit` | The target moved again while the loop held its turn (R-6). |
 | `Lined` | `at` | Joined the merge line of its target. |
 | `Unlined` | `why` | Left it. |
@@ -28,7 +30,7 @@ unchanged.
 
 | Field | Type | From |
 |---|---|---|
-| `update` | `Option<UpdateState { n, target_commit, conflicts, remote, working, started_seq }>` | `Updated` until the loop is ready (or, published, pushed forward) again, or `UpdateDropped` |
+| `update` | `Option<UpdateState { n, target_commit, conflicts, remote, working, merged, started_seq }>` | `Updated` until the loop is ready (or, published, pushed forward) again, or `UpdateDropped` |
 | `fresh_seq` | `u64` | `Relocked` and `UpdateMerged`; read by `repairs_of`, `allowed_more`, `fresh_since` instead of `relocked_seq` |
 | `updates` | `u32` | count of `Updated` |
 | `update_limit` | `u32` | `LoopCreated`, default 3 |
@@ -48,7 +50,7 @@ unchanged.
 
 ## Lock record (`src/project/mod.rs`)
 
-`LockRec` gains `update_limit` and `run_after` (both optional).
+`LockRec` gains `update_limit`, `run_after` and `reconciled_target` (the target commit a "Lock again" was reconciled against; all optional).
 
 ## Host (`src/publish/host/mod.rs`)
 
@@ -58,9 +60,9 @@ the protection read gains `strict: Option<bool>` (requires up to date).
 ## Rules (state transitions)
 
 - Ready → (target moved) → Free: `Updated`; Normal/Strict: `NeedsEngineer [bring up to date, stop]`.
-- `Updated` (no conflict, no docs) → `UpdateMerged` → Building (stories reopened) → … → Ready.
-- `Updated` (conflicts) → repair step on `update-<n>` from the working commit → verified (no markers) → Fallow's merge commit → `UpdateMerged` → as above.
-- `Updated` (docs_changed) → `NeedsEngineer [lock again, stop]`; nothing merged.
+- `Updated` (no conflict, no docs) → `UpdateMerged` → Part gates on the merge commit (part `update-<n>`; a failure → builder repair) → stories reopened and checked again → Ready.
+- `Updated` → `UpdateConflicted` → repair step on `update-<n>`, build worktree detached at the working commit → accepted (no markers, no `~<side>` files, every non-text path in `resolutions`) → Fallow's merge commit, branch fast-forwarded → `UpdateMerged` → as above.
+- `Updated` → `UpdateDocsChanged` → `NeedsEngineer [lock again, stop]`; nothing merged.
 - Ready + target moved again while holding the turn → `Overtaken`; `overtaken == update_limit` →
   `NeedsEngineer [verify again on the latest <target>, merge without the latest check (if no
   conflict), stop]`.
