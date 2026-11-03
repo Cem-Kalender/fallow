@@ -2156,6 +2156,9 @@ impl Engine {
             || l.when_verified != WhenVerified::PullRequest
             || r.is_busy()
             || l.unlocked
+            // 011: a merge the engineer asked for comes first; a question waits for them.
+            || l.merge_pending
+            || r.state.needs.is_some()
         {
             return;
         }

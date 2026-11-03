@@ -28,7 +28,12 @@ pub fn merge_as(
     let short = &commit[..commit.len().min(10)];
     // Constitution I: a result Fallow did not verify is never said to be verified.
     let msg = if let Some(why) = not_verified {
-        format!("Merge {short} (not verified by Fallow: {why}; merged by the engineer)")
+        let latest = if unchecked {
+            ", without the latest check"
+        } else {
+            ""
+        };
+        format!("Merge {short} (not verified by Fallow: {why}{latest}; merged by the engineer)")
     } else if unchecked {
         format!(
             "Merge {short} (verified by Fallow without the latest check: not verified on top of {target} as it was; merged by the engineer)"
