@@ -1,14 +1,17 @@
 <!--
 Sync Impact Report
 ==================
-Version change: 6.3.0 → 6.3.1
-Bump rationale: PATCH. A clarification of V: the engineer's own git and remote tools may also be
-run to show on a project what publishing would do (reading the target branch's protection), a read
-the publishing of a run already needed. No principle added, removed or loosened. Approved by the
-project owner on 2026-11-02 (finding D1 of /speckit-analyze for feature 010).
+Version change: 6.3.1 → 6.4.0
+Bump rationale: MINOR. VI fixes the rights of a new agent kind, the assistant of a solo session
+(feature 011, FR-008): it edits only its session's working copy, and the project's branches only on
+the engineer's word; like the lead, it may run commands that are not approved only when the engineer
+lets it, per command or until they switch back; Fallow writes to the working copies and branches of
+solo sessions. Guidance materially expanded, nothing removed or loosened for existing kinds.
+Approved by the project owner on 2026-11-03.
 
 Modified principles:
-  - V. Local and Private by Construction: the second item of the traffic of a run clarified
+  - VI. Least Privilege: the assistant's rights; the lead's exception for unapproved commands
+    extended to the assistant; solo sessions among the places Fallow writes to
 
 Added sections: none. Removed sections: none.
 
@@ -16,8 +19,9 @@ Templates requiring updates: none.
 
 Follow-up TODOs: none.
 
-Previous amendments: 6.3.0 (MINOR) solo sessions in II and V; 6.2.0 (MINOR) IX. Runtime-Agnostic;
-6.1.0 (MINOR) feature 007; 6.0.0 (MAJOR) the constitution replaced for the headless orchestrator.
+Previous amendments: 6.3.1 (PATCH) V clarified for showing a project's remote; 6.3.0 (MINOR) solo
+sessions in II and V; 6.2.0 (MINOR) IX. Runtime-Agnostic; 6.1.0 (MINOR) feature 007; 6.0.0 (MAJOR)
+the constitution replaced for the headless orchestrator.
 -->
 
 # Fallow Constitution
@@ -136,15 +140,17 @@ already has.
   fewer.
 - Each agent's rights are fixed by Fallow from its kind, whatever its definition says. A maker
   edits only its own working copy, and never the locked documents. A checker runs commands without
-  editing. The lead writes only spec documents (`specs/`, the constitution, `.fallow/`). Commands
-  are limited to the gates, the plan's commands and the project's approved commands.
+  editing. The lead writes only spec documents (`specs/`, the constitution, `.fallow/`). The
+  assistant edits only its solo session's working copy, and the project's branches only on the
+  engineer's word (II). Commands are limited to the gates, the plan's commands and the project's
+  approved commands.
 - Options that make an agent skip its own permission checks MUST NOT be used. In a conversation
-  the engineer is present for, they may let the lead run commands that are not approved, either
-  per command or until they switch back. The lead's edits stay limited to spec documents either
-  way.
+  the engineer is present for, they may let the lead or the assistant run commands that are not
+  approved, either per command or until they switch back. The lead's edits stay limited to spec
+  documents either way.
 - Fallow writes only to these places:
   - its own data and config directories;
-  - the working copies and branches of its loops and conversations;
+  - the working copies and branches of its loops, conversations and solo sessions;
   - in a project the engineer added: the Spec Kit files and `.fallow/` files it installs where
     they are missing, and the spec documents and handovers of that project's features.
 
@@ -233,4 +239,4 @@ breaks silently on the next, and ties the engineer to one supplier.
   section; unjustified violations block merge.
 - Compliance is reviewed at every pull request and at every release.
 
-**Version**: 6.3.1 | **Ratified**: 2026-10-13 | **Last Amended**: 2026-11-02
+**Version**: 6.4.0 | **Ratified**: 2026-10-13 | **Last Amended**: 2026-11-03
