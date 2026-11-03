@@ -114,7 +114,7 @@ When the engineer locks a feature, Fallow compares the files its tasks name with
 - **The engineer's folder has the target checked out with uncommitted changes**: nothing in this feature touches it; the final merge behaves as today.
 - **A waiting loop ("Run after") whose other loop is deleted or its project removed**: it starts by itself, saying why.
 - **Fallow restarts while a loop is being brought up to date or waits for another**: it resumes where it was, without repeating a completed step (constitution VII); a waiting loop keeps waiting.
-- **The target branch is deleted or renamed** (locally, or on the remote for a published loop): nothing is merged or pushed; the loop page says the target is gone, and the engineer decides (stop, or lock again on another branch).
+- **The target branch is deleted or renamed** (locally, or on the remote for a published loop): nothing is merged or pushed; the loop page says the target is gone, and the engineer decides (stop, except as in FR-016b, or lock again on another branch).
 - **The pull request is merged or closed on the remote while an update runs**: the update's running steps are stopped, what they left uncommitted is dropped, nothing is pushed, and this is recorded; the loop follows the pull request's end as in 010.
 - **A loop stopped during an update** (one not published): it is stopped like any loop; its branch keeps what was committed, and nothing is merged or pushed. A published loop is never stopped or paused while its pull request is open (FR-016b).
 - **Parallel parts within one loop** already integrate their own work (stage "integrating"); this feature concerns the target moving under the loop as a whole.
@@ -156,8 +156,8 @@ When the engineer locks a feature, Fallow compares the files its tasks name with
 - **FR-014**: A loop locked to run after another MUST wait, shown as waiting for that loop, and start by itself when the other loop is merged, stopped or deleted. When the target moved since the lock and the loop has built nothing yet, its starting point becomes the target as it is then: the target is merged into its branch without gates or checker (there is nothing built to check), and a change there to its own locked documents is handled as in FR-005.
 - **FR-015**: While loops run, when a step's commit of one loop changes files another unfinished loop has changed, Fallow MUST say so on both loop pages, naming the files and the loop, and offer "Wait for <feature>" (except on a loop whose pull request is open, FR-016b): the loop pauses after its current step and resumes when the other is merged, stopped or deleted.
 - **FR-016**: Warnings MUST NOT block: the engineer can always run anyway. A wait that would make two loops wait for each other (directly or through others) MUST NOT be offered; the page says which loop already waits for this one.
-- **FR-016b**: At any time, a loop whose pull request is open MUST NOT be stopped or paused, and "Stop" and "Wait for" MUST NOT be offered for it; its page says to close the pull request on the remote first (what Fallow already enforces since 010). This holds wherever this spec offers "Stop" or "Wait for" (FR-003, FR-005, FR-015).
 - **FR-016a**: An unfinished loop, for the warnings, is one in any stage but done or stopped: planning, building, integrating, gating, reviewing, ready, paused, or publishing, including one whose pull request is open.
+- **FR-016b**: At any time, a loop whose pull request is open MUST NOT be stopped or paused, and "Stop" and "Wait for" MUST NOT be offered for it; its page says to close the pull request on the remote first (what Fallow already enforces since 010). This holds wherever this spec offers "Stop" or "Wait for" (FR-003, FR-005, FR-015).
 
 **Lasting and runtimes**
 
