@@ -824,7 +824,8 @@ fn restart(e: fallow::service::ToolEngine, root: &Path) -> fallow::service::Tool
     start_studio(root, &root.join("scenario.toml"), None)
 }
 
-/// Merge commits (two parents) on the loop's branch since its lock.
+/// Merge commits (two parents) on the loop's branch since `since` (the target commit the update
+/// merges: the target's own merges are left out, so this counts the update's merges).
 fn merges_on(repo: &Path, branch: &str, since: &str) -> usize {
     git(
         repo,
@@ -851,7 +852,7 @@ fn a_restart_while_the_update_is_computed_resumes_it_once() {
     );
     let (e, repo, _a, b) = conflicting(&root, &after);
     moved(&e.tx, b);
-    let lock = git(&repo, &["rev-parse", "main"]);
+    let target = git(&repo, &["rev-parse", "main"]);
     ask(&e.tx, Request::Update { id: b }).unwrap();
     let e = restart(e, &root);
     let tx = &e.tx;
@@ -860,7 +861,7 @@ fn a_restart_while_the_update_is_computed_resumes_it_once() {
     });
     assert_eq!(r["feature_loop"]["updates"], 1, "one update");
     assert_eq!(
-        merges_on(&repo, "fallow/002-calc2/build", &lock),
+        merges_on(&repo, "fallow/002-calc2/build", &target),
         1,
         "one merge of the target"
     );
@@ -868,10 +869,10 @@ fn a_restart_while_the_update_is_computed_resumes_it_once() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
-/// T036, FR-017: a restart while the update's repair runs: the repair goes on in its session,
-/// the resolution is not lost, one merge commit.
+/// T036, FR-017: a restart while the update's repair runs (before it wrote anything): the repair
+/// is made again and accepted, one merge commit, no marker left.
 #[test]
-fn a_restart_during_the_update_repair_keeps_the_resolution() {
+fn a_restart_during_the_update_repair_resumes_it() {
     let root = scratch("u-restart-b");
     // The repair is slow, so the restart lands during it; a second one answers the step resumed.
     let slow = conflict_repair_step(1, "calc/__init__.py", &calc_resolved(), true).replacen(
@@ -886,7 +887,7 @@ fn a_restart_during_the_update_repair_keeps_the_resolution() {
     );
     let (e, repo, _a, b) = conflicting(&root, &after);
     moved(&e.tx, b);
-    let lock = git(&repo, &["rev-parse", "main"]);
+    let target = git(&repo, &["rev-parse", "main"]);
     ask(&e.tx, Request::Update { id: b }).unwrap();
     wait_for(&e.tx, b, "the repair running", |v| {
         v["steps"]
@@ -899,7 +900,7 @@ fn a_restart_during_the_update_repair_keeps_the_resolution() {
         v["stage"] == "ready" && v["feature_loop"]["update"].is_null()
     });
     assert_eq!(r["feature_loop"]["updates"], 1);
-    assert_eq!(merges_on(&repo, "fallow/002-calc2/build", &lock), 1);
+    assert_eq!(merges_on(&repo, "fallow/002-calc2/build", &target), 1);
     let file = git(&repo, &["show", "fallow/002-calc2/build:calc/__init__.py"]);
     assert!(
         !file.contains("<<<<<<<") && file.contains("def mul"),

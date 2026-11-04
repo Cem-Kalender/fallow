@@ -99,7 +99,7 @@ For a pull request, `merged.commit` (and a record's final commit) is the commit 
 - `update_conflicted`: the merge conflicts. The repair starts on the `working` commit, kept on the loop's own branch `branch`.
 - `update_docs_changed`: the target changed the feature's locked documents. Nothing is merged; the engineer locks again.
 - `update_merged`: Fallow's two-parent merge commit is on the loop's branch. The stories are checked again from there.
-- `update_dropped`: the update was dropped, because the pull request was merged or closed, the loop stopped, or it was locked again.
+- `update_dropped`: the update was dropped, because the pull request was merged or closed, the loop stopped, it was locked again, or its merge could not be computed or moved onto the loop's branch (`why` says which; the loop then asks).
 - `pushed_forward`: the loop's branch on the remote moved forward from `from` to `to`, after an update of a published loop.
 - `left_pull_request`: the engineer chose "Leave the pull request as it is" at the limit of overtaken updates; `unchecked` names the target commits not verified with.
 - `touched`: the files an accepted step changed. They feed the overlap warnings.
