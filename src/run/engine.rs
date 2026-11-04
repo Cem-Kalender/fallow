@@ -2012,7 +2012,7 @@ impl Engine {
         };
         // A verified commit not on the pull request yet is pushed first (push_forward_due).
         let unpushed = l.outcome.is_some()
-            && l.unchecked.is_empty()
+            && !l.left_pr
             && r.state.integrated.as_deref() != Some(pb.commit.as_str());
         if r.state.stage != Stage::Publishing
             || l.update.is_some()
@@ -2086,7 +2086,7 @@ impl Engine {
             || r.state.needs.is_some()
             || r.is_busy()
             || to == pb.commit
-            || (base.is_none() && !l.unchecked.is_empty())
+            || (base.is_none() && l.left_pr)
         {
             return;
         }
@@ -2154,7 +2154,7 @@ impl Engine {
                         .as_ref()
                         .is_some_and(|p| p.commit != integrated)
                     && l.outcome.is_some()
-                    && l.unchecked.is_empty();
+                    && !l.left_pr;
                 if git::is_ancestor(&r.state.repo, &sha, &integrated) {
                     if unpushed {
                         // The push forward goes on at the next pass (review F1).

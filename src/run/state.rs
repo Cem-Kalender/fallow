@@ -258,6 +258,9 @@ pub struct LoopState {
     pub publish_turn: bool,
     /// 011 (FR-011a): the remote target's commit a first publication found it moved to.
     pub publish_moved: Option<String>,
+    /// 011: the engineer left the pull request as it is (FR-009): no verified commit is pushed
+    /// to it by itself until a new update.
+    pub left_pr: bool,
     /// 011: the target commit that overtook the loop last (for "Leave the pull request as it
     /// is" and "without the latest check").
     pub overtaken_tip: Option<String>,
@@ -929,6 +932,7 @@ impl RunState {
                     update_asked: false,
                     publish_turn: false,
                     publish_moved: None,
+                    left_pr: false,
                     overtaken_tip: None,
                     touched: BTreeSet::new(),
                     task_paths: task_paths(phases),
@@ -1334,6 +1338,7 @@ impl RunState {
                     f.fresh_seq = l.seq;
                     f.updates += 1;
                     f.update_asked = false;
+                    f.left_pr = false;
                     if *for_publication {
                         f.publish_turn = true;
                         f.publish_moved = None;
@@ -1457,6 +1462,7 @@ impl RunState {
                     f.overtaken = 0;
                     f.update = None;
                     f.unchecked.clear();
+                    f.left_pr = false;
                     if let Some(p) = f.publication.as_mut() {
                         p.commit = to.clone();
                         p.conflicting = false;
@@ -1475,6 +1481,7 @@ impl RunState {
             }
             Event::LeftPullRequest { unchecked } => {
                 if let Some(f) = self.feature_loop.as_mut() {
+                    f.left_pr = true;
                     f.unchecked = unchecked.clone();
                     f.update = None;
                     f.update_steps.push((
