@@ -115,7 +115,11 @@ fn start_from_target(r: &mut Run, tip: &str) -> Result<(), String> {
     let head = git::rev(&repo, &format!("refs/heads/{}", l.build_branch))?;
     if git::is_ancestor(&repo, tip, &head) {
         // Merged before a restart cut it short: the base still moves (FR-017).
-        if l.base_commit != tip && head != l.lock_commit {
+        // Only when the lock did not hold the tip already: a merge was made (review N2).
+        if l.base_commit != tip
+            && head != l.lock_commit
+            && !git::is_ancestor(&repo, tip, &l.lock_commit)
+        {
             r.append(Event::StartedFrom {
                 target_commit: tip.to_string(),
                 commit: head,
@@ -839,6 +843,13 @@ impl Engine {
                                 r.running.remove(n);
                             }
                             Done::PrState(_) | Done::Moved { .. } => {}
+                            // A fetch for a start after a wait marked nothing busy; a published
+                            // loop's fetch marked the update (review N1).
+                            Done::Fetched(_) => {
+                                if r.busy == Some(Busy::Update) {
+                                    r.busy = None;
+                                }
+                            }
                             _ => r.busy = None,
                         }
                         if let Err(e) = super::machine::on_done(r, &self.ctx, done) {
@@ -2582,6 +2593,23 @@ impl Engine {
             let Some(r) = self.runs.get_mut(&id) else {
                 return;
             };
+            // Still waiting for that loop: the engineer may have stopped waiting, stopped the
+            // loop or unlocked it meanwhile (review N1).
+            let still = r
+                .state
+                .feature_loop
+                .as_ref()
+                .is_some_and(|l| l.waits_for.is_some_and(|(o, _)| o == other) && !l.unlocked)
+                && !r.state.stage.is_final();
+            if !still {
+                return;
+            }
+            if r.waiting
+                .as_deref()
+                .is_some_and(|w| w.starts_with(WAITING_FOR))
+            {
+                r.waiting = None;
+            }
             let local = git::rev(&r.state.repo, &format!("refs/heads/{}", r.state.target)).ok();
             let tip = match fetched {
                 Ok(sha) => Some(sha.clone()),

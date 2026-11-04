@@ -185,6 +185,11 @@ fn run_after_waits_and_starts_when_the_other_is_merged() {
     // Started from the target: its base moved, no update left in progress (review F1).
     assert!(v["update"].is_null(), "{}", v["update"]);
     assert_eq!(v["updates"], 0);
+    let s = wait_for(tx, b, "b", |_| true);
+    assert_eq!(
+        s["feature_loop"]["base_commit"], main,
+        "its base is the target it started from"
+    );
     drop(e);
     let _ = std::fs::remove_dir_all(&root);
 }
