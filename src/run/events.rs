@@ -608,6 +608,13 @@ pub enum Event {
         run: u64,
         why: String,
     },
+    /// 011 (FR-014): a loop that waited from its lock and built nothing starts from the target
+    /// at `target_commit`, merged straight onto its branch (`commit`): its base moves there; no
+    /// update is left in progress.
+    StartedFrom {
+        target_commit: String,
+        commit: String,
+    },
 }
 
 /// 011: a conflicting path of an update, as recorded.
@@ -814,6 +821,7 @@ impl Event {
             Event::Overlap { .. } => "overlap",
             Event::WaitsFor { .. } => "waits_for",
             Event::WaitEnded { .. } => "wait_ended",
+            Event::StartedFrom { .. } => "started_from",
         }
     }
 }

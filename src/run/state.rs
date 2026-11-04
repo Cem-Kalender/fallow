@@ -1557,6 +1557,24 @@ impl RunState {
                     f.waits_for = Some((*run, *from));
                 }
             }
+            Event::StartedFrom {
+                target_commit,
+                commit,
+            } => {
+                if let Some(f) = self.feature_loop.as_mut() {
+                    // Its gates are judged against the target it starts from (research R-3).
+                    f.base_commit = target_commit.clone();
+                    f.update_steps.push((
+                        l.at.clone(),
+                        format!(
+                            "Started from the target at {} (merged in as {}) before anything was built",
+                            short(target_commit),
+                            short(commit)
+                        ),
+                        true,
+                    ));
+                }
+            }
             Event::WaitEnded { run, .. } => {
                 if let Some(f) = self.feature_loop.as_mut() {
                     if f.waits_for.is_some_and(|(r, _)| r == *run) {

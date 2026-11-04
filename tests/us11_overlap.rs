@@ -180,7 +180,11 @@ fn run_after_waits_and_starts_when_the_other_is_merged() {
         git(&repo, &["merge-base", "--is-ancestor", &main, &branch]).is_empty(),
         "started from the target as it is now"
     );
-    assert!(loop_view(tx, b)["waits_for"].is_null());
+    let v = loop_view(tx, b);
+    assert!(v["waits_for"].is_null());
+    // Started from the target: its base moved, no update left in progress (review F1).
+    assert!(v["update"].is_null(), "{}", v["update"]);
+    assert_eq!(v["updates"], 0);
     drop(e);
     let _ = std::fs::remove_dir_all(&root);
 }
@@ -331,7 +335,14 @@ fn a_wait_that_ends_on_changed_documents_offers_lock_again() {
         "edit the spec",
     );
     // The other loop stopped: the wait ends, and the target moved with the documents' change.
-    ask(tx, Request::Stop { id: a, reason: None }).unwrap();
+    ask(
+        tx,
+        Request::Stop {
+            id: a,
+            reason: None,
+        },
+    )
+    .unwrap();
     let v = wait_for(tx, b, "the documents' question", |v| {
         v["needs_engineer"]
             .as_str()

@@ -100,10 +100,10 @@ fn update_by_itself(l: &super::state::LoopState) -> bool {
 const WAITING_FOR: &str = "waiting for ";
 
 /// 011 (FR-014, research R-8): a loop that waited from its lock and built nothing starts from
-/// `tip` (the target as it is then): recorded as an update, so its base moves to `tip` and its
-/// gates are judged against that baseline (review 2); the documents' check first (FR-005: held,
-/// so "Lock again" can take it, review 1); then the merge committed straight onto its branch
-/// (nothing built, so no gates or checker now).
+/// `tip` (the target as it is then). Changed documents are held as an update (FR-005, so "Lock
+/// again" can take it); otherwise the merge is committed straight onto its branch (nothing built,
+/// so no gates or checker now) and `StartedFrom` moves its base to `tip`, no update left in
+/// progress (phase 7 reviews 2, F1).
 fn start_from_target(r: &mut Run, tip: &str) -> Result<(), String> {
     let Some(l) = r.state.feature_loop.clone() else {
         return Ok(());
@@ -114,6 +114,13 @@ fn start_from_target(r: &mut Run, tip: &str) -> Result<(), String> {
     let repo = r.state.repo.clone();
     let head = git::rev(&repo, &format!("refs/heads/{}", l.build_branch))?;
     if git::is_ancestor(&repo, tip, &head) {
+        // Merged before a restart cut it short: the base still moves (FR-017).
+        if l.base_commit != tip && head != l.lock_commit {
+            r.append(Event::StartedFrom {
+                target_commit: tip.to_string(),
+                commit: head,
+            })?;
+        }
         return Ok(());
     }
     let n = l.updates + 1;
@@ -129,25 +136,24 @@ fn start_from_target(r: &mut Run, tip: &str) -> Result<(), String> {
         &index,
     );
     let _ = std::fs::remove_file(&index);
-    let computed = computed?;
-    if let super::update::Computed::Conflicted { .. } = &computed {
-        super::update::discard(r, &Ok(computed));
-        return Err(format!(
-            "{} conflicts with what the lock committed (other than this feature's documents)",
-            r.state.target
-        ));
-    }
-    r.append(Event::Updated {
-        n,
-        target: r.state.target.clone(),
-        target_commit: tip.to_string(),
-        loop_head: head,
-        remote: false,
-        in_turn: false,
-        for_publication: false,
-    })?;
-    match computed {
+    match computed? {
+        c @ super::update::Computed::Conflicted { .. } => {
+            super::update::discard(r, &Ok(c));
+            Err(format!(
+                "{} conflicts with what the lock committed (other than this feature's documents)",
+                r.state.target
+            ))
+        }
         super::update::Computed::DocsChanged(paths) => {
+            r.append(Event::Updated {
+                n,
+                target: r.state.target.clone(),
+                target_commit: tip.to_string(),
+                loop_head: head,
+                remote: false,
+                in_turn: false,
+                for_publication: false,
+            })?;
             r.append(Event::UpdateDocsChanged {
                 n,
                 paths: paths.clone(),
@@ -168,16 +174,11 @@ fn start_from_target(r: &mut Run, tip: &str) -> Result<(), String> {
             } else {
                 git::set_branch(&repo, &l.build_branch, &commit)?;
             }
-            r.append(Event::UpdateMerged { n, commit })?;
-            r.append(Event::Note {
-                text: format!(
-                    "Started from {} at {}: merged into the loop's branch before anything was built.",
-                    r.state.target,
-                    &tip[..tip.len().min(7)]
-                ),
+            r.append(Event::StartedFrom {
+                target_commit: tip.to_string(),
+                commit,
             })
         }
-        super::update::Computed::Conflicted { .. } => Ok(()),
     }
 }
 
@@ -608,6 +609,9 @@ pub struct Engine {
     watched: BTreeMap<u64, Watched>,
     /// 011: how many touched files each loop's overlaps were last computed for.
     overlap_seen: BTreeMap<u64, usize>,
+    /// 011: loops ending their wait while the remote target is fetched: the loop waited for,
+    /// and why the wait ends.
+    starting: BTreeMap<u64, (u64, String)>,
 }
 
 /// 010: how often a project's protection is read again: a known value once a minute, an unknown
@@ -652,6 +656,7 @@ impl Engine {
             pr_checked: BTreeMap::new(),
             auto_waits: BTreeMap::new(),
             ready_seen: std::collections::BTreeSet::new(),
+            starting: BTreeMap::new(),
             overlap_seen: BTreeMap::new(),
             watched: BTreeMap::new(),
             data,
@@ -1173,6 +1178,31 @@ impl Engine {
                     });
                     let mut v = super::dashboard::needs(r, &name(&l.project));
                     v.retain(|i| live || i["kind"] != "overlap");
+                    for i in v.iter_mut().filter(|i| i["kind"] == "overlap") {
+                        let open: Vec<&super::state::OverlapRec> = l
+                            .overlaps
+                            .iter()
+                            .filter(|o| {
+                                self.runs
+                                    .get(&o.with)
+                                    .is_some_and(|x| !x.state.stage.is_final())
+                            })
+                            .collect();
+                        let files: usize = open.iter().map(|o| o.files.len()).sum();
+                        i["key"] = json!(format!("{}:overlap:{files}", r.id()));
+                        i["text"] = json!(open
+                            .iter()
+                            .map(|o| {
+                                let f = self
+                                    .runs
+                                    .get(&o.with)
+                                    .and_then(|x| x.state.feature_loop.as_ref())
+                                    .map_or_else(|| format!("loop {}", o.with), |x| x.feature.clone());
+                                format!("{f} changes {} too", o.files.join(", "))
+                            })
+                            .collect::<Vec<_>>()
+                            .join("; "));
+                    }
                     v
                 }
                 // A run of 006's single-task flow.
@@ -2190,22 +2220,37 @@ impl Engine {
                 }
                 continue;
             };
-            // The target to start from: the remote's when the other loop merged there.
-            let tip = if from == crate::run::events::WaitFrom::Lock {
-                let local = self.runs.get(&id).and_then(|r| {
-                    git::rev(&r.state.repo, &format!("refs/heads/{}", r.state.target)).ok()
-                });
-                if remote_merged {
-                    self.publish_remote(id)
-                        .ok()
-                        .and_then(|(remote, target)| {
-                            let repo = self.runs.get(&id)?.state.repo.clone();
-                            crate::publish::fetch_target(&repo, &remote, &target).ok()
-                        })
-                        .or(local)
+            // The target to start from: the remote's when the other loop merged there, fetched on
+            // a thread (review F4); the start and the end of the wait follow it.
+            if from == crate::run::events::WaitFrom::Lock && remote_merged {
+                if !self.starting.contains_key(&id) {
+                    if let Ok((remote, target)) = self.publish_remote(id) {
+                        if let Some(repo) = self.runs.get(&id).map(|r| r.state.repo.clone()) {
+                            self.starting.insert(id, (other, why.clone()));
+                            let tx = self.ctx.tx.clone();
+                            let spawned = std::thread::Builder::new()
+                                .name(format!("start-{id}"))
+                                .spawn(move || {
+                                    let r = crate::publish::fetch_target(&repo, &remote, &target);
+                                    let _ = tx.send(Msg::Done {
+                                        run: id,
+                                        done: Done::Fetched(r),
+                                    });
+                                });
+                            if spawned.is_ok() {
+                                continue;
+                            }
+                            self.starting.remove(&id);
+                        }
+                    }
                 } else {
-                    local
+                    continue;
                 }
+            }
+            let tip = if from == crate::run::events::WaitFrom::Lock {
+                self.runs.get(&id).and_then(|r| {
+                    git::rev(&r.state.repo, &format!("refs/heads/{}", r.state.target)).ok()
+                })
             } else {
                 None
             };
@@ -2532,6 +2577,40 @@ impl Engine {
     /// 011: what a published loop's fetch, push forward, or a first publication refused because
     /// the remote target moved, leads to.
     fn after_remote(&mut self, id: u64, a: After) {
+        // 011 (FR-014): the remote target fetched for a loop that ends its wait.
+        if let (Some((other, why)), After::Fetched(fetched)) = (self.starting.remove(&id), &a) {
+            let Some(r) = self.runs.get_mut(&id) else {
+                return;
+            };
+            let local = git::rev(&r.state.repo, &format!("refs/heads/{}", r.state.target)).ok();
+            let tip = match fetched {
+                Ok(sha) => Some(sha.clone()),
+                Err(e) => {
+                    let _ = r.append(Event::Note {
+                        text: format!(
+                            "{} could not be read on the remote ({e}): the loop starts from the local {}, which may not have the other loop's merge yet.",
+                            r.state.target, r.state.target
+                        ),
+                    });
+                    local
+                }
+            };
+            let started = match tip {
+                Some(t) => start_from_target(r, &t),
+                None => Ok(()),
+            };
+            let _ = r.append(Event::WaitEnded { run: other, why });
+            if let Err(e) = started {
+                let _ = r.append(Event::NeedsEngineer {
+                    why: format!(
+                        "The loop could not start from the latest {}: {e}. Unlock the feature and lock it again, or stop.",
+                        r.state.target
+                    ),
+                    options: vec!["stop".into()],
+                });
+            }
+            return;
+        }
         let tx = self.ctx.tx.clone();
         let open = self.published(id).is_some();
         let Some(r) = self.runs.get_mut(&id) else {
