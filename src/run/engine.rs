@@ -63,6 +63,9 @@ pub enum Done {
         from: String,
         to: String,
         result: Result<(), Result<String, String>>,
+        /// Pushed at the end of an update (a move then counts as overtaken), or a verified
+        /// commit pushed later, its update gone (a move then is a fresh one).
+        with_update: bool,
     },
 }
 
@@ -73,6 +76,7 @@ enum After {
         from: String,
         to: String,
         result: Result<(), Result<String, String>>,
+        with_update: bool,
     },
     PublishMoved(String),
 }
@@ -680,10 +684,16 @@ impl Engine {
                     // start from them, which needs the engine).
                     let after = match &done {
                         Done::Fetched(r) => Some(After::Fetched(r.clone())),
-                        Done::PushForward { from, to, result } => Some(After::Pushed {
+                        Done::PushForward {
+                            from,
+                            to,
+                            result,
+                            with_update,
+                        } => Some(After::Pushed {
                             from: from.clone(),
                             to: to.clone(),
                             result: result.clone(),
+                            with_update: *with_update,
                         }),
                         Done::Publish { result: Err(f), .. } => {
                             f.moved_to.clone().map(After::PublishMoved)
@@ -2081,6 +2091,7 @@ impl Engine {
             return;
         }
         let (repo, from) = (r.state.repo.clone(), pb.commit.clone());
+        let with_update = base.is_some();
         r.busy = Some(Busy::Publish);
         let spawned = std::thread::Builder::new()
             .name(format!("push-forward-{id}"))
@@ -2101,7 +2112,12 @@ impl Engine {
                 };
                 let _ = tx.send(Msg::Done {
                     run: id,
-                    done: Done::PushForward { from, to, result },
+                    done: Done::PushForward {
+                        from,
+                        to,
+                        result,
+                        with_update,
+                    },
                 });
             });
         if spawned.is_err() {
@@ -2137,7 +2153,8 @@ impl Engine {
                     && l.publication
                         .as_ref()
                         .is_some_and(|p| p.commit != integrated)
-                    && l.outcome.is_some();
+                    && l.outcome.is_some()
+                    && l.unchecked.is_empty();
                 if git::is_ancestor(&r.state.repo, &sha, &integrated) {
                     if unpushed {
                         // The push forward goes on at the next pass (review F1).
@@ -2162,6 +2179,7 @@ impl Engine {
                 from,
                 to,
                 result: Ok(()),
+                ..
             } => r.append(Event::PushedForward { from, to }),
             After::Pushed {
                 result: Err(Err(why)),
@@ -2174,6 +2192,31 @@ impl Engine {
                         options: vec!["bring up to date".into()],
                     })
                 })
+            }
+            After::Pushed {
+                result: Err(Ok(sha)),
+                with_update: false,
+                ..
+            } => {
+                // Its update was gone: the remote target moved while the loop waited, which is
+                // no overtaking (FR-007); asked or made as any move is (FR-010, review N1).
+                if let Some((which, used)) = r.state.limit_hit(super::time::unix_now()) {
+                    r.append(Event::NeedsEngineer {
+                        why: format!(
+                            "{target} moved on the remote: nothing was pushed. The {which} limit is used up ({used}): raise it to bring the loop up to date."
+                        ),
+                        options: vec!["raise the limit".into()],
+                    })
+                } else if update_by_itself(&l) {
+                    super::update::start(r, tx, &sha, true, false, false)
+                } else {
+                    r.append(Event::NeedsEngineer {
+                        why: format!(
+                            "{target} moved on the remote: nothing was pushed. Bring it up to date: it is merged into the loop's own branch in its own working copy, verified again, and pushed forward on the same branch."
+                        ),
+                        options: vec!["bring up to date".into()],
+                    })
+                }
             }
             After::Pushed {
                 result: Err(Ok(sha)),

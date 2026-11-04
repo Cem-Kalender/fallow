@@ -706,3 +706,78 @@ fn a_failed_push_forward_is_pushed_once_asked_again() {
     drop(e);
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// FR-007, FR-010 (phase 6 review N1): a move of the remote target found by a later push of the
+/// verified commit (its update gone) is a fresh move: at Normal it asks, never counted as
+/// overtaken, never an update by itself.
+#[test]
+fn a_move_found_after_a_failed_push_is_asked_about_not_counted() {
+    let after = format!(
+        "{}{}{}",
+        conflict_repair_step(1, "calc/__init__.py", CALC_INIT_SUB, true),
+        check_step("US1", true, "sleep_ms = 8000"),
+        check_step("US2", true, "")
+    );
+    let (e, root, id) = published("pu-fresh", &after, None, host());
+    let tx = &e.tx;
+    let repo = root.join("repo");
+    let state = root.join("host.json");
+    let published_at = remote_head(&root, BRANCH).unwrap();
+    remote_commit(&repo, "calc/__init__.py", REMOTE_INIT, "on the remote");
+    set_pr(&state, |pr| pr["mergeable"] = json!("CONFLICTING"));
+    wait_loop(tx, id, "the conflict shown", |v| {
+        v["target"]["pr"]["conflicting"] == true
+    });
+    ask(tx, Request::Update { id }).unwrap();
+    wait_loop(tx, id, "the update merged", |v| {
+        v["update"]["merged"] == true
+    });
+    git(
+        &repo,
+        &["push", "-q", "origin", &format!(":refs/heads/{BRANCH}")],
+    );
+    wait_loop(tx, id, "the failure said", |v| {
+        v["needs"]["why"]
+            .as_str()
+            .is_some_and(|w| w.contains("Nothing was pushed"))
+    });
+    git(
+        &repo,
+        &[
+            "push",
+            "-q",
+            "origin",
+            &format!("{published_at}:refs/heads/{BRANCH}"),
+        ],
+    );
+    remote_commit(
+        &repo,
+        "NOTES.md",
+        "meanwhile\n",
+        "a change while the loop waited",
+    );
+    // A note answers nothing, but clears the question.
+    ask(
+        tx,
+        Request::Note {
+            id,
+            text: "looking at it".into(),
+            agent: None,
+        },
+    )
+    .unwrap();
+    let v = wait_loop(tx, id, "asked about the move", |v| {
+        v["needs"]["why"]
+            .as_str()
+            .is_some_and(|w| w.contains("moved on the remote"))
+    });
+    assert_eq!(v["overtaken"], 0, "a move while waiting is no overtaking");
+    assert!(v["update"].is_null(), "nothing started at Normal");
+    assert_eq!(
+        remote_head(&root, BRANCH).unwrap(),
+        published_at,
+        "nothing pushed"
+    );
+    drop(e);
+    let _ = std::fs::remove_dir_all(&root);
+}
