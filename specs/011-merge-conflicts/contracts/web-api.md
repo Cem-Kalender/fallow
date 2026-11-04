@@ -52,12 +52,12 @@ checked with: <n> commits" and the commits.
 | `POST /api/loops/<id>/publish` | `{ "without_latest_check": true }` (optional) | As 010; with the flag only when `publish_unchecked` is offered. |
 | `POST /api/loops/<id>/leave-pr` | `{}` | Leave the pull request as it is (recorded with the newer commits not verified with, and labelled so). |
 | `POST /api/loops/<id>/wait` | `{ "for": <run id> }` | Wait for that loop (after the current step); refused when it would close a cycle (the reply names the loop already waiting) or the pull request is open. |
-| `DELETE /api/loops/<id>/wait` | | Stop waiting. |
+| `POST /api/loops/<id>/stop-waiting` | `{}` | Stop waiting. |
 | `POST /api/loops/<id>/lock-again` | `{}` | Opens the feature's spec session with Fallow's message showing the target's version of the changed documents; the lock there is the existing relock, which ends the held update. Refused while the pull request is open (FR-016b). |
 
 ## The lock
 
-`GET /api/projects/<id>/features/<f>/overlap` (read before locking):
+`GET /api/features/<project>/<feature>/overlap` (read before locking; beside 007's `relock-preview`):
 
 ```json
 { "overlaps": [{ "run": 14, "feature": "010-receipt", "stage": "building",

@@ -250,12 +250,9 @@ pub fn needs(run: &Run, project_name: &str) -> Vec<Value> {
         }
     }
     // 011 FR-015: a new overlap with another loop while this one builds.
-    if s.stage == Stage::Building
-        && s.needs.is_none()
-        && l.waits_for.is_none()
-        && l.switches.overlap
-        && !l.overlaps.is_empty()
-    {
+    // Shown while the loop builds, not hidden by a question or a wait, so it is not raised
+    // again each time one ends (review 7).
+    if s.stage == Stage::Building && l.switches.overlap && !l.overlaps.is_empty() {
         let files: usize = l.overlaps.iter().map(|o| o.files.len()).sum();
         let mut v = base("overlap", &s.stage_at);
         v["key"] = json!(format!("{}:overlap:{files}", s.id));

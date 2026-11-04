@@ -311,3 +311,74 @@ fn serve_the_011_overlap_demo() {
     std::thread::sleep(Duration::from_secs(secs));
     drop(e);
 }
+
+/// FR-014 with FR-005 (phase 7 review 1, 3): the target changed this feature's documents while
+/// it waited: it asks, and "Lock again" is taken; a loop stopped while waiting is left as it is.
+#[test]
+fn a_wait_that_ends_on_changed_documents_offers_lock_again() {
+    let root = scratch("o-docs");
+    let (e, repo) = project(&root, &calc_loop_ok(), "");
+    let tx = &e.tx;
+    let a = lock(tx, "001-calc", None);
+    wait_for(tx, a, "001-calc ready", |v| v["stage"] == "ready");
+    let b = lock(tx, "002-calc2", Some(a));
+    wait_view(tx, b, "waiting", |v| !v["waits_for"].is_null());
+    commit_on(
+        &repo,
+        "main",
+        "specs/002-calc2/spec.md",
+        "# changed on main\n",
+        "edit the spec",
+    );
+    // The other loop stopped: the wait ends, and the target moved with the documents' change.
+    ask(tx, Request::Stop { id: a, reason: None }).unwrap();
+    let v = wait_for(tx, b, "the documents' question", |v| {
+        v["needs_engineer"]
+            .as_str()
+            .is_some_and(|n| n.contains("documents"))
+    });
+    assert!(
+        v["steps"].as_object().is_none_or(|m| m.is_empty()),
+        "nothing built"
+    );
+    let la = ask(tx, Request::LockAgain { id: b }).unwrap();
+    assert!(
+        la["message"]
+            .as_str()
+            .unwrap()
+            .contains("specs/002-calc2/spec.md"),
+        "{la}"
+    );
+    drop(e);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// Phase 7 review 3: a loop stopped while it waits is not changed when the other is merged.
+#[test]
+fn a_loop_stopped_while_waiting_is_left_as_it_is() {
+    let root = scratch("o-stopped");
+    let (e, repo) = project(&root, &calc_loop_ok(), "");
+    let tx = &e.tx;
+    let a = lock(tx, "001-calc", None);
+    wait_for(tx, a, "001-calc ready", |v| v["stage"] == "ready");
+    let b = lock(tx, "002-calc2", Some(a));
+    wait_view(tx, b, "waiting", |v| !v["waits_for"].is_null());
+    ask(
+        tx,
+        Request::Stop {
+            id: b,
+            reason: None,
+        },
+    )
+    .unwrap();
+    wait_for(tx, b, "stopped", |v| v["stage"] == "stopped");
+    let branch = git(&repo, &["rev-parse", "fallow/002-calc2/build"]);
+    merge_when_read(tx, a).unwrap();
+    wait_for(tx, a, "001-calc merged", |v| v["stage"] == "done");
+    std::thread::sleep(Duration::from_secs(3));
+    let v = wait_for(tx, b, "still stopped", |_| true);
+    assert!(v["needs_engineer"].is_null(), "{}", v["needs_engineer"]);
+    assert_eq!(git(&repo, &["rev-parse", "fallow/002-calc2/build"]), branch);
+    drop(e);
+    let _ = std::fs::remove_dir_all(&root);
+}

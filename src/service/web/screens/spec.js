@@ -385,7 +385,11 @@
         if (name === "lk-after") { runAfter = Number(el.dataset.run); return render(appEl); }
         if (name === "lk-now") { runAfter = null; return render(appEl); }
         if (name === "lock-step") {
-          if (state.lock_check && state.lock_check.ok) { lockForm = true; render(appEl); }
+          if (state.lock_check && state.lock_check.ok) {
+            lockForm = true; whenTouched = false; runAfter = null; overlaps = [];
+            try { overlaps = (await get(`${base()}/overlap`)).overlaps || []; } catch (_) { overlaps = []; }
+            render(appEl);
+          }
           const bar = document.getElementById("lock");
           if (bar) {
             bar.scrollIntoView({ block: "nearest" });

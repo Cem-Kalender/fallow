@@ -99,35 +99,68 @@ fn update_by_itself(l: &super::state::LoopState) -> bool {
 /// 011: how a loop waiting for another says so (`Run::waiting`).
 const WAITING_FOR: &str = "waiting for ";
 
-/// 011 (FR-014, research R-8): a loop that waited from its lock and built nothing starts from the
-/// target as it is then: the documents' check first (FR-005), then the merge committed straight
-/// onto its branch (nothing built, so no gates or checker).
-fn start_from_target(r: &mut Run) -> Result<(), String> {
+/// 011 (FR-014, research R-8): a loop that waited from its lock and built nothing starts from
+/// `tip` (the target as it is then): recorded as an update, so its base moves to `tip` and its
+/// gates are judged against that baseline (review 2); the documents' check first (FR-005: held,
+/// so "Lock again" can take it, review 1); then the merge committed straight onto its branch
+/// (nothing built, so no gates or checker now).
+fn start_from_target(r: &mut Run, tip: &str) -> Result<(), String> {
     let Some(l) = r.state.feature_loop.clone() else {
         return Ok(());
     };
-    if !l.tasks.values().all(|t| t.commit.is_none()) {
+    if !l.tasks.values().all(|t| t.commit.is_none()) || l.update.is_some() {
         return Ok(());
     }
     let repo = r.state.repo.clone();
-    let tip = git::rev(&repo, &format!("refs/heads/{}", r.state.target))?;
     let head = git::rev(&repo, &format!("refs/heads/{}", l.build_branch))?;
-    if git::is_ancestor(&repo, &tip, &head) {
+    if git::is_ancestor(&repo, tip, &head) {
         return Ok(());
     }
+    let n = l.updates + 1;
     let index = r.dir.join("start-index");
     let computed = super::update::compute(
         &repo,
         &l.feature,
-        0,
+        n,
         &head,
-        &tip,
+        tip,
         &r.state.target,
         l.reconciled_target.as_deref(),
         &index,
     );
     let _ = std::fs::remove_file(&index);
-    match computed? {
+    let computed = computed?;
+    if let super::update::Computed::Conflicted { .. } = &computed {
+        super::update::discard(r, &Ok(computed));
+        return Err(format!(
+            "{} conflicts with what the lock committed (other than this feature's documents)",
+            r.state.target
+        ));
+    }
+    r.append(Event::Updated {
+        n,
+        target: r.state.target.clone(),
+        target_commit: tip.to_string(),
+        loop_head: head,
+        remote: false,
+        in_turn: false,
+        for_publication: false,
+    })?;
+    match computed {
+        super::update::Computed::DocsChanged(paths) => {
+            r.append(Event::UpdateDocsChanged {
+                n,
+                paths: paths.clone(),
+            })?;
+            r.append(Event::NeedsEngineer {
+                why: format!(
+                    "{} changed this feature's documents while the loop waited ({}): lock again with them, or stop.",
+                    r.state.target,
+                    paths.join(", ")
+                ),
+                options: vec!["lock again".into(), "stop".into()],
+            })
+        }
         super::update::Computed::Clean(commit) => {
             let wt = r.worktrees().join("build");
             if wt.join(".git").exists() {
@@ -135,6 +168,7 @@ fn start_from_target(r: &mut Run) -> Result<(), String> {
             } else {
                 git::set_branch(&repo, &l.build_branch, &commit)?;
             }
+            r.append(Event::UpdateMerged { n, commit })?;
             r.append(Event::Note {
                 text: format!(
                     "Started from {} at {}: merged into the loop's branch before anything was built.",
@@ -143,18 +177,7 @@ fn start_from_target(r: &mut Run) -> Result<(), String> {
                 ),
             })
         }
-        super::update::Computed::DocsChanged(paths) => r.append(Event::NeedsEngineer {
-            why: format!(
-                "{} changed this feature's documents while the loop waited ({}): lock again with them, or stop.",
-                r.state.target,
-                paths.join(", ")
-            ),
-            options: vec!["lock again".into(), "stop".into()],
-        }),
-        c @ super::update::Computed::Conflicted { .. } => {
-            super::update::discard(r, &Ok(c));
-            Err("the target conflicts with the loop's locked documents".into())
-        }
+        super::update::Computed::Conflicted { .. } => Ok(()),
     }
 }
 
@@ -1141,7 +1164,17 @@ impl Engine {
             .runs
             .values()
             .flat_map(|r| match r.state.feature_loop.as_ref() {
-                Some(l) => super::dashboard::needs(r, &name(&l.project)),
+                Some(l) => {
+                    // 011: an overlap item only while an overlapping loop is unfinished.
+                    let live = l.overlaps.iter().any(|o| {
+                        self.runs
+                            .get(&o.with)
+                            .is_some_and(|x| !x.state.stage.is_final())
+                    });
+                    let mut v = super::dashboard::needs(r, &name(&l.project));
+                    v.retain(|i| live || i["kind"] != "overlap");
+                    v
+                }
                 // A run of 006's single-task flow.
                 None => needs(r)
                     .map(|why| {
@@ -2080,7 +2113,11 @@ impl Engine {
             let Some(ol) = o.state.feature_loop.as_ref() else {
                 continue;
             };
-            if *other == id || ol.project != project || o.state.stage.is_final() {
+            if *other == id
+                || ol.project != project
+                || o.state.stage.is_final()
+                || !ol.switches.overlap
+            {
                 continue;
             }
             let known: BTreeSet<&String> = l
@@ -2118,57 +2155,87 @@ impl Engine {
         let waiting: Vec<(u64, u64, crate::run::events::WaitFrom)> = self
             .runs
             .iter()
+            // A loop that ended waits for nothing (review 3).
+            .filter(|(_, r)| !r.state.stage.is_final())
             .filter_map(|(id, r)| {
                 let (other, from) = r.state.feature_loop.as_ref()?.waits_for?;
                 Some((*id, other, from))
             })
             .collect();
         for (id, other, from) in waiting {
-            let (ended, feature) = match self.runs.get(&other) {
-                None => (Some("it was deleted".to_string()), format!("loop {other}")),
+            let (ended, feature, remote_merged) = match self.runs.get(&other) {
+                None => (
+                    Some("it was deleted".to_string()),
+                    format!("loop {other}"),
+                    false,
+                ),
                 Some(o) => {
-                    let name = o
-                        .state
-                        .feature_loop
-                        .as_ref()
-                        .map_or_else(|| format!("loop {other}"), |l| l.feature.clone());
+                    let ol = o.state.feature_loop.as_ref();
+                    let name = ol.map_or_else(|| format!("loop {other}"), |l| l.feature.clone());
+                    // Merged through its pull request: the target moved on the remote (review 5).
+                    let via_pr = ol
+                        .and_then(|l| l.publication.as_ref())
+                        .is_some_and(|p| p.state == crate::publish::host::PrStatus::Merged);
                     let why = match o.state.stage {
                         Stage::Done => Some(format!("{name} was merged")),
                         Stage::Stopped => Some(format!("{name} was stopped")),
                         _ => None,
                     };
-                    (why, name)
+                    (why, name, via_pr)
                 }
+            };
+            let Some(why) = ended else {
+                if let Some(r) = self.runs.get_mut(&id) {
+                    r.waiting = Some(format!("{WAITING_FOR}{feature}"));
+                }
+                continue;
+            };
+            // The target to start from: the remote's when the other loop merged there.
+            let tip = if from == crate::run::events::WaitFrom::Lock {
+                let local = self.runs.get(&id).and_then(|r| {
+                    git::rev(&r.state.repo, &format!("refs/heads/{}", r.state.target)).ok()
+                });
+                if remote_merged {
+                    self.publish_remote(id)
+                        .ok()
+                        .and_then(|(remote, target)| {
+                            let repo = self.runs.get(&id)?.state.repo.clone();
+                            crate::publish::fetch_target(&repo, &remote, &target).ok()
+                        })
+                        .or(local)
+                } else {
+                    local
+                }
+            } else {
+                None
             };
             let Some(r) = self.runs.get_mut(&id) else {
                 continue;
             };
-            match ended {
-                None => {
-                    r.waiting = Some(format!("{WAITING_FOR}{feature}"));
-                }
-                Some(why) => {
-                    if r.waiting
-                        .as_deref()
-                        .is_some_and(|w| w.starts_with(WAITING_FOR))
-                    {
-                        r.waiting = None;
-                    }
-                    let _ = r.append(Event::WaitEnded {
-                        run: other,
-                        why: why.clone(),
-                    });
-                    if from == crate::run::events::WaitFrom::Lock {
-                        if let Err(e) = start_from_target(r) {
-                            let _ = r.append(Event::NeedsEngineer {
-                                why: format!(
-                                    "The loop could not start from the latest target: {e}"
-                                ),
-                                options: vec!["retry".into(), "stop".into()],
-                            });
-                        }
-                    }
-                }
+            if r.waiting
+                .as_deref()
+                .is_some_and(|w| w.starts_with(WAITING_FOR))
+            {
+                r.waiting = None;
+            }
+            // The start comes first, then the end of the wait: a restart in between starts again
+            // (FR-017, review 6).
+            let started = match tip {
+                Some(t) => start_from_target(r, &t),
+                None => Ok(()),
+            };
+            let _ = r.append(Event::WaitEnded {
+                run: other,
+                why: why.clone(),
+            });
+            if let Err(e) = started {
+                let _ = r.append(Event::NeedsEngineer {
+                    why: format!(
+                        "The loop could not start from the latest {}: {e}. Unlock the feature and lock it again, or stop.",
+                        r.state.target
+                    ),
+                    options: vec!["stop".into()],
+                });
             }
         }
     }
@@ -2186,15 +2253,20 @@ impl Engine {
         if r.state.stage == Stage::Publishing {
             return Err("its pull request is open: close it on the remote first (FR-016b)".into());
         }
-        if r.state.stage.is_final() {
-            return Err("the loop is over".into());
+        // While it builds (FR-015): a ready loop has nothing more to start.
+        if r.state.stage != Stage::Building {
+            return Err("only a loop that is building waits for another".into());
         }
+        let project = r.state.feature_loop.as_ref().map(|l| l.project.clone());
         let o = self
             .runs
             .get(&other)
             .ok_or_else(|| format!("there is no loop {other}"))?;
         if o.state.stage.is_final() {
             return Err("that loop is over".into());
+        }
+        if o.state.feature_loop.as_ref().map(|l| l.project.clone()) != project {
+            return Err("that loop is not of this project".into());
         }
         // A cycle: following the waits from the other loop reaches this one.
         let mut at = other;
@@ -4567,9 +4639,16 @@ impl Engine {
                     };
                     if let Some(r) = self.runs.get(&id) {
                         if let Some(l) = r.state.feature_loop.as_ref() {
+                            // Only with loops still unfinished (review 7).
+                            let live = |other: u64| {
+                                self.runs
+                                    .get(&other)
+                                    .is_some_and(|o| !o.state.stage.is_final())
+                            };
                             v["overlaps"] = json!(l
                                 .overlaps
                                 .iter()
+                                .filter(|o| live(o.with))
                                 .map(|o| json!({ "run": o.with, "feature": name(o.with), "files": o.files }))
                                 .collect::<Vec<_>>());
                             v["waits_for"] = match l.waits_for {
@@ -4580,11 +4659,12 @@ impl Engine {
                             };
                             let open = r.state.stage == Stage::Publishing;
                             if let Some(offer) = v["offer"].as_array_mut() {
-                                if l.waits_for.is_some() {
+                                let over = r.state.stage.is_final();
+                                if l.waits_for.is_some() && !over {
                                     offer.push(json!("stop_waiting"));
-                                } else if !l.overlaps.is_empty()
+                                } else if l.overlaps.iter().any(|o| live(o.with))
                                     && !open
-                                    && !r.state.stage.is_final()
+                                    && r.state.stage == Stage::Building
                                 {
                                     offer.push(json!("wait_for"));
                                 }
