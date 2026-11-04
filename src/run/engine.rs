@@ -5,7 +5,7 @@
 //! applied; then the stage machine decides what happens next. Agent calls, gates and merges run
 //! on threads of their own and report back here.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
@@ -96,6 +96,68 @@ fn update_by_itself(l: &super::state::LoopState) -> bool {
     l.level == Level::Free && l.switches.auto
 }
 
+/// 011: how a loop waiting for another says so (`Run::waiting`).
+const WAITING_FOR: &str = "waiting for ";
+
+/// 011 (FR-014, research R-8): a loop that waited from its lock and built nothing starts from the
+/// target as it is then: the documents' check first (FR-005), then the merge committed straight
+/// onto its branch (nothing built, so no gates or checker).
+fn start_from_target(r: &mut Run) -> Result<(), String> {
+    let Some(l) = r.state.feature_loop.clone() else {
+        return Ok(());
+    };
+    if !l.tasks.values().all(|t| t.commit.is_none()) {
+        return Ok(());
+    }
+    let repo = r.state.repo.clone();
+    let tip = git::rev(&repo, &format!("refs/heads/{}", r.state.target))?;
+    let head = git::rev(&repo, &format!("refs/heads/{}", l.build_branch))?;
+    if git::is_ancestor(&repo, &tip, &head) {
+        return Ok(());
+    }
+    let index = r.dir.join("start-index");
+    let computed = super::update::compute(
+        &repo,
+        &l.feature,
+        0,
+        &head,
+        &tip,
+        &r.state.target,
+        l.reconciled_target.as_deref(),
+        &index,
+    );
+    let _ = std::fs::remove_file(&index);
+    match computed? {
+        super::update::Computed::Clean(commit) => {
+            let wt = r.worktrees().join("build");
+            if wt.join(".git").exists() {
+                git::checkout_forward(&wt, &l.build_branch, &commit)?;
+            } else {
+                git::set_branch(&repo, &l.build_branch, &commit)?;
+            }
+            r.append(Event::Note {
+                text: format!(
+                    "Started from {} at {}: merged into the loop's branch before anything was built.",
+                    r.state.target,
+                    &tip[..tip.len().min(7)]
+                ),
+            })
+        }
+        super::update::Computed::DocsChanged(paths) => r.append(Event::NeedsEngineer {
+            why: format!(
+                "{} changed this feature's documents while the loop waited ({}): lock again with them, or stop.",
+                r.state.target,
+                paths.join(", ")
+            ),
+            options: vec!["lock again".into(), "stop".into()],
+        }),
+        c @ super::update::Computed::Conflicted { .. } => {
+            super::update::discard(r, &Ok(c));
+            Err("the target conflicts with the loop's locked documents".into())
+        }
+    }
+}
+
 /// 011: how a loop waiting in its merge line says so (`Run::waiting`).
 const IN_LINE: &str = "in line to merge after ";
 
@@ -144,6 +206,22 @@ pub enum Request {
     },
     /// 011: "Leave the pull request as it is" at the limit of overtaken updates (FR-009).
     LeavePr {
+        id: u64,
+    },
+    /// 011 (FR-013): the unfinished loops of the project whose files overlap what this
+    /// feature's tasks name, read before locking.
+    Overlap {
+        project: String,
+        feature: String,
+    },
+    /// 011 (FR-015): "Wait for <feature>": this loop starts no new step until loop `other` is
+    /// merged, stopped or deleted.
+    Wait {
+        id: u64,
+        other: u64,
+    },
+    /// 011: "Stop waiting".
+    StopWaiting {
         id: u64,
     },
     /// 011: the target changed the feature's documents: unlock it and open its spec session
@@ -505,6 +583,8 @@ pub struct Engine {
     /// 011: the target watch per loop (research R-1): when it last asked, whether a read is
     /// running, for which verified commit, and what it read.
     watched: BTreeMap<u64, Watched>,
+    /// 011: how many touched files each loop's overlaps were last computed for.
+    overlap_seen: BTreeMap<u64, usize>,
 }
 
 /// 010: how often a project's protection is read again: a known value once a minute, an unknown
@@ -549,6 +629,7 @@ impl Engine {
             pr_checked: BTreeMap::new(),
             auto_waits: BTreeMap::new(),
             ready_seen: std::collections::BTreeSet::new(),
+            overlap_seen: BTreeMap::new(),
             watched: BTreeMap::new(),
             data,
             runs: BTreeMap::new(),
@@ -1931,6 +2012,257 @@ impl Engine {
         }
         super::update::start(r, tx, &tip, false, false, false)?;
         self.watched.remove(&id);
+        Ok(())
+    }
+
+    /// 011 (FR-013, research R-8): the unfinished loops of `project` whose changed or named
+    /// files overlap the paths `feature`'s tasks name.
+    fn overlap_read(&mut self, project: &str, feature: &str) -> Result<Value, String> {
+        let (p, f, wd) = self.studio.feature_ctx(project, feature)?;
+        // FR-016c: `[updates] overlap = false` turns the warnings off.
+        let file = crate::config::squad::SQUAD_FILE;
+        let text = std::fs::read_to_string(p.path.join(file)).unwrap_or_default();
+        if !Squad::parse(file, &text, &mut Vec::new()).updates.overlap {
+            return Ok(json!({ "overlaps": [], "off": true }));
+        }
+        // The documents as the spec session has them (its working copy), else the project's.
+        let tasks = std::fs::read_to_string(wd.join(&f.dir).join("tasks.md"))
+            .or_else(|_| std::fs::read_to_string(p.path.join(&f.dir).join("tasks.md")))
+            .unwrap_or_default();
+        let mine: BTreeSet<String> = tasks
+            .lines()
+            .flat_map(crate::speckit::tasks::paths_in)
+            .collect();
+        let mut out = Vec::new();
+        for (id, r) in &self.runs {
+            let Some(l) = r.state.feature_loop.as_ref() else {
+                continue;
+            };
+            if l.project != project || l.feature == feature || r.state.stage.is_final() {
+                continue;
+            }
+            let theirs: BTreeSet<&String> = l.touched.iter().chain(l.task_paths.iter()).collect();
+            let files: Vec<&String> = mine.iter().filter(|m| theirs.contains(m)).collect();
+            if files.is_empty() {
+                continue;
+            }
+            let named = files.iter().any(|f| l.task_paths.contains(*f));
+            out.push(json!({
+                "run": id, "feature": l.feature, "stage": r.state.stage, "files": files,
+                "named_in_tasks": named,
+            }));
+        }
+        Ok(json!({
+            "overlaps": out,
+            "forecast": "compared with the files this feature's tasks name and the files the other loops changed so far or name in their tasks",
+        }))
+    }
+
+    /// 011 (FR-015): after a step of loop `id` changed files, a new overlap with another
+    /// unfinished loop of the project is recorded on both, once per pair and file set.
+    fn overlaps_of(&mut self, id: u64) {
+        let Some(r) = self.runs.get(&id) else {
+            return;
+        };
+        let Some(l) = r.state.feature_loop.as_ref() else {
+            return;
+        };
+        if !l.switches.overlap || r.state.stage.is_final() || l.touched.is_empty() {
+            return;
+        }
+        if self.overlap_seen.get(&id) == Some(&l.touched.len()) {
+            return;
+        }
+        self.overlap_seen.insert(id, l.touched.len());
+        let (project, mine) = (l.project.clone(), l.touched.clone());
+        let mut found: Vec<(u64, Vec<String>)> = Vec::new();
+        for (other, o) in &self.runs {
+            let Some(ol) = o.state.feature_loop.as_ref() else {
+                continue;
+            };
+            if *other == id || ol.project != project || o.state.stage.is_final() {
+                continue;
+            }
+            let known: BTreeSet<&String> = l
+                .overlaps
+                .iter()
+                .filter(|x| x.with == *other)
+                .flat_map(|x| x.files.iter())
+                .collect();
+            let files: Vec<String> = mine
+                .iter()
+                .filter(|f| ol.touched.contains(*f) && !known.contains(f))
+                .cloned()
+                .collect();
+            if !files.is_empty() {
+                found.push((*other, files));
+            }
+        }
+        for (other, files) in found {
+            if let Some(r) = self.runs.get_mut(&id) {
+                let _ = r.append(Event::Overlap {
+                    with: other,
+                    files: files.clone(),
+                });
+            }
+            if let Some(o) = self.runs.get_mut(&other) {
+                let _ = o.append(Event::Overlap { with: id, files });
+            }
+        }
+    }
+
+    /// 011 (FR-014, FR-015): waits end when the other loop is merged, stopped or deleted; a
+    /// waiting loop says for whom; a loop that waited from its lock and built nothing starts from
+    /// the target as it is then.
+    fn waits(&mut self) {
+        let waiting: Vec<(u64, u64, crate::run::events::WaitFrom)> = self
+            .runs
+            .iter()
+            .filter_map(|(id, r)| {
+                let (other, from) = r.state.feature_loop.as_ref()?.waits_for?;
+                Some((*id, other, from))
+            })
+            .collect();
+        for (id, other, from) in waiting {
+            let (ended, feature) = match self.runs.get(&other) {
+                None => (Some("it was deleted".to_string()), format!("loop {other}")),
+                Some(o) => {
+                    let name = o
+                        .state
+                        .feature_loop
+                        .as_ref()
+                        .map_or_else(|| format!("loop {other}"), |l| l.feature.clone());
+                    let why = match o.state.stage {
+                        Stage::Done => Some(format!("{name} was merged")),
+                        Stage::Stopped => Some(format!("{name} was stopped")),
+                        _ => None,
+                    };
+                    (why, name)
+                }
+            };
+            let Some(r) = self.runs.get_mut(&id) else {
+                continue;
+            };
+            match ended {
+                None => {
+                    r.waiting = Some(format!("{WAITING_FOR}{feature}"));
+                }
+                Some(why) => {
+                    if r.waiting
+                        .as_deref()
+                        .is_some_and(|w| w.starts_with(WAITING_FOR))
+                    {
+                        r.waiting = None;
+                    }
+                    let _ = r.append(Event::WaitEnded {
+                        run: other,
+                        why: why.clone(),
+                    });
+                    if from == crate::run::events::WaitFrom::Lock {
+                        if let Err(e) = start_from_target(r) {
+                            let _ = r.append(Event::NeedsEngineer {
+                                why: format!(
+                                    "The loop could not start from the latest target: {e}"
+                                ),
+                                options: vec!["retry".into(), "stop".into()],
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// 011 (FR-015): "Wait for <feature>": refused for a loop whose pull request is open
+    /// (FR-016b), for itself, and when it would close a cycle.
+    fn wait_for(&mut self, id: u64, other: u64) -> Result<(), String> {
+        if id == other {
+            return Err("a loop cannot wait for itself".into());
+        }
+        let r = self
+            .runs
+            .get(&id)
+            .ok_or_else(|| format!("there is no loop {id}"))?;
+        if r.state.stage == Stage::Publishing {
+            return Err("its pull request is open: close it on the remote first (FR-016b)".into());
+        }
+        if r.state.stage.is_final() {
+            return Err("the loop is over".into());
+        }
+        let o = self
+            .runs
+            .get(&other)
+            .ok_or_else(|| format!("there is no loop {other}"))?;
+        if o.state.stage.is_final() {
+            return Err("that loop is over".into());
+        }
+        // A cycle: following the waits from the other loop reaches this one.
+        let mut at = other;
+        for _ in 0..64 {
+            let next = self
+                .runs
+                .get(&at)
+                .and_then(|x| x.state.feature_loop.as_ref())
+                .and_then(|l| l.waits_for)
+                .map(|(n, _)| n);
+            match next {
+                Some(n) if n == id => {
+                    let name = self
+                        .runs
+                        .get(&at)
+                        .and_then(|x| x.state.feature_loop.as_ref())
+                        .map_or_else(|| format!("loop {at}"), |l| l.feature.clone());
+                    return Err(format!(
+                        "{name} already waits for this loop: waiting for it would close a cycle"
+                    ));
+                }
+                Some(n) => at = n,
+                None => break,
+            }
+        }
+        let feature = o
+            .state
+            .feature_loop
+            .as_ref()
+            .map_or_else(|| format!("loop {other}"), |l| l.feature.clone());
+        let r = self.runs.get_mut(&id).ok_or("no such loop")?;
+        r.append(Event::Steering {
+            kind: SteeringKind::WaitFor,
+            target: Some(feature),
+            detail: Some(other.to_string()),
+        })?;
+        r.append(Event::WaitsFor {
+            run: other,
+            from: crate::run::events::WaitFrom::Engineer,
+        })?;
+        self.waits();
+        Ok(())
+    }
+
+    /// 011: "Stop waiting".
+    fn stop_waiting(&mut self, id: u64) -> Result<(), String> {
+        let r = self
+            .runs
+            .get_mut(&id)
+            .ok_or_else(|| format!("there is no loop {id}"))?;
+        let Some((other, _)) = r.state.feature_loop.as_ref().and_then(|l| l.waits_for) else {
+            return Err("the loop is not waiting".into());
+        };
+        r.append(Event::Steering {
+            kind: SteeringKind::StopWaiting,
+            target: None,
+            detail: Some(other.to_string()),
+        })?;
+        r.append(Event::WaitEnded {
+            run: other,
+            why: "you stopped waiting".into(),
+        })?;
+        if r.waiting
+            .as_deref()
+            .is_some_and(|w| w.starts_with(WAITING_FOR))
+        {
+            r.waiting = None;
+        }
         Ok(())
     }
 
@@ -3729,6 +4061,23 @@ impl Engine {
                 "updates overtaken before you decide: {update_limit} is not between 1 and 20"
             ));
         }
+        // 011 FR-014: "Run after" an unfinished loop of the same project.
+        if let Some(other) = extra.run_after {
+            let o = self
+                .runs
+                .get(&other)
+                .ok_or_else(|| format!("there is no loop {other} to run after"))?;
+            let same = o
+                .state
+                .feature_loop
+                .as_ref()
+                .is_some_and(|l| l.project == project);
+            if !same || o.state.stage.is_final() {
+                return Err(format!(
+                    "loop {other} is not an unfinished loop of {project}"
+                ));
+            }
+        }
         let prep = self
             .studio
             .lock_prepare(project, feature)
@@ -3851,6 +4200,12 @@ impl Engine {
             to: Stage::Building,
             why: format!("lock {} of {}", prep.lock, f.name()),
         })?;
+        if let Some(other) = extra.run_after {
+            run.append(Event::WaitsFor {
+                run: other,
+                from: crate::run::events::WaitFrom::Lock,
+            })?;
+        }
         for n in notices {
             run.append(Event::Note {
                 text: n.to_string(),
@@ -4001,6 +4356,8 @@ impl Engine {
             self.watch(id, false);
         }
         self.turns();
+        self.overlaps_of(id);
+        self.waits();
         self.target_moved_for(id);
         self.push_forward_due(id);
         self.pr_fell_behind(id);
@@ -4163,6 +4520,9 @@ impl Engine {
             } => self.publish_unchecked(id).map(|()| json!({})),
             Request::Publish { id, .. } => self.publish(id, "engineer").map(|()| json!({})),
             Request::LeavePr { id } => self.leave_pr(id).map(|()| json!({})),
+            Request::Overlap { project, feature } => self.overlap_read(&project, &feature),
+            Request::Wait { id, other } => self.wait_for(id, other).map(|()| json!({})),
+            Request::StopWaiting { id } => self.stop_waiting(id).map(|()| json!({})),
             Request::Stop { id, reason } => run_mut(self, id)
                 .and_then(|r| super::machine::stop(r, reason))
                 .map(|()| json!({})),
@@ -4197,6 +4557,39 @@ impl Engine {
                         .and_then(|r| r.state.feature_loop.as_ref())
                     {
                         v["unchecked"] = json!(l.unchecked);
+                    }
+                    // 011 FR-015: overlaps with other loops, and a wait (contracts/web-api.md).
+                    let name = |other: u64| {
+                        self.runs
+                            .get(&other)
+                            .and_then(|o| o.state.feature_loop.as_ref())
+                            .map_or_else(|| format!("loop {other}"), |l| l.feature.clone())
+                    };
+                    if let Some(r) = self.runs.get(&id) {
+                        if let Some(l) = r.state.feature_loop.as_ref() {
+                            v["overlaps"] = json!(l
+                                .overlaps
+                                .iter()
+                                .map(|o| json!({ "run": o.with, "feature": name(o.with), "files": o.files }))
+                                .collect::<Vec<_>>());
+                            v["waits_for"] = match l.waits_for {
+                                Some((other, from)) => {
+                                    json!({ "run": other, "feature": name(other), "from": from })
+                                }
+                                None => Value::Null,
+                            };
+                            let open = r.state.stage == Stage::Publishing;
+                            if let Some(offer) = v["offer"].as_array_mut() {
+                                if l.waits_for.is_some() {
+                                    offer.push(json!("stop_waiting"));
+                                } else if !l.overlaps.is_empty()
+                                    && !open
+                                    && !r.state.stage.is_final()
+                                {
+                                    offer.push(json!("wait_for"));
+                                }
+                            }
+                        }
                     }
                     if let Some(l) = self
                         .runs

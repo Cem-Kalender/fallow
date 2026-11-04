@@ -249,6 +249,25 @@ pub fn needs(run: &Run, project_name: &str) -> Vec<Value> {
             out.push(v);
         }
     }
+    // 011 FR-015: a new overlap with another loop while this one builds.
+    if s.stage == Stage::Building
+        && s.needs.is_none()
+        && l.waits_for.is_none()
+        && l.switches.overlap
+        && !l.overlaps.is_empty()
+    {
+        let files: usize = l.overlaps.iter().map(|o| o.files.len()).sum();
+        let mut v = base("overlap", &s.stage_at);
+        v["key"] = json!(format!("{}:overlap:{files}", s.id));
+        v["text"] = json!(
+            l.overlaps
+                .iter()
+                .map(|o| format!("loop {} changed {} too", o.with, o.files.join(", ")))
+                .collect::<Vec<_>>()
+                .join("; ")
+        );
+        out.push(v);
+    }
     // 011: the limit of overtaken updates reached (a ready loop that asks) and an update held
     // because the target changed the feature's documents (contracts/web-api.md).
     if let Some(n) = s.needs.as_ref() {

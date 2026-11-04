@@ -229,6 +229,10 @@ fn step(run: &mut Run, ctx: &Ctx) -> Result<(), String> {
     if requeue_cut_short(run)? {
         return Ok(());
     }
+    // 011 (FR-014, FR-015): waiting for another loop, no new step starts; one running goes on.
+    if l.waits_for.is_some() {
+        return Ok(());
+    }
     // A question that waits for the engineer holds the loop: its later work depends on it
     // (FR-021). Other loops and conversations go on.
     if let Some(q) = super::questions::waiting(&l).cloned() {

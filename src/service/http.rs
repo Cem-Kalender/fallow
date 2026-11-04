@@ -534,6 +534,11 @@ fn studio_route(
                 feature: f.to_string(),
             }))
         }
+        // 011 FR-013: the overlap read before the lock (contracts/web-api.md).
+        ("GET", ["api", "features", p, f, "overlap"]) => Some(Ok(Request::Overlap {
+            project: p.to_string(),
+            feature: f.to_string(),
+        })),
         ("GET", ["api", "features", p, f, "relock-preview"]) => Some(Ok(Request::RelockPreview {
             project: p.to_string(),
             feature: f.to_string(),
@@ -780,6 +785,11 @@ fn handle(mut req: tiny_http::Request, tx: &Sender<Msg>, port: u16, secret: &str
                 ["update"] => Request::Update { id: i },
                 ["lock-again"] => Request::LockAgain { id: i },
                 ["leave-pr"] => Request::LeavePr { id: i },
+                ["wait"] => Request::Wait {
+                    id: i,
+                    other: body["for"].as_u64().unwrap_or(0),
+                },
+                ["stop-waiting"] => Request::StopWaiting { id: i },
                 ["questions", q, "answer"] => Request::QuestionAnswer {
                     id: i,
                     q: percent_decode(q),

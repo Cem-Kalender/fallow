@@ -36,6 +36,7 @@ fn what(item: &Value) -> &'static str {
         Some("pr_open") => "pull request opened: review and merge it on the remote",
         Some("pr_merged") => "merged on the remote",
         Some("docs_changed") => "the target changed this feature's documents: lock again or stop",
+        Some("overlap") => "another loop changes the same files; you may let one wait",
         _ => match item["what"].as_str() {
             Some("stopped at a limit") => "stopped at a limit",
             Some("stopped at the repair cap") => "stopped at the repair cap",

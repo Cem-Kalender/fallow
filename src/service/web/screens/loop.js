@@ -41,6 +41,9 @@
     const u = v.update;
     const offer = v.offer || [];
     const lines = [];
+    // 011 FR-014, FR-015: a wait for another loop, and overlaps with others.
+    if (v.waits_for) lines.push(h`<div class="row wrap gap-8"><span class="pill yellow">Waiting</span><span class="small">Waiting for <b>${v.waits_for.feature}</b>: no new step starts until it is merged or stopped.</span>${offer.includes("stop_waiting") ? h`<button class="btn btn2 sm" data-act="stop-waiting">Stop waiting</button>` : ""}</div>`);
+    for (const o of v.overlaps || []) lines.push(h`<div class="small">Changes the same files as <b>${o.feature}</b>: <span class="mono tiny">${o.files.join(", ")}</span>${offer.includes("wait_for") ? h` <button class="btn btn2 sm" data-act="wait-for" data-run="${o.run}">Wait for ${o.feature}</button>` : ""}</div>`);
     // 011 FR-009a, FR-007: the merge line and the updates overtaken.
     if (v.line && v.line.after) lines.push(h`<div class="row wrap gap-8"><span class="pill yellow">In line</span><span class="small">In line to merge after <b>${v.line.after}</b> (place ${v.line.position}): the merge runs, checked again, when its turn comes.</span></div>`);
     if ((v.overtaken || 0) > 0) lines.push(h`<div class="small">Overtaken ${v.overtaken} of ${v.update_limit} in a row by commits on ${v.base_branch} from outside Fallow.</div>`);
@@ -593,6 +596,8 @@
     }
     // 011: the target's commit an update or "Lock again" was asked with.
     if (x.kind === "merge") return "asked to merge";
+    if (x.kind === "wait_for") return `waiting for ${x.target || "another loop"}`;
+    if (x.kind === "stop_waiting") return "stopped waiting";
     if (x.kind === "merge_unchecked") return "merged without the latest check";
     if (["update", "lock_again"].includes(x.kind) && x.detail) return `${x.kind === "update" ? "brought up to date with" : "locked again for"} ${x.target || "the target"} at ${short(x.detail)}`;
     return `${x.kind.replace(/_/g, " ")}${x.detail ? `: ${x.detail}` : ""}`;
@@ -867,6 +872,18 @@
         if (ok) run("merge", { confirm: true, without_latest_check: true });
         return;
       }
+      case "wait-for": {
+        const o = (state.view.overlaps || []).find((x) => String(x.run) === el.dataset.run);
+        const ok = await confirm({
+          title: `Wait for ${o ? o.feature : "that loop"}?`,
+          text: "This loop finishes its current step, then starts no new one until the other is merged or stopped.",
+          ok: "Wait",
+        });
+        if (ok) run("wait", { for: Number(el.dataset.run) });
+        return;
+      }
+      case "stop-waiting":
+        return run("stop-waiting", {});
       case "publish-unchecked": {
         const v = state.view;
         const ok = await confirm({

@@ -60,6 +60,7 @@
       update: [`${n.target || "The target"} moved · bring it up to date`, "Bring up to date"],
       update_limit: [`Updated ${n.updates || 0} times and overtaken · your decision`, "Decide"],
       docs_changed: ["The target changed this feature's documents", "Lock again or stop"],
+      overlap: ["Another loop changes the same files", "Open the loop"],
     }[n.kind];
     if (UPDATE) {
       return h`<div class="card pad-16 needs">

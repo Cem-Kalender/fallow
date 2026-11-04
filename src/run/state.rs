@@ -1078,6 +1078,7 @@ impl RunState {
                     f.update_asked = false;
                     f.publish_turn = false;
                     f.publish_moved = None;
+                    f.left_pr = false;
                     f.unlocked = false;
                     f.fresh_seq = l.seq;
                     // The base follows the new lock until an update merged a target in.
@@ -1188,6 +1189,7 @@ impl RunState {
                     f.overtaken = 0;
                     f.publish_turn = false;
                     f.publish_moved = None;
+                    f.left_pr = false;
                     f.unchecked = unchecked.clone();
                     f.publication = Some(Publication {
                         remote: remote.clone(),

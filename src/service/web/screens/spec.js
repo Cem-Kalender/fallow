@@ -12,6 +12,9 @@
   let editing = null; // { text } while the engineer edits
   let conflict = null; // { mine, theirs, version }
   let lockForm = false;
+  // 011 FR-013: what the overlap read found when the lock form opened, and "Run after".
+  let overlaps = [];
+  let runAfter = null;
   // 010: the engineer chose "When verified" by hand; until then it follows the autonomy level.
   let whenTouched = false;
   let whenChoice = null;
@@ -87,8 +90,11 @@
         <div class="field"><label for="lk-pipeline">Pipeline</label><select id="lk-pipeline">${f.pipelines.map((p) => h`<option value="${p.name}"${raw(p.name === f.pipeline ? " selected" : "")}>${p.name}${p.verifying ? "" : " (not verified)"}</option>`)}</select></div>
         <div class="field"><label for="lk-autonomy">Autonomy</label><select id="lk-autonomy" data-change="lk-level">${["strict", "normal", "free"].map((a) => h`<option value="${a}"${raw(a === f.autonomy ? " selected" : "")}>${a[0].toUpperCase() + a.slice(1)}</option>`)}</select></div>
         <div class="field"><label for="lk-when" title="Only when the project has a remote Fallow can publish to">When verified</label><select id="lk-when" data-change="lk-when">${[["wait", "Wait for me"], ["pull_request", "Open a pull request"]].map(([v, l]) => h`<option value="${v}"${raw(v === (whenTouched && whenChoice ? whenChoice : whenPreset(f.autonomy)) ? " selected" : "")}>${l}</option>`)}</select></div>
+        <div class="field"><label for="lk-limit" title="Updates in a row overtaken by changes of the target from outside Fallow, before the loop asks you">Updates overtaken before I decide</label><input id="lk-limit" type="text" inputmode="numeric" value="3"></div>
         <div class="field"><label for="lk-usd">Budget, $</label><input id="lk-usd" type="text" inputmode="decimal" value="${s.usd.toFixed(2)}"></div>
         <div class="field"><label for="lk-min">Budget, minutes</label><input id="lk-min" type="text" inputmode="numeric" value="${s.minutes}"></div>
+        ${overlaps.length ? h`<div class="notice overlap-warn"><b>Other loops change the same files</b>${overlaps.map((o) => h`<div class="row wrap gap-8 mt-6"><span><b>${o.feature}</b> (${o.stage}): <span class="mono tiny">${o.files.join(", ")}</span></span><button class="btn btn2 sm${runAfter === o.run ? " on" : ""}" type="button" data-act="lk-after" data-run="${o.run}" aria-pressed="${runAfter === o.run ? "true" : "false"}">Run after ${o.feature}</button></div>`)}
+          <div class="row wrap gap-8 mt-6"><button class="btn btn2 sm${runAfter === null ? " on" : ""}" type="button" data-act="lk-now" aria-pressed="${runAfter === null ? "true" : "false"}">Run now anyway</button><span class="tiny muted">${runAfter === null ? "It starts now; a conflict later is brought up to date like any change." : "It waits, and starts by itself when that loop is merged or stopped."}</span></div></div>` : ""}
         <div class="small muted grow lh">Suggested from ${s.tasks} tasks. Locking commits spec, plan and tasks to <span class="mono tiny">${f.branch || f.name}</span> and starts the loop.</div>
         <button class="btn btn2" type="button" data-act="lock-cancel">Cancel</button>
         <button class="btn" type="submit">Lock &amp; start the loop</button></form>`;
@@ -371,7 +377,13 @@
         if (name === "keep-mine") return save(conflict.mine, conflict.version);
         if (name === "keep-theirs") { conflict = null; await openDoc(tab); return render(appEl); }
         if (name === "step") { await post(`${base()}/step`, { to: el.dataset.to }); return again(); }
-        if (name === "lock-open") { lockForm = true; whenTouched = false; return render(appEl); }
+        if (name === "lock-open") {
+          lockForm = true; whenTouched = false; runAfter = null; overlaps = [];
+          try { overlaps = (await get(`${base()}/overlap`)).overlaps || []; } catch (_) { overlaps = []; }
+          return render(appEl);
+        }
+        if (name === "lk-after") { runAfter = Number(el.dataset.run); return render(appEl); }
+        if (name === "lk-now") { runAfter = null; return render(appEl); }
         if (name === "lock-step") {
           if (state.lock_check && state.lock_check.ok) { lockForm = true; render(appEl); }
           const bar = document.getElementById("lock");
@@ -403,7 +415,10 @@
         if (name === "lock") {
           const usd = parseFloat(document.getElementById("lk-usd").value);
           const minutes = parseInt(document.getElementById("lk-min").value, 10);
+          const limit = parseInt(document.getElementById("lk-limit").value, 10);
           const out = await post(`${base()}/lock`, {
+            update_limit: isFinite(limit) ? limit : undefined,
+            run_after: runAfter === null ? undefined : runAfter,
             pipeline: document.getElementById("lk-pipeline").value,
             autonomy: document.getElementById("lk-autonomy").value,
             when_verified: document.getElementById("lk-when").value,
