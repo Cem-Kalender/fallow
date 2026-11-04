@@ -648,3 +648,61 @@ fn at_the_limit_verify_again_starts_a_new_update() {
     drop(e);
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// FR-012 (phase 6 review F1): a push forward that failed is said; once the engineer brings the
+/// loop up to date again, the verified commit reaches the pull request's branch.
+#[test]
+fn a_failed_push_forward_is_pushed_once_asked_again() {
+    // The update's first check is slowed so the branch can be taken away before the push.
+    let after = format!(
+        "{}{}{}",
+        conflict_repair_step(1, "calc/__init__.py", CALC_INIT_SUB, true),
+        check_step("US1", true, "sleep_ms = 8000"),
+        check_step("US2", true, "")
+    );
+    let (e, root, id) = published("pu-pushfail", &after, None, host());
+    let tx = &e.tx;
+    let repo = root.join("repo");
+    let state = root.join("host.json");
+    let published_at = remote_head(&root, BRANCH).unwrap();
+    remote_commit(&repo, "calc/__init__.py", REMOTE_INIT, "on the remote");
+    set_pr(&state, |pr| pr["mergeable"] = json!("CONFLICTING"));
+    wait_loop(tx, id, "the conflict shown", |v| {
+        v["target"]["pr"]["conflicting"] == true
+    });
+    ask(tx, Request::Update { id }).unwrap();
+    wait_loop(tx, id, "the update merged", |v| {
+        v["update"]["merged"] == true
+    });
+    // The branch is gone on the remote for a moment: the push forward fails, nothing pushed.
+    git(
+        &repo,
+        &["push", "-q", "origin", &format!(":refs/heads/{BRANCH}")],
+    );
+    wait_loop(tx, id, "the failure said", |v| {
+        v["needs"]["why"]
+            .as_str()
+            .is_some_and(|w| w.contains("Nothing was pushed"))
+    });
+    git(
+        &repo,
+        &[
+            "push",
+            "-q",
+            "origin",
+            &format!("{published_at}:refs/heads/{BRANCH}"),
+        ],
+    );
+    ask(tx, Request::Update { id }).unwrap();
+    let v = wait_loop(tx, id, "pushed forward", |v| {
+        v["publish"]["publication"]["commit"] != published_at.as_str()
+    });
+    let now = remote_head(&root, BRANCH).unwrap();
+    assert_eq!(v["publish"]["publication"]["commit"], now);
+    assert!(
+        git(&repo, &["merge-base", "--is-ancestor", &published_at, &now]).is_empty(),
+        "forward from what Fallow pushed"
+    );
+    drop(e);
+    let _ = std::fs::remove_dir_all(&root);
+}

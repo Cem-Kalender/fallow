@@ -741,6 +741,13 @@ impl RunState {
                         f.update_asked = true;
                     }
                 }
+                // 011: a local merge chosen instead of the publication ends its turn (review F2).
+                if matches!(kind, SteeringKind::Merge | SteeringKind::MergeUnchecked) {
+                    if let Some(f) = self.feature_loop.as_mut() {
+                        f.publish_turn = false;
+                        f.publish_moved = None;
+                    }
+                }
                 // 011: publishing instead, or merging without the latest check, ends the merge
                 // asked for in its line (review F1).
                 if matches!(

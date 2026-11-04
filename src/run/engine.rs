@@ -1857,6 +1857,7 @@ impl Engine {
         if for_publication {
             let r = self.runs.get(&id).ok_or("no such loop")?;
             super::update::can_start(r, false)?;
+            self.publish_remote(id)?;
             let r = self.runs.get_mut(&id).ok_or("no such loop")?;
             r.append(Event::Steering {
                 kind: SteeringKind::Update,
@@ -1936,17 +1937,22 @@ impl Engine {
     }
 
     /// 011: fetches the remote target of a published loop on a thread (`Done::Fetched`).
-    fn fetch_remote_target(&mut self, id: u64) -> Result<(), String> {
-        let (remote, target) = match self.published(id) {
-            Some(pb) => (pb.remote, pb.target),
+    /// 011: the remote and target branch a loop publishes to.
+    fn publish_remote(&mut self, id: u64) -> Result<(String, String), String> {
+        match self.published(id) {
+            Some(pb) => Ok((pb.remote, pb.target)),
             None => {
                 let rm = self.loop_remote(id, false).ok_or("no remote")?;
-                (
+                Ok((
                     rm.remote.ok_or("no remote")?,
                     rm.target.ok_or("no target on the remote")?,
-                )
+                ))
             }
-        };
+        }
+    }
+
+    fn fetch_remote_target(&mut self, id: u64) -> Result<(), String> {
+        let (remote, target) = self.publish_remote(id)?;
         let r = self.runs.get_mut(&id).ok_or("no such loop")?;
         r.busy = Some(Busy::Update);
         let (tx, repo) = (self.ctx.tx.clone(), r.state.repo.clone());
@@ -1994,10 +2000,15 @@ impl Engine {
         let Some(l) = r.state.feature_loop.as_ref() else {
             return;
         };
+        // A verified commit not on the pull request yet is pushed first (push_forward_due).
+        let unpushed = l.outcome.is_some()
+            && l.unchecked.is_empty()
+            && r.state.integrated.as_deref() != Some(pb.commit.as_str());
         if r.state.stage != Stage::Publishing
             || l.update.is_some()
             || r.state.needs.is_some()
             || r.is_busy()
+            || unpushed
             || (l.overtaken > 0 && l.overtaken >= l.update_limit)
             || !(pb.conflicting || (pb.behind && pb.strict == Some(true)))
         {
@@ -2049,19 +2060,26 @@ impl Engine {
         let Some(l) = r.state.feature_loop.as_ref() else {
             return;
         };
-        let Some(u) = l.update.clone().filter(|u| u.merged && u.remote) else {
+        // The update's merged result, or (its update dropped after a push that failed) the
+        // verified commit the pull request does not have yet (review F1); never after the pull
+        // request was left as it is.
+        let base = match &l.update {
+            Some(u) if u.merged && u.remote => Some(u.target_commit.clone()),
+            Some(_) => return,
+            None => None,
+        };
+        let Some(to) = r.state.integrated.clone() else {
             return;
         };
         if r.state.stage != Stage::Publishing
             || l.outcome.is_none()
             || r.state.needs.is_some()
             || r.is_busy()
+            || to == pb.commit
+            || (base.is_none() && !l.unchecked.is_empty())
         {
             return;
         }
-        let Some(to) = r.state.integrated.clone() else {
-            return;
-        };
         let (repo, from) = (r.state.repo.clone(), pb.commit.clone());
         r.busy = Some(Busy::Publish);
         let spawned = std::thread::Builder::new()
@@ -2070,7 +2088,10 @@ impl Engine {
                 let result = match crate::publish::fetch_target(&repo, &pb.remote, &pb.target) {
                     Err(e) => Err(Err(e)),
                     // FR-011a: moved since the update started, nothing is pushed.
-                    Ok(at) if at != u.target_commit && !git::is_ancestor(&repo, &at, &to) => {
+                    Ok(at)
+                        if base.as_deref() != Some(at.as_str())
+                            && !git::is_ancestor(&repo, &at, &to) =>
+                    {
                         Err(Ok(at))
                     }
                     Ok(_) => crate::publish::push::push_forward(
@@ -2112,8 +2133,16 @@ impl Engine {
             }),
             After::Fetched(Ok(sha)) => {
                 let integrated = r.state.integrated.clone().unwrap_or_default();
+                let unpushed = published
+                    && l.publication
+                        .as_ref()
+                        .is_some_and(|p| p.commit != integrated)
+                    && l.outcome.is_some();
                 if git::is_ancestor(&r.state.repo, &sha, &integrated) {
-                    if published {
+                    if unpushed {
+                        // The push forward goes on at the next pass (review F1).
+                        Ok(())
+                    } else if published {
                         // The pull request still says otherwise: said, not tried again (10).
                         r.append(Event::NeedsEngineer {
                             why: format!(
@@ -2172,6 +2201,14 @@ impl Engine {
                                 "leave the pull request as it is".into(),
                             ],
                         })
+                    } else if let Some((which, used)) = r.state.limit_hit(super::time::unix_now())
+                    {
+                        r.append(Event::NeedsEngineer {
+                            why: format!(
+                                "{target} moved on the remote again: nothing was pushed. The {which} limit is used up ({used}): raise it to go on."
+                            ),
+                            options: vec!["raise the limit".into()],
+                        })
                     } else {
                         super::update::start(r, tx, &sha, true, false, false)
                     }
@@ -2211,6 +2248,16 @@ impl Engine {
                     }
                     // Free brings itself up to date for the publication; an update the
                     // engineer already started for it goes on (review 5).
+                    Ok(()) if r.state.limit_hit(super::time::unix_now()).is_some() => {
+                        let (which, used) =
+                            r.state.limit_hit(super::time::unix_now()).unwrap_or_default();
+                        r.append(Event::NeedsEngineer {
+                            why: format!(
+                                "{target} on the remote moved: nothing was pushed. The {which} limit is used up ({used}): raise it to bring the loop up to date, or stop."
+                            ),
+                            options: vec!["raise the limit".into(), "stop".into()],
+                        })
+                    }
                     Ok(()) if update_by_itself(&l) || counted => {
                         super::update::start(r, tx, &sha, false, false, true)
                     }
@@ -2249,6 +2296,14 @@ impl Engine {
         }
         if let Err(e) = self.publish(id, "engineer") {
             if let Some(r) = self.runs.get_mut(&id) {
+                // Recorded as a failed publication: its turn ends (review F2).
+                let _ = r.append(Event::PublishFailed {
+                    step: "check".into(),
+                    why: e.clone(),
+                    pushed: None,
+                    by: "engineer".into(),
+                    moved_to: None,
+                });
                 let _ = r.append(Event::NeedsEngineer {
                     why: format!("The publication could not go on: {e}"),
                     options: vec!["stop".into()],
@@ -3904,8 +3959,8 @@ impl Engine {
         }
         self.turns();
         self.target_moved_for(id);
-        self.pr_fell_behind(id);
         self.push_forward_due(id);
+        self.pr_fell_behind(id);
         self.publish_again(id);
         let was_ready = self.ready_seen.contains(&id);
         if ready && !was_ready {
