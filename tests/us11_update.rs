@@ -815,3 +815,96 @@ fn a_budget_used_up_during_an_update_stops_it() {
     drop(e);
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// Stops the engine and starts it again on the same folders (constitution VII).
+fn restart(e: fallow::service::ToolEngine, root: &Path) -> fallow::service::ToolEngine {
+    let fallow::service::ToolEngine { tx: t, handle, .. } = e;
+    t.send(Msg::Shutdown).unwrap();
+    handle.join().unwrap();
+    start_studio(root, &root.join("scenario.toml"), None)
+}
+
+/// Merge commits (two parents) on the loop's branch since its lock.
+fn merges_on(repo: &Path, branch: &str, since: &str) -> usize {
+    git(
+        repo,
+        &[
+            "rev-list",
+            "--merges",
+            "--count",
+            &format!("{since}..{branch}"),
+        ],
+    )
+    .parse()
+    .unwrap_or(0)
+}
+
+/// T036, FR-017: a restart right after an update started (its merge being computed): the
+/// computation is made again, one merge, the loop verified again and ready.
+#[test]
+fn a_restart_while_the_update_is_computed_resumes_it_once() {
+    let root = scratch("u-restart-a");
+    let after = format!(
+        "{}{}",
+        conflict_repair_step(1, "calc/__init__.py", &calc_resolved(), true),
+        check_step("US1", true, "")
+    );
+    let (e, repo, _a, b) = conflicting(&root, &after);
+    moved(&e.tx, b);
+    let lock = git(&repo, &["rev-parse", "main"]);
+    ask(&e.tx, Request::Update { id: b }).unwrap();
+    let e = restart(e, &root);
+    let tx = &e.tx;
+    let r = wait_for(tx, b, "ready again after the restart", |v| {
+        v["stage"] == "ready" && v["feature_loop"]["update"].is_null()
+    });
+    assert_eq!(r["feature_loop"]["updates"], 1, "one update");
+    assert_eq!(
+        merges_on(&repo, "fallow/002-calc2/build", &lock),
+        1,
+        "one merge of the target"
+    );
+    drop(e);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// T036, FR-017: a restart while the update's repair runs: the repair goes on in its session,
+/// the resolution is not lost, one merge commit.
+#[test]
+fn a_restart_during_the_update_repair_keeps_the_resolution() {
+    let root = scratch("u-restart-b");
+    // The repair is slow, so the restart lands during it; a second one answers the step resumed.
+    let slow = conflict_repair_step(1, "calc/__init__.py", &calc_resolved(), true).replacen(
+        "[[step]]\n",
+        "[[step]]\nsleep_ms = 15000\n",
+        1,
+    );
+    let after = format!(
+        "{slow}{}{}",
+        conflict_repair_step(1, "calc/__init__.py", &calc_resolved(), true),
+        check_step("US1", true, "")
+    );
+    let (e, repo, _a, b) = conflicting(&root, &after);
+    moved(&e.tx, b);
+    let lock = git(&repo, &["rev-parse", "main"]);
+    ask(&e.tx, Request::Update { id: b }).unwrap();
+    wait_for(&e.tx, b, "the repair running", |v| {
+        v["steps"]
+            .as_object()
+            .is_some_and(|m| m.values().any(|s| s["part"] == "update-1"))
+    });
+    let e = restart(e, &root);
+    let tx = &e.tx;
+    let r = wait_for(tx, b, "ready again after the restart", |v| {
+        v["stage"] == "ready" && v["feature_loop"]["update"].is_null()
+    });
+    assert_eq!(r["feature_loop"]["updates"], 1);
+    assert_eq!(merges_on(&repo, "fallow/002-calc2/build", &lock), 1);
+    let file = git(&repo, &["show", "fallow/002-calc2/build:calc/__init__.py"]);
+    assert!(
+        !file.contains("<<<<<<<") && file.contains("def mul"),
+        "{file}"
+    );
+    drop(e);
+    let _ = std::fs::remove_dir_all(&root);
+}

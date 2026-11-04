@@ -68,6 +68,49 @@
 
 For a pull request, `merged.commit` (and a record's final commit) is the commit pushed and merged on the remote, not a commit on the local target (a squash or a rebase makes new ones there). A loop's stage goes Ready → Publishing on `published`, Publishing → Done (with `merged`, how: "pull request") when the pull request is merged on the remote, and Publishing → Ready when it is closed. `projects.json` gains `remote_seen` per project (the remote as last read, with `checked_at`) and `when_verified` on each lock record. The pull request's text is kept at `runs/<id>/publish/body.md`.
 
+011 adds (011 data-model.md). Every field added to an existing event is `#[serde(default)]`, so earlier logs load unchanged:
+
+| Type | Fields |
+|---|---|
+| `loop_created` | + update_limit (absent: 3), run_after? (the loop it waits for, chosen at the lock), switches { auto, line, overlap } (from `.fallow/squad.toml` `[updates]`; absent: all true) |
+| `relocked` | + reconciled_target? (the target commit a "Lock again" was reconciled against) |
+| `merged` | + unchecked[] (target commits a "Merge without the latest check" was not verified with) |
+| `published` | + unchecked[] (the same for "Publish without the latest check") |
+| `publish_failed` | + moved_to? (the remote target's commit, when it moved since the loop was verified) |
+| `pull_request_state` | + conflicting, behind (absent: false), strict? (whether the target requires branches to be up to date; absent when it cannot be read) |
+| `steering` | + kinds `update` (also "Verify again on the latest <target>"), `merge_unchecked`, `publish_unchecked`, `leave_pull_request`, `lock_again`, `wait_for`, `stop_waiting` |
+| `updated` | n, target, target_commit, loop_head, remote, in_turn, for_publication (the last three absent: false) |
+| `update_conflicted` | n, working (commit), branch (its actual name), conflicts[] (path, kind: text \| non_text) |
+| `update_docs_changed` | n, paths[] |
+| `update_merged` | n, commit |
+| `update_dropped` | n, why |
+| `pushed_forward` | from, to |
+| `left_pull_request` | unchecked[] |
+| `touched` | files[] |
+| `overtaken` | n, target_commit |
+| `lined` | at_ms |
+| `unlined` | why |
+| `overlap` | with (run id), files[] |
+| `waits_for` | run (run id), from: lock \| engineer |
+| `wait_ended` | run, why |
+| `started_from` | target_commit, commit |
+
+- `updated`: an update started. It is written before the merge is computed, so a restart can resume it; `remote` says the target was read from the remote, `in_turn` that the loop held its line's turn, `for_publication` that the remote target moved before the first push.
+- `update_conflicted`: the merge conflicts. The repair starts on the `working` commit, kept on the loop's own branch `branch`.
+- `update_docs_changed`: the target changed the feature's locked documents. Nothing is merged; the engineer locks again.
+- `update_merged`: Fallow's two-parent merge commit is on the loop's branch. The stories are checked again from there.
+- `update_dropped`: the update was dropped, because the pull request was merged or closed, the loop stopped, or it was locked again.
+- `pushed_forward`: the loop's branch on the remote moved forward from `from` to `to`, after an update of a published loop.
+- `left_pull_request`: the engineer chose "Leave the pull request as it is" at the limit of overtaken updates; `unchecked` names the target commits not verified with.
+- `touched`: the files an accepted step changed. They feed the overlap warnings.
+- `overtaken`: the target moved again while the loop held its turn, before its result could be merged or published.
+- `lined` and `unlined`: the loop joined or left the merge line of its target. `at_ms` (milliseconds since the epoch) is its place in the line.
+- `overlap`: another unfinished loop touches the same files.
+- `waits_for` and `wait_ended`: the loop does not start steps until loop `run` is merged, stopped or deleted, and then the wait is over.
+- `started_from`: a loop that waited from its lock and built nothing starts from the target at `target_commit`, merged straight onto its branch as `commit`. Its base moves there and no update is left in progress.
+
+`projects.json` gains, on each lock record, `update_limit?`, `run_after?` and `reconciled_target?`, also optional.
+
 006's events (`step_*`, `verified`, `gate_run`, `verdict`, `steering`, `limits_set`, `session_lost`, `needs_cleared`, `merged`, `stopped`) are kept. `run_created` is kept for runs from 006, which stay readable.
 
 **Rules**:

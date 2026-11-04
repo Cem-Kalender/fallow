@@ -128,7 +128,9 @@ fn start_from_target(r: &mut Run, tip: &str) -> Result<(), String> {
         return Ok(());
     }
     let n = l.updates + 1;
-    let index = r.dir.join("start-index");
+    let index = r
+        .dir
+        .join(format!("start-{}.index", super::time::unix_ms()));
     let computed = super::update::compute(
         &repo,
         &l.feature,

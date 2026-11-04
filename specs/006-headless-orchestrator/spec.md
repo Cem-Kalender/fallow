@@ -207,7 +207,8 @@ part.
 > loop's branch, open a pull request with the run's summary, never push to the target, force,
 > bypass or approve). Not yet: FR-025 and FR-026 (learning required checks, waiting for them,
 > repairing a failing check, bringing a branch that fell behind up to date); 010 shows the
-> remote's checks and leaves what follows to the engineer.
+> remote's checks and leaves what follows to the engineer. 011 (`specs/011-merge-conflicts`) later
+> delivers bringing a branch that fell behind up to date (part of FR-026).
 
 **Without a remote, or with an unprotected target branch:** the engineer merges locally.
 
@@ -441,6 +442,10 @@ pass rate, time, cost and interventions.
   branch behind the target MUST be brought up to date and gated again. With nothing required and
   nothing reporting within a waiting period (default 5 minutes), the page MUST say so, and the run
   continues.
+
+  > Bringing a branch that fell behind up to date, and gating it again, is delivered for a feature
+  > loop by 011 (`specs/011-merge-conflicts`). Waiting for the required checks and repairing a
+  > failing one are not.
 - **FR-027**: The orchestrator MUST NOT force-push, bypass protection, approve its own pull request,
   or act with rights beyond the engineer's own. The merge of a pull request MUST be the engineer's
   action, through the remote's normal merge.

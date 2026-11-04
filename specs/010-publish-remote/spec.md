@@ -116,6 +116,8 @@ After the pull request is opened, the engineer reviews and merges it on the remo
 - **FR-011**: A loop MUST have at most one open pull request; publishing again while one is open MUST show it instead.
 - **FR-012**: When pushing or opening the pull request fails, the loop page MUST say which step failed and why in plain words, MUST leave nothing pushed that it does not report, and MUST let the engineer try again. A branch name taken on the remote by other commits MUST NOT be overwritten.
 
+  > Amended by 011's FR-012 (`specs/011-merge-conflicts`): after an update, Fallow may move the loop's own branch on the remote forward, never forced, and only when it is exactly at the commit Fallow last pushed to it and the new commit descends from that one. In every other case it is still never overwritten.
+
 (FR-019 to FR-021, added at clarification, follow below.)
 
 **Publishing when verified**

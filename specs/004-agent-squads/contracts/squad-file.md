@@ -72,6 +72,11 @@ requires = [
   "done:builder",                # every task handed to a builder is reported done, with evidence
   "signal:review-approved@reviewer",  # signalled by a session in role "reviewer" (every reviewer, if several)
 ]
+
+[updates]                        # 011: the parts of an update that act on their own (011 FR-016c)
+auto = true                      # false: a Free loop asks before an update, as Normal does
+line = true                      # false: merges are not held in a line per target
+overlap = true                   # false: no overlap between loops is computed or shown
 ```
 
 ## Rules
@@ -90,6 +95,14 @@ requires = [
 - **Read-only roles**: their sessions' worktrees must stay clean (FR-013).
 - **Exactly one lead**: the session the burst starts from is in role `lead`, whatever its profile;
   a squad must define a role named `lead` (the built-in one is used if it does not).
+- **`[updates]`** (011, research R-8b): `auto`, `line` and `overlap` are booleans, each `true` when
+  absent. `auto = false` makes a Free loop ask before bringing itself up to date, as Normal does.
+  `line = false` stops holding merges in a line per target; the recheck before each merge still
+  applies, and every move of the target found there counts as an overtaking. `overlap = false`
+  turns off the overlap warnings between loops. A merge that would conflict is never offered,
+  whatever the switches. A loop records the values in force at its lock. An unknown key under
+  `[updates]` is a warning, `unknown key updates.<k>`, not a refused squad file; a value that is
+  not `true` or `false` is a warning too, and that part stays on.
 
 ## Built-in squad
 

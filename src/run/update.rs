@@ -274,7 +274,13 @@ fn computing(
     run.busy = Some(Busy::Update);
     let id = run.id();
     let repo = run.state.repo.clone();
-    let index: PathBuf = run.worktrees().join(format!("update-{n}.index"));
+    // Its own index file: two computations of one update never share one (a restart while the
+    // first still runs would otherwise mix their trees).
+    let index: PathBuf = run.worktrees().join(format!(
+        "update-{n}-{}-{}.index",
+        std::process::id(),
+        super::time::unix_ms()
+    ));
     let (feature, loop_head, target_commit, target) = (
         feature.to_string(),
         loop_head.to_string(),
@@ -354,7 +360,9 @@ pub fn computed(run: &mut Run, n: u32, result: Result<Computed, String>) -> Resu
         .feature_loop
         .as_ref()
         .and_then(|l| l.update.clone())
-        .filter(|u| u.n == n && !u.merged)
+        // Not merged and not computed yet: a second result for the same update (a computation
+        // started again while the first still ran) is discarded.
+        .filter(|u| u.n == n && !u.merged && u.working.is_none() && u.docs_changed.is_empty())
     else {
         discard(run, &result);
         return Ok(());

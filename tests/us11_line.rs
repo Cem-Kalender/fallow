@@ -559,3 +559,47 @@ fn a_normal_loop_asks_at_its_turn_then_merges() {
     drop(e);
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// T036, FR-017: a restart with two loops in a merge line keeps the line's order; both merge.
+#[test]
+fn a_restart_keeps_the_merge_lines_order() {
+    let root = scratch("l-restart");
+    // a's update, its first check slowed (and again after the restart cut it short), then b's.
+    let after = format!(
+        "{}{}{}{}{}{}",
+        slow_check("US1", 8000),
+        check_step("US1", true, ""),
+        check_step("US2", true, ""),
+        check_step("US1", true, ""),
+        check_step("US1", true, ""),
+        check_step("US2", true, "")
+    );
+    let (e, repo, a, b) = two_ready(&root, &after, Some(Level::Free), LockExtra::default());
+    commit_on(
+        &repo,
+        "main",
+        "NOTES.md",
+        "outside\n",
+        "a note from outside Fallow",
+    );
+    merge_when_read(&e.tx, a).unwrap();
+    wait_for(&e.tx, a, "a brought up to date for its merge", |v| {
+        !v["feature_loop"]["update"].is_null()
+    });
+    assert_eq!(merge(&e.tx, b).unwrap()["in_line_after"], "001-calc");
+    let fallow::service::ToolEngine { tx: t, handle, .. } = e;
+    t.send(Msg::Shutdown).unwrap();
+    handle.join().unwrap();
+    let e = start_studio(&root, &root.join("scenario.toml"), None);
+    let tx = &e.tx;
+    let v = loop_view(tx, b);
+    assert_eq!(
+        v["line"]["after"], "001-calc",
+        "the order kept: {}",
+        v["line"]
+    );
+    wait_for(tx, a, "a merged", |v| v["stage"] == "done");
+    wait_for(tx, b, "b merged", |v| v["stage"] == "done");
+    drop(e);
+    let _ = std::fs::remove_dir_all(&root);
+}
