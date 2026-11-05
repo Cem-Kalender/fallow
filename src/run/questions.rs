@@ -401,6 +401,9 @@ fn start_lead(
         group: Some(Arc::new(
             Group::new().map_err(|e| format!("cannot create a process group: {e}"))?,
         )),
+        attachments: Vec::new(),
+        web: false,
+        user_settings: false,
     };
     let tx = ctx.tx.clone();
     let id = run.id();

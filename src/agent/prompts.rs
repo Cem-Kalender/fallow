@@ -47,6 +47,9 @@ pub struct LeadTurn<'a> {
     pub command: Option<CommandUse>,
     /// Files the engineer refers to with `@` (009 US5).
     pub refs: &'a [FileRef],
+    /// 012 (research R-7): the project's instruction files as text, when they are handed with
+    /// this turn (empty otherwise).
+    pub instructions: &'a str,
 }
 
 /// A file the engineer refers to: its text, or why it is not given (a secret, a binary).
@@ -82,6 +85,7 @@ fn quoted(text: &str) -> String {
 /// The instruction of a lead's turn (header `Fallow step: lead_turn`).
 pub fn lead_turn(t: &LeadTurn) -> String {
     let mut s = header("lead_turn", None);
+    s.push_str(t.instructions);
     match t.feature {
         None => {
             if t.first {
@@ -518,7 +522,32 @@ mod tests {
             withdrawn: &[],
             command,
             refs: &[],
+            instructions: "",
         })
+    }
+
+    #[test]
+    fn the_instruction_files_come_right_after_the_header() {
+        let s = lead_turn(&LeadTurn {
+            project: "shop",
+            feature: None,
+            first: false,
+            said: "hi",
+            edits: &[],
+            plain_folder: false,
+            withdrawn: &[],
+            command: None,
+            refs: &[],
+            instructions: "The project's instructions for coding agents, from `AGENTS.md`:
+```
+be brief
+```
+
+",
+        });
+        assert!(s.starts_with("Fallow step: lead_turn
+
+The project's instructions for coding agents, from `AGENTS.md`"));
     }
 
     #[test]

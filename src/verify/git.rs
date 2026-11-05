@@ -1510,3 +1510,177 @@ mod view_tests {
         let _ = std::fs::remove_dir_all(&d);
     }
 }
+
+// ---- 012: solo sessions (research R-2, R-3, R-10, R-18) ----
+
+/// The empty folder Fallow points `core.hooksPath` at for its own git commands on a session,
+/// so no hook runs, from any source (R-2, R-3). Set once at start, under Fallow's own data.
+static NOHOOKS: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+/// Sets (and creates) the empty hooks folder; the first call wins.
+pub fn set_nohooks(dir: PathBuf) -> Result<(), String> {
+    std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let _ = NOHOOKS.set(dir);
+    Ok(())
+}
+
+fn nohooks() -> Result<&'static PathBuf, String> {
+    NOHOOKS
+        .get()
+        .ok_or_else(|| "Fallow's empty hooks folder is not set".to_string())
+}
+
+/// `git` in `dir` with no hook from any source and no LFS download (R-2): `-c core.hooksPath`
+/// at Fallow's empty folder, `GIT_LFS_SKIP_SMUDGE=1`.
+fn git_nohooks(dir: &Path, args: &[&str], env: &[(&str, &str)]) -> Result<String, String> {
+    let hooks = nohooks()?.display().to_string();
+    let mut c = crate::platform::command("git");
+    c.current_dir(dir)
+        .args(["-c", &format!("core.hooksPath={hooks}")])
+        .args(args)
+        .env("GIT_LFS_SKIP_SMUDGE", "1");
+    for (k, v) in env {
+        c.env(k, v);
+    }
+    let out = c.output().map_err(|e| format!("git: {e}"))?;
+    if out.status.success() {
+        Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+    } else {
+        Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
+    }
+}
+
+/// The engineer's configured identity (`user.name` and `user.email` both set), or `None`.
+pub fn identity(dir: &Path) -> Option<(String, String)> {
+    let get = |k: &str| {
+        git(dir, &["config", k])
+            .ok()
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())
+    };
+    Some((get("user.name")?, get("user.email")?))
+}
+
+/// A new worktree at `dir` on a new branch `branch` from `start`, without hooks or LFS download
+/// (R-2). Refused when the branch name is taken.
+pub fn worktree_add_new(repo: &Path, dir: &Path, branch: &str, start: &str) -> Result<(), String> {
+    if rev_exists(repo, &format!("refs/heads/{branch}")) {
+        return Err(format!("the branch {branch} exists already"));
+    }
+    let d = dir.display().to_string();
+    git_nohooks(repo, &["worktree", "add", "-q", "-b", branch, &d, start], &[]).map(|_| ())
+}
+
+/// Renames a branch, without hooks (a session's branch named after its first message).
+pub fn rename_branch_nohooks(dir: &Path, from: &str, to: &str) -> Result<(), String> {
+    git_nohooks(dir, &["branch", "-m", from, to], &[]).map(|_| ())
+}
+
+/// Fallow's snapshot of a session's working copy (R-3): everything the ignore rules let in,
+/// committed with plumbing so no hook runs and nothing is signed, on `branch` only. `None` when
+/// nothing changed. Refused when the working copy is not on `branch` (a command moved it).
+pub fn snapshot(wt: &Path, branch: &str, message: &str) -> Result<Option<String>, String> {
+    let on = git(wt, &["symbolic-ref", "-q", "HEAD"])
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default();
+    if on != format!("refs/heads/{branch}") {
+        let now = on.strip_prefix("refs/heads/").map_or_else(
+            || "a detached commit".to_string(),
+            |b| format!("the branch {b}"),
+        );
+        return Err(format!(
+            "the working copy is not on the session's branch (it is on {now})"
+        ));
+    }
+    git_nohooks(wt, &["add", "-A"], &[])?;
+    let tree = git_nohooks(wt, &["write-tree"], &[])?.trim().to_string();
+    let old = head(wt)?;
+    let old_tree = git(wt, &["rev-parse", &format!("{old}^{{tree}}")])?
+        .trim()
+        .to_string();
+    if tree == old_tree {
+        return Ok(None);
+    }
+    let mut args: Vec<&str> = author_args(wt);
+    args.extend(["-c", "commit.gpgSign=false"]);
+    args.extend(["commit-tree", &tree, "-p", &old, "--no-gpg-sign", "-m", message]);
+    let new = git_nohooks(wt, &args, &[])?.trim().to_string();
+    let r = format!("refs/heads/{branch}");
+    git_nohooks(wt, &["update-ref", &r, &new, &old], &[])?;
+    Ok(Some(new))
+}
+
+/// Points `refname` at `commit`, without hooks (the session's undone refs, R-5).
+pub fn update_ref_nohooks(dir: &Path, refname: &str, commit: &str) -> Result<(), String> {
+    git_nohooks(dir, &["update-ref", refname, commit], &[]).map(|_| ())
+}
+
+/// Deletes `refname`, without hooks.
+pub fn delete_ref_nohooks(dir: &Path, refname: &str) -> Result<(), String> {
+    git_nohooks(dir, &["update-ref", "-d", refname], &[]).map(|_| ())
+}
+
+/// Resets the working copy and its branch to `commit`, without hooks or LFS download (undo).
+pub fn reset_hard_nohooks(wt: &Path, commit: &str) -> Result<(), String> {
+    git_nohooks(wt, &["reset", "-q", "--hard", commit], &[]).map(|_| ())
+}
+
+/// Every local and remote-tracking ref with its commit, read without taking a lock (R-10).
+pub fn ref_snapshot(repo: &Path) -> Result<std::collections::BTreeMap<String, String>, String> {
+    Ok(git(
+        repo,
+        &[
+            "--no-optional-locks",
+            "for-each-ref",
+            "--format=%(refname) %(objectname)",
+            "refs/heads",
+            "refs/remotes",
+        ],
+    )?
+    .lines()
+    .filter_map(|l| l.split_once(' '))
+    .map(|(r, s)| (r.to_string(), s.to_string()))
+    .collect())
+}
+
+/// The engineer's folder's status lines, read without taking its index lock (R-2).
+pub fn folder_status(dir: &Path) -> Result<Vec<String>, String> {
+    Ok(git(dir, &["--no-optional-locks", "status", "--porcelain=v1"])?
+        .lines()
+        .map(str::to_string)
+        .collect())
+}
+
+/// The blob a file's content would be (`hash-object`, nothing written), or `None` when it is
+/// gone.
+pub fn blob_of(dir: &Path, path: &str) -> Option<String> {
+    if !dir.join(path).is_file() {
+        return None;
+    }
+    git(dir, &["hash-object", "--", path])
+        .ok()
+        .map(|s| s.trim().to_string())
+}
+
+/// The oldest git Fallow works with (R-18): 011's updates need `merge-tree --write-tree`.
+pub const MIN_GIT: (u32, u32) = MERGE_TREE_GIT;
+
+/// Whether git is installed in a version Fallow can use (FR-040).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct GitCheck {
+    /// The version found, `major.minor`.
+    pub found: Option<String>,
+    pub ok: bool,
+    pub min: String,
+}
+
+/// Runs `git --version` (FR-040). A missing git is never taken for a folder without a
+/// repository.
+pub fn git_check() -> GitCheck {
+    let v = git_version(&std::env::temp_dir());
+    GitCheck {
+        found: v.map(|(a, b)| format!("{a}.{b}")),
+        ok: v.is_some_and(|v| v >= MIN_GIT),
+        min: format!("{}.{}", MIN_GIT.0, MIN_GIT.1),
+    }
+}

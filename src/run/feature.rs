@@ -2486,6 +2486,16 @@ fn start(run: &mut Run, ctx: &Ctx, n: u32) -> Result<(), String> {
     let call = Call {
         instruction: {
             let mut text = machine::instruction_of(run, n);
+            // 012 (FR-042, research R-7): the project's instruction files, from the step's own
+            // worktree, with every step (a builder or checker never reads them by itself).
+            let instr = crate::agent::instructions::block(&crate::agent::instructions::read(
+                &worktree,
+                &crate::agent::instructions::extra_at_head(&repo),
+            ));
+            if !instr.is_empty() {
+                text.push_str("\n\n");
+                text.push_str(instr.trim_end());
+            }
             let notes = notes_for(run, n, &defname);
             for note in &notes {
                 text.push_str(&format!(
@@ -2493,7 +2503,7 @@ fn start(run: &mut Run, ctx: &Ctx, n: u32) -> Result<(), String> {
                 ));
             }
             // The step's instruction file says exactly what the agent was given.
-            if !notes.is_empty() {
+            if !notes.is_empty() || !instr.is_empty() {
                 let _ = std::fs::write(run.steps_dir().join(format!("{n}.prompt")), &text);
             }
             text
@@ -2509,6 +2519,9 @@ fn start(run: &mut Run, ctx: &Ctx, n: u32) -> Result<(), String> {
         system: Some(def.body.clone()),
         partial: false,
         group: Some(Arc::clone(&group)),
+        attachments: Vec::new(),
+        web: false,
+        user_settings: false,
     };
     run.append(Event::StepStarted {
         n,

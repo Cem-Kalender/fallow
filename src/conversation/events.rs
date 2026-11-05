@@ -14,6 +14,8 @@ use crate::run::events::{Log, Logged};
 pub enum Kind {
     Project,
     Spec,
+    /// 012: a solo session with an assistant.
+    Solo,
 }
 
 /// A document as the engineer left it before a turn, kept to be put back if the turn is
@@ -61,6 +63,12 @@ pub enum Event {
         /// The lead agent the session talks to (009); none reads as `lead`.
         #[serde(default)]
         lead: Option<String>,
+        /// 012: the assistant a solo session talks to.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        agent: Option<String>,
+        /// 012 (FR-034): the solo session a feature's spec session was started from.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        origin: Option<String>,
     },
     TurnStarted {
         n: u32,
@@ -78,6 +86,17 @@ pub enum Event {
         model: Option<String>,
         #[serde(default)]
         new_session: bool,
+        /// 012 (research R-7): the project's instruction files handed with this turn, each
+        /// with its fingerprint, so a change is seen at the next turn. Empty when none were
+        /// handed (they had not changed).
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        instructions: Vec<InstructionRec>,
+        /// 012: the images sent with the message.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        attachments: Vec<super::solo::AttachmentRec>,
+        /// 012 (FR-027): how long the message waited for a free agent slot.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        slot_waited_ms: Option<u64>,
     },
     TurnFinished {
         n: u32,
@@ -95,6 +114,21 @@ pub enum Event {
         /// withdrawn and what the lead did for it is undone.
         #[serde(default)]
         withdrawn: bool,
+        /// 012 (R-3): every commit the session's turn added, the assistant's own included.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        commits: Vec<String>,
+        /// 012: why Fallow's commit at the end of the turn failed.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        commit_failed: Option<String>,
+        /// 012 (R-4): the paths the turn left, with their content, when its commit failed.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        changed: Vec<super::solo::ChangedRec>,
+        /// 012: the turn was cut short (stopped, or Fallow restarted).
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        cut: bool,
+        /// 012: this turn's commit also holds turn `folded_into`'s changes.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        folded_into: Option<u32>,
     },
     /// The engineer cancelled turn `n` (008 T047): where the lead's working copy stood when the
     /// turn began, and the engineer's edited documents as they were then.
@@ -106,11 +140,23 @@ pub enum Event {
     ApprovalAsked {
         id: String,
         command: String,
+        /// 012 (R-6): why the judge asks the engineer, per command.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        reasons: Vec<String>,
+        /// 012 (FR-016): what a merge would bring, and the engineer's folder.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        merge: Option<Value>,
     },
     ApprovalAnswered {
         id: String,
         answer: ApprovalAnswer,
         prefix: Option<String>,
+        /// 012: allowed by the judge under "until I switch back", not by the engineer.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        auto: bool,
+        /// 012: why it was answered without the engineer ("Fallow restarted").
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        why: Option<String>,
     },
     ModeSet {
         mode: Mode,
@@ -135,6 +181,9 @@ pub enum Event {
     LeadSet {
         lead: String,
     },
+    /// 012: a solo session's own events (conversation/solo.rs), each with its own `type`.
+    #[serde(untagged)]
+    Solo(super::solo::SoloEvent),
 }
 
 /// One turn of a conversation, folded.
@@ -153,11 +202,28 @@ pub struct Turn {
     pub cost_usd: Option<f64>,
     pub failure: Option<String>,
     pub approvals: Vec<Approval>,
+    /// 012: the instruction files handed with this turn (none when unchanged).
+    pub instructions: Vec<InstructionRec>,
+    /// 012: the images sent with the message.
+    pub attachments: Vec<super::solo::AttachmentRec>,
     /// Cancelled by the engineer: the message was withdrawn.
     pub withdrawn: bool,
     /// The cancel asked while the turn ran, until it ends.
     #[serde(skip)]
     pub cancel: Option<Cancel>,
+}
+
+/// 012: an instruction file as handed to an agent: its path, its fingerprint, whether it was
+/// cut, and why it was not given, if it was not.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InstructionRec {
+    pub path: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub sha: String,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub cut: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skipped: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -196,6 +262,12 @@ pub struct State {
     /// Those of a turn that began a session, until it ends with one.
     #[serde(skip)]
     pub lead_pending: Option<(Option<String>, Option<String>)>,
+    /// 012: the assistant of a solo session.
+    pub agent: Option<String>,
+    /// 012 (FR-034): the solo session a spec session was started from.
+    pub origin: Option<String>,
+    /// 012: a solo session's own state.
+    pub solo: Option<super::solo::Solo>,
 }
 
 impl State {
@@ -210,6 +282,8 @@ impl State {
             forked_from,
             workdir,
             lead,
+            agent,
+            origin,
         } = &first.event
         else {
             return Err(format!(
@@ -235,6 +309,9 @@ impl State {
             lead_runtime: None,
             lead_model: None,
             lead_pending: None,
+            agent: agent.clone(),
+            origin: origin.clone(),
+            solo: (*kind == Kind::Solo).then(super::solo::Solo::default),
         };
         for l in &events[1..] {
             s.apply(l);
@@ -254,6 +331,8 @@ impl State {
                 runtime,
                 model,
                 new_session,
+                instructions,
+                attachments,
                 ..
             } => {
                 self.busy = true;
@@ -273,6 +352,8 @@ impl State {
                     cost_usd: None,
                     failure: None,
                     approvals: Vec::new(),
+                    instructions: instructions.clone(),
+                    attachments: attachments.clone(),
                     withdrawn: false,
                     cancel: None,
                 });
@@ -288,8 +369,26 @@ impl State {
                 cost_usd,
                 failure,
                 withdrawn,
+                commits,
+                commit_failed,
+                changed,
+                cut,
+                folded_into,
             } => {
                 self.busy = false;
+                if let Some(solo) = self.solo.as_mut() {
+                    solo.turn_finished(
+                        *n,
+                        super::solo::TurnCommits {
+                            commit: commit.clone(),
+                            commits: commits.clone(),
+                            failed: commit_failed.clone(),
+                            changed: changed.clone(),
+                            cut: *cut,
+                            folded_into: *folded_into,
+                        },
+                    );
+                }
                 if let Some(s) = session {
                     self.session = Some(s.clone());
                 }
@@ -335,7 +434,7 @@ impl State {
                     });
                 }
             }
-            Event::ApprovalAsked { id, command } => {
+            Event::ApprovalAsked { id, command, .. } => {
                 if let Some(t) = self.turns.last_mut() {
                     t.approvals.push(Approval {
                         id: id.clone(),
@@ -345,7 +444,9 @@ impl State {
                     });
                 }
             }
-            Event::ApprovalAnswered { id, answer, prefix } => {
+            Event::ApprovalAnswered {
+                id, answer, prefix, ..
+            } => {
                 if let Some(a) = self
                     .turns
                     .iter_mut()
@@ -369,12 +470,34 @@ impl State {
             }
             Event::WorkdirSet { workdir } => self.workdir = workdir.clone(),
             Event::LeadSet { lead } => self.lead = Some(lead.clone()),
+            Event::Solo(e) => {
+                if let Some(solo) = self.solo.as_mut() {
+                    solo.apply(e);
+                }
+                // A suggestion is also the turn's (FR-030).
+            }
         }
     }
 
     /// The lead agent's name (009): `lead` for a session that never named one.
     pub fn lead_name(&self) -> &str {
         self.lead.as_deref().unwrap_or("lead")
+    }
+
+    /// 012: the instruction files as last handed in this conversation (path → fingerprint).
+    pub fn last_instructions(&self) -> Vec<(String, String)> {
+        self.turns
+            .iter()
+            .rev()
+            // A withdrawn turn's agent never kept what it was handed (review L2).
+            .find(|t| !t.instructions.is_empty() && !t.withdrawn)
+            .map(|t| {
+                t.instructions
+                    .iter()
+                    .map(|i| (i.path.clone(), i.sha.clone()))
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     /// Whether the session's lead can no longer change (FR-015): a message was sent and not
@@ -415,6 +538,30 @@ mod tests {
     }
 
     #[test]
+    fn a_solo_sessions_events_sit_in_the_conversation_log() {
+        use crate::conversation::solo::SoloEvent;
+        let e = Event::Solo(SoloEvent::SessionCreated {
+            branch: "fallow/solo/fix".into(),
+            start_branch: Some("main".into()),
+            start_commit: "s0".into(),
+            worktree: "wt".into(),
+            dirty_at_start: false,
+            web: true,
+            lfs: false,
+        });
+        let j = serde_json::to_value(&e).unwrap();
+        assert_eq!(j["type"], "session_created");
+        assert_eq!(serde_json::from_value::<Event>(j).unwrap(), e);
+        // A conversation event still reads as itself.
+        let m: Event = serde_json::from_str(r#"{"type":"mode_set","mode":"ask"}"#).unwrap();
+        assert!(matches!(m, Event::ModeSet { .. }));
+        let created = logged(1, Event::ConversationCreated { kind: Kind::Solo, project: "shop".into(), feature: None, forked_from: None, workdir: "w".into(), lead: None, agent: Some("assistant".into()), origin: None });
+        let s = State::fold("s1", &[created, logged(2, e)]).unwrap();
+        assert_eq!(s.solo.as_ref().unwrap().branch, "fallow/solo/fix");
+        assert_eq!(s.agent.as_deref(), Some("assistant"));
+    }
+
+    #[test]
     fn a_conversation_folds_its_turns_mode_and_approvals() {
         let events = vec![
             logged(
@@ -426,6 +573,8 @@ mod tests {
                     forked_from: Some("c1".into()),
                     workdir: "w".into(),
                     lead: None,
+                    agent: None,
+                    origin: None,
                 },
             ),
             logged(
@@ -439,6 +588,9 @@ mod tests {
                     runtime: None,
                     model: None,
                     new_session: false,
+                    instructions: Vec::new(),
+                    attachments: Vec::new(),
+                    slot_waited_ms: None,
                 },
             ),
             logged(
@@ -446,6 +598,8 @@ mod tests {
                 Event::ApprovalAsked {
                     id: "a1".into(),
                     command: "pip list".into(),
+                    reasons: Vec::new(),
+                    merge: None,
                 },
             ),
             logged(
@@ -454,6 +608,8 @@ mod tests {
                     id: "a1".into(),
                     answer: ApprovalAnswer::Always,
                     prefix: Some("pip list".into()),
+                    auto: false,
+                    why: None,
                 },
             ),
             logged(
@@ -469,6 +625,11 @@ mod tests {
                     cost_usd: Some(0.2),
                     failure: None,
                     withdrawn: false,
+                    commits: Vec::new(),
+                    commit_failed: None,
+                    changed: Vec::new(),
+                    cut: false,
+                    folded_into: None,
                 },
             ),
             logged(
@@ -510,6 +671,8 @@ mod tests {
             forked_from: None,
             workdir: "w".into(),
             lead: None,
+            agent: None,
+            origin: None,
         })
         .unwrap();
         log.append(Event::ModeSet {
@@ -536,6 +699,9 @@ mod tests {
                 runtime: Some("claude".into()),
                 model: Some(model.into()),
                 new_session,
+                instructions: Vec::new(),
+                attachments: Vec::new(),
+                slot_waited_ms: None,
             },
         )
     }
@@ -554,6 +720,11 @@ mod tests {
                 cost_usd: None,
                 failure: None,
                 withdrawn,
+                commits: Vec::new(),
+                commit_failed: None,
+                changed: Vec::new(),
+                cut: false,
+                folded_into: None,
             },
         )
     }

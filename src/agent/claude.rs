@@ -7,7 +7,7 @@ use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use super::rights::{Edits, Rights};
 use super::{
@@ -69,10 +69,7 @@ impl Runtime for Claude {
         Capabilities {
             images: true,
             web_off: true,
-            control_files: vec![
-                ".claude/settings.json".into(),
-                ".claude/settings.local.json".into(),
-            ],
+            control_files: CONTROL_FILES.iter().map(|f| f.to_string()).collect(),
         }
     }
 
@@ -173,6 +170,13 @@ pub fn rules(r: &Rights) -> (Vec<String>, Vec<String>, &'static str) {
     (allow, deny, mode)
 }
 
+/// 012: the tools a whole-tool ask rule sends to the permission prompt for the assistant
+/// (research R-6; T001 found no `MultiEdit` on 2.1.318, kept for older versions).
+const ASKED: [&str; 6] = ["Bash", "PowerShell", "Edit", "Write", "MultiEdit", "NotebookEdit"];
+
+/// 012: the files in a working copy through which Claude Code reads settings of its own.
+const CONTROL_FILES: [&str; 2] = [".claude/settings.json", ".claude/settings.local.json"];
+
 /// The arguments after the agent's own leading arguments (research R-3, S-5, S-7). The
 /// instruction goes on stdin, which also keeps it off the command line.
 pub fn args(c: &Call) -> Vec<String> {
@@ -189,15 +193,54 @@ pub fn args(c: &Call) -> Vec<String> {
         a.push("--json-schema".into());
         a.push(s.to_string());
     }
-    let (allow, deny, mode) = rules(&c.rights);
+    let (mut allow, mut deny, mode) = rules(&c.rights);
+    // 012 (research R-8): the web tools are the assistant's, on its switch; off for everyone
+    // else.
+    let web = ["WebFetch".to_string(), "WebSearch".to_string()];
+    if c.web {
+        allow.extend(web);
+    } else {
+        deny.extend(web);
+    }
+    if !c.attachments.is_empty() {
+        // The instruction then goes as one stream-json user message with its images (T001).
+        a.push("--input-format".into());
+        a.push("stream-json".into());
+    }
+    // 012 (FR-042, research R-6, T001): no settings from the working copy, ever; none of the
+    // runtime's own for unattended kinds; for the assistant the engineer's user settings, with
+    // every command and edit still sent to Fallow by whole-tool ask rules, and no hook.
+    a.push("--setting-sources".into());
+    a.push(if c.user_settings { "user" } else { "" }.into());
+    a.push("--settings".into());
+    a.push(
+        if c.user_settings {
+            json!({"permissions": {"ask": ASKED}, "disableAllHooks": true})
+        } else {
+            json!({"disableAllHooks": true})
+        }
+        .to_string(),
+    );
+    // The fixed tool list (the engineer's decision of 2026-11-05): no other built-in tool.
+    let mut tools = vec!["Read", "Glob", "Grep", "Bash", "PowerShell", "Task"];
+    if !matches!(c.rights.edits, Edits::None) {
+        tools.extend(["Edit", "Write", "NotebookEdit"]);
+    }
+    if c.web {
+        tools.extend(["WebSearch", "WebFetch"]);
+    }
+    a.push("--tools".into());
+    a.push(tools.join(","));
+    // Its own settings files are never an agent's to edit (Capabilities.control_files).
+    for f in CONTROL_FILES {
+        push(&mut deny, [format!("Edit({f})"), format!("Write({f})")]);
+    }
     a.push("--permission-mode".into());
     a.push(mode.into());
     a.push("--allowedTools".into());
     a.extend(allow);
-    if !deny.is_empty() {
-        a.push("--disallowedTools".into());
-        a.extend(deny);
-    }
+    a.push("--disallowedTools".into());
+    a.extend(deny);
     if let Some(t) = &c.rights.prompt_tool {
         a.push("--permission-prompt-tool".into());
         a.push(t.clone());
@@ -222,10 +265,15 @@ pub fn args(c: &Call) -> Vec<String> {
             a.push("--fork-session".into());
         }
     }
-    if let Some(m) = c.model.as_ref().filter(|m| !m.is_empty()) {
-        a.push("--model".into());
-        a.push(m.clone());
-    }
+    // 012 (FR-042): always a model, since the user's default no longer applies to every kind.
+    a.push("--model".into());
+    a.push(
+        c.model
+            .as_ref()
+            .filter(|m| !m.is_empty())
+            .cloned()
+            .unwrap_or_else(|| super::registry::models("claude")[0].to_string()),
+    );
     if let Some(b) = c.budget_usd {
         a.push("--max-budget-usd".into());
         a.push(format!("{:.2}", b.max(0.01)));
@@ -235,6 +283,107 @@ pub fn args(c: &Call) -> Vec<String> {
         a.push(s.clone());
     }
     a
+}
+
+/// 012: what goes on stdin: the instruction, or with attachments one stream-json user message
+/// holding the text and each image as a base64 block (checked by T001). An image that cannot be
+/// read is named in the text instead.
+pub fn stdin_text(c: &Call) -> String {
+    if c.attachments.is_empty() {
+        return c.instruction.clone();
+    }
+    let mut content = vec![json!({"type": "text", "text": c.instruction})];
+    for a in &c.attachments {
+        match std::fs::read(&a.path) {
+            Ok(bytes) => content.push(json!({"type": "image", "source": {
+                "type": "base64", "media_type": a.media_type,
+                "data": base64(&bytes)}})),
+            Err(e) => content.push(json!({"type": "text",
+                "text": format!("(an attached image could not be read: {e})")})),
+        }
+    }
+    format!(
+        "{}\n",
+        json!({"type": "user", "message": {"role": "user", "content": content}})
+    )
+}
+
+/// Standard base64 with padding (RFC 4648), for an image block.
+fn base64(bytes: &[u8]) -> String {
+    const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for c in bytes.chunks(3) {
+        let n = (u32::from(c[0]) << 16)
+            | (u32::from(*c.get(1).unwrap_or(&0)) << 8)
+            | u32::from(*c.get(2).unwrap_or(&0));
+        for (i, shift) in [18, 12, 6, 0].into_iter().enumerate() {
+            if i <= c.len() {
+                out.push(T[((n >> shift) & 63) as usize] as char);
+            } else {
+                out.push('=');
+            }
+        }
+    }
+    out
+}
+
+/// 012 (contracts/runtime.md, "Permission requests"): Claude Code's permission prompt
+/// (`{tool_name, input, tool_use_id}`) in the contract's terms.
+pub fn permission_request(raw: &Value) -> super::PermissionRequest {
+    let tool = raw["tool_name"].as_str().unwrap_or_default().to_string();
+    let input = &raw["input"];
+    let s = |k: &str| input[k].as_str().map(str::to_string);
+    let mut r = super::PermissionRequest {
+        kind: super::RequestKind::Other,
+        command: None,
+        path: None,
+        url: None,
+        query: None,
+        tool: tool.clone(),
+    };
+    match tool.as_str() {
+        "Bash" | "PowerShell" => {
+            r.kind = super::RequestKind::Run;
+            r.command = s("command");
+        }
+        "Edit" | "Write" | "MultiEdit" => {
+            r.kind = super::RequestKind::Edit;
+            r.path = s("file_path");
+        }
+        "NotebookEdit" => {
+            r.kind = super::RequestKind::Edit;
+            r.path = s("notebook_path");
+        }
+        "WebFetch" => {
+            r.kind = super::RequestKind::Web;
+            r.url = s("url");
+        }
+        "WebSearch" => {
+            r.kind = super::RequestKind::Web;
+            r.query = s("query");
+        }
+        _ => {}
+    }
+    // A request whose input does not have the field it needs is one Fallow cannot judge.
+    let complete = match r.kind {
+        super::RequestKind::Run => r.command.is_some(),
+        super::RequestKind::Edit => r.path.is_some(),
+        super::RequestKind::Web => r.url.is_some() || r.query.is_some(),
+        super::RequestKind::Other => true,
+    };
+    if !complete {
+        r.kind = super::RequestKind::Other;
+    }
+    r
+}
+
+/// 012: the permission prompt's answer, as Claude Code reads it.
+pub fn permission_reply(allow: bool, message: &str, raw: &Value) -> Value {
+    if allow {
+        json!({ "behavior": "allow", "updatedInput": raw["input"] })
+    } else {
+        json!({ "behavior": "deny", "message": message })
+    }
 }
 
 /// An edit's diff, as `-` and `+` lines.
@@ -301,6 +450,17 @@ fn tool_call(b: &Value) -> Event {
         "Grep" | "Glob" => (
             ToolKind::Search,
             input["pattern"].as_str().unwrap_or_default().to_string(),
+            String::new(),
+        ),
+        // 012 (research R-8): web requests made as tool calls.
+        "WebFetch" => (
+            ToolKind::Web,
+            format!("Fetched {}", input["url"].as_str().unwrap_or_default()),
+            input["prompt"].as_str().unwrap_or_default().to_string(),
+        ),
+        "WebSearch" => (
+            ToolKind::Web,
+            format!("Searched {}", input["query"].as_str().unwrap_or_default()),
             String::new(),
         ),
         "mcp__fallow__ask" => (
@@ -525,6 +685,9 @@ pub fn run(agent: &Agent, c: &Call, sink: &mut dyn FnMut(Event), stop: &AtomicBo
         cmd.args(&agent.args)
             .args(args(c))
             .current_dir(&c.cwd)
+            // 012 (review M1): each shell command starts in the working copy again, so a `cd`
+            // in one command never carries over to the next one Fallow judges.
+            .env("CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR", "1")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -557,7 +720,7 @@ pub fn run(agent: &Agent, c: &Call, sink: &mut dyn FnMut(Event), stop: &AtomicBo
     let _ = group.adopt(child.id());
     sink(Event::Launched);
     if let Some(mut stdin) = child.stdin.take() {
-        let text = c.instruction.clone();
+        let text = stdin_text(c);
         std::thread::spawn(move || {
             let _ = stdin.write_all(text.as_bytes());
         });
@@ -727,6 +890,9 @@ mod tests {
             system: None,
             partial: false,
             group: None,
+            attachments: Vec::new(),
+            web: false,
+            user_settings: false,
         };
         let t = Instant::now();
         let o = run(&agent, &c, &mut |_| {}, &AtomicBool::new(false));
@@ -809,6 +975,9 @@ mod tests {
             system: Some("rules".into()),
             partial: false,
             group: None,
+            attachments: Vec::new(),
+            web: false,
+            user_settings: false,
         }
     }
 
@@ -942,5 +1111,131 @@ mod tests {
         assert_eq!(den, ["git push"]);
         let (r, f, ..) = result_of(&json!({"type":"result","is_error":false}));
         assert!(r.is_none() && f.unwrap().contains("no structured result"));
+    }
+
+    #[test]
+    fn web_tools_follow_the_calls_switch() {
+        let pos = |a: &[String], flag: &str| a.iter().position(|x| x == flag).unwrap();
+        let off = args(&call());
+        let d = pos(&off, "--disallowedTools");
+        assert!(off[d + 1..].iter().take_while(|x| !x.starts_with("--")).any(|x| x == "WebFetch"));
+        let mut c = call();
+        c.web = true;
+        let on = args(&c);
+        let al = pos(&on, "--allowedTools");
+        let allowed: Vec<&String> = on[al + 1..].iter().take_while(|x| !x.starts_with("--")).collect();
+        assert!(allowed.iter().any(|x| *x == "WebFetch") && allowed.iter().any(|x| *x == "WebSearch"));
+        assert!(!on.contains(&"--input-format".to_string()));
+    }
+
+    #[test]
+    fn attachments_go_as_one_stream_json_message() {
+        let dir = std::env::temp_dir().join(format!("fallow-att-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let img = dir.join("a.png");
+        std::fs::write(&img, b"\x89PNG").unwrap();
+        let mut c = call();
+        c.instruction = "Fallow step: assistant_turn
+look".into();
+        c.attachments = vec![super::super::Attachment {
+            path: img,
+            media_type: "image/png".into(),
+        }];
+        let a = args(&c);
+        let i = a.iter().position(|x| x == "--input-format").unwrap();
+        assert_eq!(a[i + 1], "stream-json");
+        let text = stdin_text(&c);
+        let v: Value = serde_json::from_str(text.trim()).unwrap();
+        let content = v["message"]["content"].as_array().unwrap();
+        assert_eq!(content[0]["text"], "Fallow step: assistant_turn
+look");
+        assert_eq!(content[1]["type"], "image");
+        assert_eq!(content[1]["source"]["media_type"], "image/png");
+        assert_eq!(content[1]["source"]["data"], base64(b"\x89PNG"));
+        // Without attachments the instruction goes as it is.
+        assert_eq!(stdin_text(&call()), "x");
+    }
+
+    #[test]
+    fn base64_is_rfc_4648() {
+        for (raw, enc) in [("", ""), ("f", "Zg=="), ("fo", "Zm8="), ("foo", "Zm9v"), ("foobar", "Zm9vYmFy")] {
+            assert_eq!(base64(raw.as_bytes()), enc);
+        }
+    }
+
+    #[test]
+    fn permission_prompts_map_to_the_contracts_requests() {
+        use super::super::RequestKind as K;
+        let r = |tool: &str, input: Value| permission_request(&json!({"tool_name": tool, "input": input, "tool_use_id": "t"}));
+        let x = r("Bash", json!({"command": "npm test"}));
+        assert_eq!((x.kind, x.command.as_deref()), (K::Run, Some("npm test")));
+        assert_eq!(r("PowerShell", json!({"command": "ls"})).kind, K::Run);
+        for t in ["Edit", "Write", "MultiEdit"] {
+            let x = r(t, json!({"file_path": "a.txt"}));
+            assert_eq!((x.kind, x.path.as_deref()), (K::Edit, Some("a.txt")), "{t}");
+        }
+        let x = r("NotebookEdit", json!({"notebook_path": "n.ipynb"}));
+        assert_eq!((x.kind, x.path.as_deref()), (K::Edit, Some("n.ipynb")));
+        let x = r("WebFetch", json!({"url": "https://example.com"}));
+        assert_eq!((x.kind, x.url.as_deref()), (K::Web, Some("https://example.com")));
+        let x = r("WebSearch", json!({"query": "rust"}));
+        assert_eq!((x.kind, x.query.as_deref()), (K::Web, Some("rust")));
+        // A tool Fallow does not know, or an input without the field it needs, is Other.
+        assert_eq!(r("CronCreate", json!({})).kind, K::Other);
+        assert_eq!(r("Bash", json!({})).kind, K::Other);
+        assert_eq!(r("Edit", json!({"path": "a"})).kind, K::Other);
+        let raw = json!({"tool_name": "Bash", "input": {"command": "x"}});
+        assert_eq!(permission_reply(true, "", &raw), json!({"behavior": "allow", "updatedInput": {"command": "x"}}));
+        assert_eq!(permission_reply(false, "no", &raw), json!({"behavior": "deny", "message": "no"}));
+    }
+
+    #[test]
+    fn web_tool_uses_are_web_activity() {
+        let e = tool_call(&json!({"id": "w", "name": "WebFetch", "input": {"url": "https://example.com", "prompt": "title"}}));
+        match e {
+            Event::ToolCall { kind, summary, .. } => {
+                assert_eq!(kind, ToolKind::Web);
+                assert_eq!(summary, "Fetched https://example.com");
+            }
+            _ => unreachable!(),
+        }
+        match tool_call(&json!({"id": "s", "name": "WebSearch", "input": {"query": "rust"}})) {
+            Event::ToolCall { kind, summary, .. } => assert_eq!((kind, summary.as_str()), (ToolKind::Web, "Searched rust")),
+            _ => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn settings_and_tools_follow_the_kind() {
+        let after = |a: &[String], flag: &str| a[a.iter().position(|x| x == flag).unwrap() + 1].clone();
+        // An unattended kind: no settings source, no hooks, a model always, no web, no edits
+        // for a checker.
+        let mut c = call();
+        c.rights = rights::checker(Vec::new());
+        c.model = None;
+        let a = args(&c);
+        assert_eq!(after(&a, "--setting-sources"), "");
+        assert_eq!(after(&a, "--settings"), r#"{"disableAllHooks":true}"#);
+        assert_eq!(after(&a, "--tools"), "Read,Glob,Grep,Bash,PowerShell,Task");
+        assert_eq!(after(&a, "--model"), "opus");
+        // The assistant: the user's settings, every command and edit asked of Fallow.
+        let mut c = call();
+        c.rights = rights::maker(Vec::new(), Vec::new());
+        c.user_settings = true;
+        c.web = true;
+        c.model = Some("sonnet".into());
+        let a = args(&c);
+        assert_eq!(after(&a, "--setting-sources"), "user");
+        let s: Value = serde_json::from_str(&after(&a, "--settings")).unwrap();
+        assert_eq!(s["disableAllHooks"], true);
+        assert_eq!(s["permissions"]["ask"], json!(ASKED));
+        assert_eq!(
+            after(&a, "--tools"),
+            "Read,Glob,Grep,Bash,PowerShell,Task,Edit,Write,NotebookEdit,WebSearch,WebFetch"
+        );
+        assert_eq!(after(&a, "--model"), "sonnet");
+        // Claude Code's own settings files are never editable.
+        let d = a.iter().position(|x| x == "--disallowedTools").unwrap();
+        assert!(a[d + 1..].iter().any(|x| x == "Write(.claude/settings.local.json)"));
     }
 }

@@ -523,7 +523,7 @@ default `assets/agents/assistant.md`. `rights::assistant(mode, approved, web)`:
   `.fallow/squad.toml` `[instructions] extra = [...]`.
   - Each is read up to 64 KiB, and a longer file is cut and named as such.
   - They are handed under "The project's instructions for coding agents, from <path>:".
-  - Their sha-256 is kept per turn, in `TurnStarted.instructions[{path, sha}]`, so a change is seen
+  - Their fingerprint (64-bit FNV-1a, enough to see a change) is kept per turn, in `TurnStarted.instructions[{path, sha}]`, so a change is seen
     at the next turn. The session shows the list.
   - Each path is resolved (symlinks followed) before it is read. A path that resolves outside the
     working copy is skipped and named, and so is one matched by `files::is_secret` after resolving

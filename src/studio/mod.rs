@@ -6,6 +6,7 @@ pub mod commands;
 pub mod conv;
 pub mod defs;
 pub mod files;
+pub mod judge;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -52,6 +53,8 @@ pub enum Owner {
 pub struct Tool {
     pub owner: Owner,
     pub group: Arc<Group>,
+    /// 012: the runtime of the turn, whose adapter maps its permission prompts (IX).
+    pub runtime: String,
 }
 
 /// What a turn's thread reports.
@@ -371,6 +374,11 @@ impl Studio {
                             cost_usd: None,
                             failure,
                             withdrawn: true,
+                            commits: Vec::new(),
+                            commit_failed: None,
+                            changed: Vec::new(),
+                            cut: false,
+                            folded_into: None,
                         });
                     } else if c.state.busy {
                         if let Some(t) = c.state.turns.last() {
@@ -388,6 +396,11 @@ impl Studio {
                                     "Fallow stopped during this turn; say it again to go on".into(),
                                 ),
                                 withdrawn: false,
+                                commits: Vec::new(),
+                                commit_failed: None,
+                                changed: Vec::new(),
+                                cut: false,
+                                folded_into: None,
                             });
                         }
                     }
@@ -486,6 +499,9 @@ impl Studio {
             lead_runtime: None,
             lead_model: None,
             lead_pending: None,
+            agent: None,
+            origin: None,
+            solo: (kind == Kind::Solo).then(crate::conversation::solo::Solo::default),
         };
         let mut c = Conv::new(dir, log, state);
         c.append(CEvent::ConversationCreated {
@@ -495,6 +511,8 @@ impl Studio {
             forked_from,
             workdir,
             lead,
+            agent: None,
+            origin: None,
         })?;
         self.convs.insert(id.clone(), c);
         Ok(id)
@@ -866,7 +884,7 @@ impl Studio {
                             .output();
                     }
                 }
-                Kind::Spec => {}
+                Kind::Spec | Kind::Solo => {}
             }
         }
         if git_project && workdir != p.path {
@@ -1011,6 +1029,35 @@ impl Studio {
                 diff: &e.diff,
             })
             .collect();
+        // 012 (FR-042, research R-7): the project's instruction files, read from the working
+        // copy, handed with a session's first turn and again when one of them changed.
+        let instr = agent::instructions::read(
+            &workdir,
+            &agent::instructions::extra_at_head(&p.path),
+        );
+        let now: Vec<(String, String)> = instr
+            .iter()
+            .map(|i| (i.path.clone(), i.sha.clone()))
+            .collect();
+        let hand = !matches!(session, Session::Resume(_)) || now != c.state.last_instructions();
+        let instr_text = if hand {
+            agent::instructions::block(&instr)
+        } else {
+            String::new()
+        };
+        let instr_recs: Vec<crate::conversation::events::InstructionRec> = if hand {
+            instr
+                .iter()
+                .map(|i| crate::conversation::events::InstructionRec {
+                    path: i.path.clone(),
+                    sha: i.sha.clone(),
+                    cut: i.cut,
+                    skipped: i.skipped.clone(),
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
         let instruction = prompts::lead_turn(&prompts::LeadTurn {
             project: &p.name,
             feature: feature
@@ -1023,6 +1070,7 @@ impl Studio {
             withdrawn: &withdrawn,
             command,
             refs: &refs,
+            instructions: &instr_text,
         });
         // The MCP bridge for the approval tool, checked against the turn's own processes.
         let token = crate::mcp::identity::Token::new()
@@ -1035,6 +1083,7 @@ impl Studio {
             Tool {
                 owner: Owner::Conv(conv.to_string()),
                 group: Arc::clone(&group),
+                runtime: def.runtime.clone(),
             },
         );
         let c = self.convs.get_mut(conv).expect("checked");
@@ -1068,6 +1117,9 @@ impl Studio {
             system: Some(prompts::lead_system(&def.body)),
             partial: true,
             group: Some(group),
+            attachments: Vec::new(),
+            web: false,
+            user_settings: false,
         };
         c.append(CEvent::TurnStarted {
             n,
@@ -1079,6 +1131,9 @@ impl Studio {
             model: Some(def.model.clone()).filter(|m| !m.is_empty()),
             // A new session or a fork: a session of its own, on this runtime and model.
             new_session: !matches!(session, Session::Resume(_)),
+            instructions: instr_recs,
+            attachments: Vec::new(),
+            slot_waited_ms: None,
         })?;
         c.live.clear();
         c.head_before = if git_project && c.state.workdir != p.path {
@@ -1161,9 +1216,9 @@ impl Studio {
         }
         c.stop.store(true, std::sync::atomic::Ordering::Relaxed);
         if let Some(p) = c.pending.take() {
-            let _ = p.reply.send(Reply::Ok(
-                json!({ "behavior": "deny", "message": "The engineer cancelled this turn." }),
-            ));
+            let _ = p
+                .reply
+                .send(Reply::Ok(p.answer(false, "The engineer cancelled this turn.")));
         }
         let said = c
             .state
@@ -1206,9 +1261,7 @@ impl Studio {
         }
         let c = self.conv_mut(conv)?;
         if let Some(p) = c.pending.take() {
-            let _ = p.reply.send(Reply::Ok(
-                json!({ "behavior": "deny", "message": "The turn ended." }),
-            ));
+            let _ = p.reply.send(Reply::Ok(p.answer(false, "The turn ended.")));
         }
         let kind = c.state.kind;
         let workdir = c.state.workdir.clone();
@@ -1338,6 +1391,11 @@ impl Studio {
             cost_usd: outcome.cost_usd,
             failure: outcome.failure.clone(),
             withdrawn: false,
+            commits: Vec::new(),
+            commit_failed: None,
+            changed: Vec::new(),
+            cut: false,
+            folded_into: None,
         })?;
         c.live.clear();
         Ok(())
@@ -1369,6 +1427,11 @@ impl Studio {
             cost_usd: outcome.cost_usd,
             failure,
             withdrawn: true,
+            commits: Vec::new(),
+            commit_failed: None,
+            changed: Vec::new(),
+            cut: false,
+            folded_into: None,
         })?;
         c.live.clear();
         Ok(())
@@ -1857,17 +1920,26 @@ impl Studio {
     /// A tool call through the bridge. The reply goes to `reply`, now or when the engineer
     /// answers.
     pub fn tool_call(&mut self, token: &str, name: &str, args: Value, reply: Sender<Reply>) {
-        let deny = |msg: &str| Reply::Ok(json!({ "behavior": "deny", "message": msg }));
-        let Some(Owner::Conv(conv)) = self.tools.get(token).map(|t| t.owner.clone()) else {
+        let Some((Owner::Conv(conv), runtime)) = self
+            .tools
+            .get(token)
+            .map(|t| (t.owner.clone(), t.runtime.clone()))
+        else {
             let _ = reply.send(Reply::Err("unknown or finished step".into()));
             return;
+        };
+        let deny = |msg: &str| {
+            Reply::Ok(agent::registry::permission_reply(
+                &runtime, false, msg, &args,
+            ))
         };
         if name != "approve" {
             let _ = reply.send(Reply::Err(format!("no tool {name:?}")));
             return;
         }
-        let tool = args["tool_name"].as_str().unwrap_or_default().to_string();
-        let input = args["input"].clone();
+        // 012 (IX): judged in the contract's terms, never by a runtime's tool names.
+        let req = agent::registry::permission_request(&runtime, &args);
+        let tool = req.tool.clone();
         let Some(c) = self.convs.get_mut(&conv) else {
             let _ = reply.send(deny("the conversation is gone"));
             return;
@@ -1881,7 +1953,7 @@ impl Studio {
             let _ = reply.send(deny("Only Ask mode asks the engineer."));
             return;
         }
-        if tool != "Bash" && tool != "PowerShell" {
+        if req.kind != agent::RequestKind::Run {
             // Edits outside the spec documents and other tools are never asked about.
             let _ = reply.send(deny(&format!(
                 "{tool} is not allowed here: the lead changes only spec documents."
@@ -1892,7 +1964,7 @@ impl Studio {
             let _ = reply.send(deny("Another command is waiting for the engineer."));
             return;
         }
-        let command = input["command"].as_str().unwrap_or_default().to_string();
+        let command = req.command.clone().unwrap_or_default();
         let id = format!(
             "a{}",
             c.state
@@ -1904,7 +1976,9 @@ impl Studio {
         );
         if c.append(CEvent::ApprovalAsked {
             id: id.clone(),
-            command,
+            command: command.clone(),
+            reasons: Vec::new(),
+            merge: None,
         })
         .is_err()
         {
@@ -1914,7 +1988,9 @@ impl Studio {
         c.pending = Some(Pending {
             id,
             tool,
-            input,
+            command,
+            raw: args,
+            runtime,
             reply,
             deadline: Instant::now() + self.approval_wait,
         });
@@ -1935,7 +2011,7 @@ impl Studio {
         let command = c
             .pending
             .as_ref()
-            .and_then(|p| p.input["command"].as_str().map(str::to_string))
+            .map(|p| p.command.clone())
             .unwrap_or_default();
         let project = c.state.project.clone();
         let prefix = match (answer, prefix) {
@@ -1967,16 +2043,16 @@ impl Studio {
         let c = self.conv_mut(conv)?;
         let pending = c.pending.take().expect("checked");
         let msg = match answer {
-            ApprovalAnswer::Deny => {
-                json!({ "behavior": "deny", "message": "The engineer refused this command." })
-            }
-            _ => json!({ "behavior": "allow", "updatedInput": pending.input }),
+            ApprovalAnswer::Deny => pending.answer(false, "The engineer refused this command."),
+            _ => pending.answer(true, ""),
         };
         let _ = pending.reply.send(Reply::Ok(msg));
         c.append(CEvent::ApprovalAnswered {
             id: id.to_string(),
             answer,
             prefix,
+            auto: false,
+            why: None,
         })?;
         Ok(json!({}))
     }
@@ -1990,14 +2066,15 @@ impl Studio {
                 .is_some_and(|p| Instant::now() >= p.deadline)
             {
                 let p = c.pending.take().expect("checked");
-                let _ = p.reply.send(Reply::Ok(json!({
-                    "behavior": "deny",
-                    "message": "The engineer did not answer within 10 minutes."
-                })));
+                let _ = p.reply.send(Reply::Ok(
+                    p.answer(false, "The engineer did not answer within 10 minutes."),
+                ));
                 let _ = c.append(CEvent::ApprovalAnswered {
                     id: p.id,
                     answer: ApprovalAnswer::Deny,
                     prefix: None,
+                    auto: false,
+                    why: None,
                 });
             }
         }

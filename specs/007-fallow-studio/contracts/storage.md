@@ -116,3 +116,14 @@ For a pull request, `merged.commit` (and a record's final commit) is the commit 
 **Rules**:
 - An event is written and flushed before Fallow acts on it (constitution VII).
 - Removing a project from Fallow deletes its conversations and worktrees under Fallow's data, after a confirmation naming them. The project folder and its branches are not touched.
+
+012 adds (012 data-model.md). Every field added to an existing event is `#[serde(default)]`, so earlier logs load unchanged:
+
+| Where | What |
+|---|---|
+| `conversations/<id>/events.jsonl` | a conversation of kind `solo`: the session's events (`session_creating`, `session_created`, `session_renamed`, `branch_renamed`, `turn_committed`, `fold_next`, `uncommitted_discarded`, `engineer_edits`, `base_moved`, `undo_started`, `turns_undone`, `message_queued`, `queue_edited`, `queue_removed`, `queue_sent`, `web_set`, `git_observed`, `folder_state_seen`, `squashed`, `gates_run`, `feature_suggested`, `feature_starting`, `feature_started`, `close_started`, `session_closed`, `copy_removed`); `turn_started` gains `attachments`, `instructions`, `slot_waited_ms`; `turn_finished` gains `commits`, `commit_failed`, `changed`, `cut`, `folded_into`; `approval_asked` gains `reasons`, `merge`; `approval_answered` gains `auto`, `why`; `conversation_created` gains `agent`, `origin` |
+| `conversations/<id>/attachments/<sha>.<ext>` | the images attached to a session's messages |
+| `conversations/<id>/turn.pid` | the running turn's root pid and its start time (a restart stops it first) |
+| `projects/<p>/git.jsonl`, `git-seen.json` | the changes Fallow observed to the project's branches and remotes, and the last snapshot |
+| `<data>/nohooks/` | the empty folder Fallow's own git commands on a session use as `core.hooksPath` |
+| in the project's repository | `refs/fallow/solo/<id>/undone/<n>`: a session's undone commits, kept until it closes |

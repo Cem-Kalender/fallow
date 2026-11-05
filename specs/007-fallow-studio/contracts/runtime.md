@@ -69,3 +69,16 @@ Outcome { result: Option<Value>, failure: Option<String>, cost_usd: Option<f64>,
 ## The registry
 
 `agent::registry::runtime(name, settings)` gives the runtime a definition names. Its program comes from the settings' `[agents.<name>]` profile; `claude` falls back to the `claude` program on the PATH. A runtime Fallow does not know, one without a profile, or one whose program is not found is refused with a message that names it; the step does not start and the loop asks the engineer. `GET /api/runtimes` lists every runtime with `installed`, `version` (the first line of its `--version`) and the models a definition may name.
+
+## 012 amendments
+
+Feature 012 (solo sessions) amends this contract; [012's runtime contract](../../012-solo-session/contracts/runtime.md) has the details:
+- every runtime declares `Capabilities { images, web_off, control_files }`;
+- `Call` gains `attachments`, `web` and `user_settings`;
+- `tool_call.kind` gains `web`;
+- permission prompts reach Fallow in the contract's terms (`PermissionRequest`), mapped by each adapter;
+- which settings apply: none from a working copy; none of the runtime's own for unattended kinds; the engineer's user settings for the assistant, with every command and edit still sent to Fallow;
+- every Claude call passes `--tools` with a fixed list, and `--model` always;
+- the assistant's result schema, `assistant_reply`.
+
+`GET /api/runtimes` gains `capabilities`.

@@ -60,6 +60,8 @@ struct Raw {
     /// 011: kept as a table and read by hand, so an unknown key under it is a notice, not a
     /// whole squad file refused.
     updates: Option<toml::Table>,
+    /// 012 (research R-7): `[instructions] extra = [...]`, read the same way.
+    instructions: Option<toml::Table>,
 }
 
 const KNOWN: &[&str] = &[
@@ -73,6 +75,7 @@ const KNOWN: &[&str] = &[
     "roles",
     "allow",
     "updates",
+    "instructions",
 ];
 const LEGACY: &[&str] = &[
     "name",
@@ -112,6 +115,8 @@ pub struct Squad {
     pub allow: BTreeMap<String, Vec<String>>,
     /// 011: the parts of an update that act on their own, each switchable (FR-016c, R-8b).
     pub updates: UpdateSwitches,
+    /// 012: further instruction files handed to every agent (`[instructions] extra`).
+    pub instructions_extra: Vec<String>,
 }
 
 /// 011: `[updates]` (FR-016c): Free's own updates, the merge line, the overlap warnings.
@@ -183,6 +188,25 @@ impl Squad {
                         line: None,
                         level: Level::Warning,
                         message: format!("updates.{k} must be true or false; kept on"),
+                    }),
+                }
+            }
+        }
+        let mut instructions_extra = Vec::new();
+        if let Some(t) = &raw.instructions {
+            for (k, v) in t {
+                match (k.as_str(), v.as_array()) {
+                    ("extra", Some(a)) => {
+                        instructions_extra =
+                            a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect()
+                    }
+                    _ => notices.push(Notice {
+                        file: file.into(),
+                        line: None,
+                        level: Level::Warning,
+                        message: format!(
+                            "instructions.{k}: only `extra`, a list of paths, is known"
+                        ),
                     }),
                 }
             }
@@ -259,6 +283,7 @@ impl Squad {
                 .filter(|(r, _)| ROLES.contains(&r.as_str()))
                 .collect(),
             updates,
+            instructions_extra,
         }
     }
 }
@@ -331,6 +356,21 @@ builder = ["Bash(npm run lint:*)"]
         assert_eq!(s.gates.len(), 1);
         assert_eq!(s.gates[0].failures, Failures::Auto);
         assert_eq!(n.iter().filter(|x| x.level == Level::Error).count(), 2);
+    }
+
+    #[test]
+    fn instructions_extra_is_a_list_of_paths() {
+        let mut n = Vec::new();
+        let s = Squad::parse(
+            "squad.toml",
+            "[instructions]
+extra = [\"docs/AGENT_NOTES.md\"]
+other = 1
+",
+            &mut n,
+        );
+        assert_eq!(s.instructions_extra, ["docs/AGENT_NOTES.md"]);
+        assert!(n.iter().any(|x| x.message.contains("instructions.other")), "{n:?}");
     }
 
     #[test]

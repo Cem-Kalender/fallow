@@ -87,7 +87,7 @@ runtime plays images, web calls and suggestions. The assistant kind exists.
 **Purpose**: the runtime contract, settings and instructions for every kind, git helpers, the
 session's records and the command judge. These block all stories.
 
-- [ ] T005 Extend the runtime contract in `src/agent/mod.rs` (R-8, contracts/runtime.md).
+- [X] T005 Extend the runtime contract in `src/agent/mod.rs` (R-8, contracts/runtime.md).
   - `Capabilities { images, web_off, control_files }` and `Runtime::capabilities()`.
   - `Call.attachments: Vec<Attachment{path, media_type}>` and `Call.web: bool`, both default empty or false for every kind but the assistant.
   - `ToolKind::Web`, with `activity_of` showing "Fetched <url>" or "Searched <query>".
@@ -98,7 +98,7 @@ session's records and the command judge. These block all stories.
     - writes the instruction as a stream-json user message with base64 image blocks when there are attachments (`--input-format stream-json`).
   - `GET /api/runtimes` gains `capabilities`.
   - Unit tests for the adapter's arguments with each combination.
-- [ ] T006 Settings for every kind (FR-042), in `src/agent/claude.rs` `args()` and `src/agent/rights.rs` (R-6).
+- [X] T006 Settings for every kind (FR-042), in `src/agent/claude.rs` `args()` and `src/agent/rights.rs` (R-6).
   - The lead, makers and checkers: `--setting-sources` with an empty list, and `--model` always (the definition's, or the runtime profile's default).
   - The assistant:
     - `--setting-sources user`;
@@ -107,7 +107,7 @@ session's records and the command judge. These block all stories.
   - `--tools` with the fixed list per kind (research R-6, "A fixed tool list"): `Read`, `Glob`, `Grep`, `Bash`, `PowerShell`, `Task` and Fallow's MCP tools; `Edit`, `Write`, `NotebookEdit` for makers, the lead and the assistant; `WebSearch`, `WebFetch` for the assistant with web on. The instruction goes on stdin, never after a list flag.
   - Unit tests check the arguments per kind.
   - Run every test from 007 to 011 (lead, loops, publishing) and keep them green. When a test relied on settings, the change is noted in this task.
-- [ ] T007 Hand the project's instruction files to every kind (FR-007, FR-042; R-7).
+- [X] T007 Hand the project's instruction files to every kind (FR-007, FR-042; R-7).
   - **The reader**: a new `src/agent/instructions.rs` reads `CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, `.github/copilot-instructions.md`, `.cursorrules`, `.cursor/rules/*.mdc` and `[instructions] extra` from a working copy.
     - The `extra` list is read from the project folder's `HEAD` with `git show`.
     - Each file is cut at 64 KiB, and the cut is marked.
@@ -116,7 +116,7 @@ session's records and the command judge. These block all stories.
   - **The config**: `src/config/squad.rs` gains `[instructions] extra = [..]` in `KNOWN`, with a parse test.
   - **The prompts**: `prompts::lead_turn` includes the files on the lead's first turn, and on a later turn when a sha changed (the shas are kept per turn, in `turn_started.instructions`). The loop's step prompts in `src/run/feature.rs` include them, read from the step's own worktree.
   - **Tests** in `tests/us1_conversation.rs` and `tests/us2_loop.rs`: a lead turn and a builder step carry an `AGENTS.md` text, and a `.env` file named in `extra` is never read.
-- [ ] T008 [P] Add git helpers to `src/verify/git.rs` (R-2, R-3, R-10, R-18).
+- [X] T008 [P] Add git helpers to `src/verify/git.rs` (R-2, R-3, R-10, R-18).
   - `NOHOOKS`: the empty directory `<data>/nohooks`.
   - `git_nohooks(dir)`: a `Command` with `-c core.hooksPath=<nohooks>` and `GIT_LFS_SKIP_SMUDGE=1`.
   - `snapshot(wt, branch, message, ident) -> Result<Option<sha>, String>`:
@@ -135,7 +135,7 @@ session's records and the command judge. These block all stories.
     - a snapshot refuses a detached or other `HEAD`;
     - `worktree_add_new` fires no hook;
     - `ref_snapshot` sees local and remote-tracking refs.
-- [ ] T009 Add the session's records to `src/conversation/events.rs`, exactly as in data-model.md, all `#[serde(default)]`.
+- [X] T009 Add the session's records to `src/conversation/events.rs`, exactly as in data-model.md, all `#[serde(default)]`.
   - `Kind::Solo`.
   - The new events:
     - creating: `session_creating`, `session_created`, `session_renamed`, `branch_renamed`;
@@ -157,7 +157,7 @@ session's records and the command judge. These block all stories.
     - `base`, the last `base_moved` of a turn that is not undone, else the start commit;
     - `pending_commit`, `queue`, `web`, `gates` and its label, `suggestions`, `features`, `observed`, `closed`.
   - Unit tests for each fold, including that undoing a turn moves the base back, and that a log from 009 folds unchanged.
-- [ ] T010 [P] Write the command judge in a new `src/studio/judge.rs` (R-6).
+- [X] T010 [P] Write the command judge in a new `src/studio/judge.rs` (R-6).
   - `split(cmd)`, on `&&`, `||`, `;`, `|` and newlines, handling one level of quotes.
   - `OPAQUE`: the "cannot tell" forms and the inline interpreters, exactly as R-6 lists them, plus environment assignments and dumps, `[Type]::` calls, provider drives (matched without regard to case) and UNC paths.
   - `assess(cmd, ctx{wt, branch, folder, protect}) -> Allow | Ask(Vec<reason>)`, covering every form R-6 lists:
@@ -173,7 +173,7 @@ session's records and the command judge. These block all stories.
   - `runs_unasked(cmd, gates, approved)`: true only when every part is a gate or a `prefix_safe` approved prefix and there is no "cannot tell" form.
   - Every request carries the fixed note "Fallow judges the command as written; it cannot see what a script does inside".
   - A table-driven unit test holds every example of research R-6 and quickstart Q5, with each verdict: `npm test && rm -rf ../x`, `git -c core.pager=x log`, `GIT_DIR=../p/.git git merge x`, `printenv`, `cp x .fallow/squad.toml`, `git diff --output=.fallow/squad.toml`, and so on.
-- [ ] T011 [P] Amend 007's contracts.
+- [X] T011 [P] Amend 007's contracts.
   - `specs/007-fallow-studio/contracts/runtime.md` points to 012's `contracts/runtime.md` (capabilities, attachments, `web`, settings, the assistant's schema).
   - `specs/007-fallow-studio/contracts/storage.md` gains a "012 adds" section: the session events, `attachments/`, `projects/<p>/git.jsonl` and `git-seen.json`, and `refs/fallow/solo/<id>/undone/*`.
 

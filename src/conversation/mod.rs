@@ -5,3 +5,4 @@
 //! committed and anything else it changed is discarded.
 
 pub mod events;
+pub mod solo;

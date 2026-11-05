@@ -22,6 +22,9 @@ fn call(cwd: &std::path::Path, limit: Duration) -> Call {
         system: None,
         partial: false,
         group: None,
+        attachments: Vec::new(),
+        web: false,
+        user_settings: false,
     }
 }
 

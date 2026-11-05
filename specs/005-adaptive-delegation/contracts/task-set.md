@@ -2,6 +2,8 @@
 
 A directory the engineer chooses, outside every project. Fallow reads it and never writes it.
 
+> **Note (012, 2026-11-05):** Fallow's agents no longer read settings from a working copy (012 FR-042), so a `setup/settings.local.json` copied into a run's copy does not reach its agents. Their permissions come from Fallow's rights.
+
 ```text
 my-tasks/
 ├── taskset.toml

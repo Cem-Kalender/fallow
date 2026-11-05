@@ -4028,7 +4028,10 @@ impl Engine {
             crate::agent::registry::list(&self.ctx.settings)
                 .into_iter()
                 .map(|(name, a, models)| {
-                    json!({ "name": name, "installed": a.installed, "version": a.version, "models": models })
+                    // 012 (FR-010a): what it can do, as its adapter declares it.
+                    let caps = crate::agent::registry::capabilities(&name, &self.ctx.settings);
+                    json!({ "name": name, "installed": a.installed, "version": a.version,
+                            "models": models, "capabilities": caps })
                 })
                 .collect(),
         )

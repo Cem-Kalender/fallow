@@ -18,10 +18,23 @@ use crate::run::events::Log;
 /// A command the lead asked to run, waiting for the engineer (research S-7).
 pub struct Pending {
     pub id: String,
+    /// The runtime's own name for the tool, for the record.
     pub tool: String,
-    pub input: Value,
+    /// The command asked about (012: from the contract's `PermissionRequest`).
+    pub command: String,
+    /// The runtime's permission prompt as it came, for its answer.
+    pub raw: Value,
+    /// The runtime that asked, which shapes the answer (IX).
+    pub runtime: String,
     pub reply: Sender<Reply>,
     pub deadline: Instant,
+}
+
+impl Pending {
+    /// The answer to send, in the asking runtime's own form.
+    pub fn answer(&self, allow: bool, message: &str) -> Value {
+        crate::agent::registry::permission_reply(&self.runtime, allow, message, &self.raw)
+    }
 }
 
 pub struct Conv {
@@ -120,7 +133,7 @@ impl Conv {
         );
         v["pending_approval"] = match &self.pending {
             Some(p) => {
-                let command = p.input["command"].as_str().unwrap_or(&p.tool);
+                let command = if p.command.is_empty() { &p.tool } else { &p.command };
                 // What "always in this project" could allow, or why it cannot (008 T040).
                 let (always, why) = match crate::project::commands::always_prefix(command) {
                     Ok(pre) => (Some(pre), None),

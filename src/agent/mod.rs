@@ -9,6 +9,7 @@
 
 pub mod claude;
 pub mod fake;
+pub mod instructions;
 pub mod prompts;
 pub mod rights;
 pub mod schemas;
@@ -65,6 +66,48 @@ pub struct Call {
     /// The process group to start the agent in. Fallow keeps it to check that an MCP bridge
     /// connecting for this call is one of the agent's own processes (006 research R-5).
     pub group: Option<std::sync::Arc<crate::platform::job::Group>>,
+    /// 012: images handed with the instruction (a runtime with `Capabilities.images` only).
+    pub attachments: Vec<Attachment>,
+    /// 012: whether the agent's web tools are on (the assistant with web access on only).
+    pub web: bool,
+    /// 012 (FR-042, research R-6): the engineer's own user-level settings may apply (the
+    /// assistant only). Unattended kinds run with no settings of the runtime's own; a working
+    /// copy's settings never apply.
+    pub user_settings: bool,
+}
+
+/// 012 (research R-8): an image stored by Fallow, handed to the agent with its instruction.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Attachment {
+    pub path: PathBuf,
+    /// `image/png`, `image/jpeg`, `image/gif` or `image/webp`.
+    pub media_type: String,
+}
+
+/// 012 (contracts/runtime.md, "Permission requests"; IX): what an agent asks permission for, in
+/// the contract's terms. Each runtime's adapter maps its own tools into it; Fallow judges only
+/// this.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PermissionRequest {
+    pub kind: RequestKind,
+    /// The command, for `Run`.
+    pub command: Option<String>,
+    /// The file written, for `Edit`.
+    pub path: Option<String>,
+    /// The page fetched, for `Web`.
+    pub url: Option<String>,
+    /// The search, for `Web`.
+    pub query: Option<String>,
+    /// The runtime's own name for the tool, for the record only.
+    pub tool: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RequestKind {
+    Run,
+    Edit,
+    Web,
+    Other,
 }
 
 /// What a tool call does, as the feed shows it.
@@ -80,6 +123,8 @@ pub enum ToolKind {
     /// 007: Fallow's `ask` and `progress` tools: the question, or the line for the feed.
     Ask,
     Progress,
+    /// 012: a request to the web made as a tool call: a page fetched or a search.
+    Web,
     Other,
 }
 
@@ -94,6 +139,7 @@ impl ToolKind {
             ToolKind::Mcp => "tool",
             ToolKind::Ask => "ask",
             ToolKind::Progress => "progress",
+            ToolKind::Web => "web",
             ToolKind::Other => "tool",
         }
     }
@@ -340,6 +386,47 @@ pub mod registry {
                 ));
             }
         })
+    }
+
+    /// 012 (IX): a permission prompt from the runtime called `name`, in the contract's terms.
+    /// The mapping is the runtime's own (its adapter); a runtime Fallow does not know asks for
+    /// nothing it can judge (`Other`, denied).
+    pub fn permission_request(name: &str, raw: &serde_json::Value) -> super::PermissionRequest {
+        match name {
+            "claude" | "fake" => super::claude::permission_request(raw),
+            _ => super::PermissionRequest {
+                kind: super::RequestKind::Other,
+                command: None,
+                path: None,
+                url: None,
+                query: None,
+                tool: String::new(),
+            },
+        }
+    }
+
+    /// 012 (FR-010a): what the runtime called `name` can do, as its adapter declares it, also
+    /// when it is not installed (review L3).
+    pub fn capabilities(name: &str, settings: &Settings) -> super::Capabilities {
+        match name {
+            "claude" => super::claude::Claude::new("claude", Vec::new()).capabilities(),
+            "fake" => profile(name, settings)
+                .map(|(c, a)| super::fake::Fake::from_profile(c, a).capabilities())
+                .unwrap_or_default(),
+            _ => super::Capabilities::default(),
+        }
+    }
+
+    /// 012: Fallow's answer to a permission prompt, in the runtime's own form.
+    pub fn permission_reply(
+        name: &str,
+        allow: bool,
+        message: &str,
+        raw: &serde_json::Value,
+    ) -> serde_json::Value {
+        // Every runtime Fallow knows answers in Claude Code's form.
+        let _ = name;
+        super::claude::permission_reply(allow, message, raw)
     }
 
     type Listed = Vec<(String, Availability, &'static [&'static str])>;
