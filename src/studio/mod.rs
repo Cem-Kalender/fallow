@@ -9,6 +9,7 @@ pub mod files;
 pub mod judge;
 pub mod repo;
 pub mod solo;
+pub mod solo_check;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -71,6 +72,21 @@ pub enum Note {
         conv: String,
         n: u32,
         outcome: agent::Outcome,
+    },
+    /// 012 (R-12): a session's gate run ended: its results, and a baseline run if one was made.
+    GatesDone {
+        conv: String,
+        commit: String,
+        base: String,
+        #[allow(clippy::type_complexity)]
+        outcome: Result<
+            (
+                Vec<(crate::verify::gates::GateResult, String)>,
+                Option<Vec<crate::verify::gates::GateResult>>,
+            ),
+            String,
+        >,
+        baseline: Option<Vec<crate::verify::gates::GateResult>>,
     },
 }
 
@@ -145,6 +161,31 @@ pub enum Req {
         name: String,
     },
     OpenSession {
+        session: String,
+    },
+    /// 012 (R-4): the way on from a failed turn commit: `fold_next` or `discard`.
+    SoloPending {
+        session: String,
+        choice: String,
+        confirmed: bool,
+    },
+    /// 012 (R-5): what undoing turn `turn` takes back (read only).
+    UndoPreview {
+        session: String,
+        turn: u32,
+    },
+    /// 012 (FR-014, R-5): undo turn `turn` and every turn after it.
+    Undo {
+        session: String,
+        turn: u32,
+        confirmed: bool,
+    },
+    /// 012 (FR-019): the session's changes against its base.
+    SoloChanges {
+        session: String,
+    },
+    /// 012 (R-12): run the project's gates on the session's head.
+    SoloGates {
         session: String,
     },
     /// Cancels the lead's running turn; the message is withdrawn (008 T047).
@@ -1301,6 +1342,17 @@ impl Studio {
             Note::TurnDone { conv, n, outcome } => {
                 if let Err(e) = self.turn_done(&conv, n, outcome) {
                     self.console.push(format!("conversation {conv}: {e}"));
+                }
+            }
+            Note::GatesDone {
+                conv,
+                commit,
+                base,
+                outcome,
+                baseline,
+            } => {
+                if let Err(e) = self.solo_gates_done(&conv, commit, base, outcome, baseline) {
+                    self.console.push(format!("session {conv}: {e}"));
                 }
             }
         }

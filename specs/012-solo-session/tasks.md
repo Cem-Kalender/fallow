@@ -343,7 +343,7 @@ back to before any turn.
 
 **Independent Test**: quickstart Q3.
 
-- [ ] T028 [US3] Write `tests/us12_check.rs` (Q3, as numbered there). It fails first.
+- [X] T028 [US3] Write `tests/us12_check.rs` (Q3, as numbered there). It fails first.
   - Changes lists the files and the turns that changed them.
   - The Files tab's version is `solo:<id>`, with its marks.
   - The engineer's edit is committed before turn 4 as their own.
@@ -354,24 +354,24 @@ back to before any turn.
   - A restart between `undo_started` and `turns_undone` finishes the undo (analyze C3).
   - Opening a file with "Open in my editor" during a turn sets `editor_during_turn`, and the session says those edits count as the turn's (analyze C12).
   - The Changes panel and the undo confirmation say that they cover only the working copy (analyze C1).
-- [ ] T029 [US3] Settling the working copy, `solo::settle` (R-4).
+- [X] T029 [US3] Settling the working copy, `solo::settle` (R-4).
   - A pending commit is retried, comparing paths by blob: what the turn left goes in `turn_committed`, and what changed since goes in `engineer_edits`.
   - The engineer's between-turn edits are snapshotted as `engineer_edits`.
   - `fold_next` and `uncommitted_discarded` need a confirmation naming the files.
   - `POST /api/sessions/<s>/pending`.
   - `say`, undo and close wait while a commit is pending.
-- [ ] T030 [US3] Undo and the base (R-5).
+- [X] T030 [US3] Undo and the base (R-5).
   - `GET …/undo?turn=k` returns what the confirmation names: shared commits, the engineer's edits, changes made elsewhere, and whether the base moves.
   - `POST …/undo` follows: `undo_started`, then `refs/fallow/solo/<id>/undone/<k>`, then `reset --hard` without hooks and with no LFS download, then `turns_undone`.
   - `confirmed` is required when the undo goes back more than the last turn, past the engineer's edits, or over a turn that merged or pushed elsewhere.
   - At the end of each turn, `base_moved` is detected for a merge and for a rebase or fast-forward onto the starting branch, as R-5 decides.
   - `start_moved` is computed here from the starting branch (`rev-list --count base.gates..S`) when the session is read. The ref watcher (T035) refreshes it (analyze F7).
   - `solo::reconcile` gains `undo_started` (analyze F6).
-- [ ] T031 [US3] Changes and files.
+- [X] T031 [US3] Changes and files.
   - `GET /api/sessions/<s>/changes`: files against `base.mark`, with their turns and who changed them.
   - FR-020's details (analyze C6): folders carry the number of changes inside; an "only changed files" filter; a changed file opens with a choice between its changes and the whole file, naming the turns that changed it and by whom. Deleted files are listed in Changes only.
   - In `src/studio/files.rs`: the `solo` version kind, `who_of` for session subjects ("assistant, turn n" or "you"), the version list per open session, and `POST /api/files/open` setting `editor_during_turn` while a turn works.
-- [ ] T032 [US3] Gates on a session, `solo::run_gates` (R-12).
+- [X] T032 [US3] Gates on a session, `solo::run_gates` (R-12).
   - Refused during a turn.
   - Settle first, then a worktree `-gates-<ms>` at the head, without hooks or LFS download.
   - The gates are read from `HEAD:<spec_root>/.fallow/squad.toml`, never the session's copy.
@@ -379,7 +379,7 @@ back to before any turn.
   - `gates::classify`, then `gates_run`, then the worktree is removed.
   - `POST /api/sessions/<s>/gates`.
   - The view's label: `not_run`, `passed`, `failed`, `stale` or `no_gates`.
-- [ ] T033 [US3] Build the page.
+- [X] T033 [US3] Build the page.
   - The rail's Changes and Gates panels, with neutral colors for a pass and the label's exact words (FR-022).
   - Undo on each turn, with its confirmation, and undone turns marked.
   - The pending-commit notice with its two ways on.

@@ -80,6 +80,16 @@ pub struct Conv {
     /// 012 (R-19): set when the turn ends, so the thread recording its process group never
     /// leaves `turn-<n>.pid` behind it (fourth review, 6).
     pub turn_ended: Arc<AtomicBool>,
+    /// 012 (R-12): the session's gates are running on a thread.
+    pub gates_running: bool,
+    /// 012 (R-12): why the last gate run could not run.
+    pub gates_error: Option<String>,
+    /// 012 (R-12): gate results at a base commit, the baseline of later runs, per commit.
+    pub gate_baselines: std::collections::BTreeMap<String, Vec<crate::verify::gates::GateResult>>,
+    /// 012 (R-4): the engineer opened the session's copy in an editor while a turn worked.
+    pub editor_during_turn: bool,
+    /// 012 (R-5): the starting branch's commit when the running turn began.
+    pub start_before: Option<String>,
 }
 
 impl Conv {
@@ -104,6 +114,11 @@ impl Conv {
             gone: None,
             mode_reset: false,
             turn_ended: Arc::new(AtomicBool::new(false)),
+            gates_running: false,
+            gates_error: None,
+            gate_baselines: std::collections::BTreeMap::new(),
+            editor_during_turn: false,
+            start_before: None,
         }
     }
 

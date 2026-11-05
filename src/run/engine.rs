@@ -795,7 +795,10 @@ impl Engine {
                     self.drive(run);
                 }
                 Msg::Studio(note) => {
-                    let done = matches!(note, crate::studio::Note::TurnDone { .. });
+                    let done = matches!(
+                        note,
+                        crate::studio::Note::TurnDone { .. } | crate::studio::Note::GatesDone { .. }
+                    );
                     self.studio.note(note);
                     if done {
                         self.bus.publish(json!({ "type": "studio" }));
@@ -3601,7 +3604,15 @@ impl Engine {
 
     /// The versions of a project's files: the folder, then each feature's live copy (research R-8).
     fn file_versions(&self, project: &str) -> Result<Vec<crate::studio::files::Version>, String> {
-        self.versions_of(project, None)
+        let mut v = self.versions_of(project, None)?;
+        // 012 (FR-019): each open session's working copy.
+        let sessions = self.studio.store.get(project).map(|p| p.sessions.clone()).unwrap_or_default();
+        for s in sessions {
+            if let Ok(x) = self.file_version(project, &format!("solo:{s}")) {
+                v.push(x);
+            }
+        }
+        Ok(v)
     }
 
     /// The folder, and each feature's version, or only `only`'s (a feature's name): a file view
@@ -3927,7 +3938,12 @@ impl Engine {
             | Req::SetLead { conv: c, .. } => conv(c),
             Req::SessionMode { session, .. }
             | Req::RenameSession { session, .. }
-            | Req::OpenSession { session } => conv(session),
+            | Req::OpenSession { session }
+            | Req::SoloPending { session, .. }
+            | Req::UndoPreview { session, .. }
+            | Req::Undo { session, .. }
+            | Req::SoloChanges { session }
+            | Req::SoloGates { session } => conv(session),
             _ => None,
         }
     }
@@ -4054,6 +4070,19 @@ impl Engine {
             Req::Sessions { project } => self.studio.list_sessions(&project),
             Req::RenameSession { session, name } => self.studio.rename_session(&session, &name),
             Req::OpenSession { session } => self.studio.open_session(&session),
+            Req::SoloPending {
+                session,
+                choice,
+                confirmed,
+            } => self.studio.solo_pending(&session, &choice, confirmed),
+            Req::UndoPreview { session, turn } => self.studio.undo_preview(&session, turn),
+            Req::Undo {
+                session,
+                turn,
+                confirmed,
+            } => self.studio.undo_turns(&session, turn, confirmed),
+            Req::SoloChanges { session } => self.studio.solo_changes(&session),
+            Req::SoloGates { session } => self.studio.run_solo_gates(&self.ctx, &session),
             Req::Commands { conv } => self.studio.commands(&conv),
             Req::SetMode { conv, mode } => self.studio.set_mode(&conv, mode),
             Req::Approve {
@@ -4094,7 +4123,17 @@ impl Engine {
                 path,
                 editor,
                 command,
-            } => self.open_file(&project, &version, &path, editor, command),
+            } => {
+                // 012 (R-4): edits made in the session's copy while a turn works count as the
+                // turn's; the session says so.
+                if let Some(sid) = version.strip_prefix("solo:") {
+                    if let Some(c) = self.studio.convs.get_mut(sid).filter(|c| c.state.busy) {
+                        c.editor_during_turn = true;
+                        c.tick();
+                    }
+                }
+                self.open_file(&project, &version, &path, editor, command)
+            }
             Req::GetEditor => {
                 Ok(json!({ "editor": crate::studio::files::editor(&self.studio.data) }))
             }
@@ -4798,6 +4837,8 @@ impl Engine {
                 let reads = matches!(
                     req,
                     Req::Project { .. }
+                        | Req::UndoPreview { .. }
+                        | Req::SoloChanges { .. }
                         | Req::GitScan { .. }
                         | Req::Move { confirmed: false, .. }
                         | Req::CheckRemote { .. }

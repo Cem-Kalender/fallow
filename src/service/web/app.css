@@ -713,3 +713,11 @@ fieldset.field.along legend { padding: 0; margin-bottom: 4px; }
 .gate { max-width: 760px; }
 .gate textarea { width: 100%; box-sizing: border-box; padding: 8px; border: 1px solid var(--line, #ddd); border-radius: 6px; background: var(--panel, #fff); color: var(--ink); }
 .gate .tbl td, .gate .tbl th { padding: 4px 8px; text-align: left; }
+
+/* 012 US3: undone turns, Changes, the gates' neutral line (FR-022), folder change counts. */
+.you.undone { opacity: .55; text-decoration: line-through; text-decoration-color: var(--muted, #888); }
+.changes li { padding: 3px 0; align-items: baseline; flex-wrap: wrap; }
+.gates-line.neutral { padding: 8px 10px; border: 1px solid var(--line, #ddd); border-radius: 6px; background: var(--panel-2, #f6f6f3); color: var(--ink); font-size: 13px; }
+.ft-count { margin-left: 6px; font-size: 11px; padding: 0 5px; border-radius: 8px; background: var(--panel-2, #eee); color: var(--muted, #666); }
+.undo-link { background: none; border: 0; padding: 0; color: var(--muted, #777); cursor: pointer; font: inherit; }
+.undo-link:hover, .undo-link:focus-visible { color: var(--ink); text-decoration: underline; }

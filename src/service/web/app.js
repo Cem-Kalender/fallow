@@ -461,7 +461,9 @@ const Fallow = (() => {
         out.push(h`<div class="tiny muted withdrawn-note">Withdrawn: you cancelled the answer${t.failure ? h`. ${t.failure}` : ", and what the lead changed for it was undone."}</div>`);
         return;
       }
-      out.push(h`<div class="you">${t.said}</div>`);
+      const undone = (c.undone || []).includes(t.n);
+      out.push(h`<div class="you${undone ? " undone" : ""}">${t.said}</div>`);
+      if (undone) out.push(h`<div class="tiny muted">Undone: this turn's changes are gone from the working copy, kept under a ref until the session closes.</div>`);
       if ((t.edits || []).length) {
         out.push(h`<div class="tiny muted">Your edits went with it: ${t.edits.map((e) => e.path).join(", ")}</div>`);
       }
@@ -483,6 +485,7 @@ const Fallow = (() => {
       if (t.failure) extras.push(h`<div class="notice-line">${t.failure}</div>`);
       if (i === asked && !c.busy && r.question) extras.push(question(r.question));
       if (r.proposed_feature) extras.push(proposal(r.proposed_feature));
+      if (c.turnExtra && !undone) { const x = c.turnExtra(t); if (x) extras.push(x); }
       if (r.proposed_pipeline) extras.push(h`<div class="card pad-12 mt-8"><div class="row between"><span class="pill blue">proposed pipeline</span><button class="btn btn2 sm" data-draft="${r.proposed_pipeline}">Open in the designer</button></div><pre class="term">${r.proposed_pipeline}</pre></div>`);
       out.push(leadMsg(meta, md(t.reply), extras, c.avatar));
     });

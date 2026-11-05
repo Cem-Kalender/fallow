@@ -136,7 +136,6 @@
       <div class="studio${chatWide("spec") ? " chat-wide" : ""}">
         <section class="chat-col narrow" aria-label="Conversation">
           <div class="chat-head"><div class="avatar" aria-hidden="true">L</div><div><b>Spec session</b><div id="lead-head">${Fallow.leadHead(c)}</div></div><span class="grow"></span>${expandBtn("spec")}</div>
-          ${f.kind === "folder" ? h`<div class="notice">A plain folder: Fallow cannot check what a command the lead runs writes, and a loop needs git.</div>` : ""}
           <div id="lead-notice">${Fallow.leadNotice(c)}</div>
           <div class="chat" id="chat"><div id="chat-list">${messages(c)}</div>${Fallow.working(c)}</div>
           ${f.stage === "spec_session" ? composer(c, "Answer, or tell the lead what to change…") : h`<div class="composer small muted">The feature is locked: its spec session continues when you unlock it.</div>`}

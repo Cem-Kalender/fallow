@@ -13,6 +13,10 @@
     c.lead = { name: (s && s.session && s.session.agent) || "assistant" };
     c.avatar = "A";
     c.pending_approval = null;
+    // 012 US3 (FR-014): each turn can be undone, back to before it; undone turns are marked.
+    c.undone = (s && s.session && s.session.undone) || [];
+    const quiet = !s || s.busy || !s.session || s.session.closed;
+    c.turnExtra = (t) => (quiet || t.reply === null || t.reply === undefined ? "" : h`<div class="row gap-8 mt-6"><button class="undo-link tiny" data-act="solo-undo" data-turn="${t.n}" aria-label="${`Undo turn ${t.n} and every turn after it`}">Undo back to before this turn</button></div>`);
     return c;
   }
 
@@ -61,8 +65,14 @@
     if (x.mode_reset) out.push(h`<div class="notice">Fallow restarted: "Until I switch back" is off, and commands are asked again.</div>`);
     if (x.start.dirty) out.push(h`<div class="notice">Your project folder had uncommitted changes when this session started: they are not in the session's copy.</div>`);
     if (x.lfs) out.push(h`<div class="notice">This project uses Git LFS: the session's copy holds LFS pointers, not the files. Ask the assistant to run <span class="mono">git lfs pull</span> if it needs them.</div>`);
-    if (x.pending_commit) out.push(h`<div class="notice" role="alert">Fallow could not commit turn ${x.pending_commit.n}: ${x.pending_commit.error || "unknown"}. The next turn waits.</div>`);
     if (x.slot_wait) out.push(h`<div class="notice">Your next message waits: ${x.slot_wait}.</div>`);
+    // A failed turn commit (R-4): its two ways on.
+    if (x.pending_commit && !x.pending_commit.fold_next) out.push(h`<div class="notice" role="alert">Fallow could not commit turn ${x.pending_commit.n}${x.pending_commit.error ? `: ${x.pending_commit.error}` : ""}. Your next message, an undo or a gate run tries again first.
+      <div class="row wrap gap-8 mt-6"><button class="btn btn2 xs" data-act="solo-fold">Fix it in the next turn</button><button class="btn btn2 xs" data-act="solo-discard">Undo these changes…</button></div></div>`);
+    if (x.pending_commit && x.pending_commit.fold_next) out.push(h`<div class="notice">Turn ${x.pending_commit.n}'s changes go into the next turn's commit.
+      <div class="row wrap gap-8 mt-6"><button class="btn btn2 xs" data-act="solo-discard">Undo these changes…</button></div></div>`);
+    if (x.start_moved) out.push(h`<div class="notice">${x.start.branch || "The starting branch"} moved by ${x.start_moved.commits} commit${x.start_moved.commits === 1 ? "" : "s"} since this session's base: ask the assistant to bring the branch up to date.</div>`);
+    if (x.editor_during_turn) out.push(h`<div class="notice">You opened the session's copy in your editor while the assistant works: what you change now counts as this turn's.</div>`);
     if (x.mode === "until_switch") out.push(h`<div class="notice">Until you switch back, commands run without asking, except the ones Fallow asks about one by one. Fallow judges a command as it is written; it cannot see what a script does inside.</div>`);
     return out;
   }
@@ -176,6 +186,86 @@
     try { await post(`/api/sessions/${encodeURIComponent(s.id)}/mode`, { mode: next }); } catch (e) { alertLine(e.message); }
   }
 
-  Fallow.solo = { asConv, head, menu, notices, list, composer, say, setMode, stopTurn, openEditor, rename };
+  // ---- 012 US3: Changes, Gates and undo ------------------------------------------------------
+  const short = (c) => String(c || "").slice(0, 7);
+  const MARKS = { A: ["added", "green"], M: ["changed", "orange"], D: ["deleted", "red"] };
+
+  // The Changes panel (FR-019): the session's files against its base, with their turns and who.
+  function changesPanel(s, data) {
+    if (!s || !s.session) return h`<div class="small muted">No session yet.</div>`;
+    if (!data) return h`<div class="small muted">Reading the changes…</div>`;
+    if (data.error) return h`<div class="notice">${data.error}</div>`;
+    const files = data.files || [];
+    return h`<div class="tiny muted lh">Against <span class="mono">${short(data.base && data.base.mark)}</span>, this session's base.</div>
+      ${files.length ? h`<ul class="plain changes mt-8">${files.map((f) => {
+        const [word, color] = MARKS[f.mark] || ["changed", "orange"];
+        const who = (f.by || []).map((b) => (b === "you" ? "you" : "the assistant")).join(" and ");
+        return h`<li class="row gap-8"><span class="pill ${color}">${word}</span>${f.mark === "D"
+          ? h`<span class="mono small">${f.path}</span>`
+          : h`<button class="linkish mono small" data-act="solo-file" data-path="${f.path}">${f.path}</button>`}
+          <span class="tiny muted">${(f.turns || []).length ? `turn${f.turns.length === 1 ? "" : "s"} ${f.turns.join(", ")}` : f.uncommitted ? "not committed yet" : ""}${who ? ` · ${who}` : ""}</span></li>`;
+      })}</ul>` : h`<div class="small muted mt-8">Nothing changed yet.</div>`}
+      <div class="tiny muted mt-8 lh">${data.notice}</div>`;
+  }
+
+  // The gates' label, in neutral words and colors (FR-022): never the verified loop's.
+  function gatesLine(x) {
+    const g = x.gates || {};
+    const at = short(x.head);
+    if (g.label === "passed") return h`<div class="gates-line neutral">Gates passed on <span class="mono">${at}</span> — no independent check</div>`;
+    if (g.label === "failed") return h`<div class="gates-line neutral">Gates failed on <span class="mono">${at}</span></div>`;
+    if (g.label === "no_gates") return h`<div class="gates-line neutral">Not verified by Fallow: the project declares no gates</div>`;
+    return h`<div class="gates-line neutral">Not verified by Fallow: the gates did not run on <span class="mono">${at}</span></div>`;
+  }
+
+  function gatesPanel(s) {
+    if (!s || !s.session) return h`<div class="small muted">No session yet.</div>`;
+    const x = s.session;
+    const g = x.gates || {};
+    const results = g.commit === x.head ? g.results || [] : [];
+    return h`${gatesLine(x)}
+      ${results.length ? h`<ul class="plain mt-8">${results.map((r) => h`<li class="small"><b>${r.gate}</b> · ${r.outcome}${r.class && r.class !== "pass" ? ` (${r.class.replace(/_/g, " ")})` : ""}${r.output ? h`<details class="mt-4"><summary class="tiny">Output</summary><pre class="term small">${r.output}</pre></details>` : ""}</li>`)}</ul>` : ""}
+      ${g.error ? h`<div class="notice mt-8">The gates could not run: ${g.error}</div>` : ""}
+      <div class="row gap-8 mt-10"><button class="btn btn2 sm" data-act="solo-gates"${raw(s.busy || g.running || g.label === "no_gates" ? " disabled" : "")}>${g.running ? "Running the gates…" : "Run the gates"}</button></div>
+      <div class="tiny muted mt-6 lh">${s.busy ? "Wait until the turn ends: the gates run on a commit." : "They run on the session's last commit, in a copy of their own, as the project's committed squad file declares them. The assistant's own test runs are in the conversation."}</div>`;
+  }
+
+  // Undo back to before turn `n` (FR-014, R-5), with the confirmation of what it takes back.
+  async function undo(s, n) {
+    const id = encodeURIComponent(s.id);
+    let p;
+    try { p = await Fallow.get(`/api/sessions/${id}/undo?turn=${n}`); } catch (e) { return alertLine(e.message); }
+    const items = [`turn${p.turns.length === 1 ? "" : "s"} ${p.turns.join(", ")}`];
+    for (const e of p.edits || []) items.push(`your edits: ${e.files.join(", ")}`);
+    if ((p.uncommitted || []).length) items.push(`not committed yet, committed first and then undone with the rest: ${p.uncommitted.join(", ")}`);
+    for (const [a, b] of p.shared || []) items.push(`turns ${a} and ${b} share one commit: both go`);
+    if (p.base_moves) items.push("the session's base moves back: what was brought up to date counts no more");
+    for (const o of p.elsewhere || []) items.push(`a change of ${o.refname} made by turn ${o.turn}: it stays, only the session's branch is reset`);
+    items.push(p.notice);
+    const ok = await Fallow.confirm({ title: `Undo back to before turn ${p.from}?`, text: "The working copy and the branch go back to before that turn. The undone commits are kept under a ref until the session closes.", items, ok: "Undo" });
+    if (!ok) return;
+    try { await post(`/api/sessions/${id}/undo`, { turn: n, confirmed: true }); } catch (e) { alertLine(e.message); }
+  }
+
+  async function pending(s, choice) {
+    const id = encodeURIComponent(s.id);
+    if (choice === "discard") {
+      // What would go, named by the server.
+      let files;
+      try { files = (await post(`/api/sessions/${id}/pending`, { choice: "discard_preview" })).files || []; } catch (e) { return alertLine(e.message); }
+      const ok = await Fallow.confirm({ title: "Undo these changes?", text: "The working copy's changes that could not be committed are thrown away, your edits since among them.", items: files.length ? files : ["nothing is left to throw away"], ok: "Undo them" });
+      if (!ok) return;
+    }
+    try {
+      const r = await post(`/api/sessions/${id}/pending`, { choice, confirmed: choice === "discard" });
+      if (r && r.files && r.files.length) alertLine(`Thrown away: ${r.files.join(", ")}`);
+    } catch (e) { alertLine(e.message); }
+  }
+
+  async function runGates(s) {
+    try { await post(`/api/sessions/${encodeURIComponent(s.id)}/gates`, {}); } catch (e) { alertLine(e.message); }
+  }
+
+  Fallow.solo = { asConv, head, menu, notices, list, composer, say, setMode, stopTurn, openEditor, rename, changesPanel, gatesPanel, undo, pending, runGates };
   void esc;
 })();

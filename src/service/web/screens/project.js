@@ -137,6 +137,8 @@
     const chat = document.getElementById("chat");
     const wasAtEnd = atEnd(chat);
     drawSolo();
+    // The open Changes panel follows the session.
+    if (side === "changes") readChanges().then(drawSide);
     markStarted();
     if (wasAtEnd) chat.scrollTop = chat.scrollHeight;
     drawSide();
@@ -216,7 +218,7 @@
           </div>
         </aside>
         <section class="file-col card" id="file-view" aria-label="A file"${raw(fc && fc.isOpen() ? "" : " hidden")}>${fc && fc.isOpen() ? fc.viewHtml() : ""}</section>
-        <section class="chat-col" id="chat-col" aria-label="Session with the assistant"${raw(fc && fc.isOpen() ? " hidden" : "")}>
+        <section class="chat-col${fc && fc.isOpen() ? " narrow" : ""}" id="chat-col" aria-label="Session with the assistant">
           <div id="solo-head">${Fallow.solo.head(p.session)}</div>
           <div id="solo-notices">${Fallow.solo.notices(p.session)}</div>
           <div class="chat" id="chat"><div id="chat-list">${Fallow.solo.list(p.session)}</div>${Fallow.working(Fallow.solo.asConv(p.session))}</div>
@@ -355,20 +357,38 @@
   let drawn = { rail: "", panel: "" }; // what the rail and the panel were last given
   let shown = null; // the proposal "Where it was proposed" brought into view, while marked
   let unmark = 0; // the timer that ends that mark
-  const PANELS = { proposals: "Proposed features", knows: "What the lead knows" };
+  const PANELS = { proposals: "Proposed features", knows: "What the lead knows", changes: "Changes", gates: "Gates" };
+  let changesData = null; // the open session's Changes, as last read
+
+  async function readChanges() {
+    const s = state && state.session;
+    if (!s) { changesData = null; return; }
+    try { changesData = await get(`/api/sessions/${encodeURIComponent(s.id)}/changes`); } catch (e) { changesData = { error: e.message }; }
+  }
 
   function railButtons(p, c) {
     const n = proposals(p, c).length;
     const btn = (key, svg, label, badge) => h`<button class="ricon${side === key ? " on" : ""}" data-act="side" data-panel="${key}" aria-controls="side-panel" aria-expanded="${side === key ? "true" : "false"}" aria-label="${label}" title="${label}">${raw(svg)}${badge ? h`<span class="dot" aria-hidden="true">${badge}</span>` : ""}</button>`;
+    // 012 US3: the session's Changes and Gates (FR-019, FR-022).
+    const sess = p.session && p.session.session;
+    const gl = sess && sess.gates ? sess.gates.label : "";
     return [
+      ...(sess ? [
+        btn("changes", '<svg class="ri" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h10M4 18h7"/></svg>', sess.changes_count ? `Changes, ${sess.changes_count} file${sess.changes_count === 1 ? "" : "s"}` : "Changes", ""),
+        btn("gates", '<svg class="ri" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12l4 4 10-10"/></svg>', `Gates: ${gl === "passed" ? "passed, no independent check" : gl === "failed" ? "failed" : "not verified"}`, ""),
+      ] : []),
       btn("proposals", '<svg class="ri" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3.5 10.9c.5.4.5 1 .5 1.6V16h6v-.5c0-.6 0-1.2.5-1.6A6 6 0 0 0 12 3z"/></svg>', n ? `Proposed features, ${n} not started` : "Proposed features, none", n ? String(n) : ""),
       btn("knows", '<svg class="ri" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg>', "What the lead knows", ""),
     ];
   }
 
   function sideHtml(p, c) {
-    const body = side === "proposals" ? proposalsPanel(proposals(p, c)) : knows(p, c);
-    return h`<div class="row between gap-8 mb-8"><h2 class="th" id="side-title" tabindex="-1">${side === "proposals" ? "Proposed by the lead · not started" : PANELS.knows}</h2><button class="linkish small" data-act="side-close" aria-label="Close ${PANELS[side]}">Close</button></div><div id="side-body">${body}</div>`;
+    const body = side === "proposals" ? proposalsPanel(proposals(p, c))
+      : side === "changes" ? Fallow.solo.changesPanel(p.session, changesData)
+      : side === "gates" ? Fallow.solo.gatesPanel(p.session)
+      : knows(p, c);
+    const title = side === "proposals" ? "Proposed by the lead · not started" : side === "changes" ? "Changes in this session" : side === "gates" ? "Gates on this session" : PANELS.knows;
+    return h`<div class="row between gap-8 mb-8"><h2 class="th" id="side-title" tabindex="-1">${title}</h2><button class="linkish small" data-act="side-close" aria-label="Close ${PANELS[side]}">Close</button></div><div id="side-body">${body}</div>`;
   }
 
   // The rail and an open panel follow the conversation without closing, and keep the focus on
@@ -397,6 +417,7 @@
 
   function openSide(key, focus) {
     side = key;
+    if (key === "changes") { changesData = null; readChanges().then(drawSide); }
     drawSide();
     if (focus) { const t = document.getElementById("side-title"); if (t) t.focus(); }
   }
@@ -528,7 +549,9 @@
     const open = fc.isOpen();
     view.innerHTML = open ? fc.viewHtml().s : "";
     view.hidden = !open;
-    chat.hidden = open;
+    // 012 (FR-029): the chat stays beside the open file.
+    chat.hidden = false;
+    chat.classList.toggle("narrow", open);
     const t2 = pane.querySelector(".ft-tree");
     if (t2) t2.scrollTop = t1;
     const c2 = view.querySelector(".fcode");
@@ -710,6 +733,24 @@
         if (name === "solo-mode") {
           if (state.session) await Fallow.solo.setMode(state.session);
           return again();
+        }
+        if (name === "solo-undo") {
+          if (state.session) await Fallow.solo.undo(state.session, Number(el.dataset.turn));
+          return again();
+        }
+        if (name === "solo-fold" || name === "solo-discard") {
+          if (state.session) await Fallow.solo.pending(state.session, name === "solo-fold" ? "fold_next" : "discard");
+          return again();
+        }
+        if (name === "solo-gates") {
+          if (state.session) await Fallow.solo.runGates(state.session);
+          return again();
+        }
+        if (name === "solo-file") {
+          // A changed file of the session, opened in the middle with the chat beside it.
+          const s = state.session;
+          if (s) location.hash = `#/p/${encodeURIComponent(state.id)}/files?v=${encodeURIComponent(`solo:${s.id}`)}&f=${encodeURIComponent(el.dataset.path)}`;
+          return;
         }
         if (name === "solo-stop") {
           if (state.session) await Fallow.solo.stopTurn(state.session);

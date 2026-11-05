@@ -543,6 +543,16 @@ fn who_of(
                 who = Some(kind.to_string());
             }
         }
+    } else if let Some(rest) = subject.strip_prefix("Fallow solo ") {
+        // 012 (FR-019): a session's commits: the engineer's edits, or the assistant's turn.
+        if rest.contains("the engineer's edits") {
+            who = Some("you".into());
+        } else if let Some(t) = rest.split(", turn").nth(1) {
+            let n = t.trim_start_matches('s').split(':').next().unwrap_or_default().trim();
+            who = Some(format!("assistant, turn {n}"));
+        } else {
+            who = Some("assistant".into());
+        }
     } else if subject.starts_with("spec: ") {
         who = Some(v.lead.clone());
     } else if subject.starts_with("lock ") {

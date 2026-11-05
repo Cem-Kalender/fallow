@@ -375,13 +375,12 @@ impl Studio {
         if let Some(why) = &c.gone {
             return Err(format!("{why}: the session can only be closed"));
         }
-        if let Some(n) = solo.pending_commit {
-            if !solo.fold_next {
-                return Err(format!(
-                    "Fallow could not commit turn {n}: try again, fix it in the next turn, or undo those changes"
-                ));
-            }
+        if solo.pending_commit.is_some() && !solo.fold_next && !c.state.busy {
+            // Tried again first (R-4); it says why when it still cannot.
+            self.settle(conv)?;
         }
+        let c = self.convs.get(conv).ok_or("there is no session")?;
+        let solo = c.state.solo.clone().ok_or("not a session")?;
         // A turn at work: the message waits (FR-011).
         if c.state.busy && from_queue {
             return Ok(json!({ "waiting": "a turn is at work" }));
@@ -457,32 +456,8 @@ impl Studio {
             return Err(why);
         }
         // The engineer's edits since the last turn are committed as theirs first (R-4).
-        let mut engineer_edits = Vec::new();
-        let dirty = git::changes_all(&wt).unwrap_or_default();
-        if !dirty.is_empty() && solo.pending_commit.is_none() {
-            let msg = format!("Fallow solo {conv}: the engineer's edits before turn {n}");
-            match git::snapshot(&wt, &solo.branch, &msg) {
-                Ok(Some(commit)) => {
-                    let files: Vec<String> = dirty
-                        .iter()
-                        .map(|f| f.trim_matches('"').to_string())
-                        .collect();
-                    engineer_edits = files.clone();
-                    self.conv_mut(conv)?
-                        .append(CEvent::Solo(SoloEvent::EngineerEdits {
-                            before: format!("turn {n}"),
-                            commit,
-                            files,
-                        }))?;
-                }
-                Ok(None) => {}
-                Err(e) => {
-                    return Err(format!(
-                        "Fallow could not commit your edits in the session's working copy: {e}"
-                    ));
-                }
-            }
-        }
+        let _ = n;
+        let engineer_edits = self.settle(conv)?;
         let lib = self.library(Some(&p.path));
         let def = lib
             .agent(&assistant)
@@ -543,7 +518,7 @@ impl Studio {
             said: text,
             instructions: &instr_text,
             refs: &refs,
-            undone: &[],
+            undone: &Self::undone_to_tell(c),
             failed_commit: failed.as_deref(),
             engineer_edits: &engineer_edits,
             feature_request: text.starts_with("/feature"),
@@ -622,6 +597,19 @@ impl Studio {
         })?;
         c.live.clear();
         c.head_before = git::head(&wt).ok();
+        c.start_before = solo
+            .start_branch
+            .as_ref()
+            .and_then(|b| git::rev(&wt, &format!("refs/heads/{b}")).ok());
+        // Kept beside the log too: a restart during the turn still knows it (R-5).
+        match &c.start_before {
+            Some(sb) => {
+                let _ = std::fs::write(c.dir.join("start_before"), sb);
+            }
+            None => {
+                let _ = std::fs::remove_file(c.dir.join("start_before"));
+            }
+        }
         c.activity.clear();
         c.token = Some(token);
         c.stop = Arc::new(AtomicBool::new(false));
@@ -789,7 +777,13 @@ impl Studio {
                 brief,
             }))?;
         }
+        c.editor_during_turn = false;
         c.tick();
+        // Whether the turn brought the branch up to date with the starting branch (R-5).
+        if let (Some(b), Some(h)) = (before.as_deref(), head.as_deref()) {
+            let after = git::head(&wt).unwrap_or_else(|_| h.to_string());
+            self.base_after_turn(conv, n, b, &after);
+        }
         Ok(())
     }
 
@@ -1051,6 +1045,10 @@ impl Studio {
             .map(|(id, _)| id.clone())
             .collect();
         for id in ids {
+            // An undo stopped in the middle is finished from git first (R-5); gate copies a
+            // restart left go.
+            self.finish_undo_on_load(&id);
+            self.forget_gate_copies(&id);
             let Some(c) = self.convs.get_mut(&id) else {
                 continue;
             };
@@ -1242,7 +1240,22 @@ impl Studio {
             "slot_wait": c.slot_wait,
             "gone": c.gone,
             "mode_reset": c.mode_reset,
-            "gates": { "label": s.gates_label(&head, declared) },
+            "gates": {
+                "label": s.gates_label(&head, declared),
+                "running": c.gates_running,
+                "error": c.gates_error,
+                "commit": s.gates.as_ref().map(|g| g.0.clone()),
+                "results": s.gates.as_ref().map(|g| g.2.clone()).unwrap_or_default(),
+            },
+            "undone": s.undone,
+            "engineer_edits": s.engineer_edits.iter().map(|(b, c, f)| json!({"before": b, "commit": c, "files": f})).collect::<Vec<_>>(),
+            "editor_during_turn": c.editor_during_turn,
+            // The starting branch's commits past the base (R-5; the ref watcher, T035, refreshes).
+            "start_moved": s.start_branch.as_ref().and_then(|b| {
+                git::count_between(&s.worktree, &base.gates, &format!("refs/heads/{b}"))
+            }).filter(|n| *n > 0).map(|n| json!({ "commits": n })),
+            "changes_notice": super::solo_check::ONLY_THE_COPY,
+            "changes_count": changed_count(s),
             "suggestions": s.suggestions.iter().map(|(n, t, b)| json!({"n": n, "title": t, "brief": b})).collect::<Vec<_>>(),
             "features": s.features.iter().map(|(f, t, cv)| json!({"feature": f, "title": t, "conversation": cv})).collect::<Vec<_>>(),
             "closed": s.closed.as_ref().map(|(how, b, w)| json!({"how": how, "branch": b, "worktree": w})),

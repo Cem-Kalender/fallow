@@ -148,13 +148,15 @@
 
     function treeHtml() {
       const v = versionObj();
-      const vs = st.versions.map((x) => h`<option value="${x.id}"${raw(x.id === st.version ? " selected" : "")}>${x.label}${x.kind === "loop" ? (x.running ? " · loop running" : " · loop") : x.kind === "spec" ? " · spec session" : x.kind === "branch" ? " · branch" : ""}</option>`);
+      const vs = st.versions.map((x) => h`<option value="${x.id}"${raw(x.id === st.version ? " selected" : "")}>${x.label}${x.kind === "loop" ? (x.running ? " · loop running" : " · loop") : x.kind === "spec" ? " · spec session" : x.kind === "branch" ? " · branch" : x.kind === "solo" ? (x.running ? " · session at work" : " · session") : ""}</option>`);
       const rs = rows();
       const items = rs.map((r) => {
         const sel = !r.dir && r.path === st.file;
         const pad = `d${Math.min(r.depth, 8)}`;
         if (r.dir) {
-          return h`<li role="treeitem" class="ft-row dir ${pad}" data-act="f-dir" data-path="${r.path}" aria-level="${r.depth + 1}" aria-expanded="${r.open ? "true" : "false"}" tabindex="-1"><span class="ft-caret" aria-hidden="true">${r.open ? "▾" : "▸"}</span>${r.name}</li>`;
+          // 012 (FR-020): a folder carries the number of changes inside it.
+          const n = st.entries.filter((e) => e.mark && e.path.startsWith(`${r.path}/`)).length;
+          return h`<li role="treeitem" class="ft-row dir ${pad}" data-act="f-dir" data-path="${r.path}" aria-level="${r.depth + 1}" aria-expanded="${r.open ? "true" : "false"}" tabindex="-1"><span class="ft-caret" aria-hidden="true">${r.open ? "▾" : "▸"}</span>${r.name}${n ? h`<span class="ft-count" title="${`${n} changed inside`}">${n}</span>` : ""}</li>`;
         }
         const who = opts.drawer && r.e.who ? h`<span class="ft-who">${r.e.who}${r.e.task ? ` · ${r.e.task}` : ""}</span>` : "";
         return h`<li role="treeitem" class="ft-row ${pad}${sel ? " sel" : ""}" data-act="f-open" data-path="${r.path}" aria-level="${r.depth + 1}" aria-selected="${sel ? "true" : "false"}" tabindex="-1"><span class="ft-name">${opts.drawer ? r.path : r.name}</span>${who}${markOf(r.e)}</li>`;
@@ -163,7 +165,7 @@
       return h`<div class="ft">
         ${opts.drawer ? "" : h`<label class="tiny muted" for="ft-version">Version</label>`}
         <select id="ft-version" class="ft-version" data-change="f-version" aria-label="Which version of the files">${vs}</select>
-        ${v && v.kind !== "folder" ? h`<div class="tiny muted mt-4">${st.changedCount} changed on this ${v.kind === "branch" ? "branch" : "feature"}</div>` : ""}
+        ${v && v.kind !== "folder" ? h`<div class="tiny muted mt-4">${st.changedCount} changed on this ${v.kind === "branch" ? "branch" : v.kind === "solo" ? "session" : "feature"}</div>` : ""}
         <div class="ft-tools">
           <label for="ft-filter" class="sr">Filter files</label>
           <input id="ft-filter" type="search" placeholder="Filter files…" value="${st.filter}" data-input="f-filter" autocomplete="off">

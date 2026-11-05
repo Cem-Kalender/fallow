@@ -77,13 +77,40 @@ pub fn changes(dir: &Path) -> Result<Vec<String>, String> {
 
 /// Changed or untracked files, each untracked file named on its own (not its folder).
 pub fn changes_all(dir: &Path) -> Result<Vec<String>, String> {
-    Ok(
-        git(dir, &["status", "--porcelain", "--untracked-files=all"])?
-            .lines()
-            .filter(|l| l.len() > 3)
-            .map(|l| l[3..].trim_matches('"').to_string())
-            .collect(),
-    )
+    // 012 (Phase 6 reviews): every name as it is (`-z`), a rename as both its new name and
+    // the one it left, so a moved file is judged, restored and committed on both ends.
+    let out = git(
+        dir,
+        &[
+            "--no-optional-locks",
+            "-c",
+            "core.quotePath=false",
+            "-c",
+            "core.fsmonitor=false",
+            "status",
+            "--porcelain=v1",
+            "-z",
+            "--untracked-files=all",
+        ],
+    )?;
+    let mut files = Vec::new();
+    let mut parts = out.split('\0');
+    while let Some(e) = parts.next() {
+        if e.len() < 4 {
+            continue;
+        }
+        files.push(e[3..].to_string());
+        let b = e.as_bytes();
+        if matches!(b[0], b'R' | b'C') || matches!(b[1], b'R' | b'C') {
+            if let Some(old) = parts.next().filter(|o| !o.is_empty()) {
+                // A copy leaves its source as it was: only a rename's is changed.
+                if b[0] == b'R' || b[1] == b'R' {
+                    files.push(old.to_string());
+                }
+            }
+        }
+    }
+    Ok(files)
 }
 
 /// 012 (FR-002): the paths a session's working copy changed, read while its assistant may be at
@@ -1720,6 +1747,40 @@ pub fn snapshot(wt: &Path, branch: &str, message: &str) -> Result<Option<String>
         ));
     }
     git_nohooks(wt, &["add", "-A"], &[])?;
+    commit_index(wt, branch, message)
+}
+
+/// 012 (R-4): `snapshot` of `paths` only (a failed turn commit retried with what the turn left),
+/// whatever else changed staying out of it.
+pub fn snapshot_paths(
+    wt: &Path,
+    branch: &str,
+    message: &str,
+    paths: &[String],
+) -> Result<Option<String>, String> {
+    let on = git(wt, &["symbolic-ref", "-q", "HEAD"])
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default();
+    if on != format!("refs/heads/{branch}") {
+        return Err("the working copy is not on the session's branch".into());
+    }
+    // The index as at HEAD, then the paths alone.
+    git_nohooks(wt, &["reset", "-q"], &[])?;
+    for p in paths {
+        // A path that matches nothing any more (staged, then deleted) is not an error; any
+        // other failure is (a locked index): the retry says so rather than mislabel the turn.
+        if let Err(e) = git_nohooks(wt, &["--literal-pathspecs", "add", "-A", "--", p], &[]) {
+            if !e.contains("did not match any files") {
+                return Err(e);
+            }
+        }
+    }
+    commit_index(wt, branch, message)
+}
+
+/// The index committed on `branch` with plumbing (no hook, no signing); `None` when it holds
+/// what `HEAD` holds.
+fn commit_index(wt: &Path, branch: &str, message: &str) -> Result<Option<String>, String> {
     let tree = git_nohooks(wt, &["write-tree"], &[])?.trim().to_string();
     let old = head(wt)?;
     let old_tree = git(wt, &["rev-parse", &format!("{old}^{{tree}}")])?
@@ -1743,6 +1804,68 @@ pub fn snapshot(wt: &Path, branch: &str, message: &str) -> Result<Option<String>
     let r = format!("refs/heads/{branch}");
     git_nohooks(wt, &["update-ref", &r, &new, &old], &[])?;
     Ok(Some(new))
+}
+
+/// 012 (R-12): a detached worktree at `commit`, without hooks or LFS download (a gate run).
+pub fn worktree_add_detached_nohooks(repo: &Path, dir: &Path, commit: &str) -> Result<(), String> {
+    let d = dir.display().to_string();
+    git_nohooks(repo, &["worktree", "add", "-q", "--detach", &d, commit], &[]).map(|_| ())
+}
+
+/// Removes a worktree Fallow made, without hooks.
+pub fn worktree_remove_nohooks(repo: &Path, dir: &Path) {
+    let d = dir.display().to_string();
+    let _ = git_nohooks(repo, &["worktree", "remove", "--force", &d], &[]);
+    let _ = std::fs::remove_dir_all(dir);
+    let _ = git_nohooks(repo, &["worktree", "prune"], &[]);
+}
+
+/// 012 (R-4): throws away the working copy's uncommitted changes and untracked files (not the
+/// ignored ones), without hooks or LFS download.
+pub fn discard_nohooks(wt: &Path) -> Result<(), String> {
+    git_nohooks(wt, &["reset", "-q", "--hard", "HEAD"], &[])?;
+    git_nohooks(wt, &["clean", "-q", "-fd"], &[]).map(|_| ())
+}
+
+/// 012 (R-5): the commits of `from..to`, newest first, each with its parents.
+pub fn parents_between(dir: &Path, from: &str, to: &str) -> Vec<(String, Vec<String>)> {
+    git(dir, &["rev-list", "--parents", &format!("{from}..{to}")])
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|l| {
+            let mut w = l.split_whitespace().map(str::to_string);
+            Some((w.next()?, w.collect()))
+        })
+        .collect()
+}
+
+/// 012 (FR-019): the commits of `from..to`, oldest first.
+pub fn commits_oldest_first(dir: &Path, from: &str, to: &str) -> Vec<String> {
+    git(dir, &["rev-list", "--reverse", &format!("{from}..{to}")])
+        .unwrap_or_default()
+        .lines()
+        .map(str::to_string)
+        .collect()
+}
+
+/// The paths a commit changed against its first parent.
+pub fn files_of(dir: &Path, commit: &str) -> Vec<String> {
+    git(
+        dir,
+        &["-c", "core.quotePath=false", "diff-tree", "--no-commit-id", "--name-only", "-r", "-z", "-m", "--first-parent", commit],
+    )
+    .unwrap_or_default()
+    .split('\0')
+    .filter(|s| !s.is_empty())
+    .map(str::to_string)
+    .collect()
+}
+
+/// How many commits `to` has that `from` has not.
+pub fn count_between(dir: &Path, from: &str, to: &str) -> Option<u32> {
+    git(dir, &["rev-list", "--count", &format!("{from}..{to}")])
+        .ok()
+        .and_then(|s| s.trim().parse().ok())
 }
 
 /// Points `refname` at `commit`, without hooks (the session's undone refs, R-5).

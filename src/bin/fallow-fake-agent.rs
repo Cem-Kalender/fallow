@@ -46,6 +46,8 @@
 //!                                # many image blocks
 //! web = ["https://example.com"]  # 012: WebFetch tool calls; refused when --disallowedTools or
 //!                                # --tools leaves WebFetch out
+//! lock_index = true              # 012: leaves git's index.lock in the working copy's git
+//!                                # folder, so Fallow's commit after the turn fails
 //! read = ["notes.txt"]           # 012: Read tool calls through the same rules as `exec`: a
 //!                                # `Read` ask rule sends each to the prompt tool; an allowed
 //!                                # read returns the file's text
@@ -113,6 +115,8 @@ struct Step {
     web: Vec<String>,
     #[serde(default)]
     read: Vec<String>,
+    #[serde(default)]
+    lock_index: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -702,6 +706,13 @@ fn main() -> ExitCode {
     }
     if step.sleep_ms > 0 {
         std::thread::sleep(std::time::Duration::from_millis(step.sleep_ms));
+    }
+    if step.lock_index {
+        // A worktree's `.git` is a file naming its git folder.
+        let link = std::fs::read_to_string(cwd.join(".git")).unwrap_or_default();
+        if let Some(dir) = link.trim().strip_prefix("gitdir: ") {
+            let _ = std::fs::write(Path::new(dir.trim()).join("index.lock"), "");
+        }
     }
     for f in &step.files {
         let p = cwd.join(&f.path);

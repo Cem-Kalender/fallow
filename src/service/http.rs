@@ -423,6 +423,28 @@ fn studio_route(
             Err(e) => Some(Err(e)),
         },
         ("GET", ["api", "sessions", c]) => r(Req::Conversation { id: c.to_string() }),
+        ("POST", ["api", "sessions", c, "pending"]) => match need("choice") {
+            Ok(choice) => r(Req::SoloPending {
+                session: c.to_string(),
+                choice,
+                confirmed: body.get("confirmed").and_then(Value::as_bool) == Some(true),
+            }),
+            Err(e) => Some(Err(e)),
+        },
+        ("GET", ["api", "sessions", c, "undo"]) => match query_arg(url, "turn").and_then(|t| t.parse().ok()) {
+            Some(turn) => r(Req::UndoPreview { session: c.to_string(), turn }),
+            None => Some(Err("turn is required".into())),
+        },
+        ("POST", ["api", "sessions", c, "undo"]) => match body.get("turn").and_then(Value::as_u64) {
+            Some(turn) => r(Req::Undo {
+                session: c.to_string(),
+                turn: turn as u32,
+                confirmed: body.get("confirmed").and_then(Value::as_bool) == Some(true),
+            }),
+            None => Some(Err("turn is required".into())),
+        },
+        ("GET", ["api", "sessions", c, "changes"]) => r(Req::SoloChanges { session: c.to_string() }),
+        ("POST", ["api", "sessions", c, "gates"]) => r(Req::SoloGates { session: c.to_string() }),
         ("GET", ["api", "projects", p, "sessions"]) => r(Req::Sessions {
             project: p.to_string(),
         }),
