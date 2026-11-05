@@ -36,7 +36,20 @@
 //! approve = "python -c 1"        # a command outside the rules: asks the --permission-prompt-tool
 //!                                # in the default mode, or is refused under dontAsk;
 //!                                # $APPROVED becomes "allow" or "deny"
+//! exec = ["git branch x"]        # 012: commands really run (sh -c) in the working directory,
+//!                                # each going through the permission rules first, as Claude
+//!                                # Code does: deny wins, then an ask rule (from --settings)
+//!                                # goes to the prompt tool, then an allow rule runs it, and
+//!                                # what none covers is asked (default) or refused (dontAsk)
+//! expect_images = 1              # 012: the step fails unless the instruction came as a
+//!                                # stream-json message (--input-format stream-json) with this
+//!                                # many image blocks
+//! web = ["https://example.com"]  # 012: WebFetch tool calls; refused when --disallowedTools or
+//!                                # --tools leaves WebFetch out
 //! ```
+//!
+//! 012: with `FALLOW_FAKE_ARGS_LOG` set, each invocation appends its arguments to that file, one
+//! per line, then a line `---`, so tests can check the flags Fallow passed.
 //!
 //! A resumed call (`--resume`) with no step left for it answers as Claude Code does for a
 //! session it does not know: "No conversation found with session ID: …". With `--fork-session`
@@ -90,6 +103,11 @@ struct Step {
     #[serde(default)]
     run: Vec<Ran>,
     think: Option<String>,
+    #[serde(default)]
+    exec: Vec<String>,
+    expect_images: Option<usize>,
+    #[serde(default)]
+    web: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -214,6 +232,19 @@ fn mcp_call(config: &Path, tool: &str, arguments: Value) -> Result<String, Strin
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if let Ok(log) = std::env::var("FALLOW_FAKE_ARGS_LOG") {
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(log)
+        {
+            // One argument per line; a newline inside one is written as `\n`.
+            for a in &args {
+                let _ = writeln!(f, "{}", a.replace('\n', "\\n"));
+            }
+            let _ = writeln!(f, "---");
+        }
+    }
     // 009: playing an editor. `--record <file> <args...>` appends each argument, one per line,
     // and exits: tests see what "Open in my editor" started it with.
     if args.first().is_some_and(|a| a == "--record") {
@@ -246,6 +277,9 @@ fn main() -> ExitCode {
     let mut system = String::new();
     let mut allowed: Vec<String> = Vec::new();
     let mut disallowed: Vec<String> = Vec::new();
+    let mut asked: Vec<String> = Vec::new();
+    let mut tools: Option<Vec<String>> = None;
+    let mut stream_input = false;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
@@ -286,6 +320,31 @@ fn main() -> ExitCode {
                 }
                 i += 1;
             }
+            "--settings" => {
+                // Only the ask rules matter to the fake (012 research R-6).
+                if let Some(v) = args.get(i + 1) {
+                    if let Ok(j) = serde_json::from_str::<Value>(v) {
+                        for r in j["permissions"]["ask"].as_array().into_iter().flatten() {
+                            if let Some(r) = r.as_str() {
+                                asked.push(r.to_string());
+                            }
+                        }
+                    }
+                }
+                i += 1;
+            }
+            "--input-format" => {
+                stream_input = args.get(i + 1).is_some_and(|v| v == "stream-json");
+                i += 1;
+            }
+            "--tools" => {
+                let mut t = Vec::new();
+                while let Some(v) = args.get(i + 1).filter(|v| !v.starts_with("--")) {
+                    t.extend(v.split(',').map(|x| x.trim().to_string()));
+                    i += 1;
+                }
+                tools = Some(t);
+            }
             "--allowedTools" | "--disallowedTools" => {
                 let into = if args[i] == "--allowedTools" {
                     &mut allowed
@@ -311,6 +370,24 @@ fn main() -> ExitCode {
     };
     let mut instruction = String::new();
     let _ = std::io::stdin().read_to_string(&mut instruction);
+    // 012: a stream-json user message carries the text and the images (research R-8).
+    let mut images = 0usize;
+    if stream_input {
+        let mut text = String::new();
+        for line in instruction.lines() {
+            let Ok(v) = serde_json::from_str::<Value>(line) else {
+                continue;
+            };
+            for c in v["message"]["content"].as_array().into_iter().flatten() {
+                match c["type"].as_str() {
+                    Some("text") => text.push_str(c["text"].as_str().unwrap_or_default()),
+                    Some("image") => images += 1,
+                    _ => {}
+                }
+            }
+        }
+        instruction = text;
+    }
     let header = instruction.lines().next().unwrap_or_default();
     let rest = header.strip_prefix("Fallow step: ").unwrap_or_default();
     let kind = rest
@@ -505,6 +582,84 @@ fn main() -> ExitCode {
                 .push(json!({"tool_name": "Bash", "tool_use_id": id, "tool_input": input}));
         }
     }
+    if let Some(n) = step.expect_images {
+        if n != images {
+            emit(json!({"type": "result", "subtype": "error", "is_error": true,
+                "session_id": session, "total_cost_usd": 0.0,
+                "result": format!("expected {n} images, got {images}"), "permission_denials": []}));
+            return ExitCode::SUCCESS;
+        }
+    }
+    let tool_on = |t: &str| tools.as_ref().is_none_or(|l| l.iter().any(|x| x == t));
+    for url in &step.web {
+        let id = tool_id();
+        emit(json!({"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "id": id, "name": "WebFetch", "input": {"url": url, "prompt": "read it"}}]}}));
+        let off = !tool_on("WebFetch") || disallowed.iter().any(|d| d == "WebFetch");
+        emit(json!({"type": "user", "message": {"content": [
+            {"type": "tool_result", "tool_use_id": id, "is_error": off,
+             "content": if off { "No such tool available: WebFetch" } else { "fetched" }}]}}));
+    }
+    // 012: commands really run, through the rules as Claude Code applies them (T001's check).
+    for cmd in &step.exec {
+        let id = tool_id();
+        let input = json!({"command": cmd, "description": "scripted"});
+        emit(json!({"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "id": id, "name": "Bash", "input": input}]}}));
+        let covers = |rules: &[String]| {
+            rules.iter().any(|r| {
+                r == "Bash"
+                    || r.strip_prefix("Bash(")
+                        .and_then(|x| x.strip_suffix(":*)"))
+                        .is_some_and(|p| cmd == p || cmd.starts_with(&format!("{p} ")))
+            })
+        };
+        let ask_tool = || -> Value {
+            match (&prompt_tool, mode.as_str(), &mcp_config) {
+                (Some(t), "default", Some(c)) => {
+                    let tool = t.trim_start_matches("mcp__fallow__");
+                    mcp_call(c, tool, json!({"tool_name": "Bash", "input": input, "tool_use_id": id}))
+                        .ok()
+                        .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+                        .unwrap_or_else(|| json!({"behavior": "deny", "message": "the prompt tool failed"}))
+                }
+                _ => json!({"behavior": "deny", "message": "Permission to use Bash has been denied."}),
+            }
+        };
+        let verdict = if !tool_on("Bash") || covers(&disallowed) {
+            json!({"behavior": "deny", "message": "Permission to use Bash has been denied."})
+        } else if covers(&asked) {
+            ask_tool()
+        } else if covers(&allowed) {
+            json!({"behavior": "allow"})
+        } else {
+            ask_tool()
+        };
+        if verdict["behavior"] == "allow" {
+            let out = Command::new(shell())
+                .current_dir(&cwd)
+                .args(["-c", cmd])
+                .output();
+            let (ok, text) = match out {
+                Ok(o) => (
+                    o.status.success(),
+                    format!(
+                        "{}{}",
+                        String::from_utf8_lossy(&o.stdout),
+                        String::from_utf8_lossy(&o.stderr)
+                    ),
+                ),
+                Err(e) => (false, e.to_string()),
+            };
+            emit(json!({"type": "user", "message": {"content": [
+                {"type": "tool_result", "tool_use_id": id, "is_error": !ok, "content": text}]}}));
+        } else {
+            let msg = verdict["message"].as_str().unwrap_or("denied").to_string();
+            emit(json!({"type": "user", "message": {"content": [
+                {"type": "tool_result", "tool_use_id": id, "is_error": true, "content": msg}]}}));
+            prompt_denials.push(json!({"tool_name": "Bash", "tool_use_id": id, "tool_input": input}));
+        }
+    }
     if step.sleep_ms > 0 {
         std::thread::sleep(std::time::Duration::from_millis(step.sleep_ms));
     }
@@ -579,6 +734,24 @@ fn main() -> ExitCode {
     }
     emit(result);
     ExitCode::SUCCESS
+}
+
+/// The `sh` that runs `exec` commands. On Windows, `sh` is often not on the PATH (only Git's
+/// `cmd` folder is), so it is found from Git's own install, as Claude Code finds Git Bash.
+fn shell() -> PathBuf {
+    if cfg!(windows) {
+        let exec = git(Path::new("."), &["--exec-path"]);
+        // e.g. C:/Program Files/Git/mingw64/libexec/git-core: Git's root is three folders up.
+        if let Some(root) = Path::new(&exec).ancestors().nth(3) {
+            for sh in ["bin/sh.exe", "usr/bin/sh.exe"] {
+                let p = root.join(sh);
+                if p.exists() {
+                    return p;
+                }
+            }
+        }
+    }
+    PathBuf::from("sh")
 }
 
 /// An exclusive lock file, removed when dropped. A lock older than 10 s is left over from an

@@ -258,10 +258,26 @@ pub struct Availability {
     pub version: Option<String>,
 }
 
+/// 012 (FR-010a, contracts/runtime.md): what a runtime declares it can do. Fallow's behaviour
+/// without a capability is the same for every runtime: attachments are refused, the web switch
+/// cannot be turned off.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub struct Capabilities {
+    /// It hands `Call.attachments` (images) to the model with the instruction.
+    pub images: bool,
+    /// It can run a call with its web tools off (`Call.web == false`).
+    pub web_off: bool,
+    /// The files in a working copy through which it reads settings of its own; protected from
+    /// every agent's edits.
+    pub control_files: Vec<String>,
+}
+
 /// A provider that runs agent calls (FR-029).
 pub trait Runtime: Send + Sync {
     fn name(&self) -> &str;
     fn available(&self) -> Availability;
+    /// 012: what it can do, declared by every runtime (FR-010a).
+    fn capabilities(&self) -> Capabilities;
     /// Runs `call` to its end or its time limit. `sink` gets each event as it comes; `stop` ends
     /// the call early (a pause, a stop, or Fallow stopping). A runtime that cannot enforce the
     /// call's rights refuses the call: it never runs with fewer restrictions.

@@ -14,10 +14,11 @@
   const SOURCE = { default: "default", user: "yours", project: "this project" };
   const GROUPS = [
     ["lead", "Lead"],
+    ["assistant", "Assistant: codes with you in a session"],
     ["maker", "Makers: change files"],
     ["checker", "Checkers: only run and verify"],
   ];
-  const RETURNS = { maker: "work", checker: "verdict", lead: "reply" };
+  const RETURNS = { maker: "work", checker: "verdict", lead: "reply", assistant: "assistant_reply" };
   const projectPart = () => encodeURIComponent(s.project || "_");
 
   // The definition split at its frontmatter's closing line: [frontmatter with both `---`, body].

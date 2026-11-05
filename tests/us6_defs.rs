@@ -105,7 +105,7 @@ fn definitions_and_pipelines_are_created_edited_and_deleted() {
     // The library: the defaults with their kind and source; the edited builder is the
     // engineer's, with the update beside it.
     let v = agents(tx, Some(&p));
-    assert_eq!(v["agents"].as_array().unwrap().len(), 6, "{v}");
+    assert_eq!(v["agents"].as_array().unwrap().len(), 7, "{v}");
     assert_eq!(agent(&v, "reviewer")["source"], "default");
     assert_eq!(agent(&v, "reviewer")["kind"], "checker");
     let b = agent(&v, "builder");

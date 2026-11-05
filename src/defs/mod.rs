@@ -16,6 +16,10 @@ pub use pipeline::Pipeline;
 /// The agents Fallow ships (FR-025).
 pub const DEFAULT_AGENTS: &[(&str, &str)] = &[
     ("lead", include_str!("../../assets/agents/lead.md")),
+    (
+        "assistant",
+        include_str!("../../assets/agents/assistant.md"),
+    ),
     ("builder", include_str!("../../assets/agents/builder.md")),
     ("reviewer", include_str!("../../assets/agents/reviewer.md")),
     (
@@ -256,7 +260,7 @@ mod tests {
     fn the_built_in_library_has_the_defaults() {
         let lib = Library::load(None, None);
         assert!(lib.problems.is_empty(), "{:?}", lib.problems);
-        assert_eq!(lib.agents.len(), 6);
+        assert_eq!(lib.agents.len(), 7);
         assert_eq!(lib.pipelines.len(), 3);
         assert!(lib.pipelines["standard"].verifying);
         assert!(!lib.pipelines["solo"].verifying);

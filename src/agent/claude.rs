@@ -10,7 +10,9 @@ use std::time::Instant;
 use serde_json::Value;
 
 use super::rights::{Edits, Rights};
-use super::{Agent, Availability, Call, Event, Outcome, Runtime, Session, ToolKind, clip};
+use super::{
+    Agent, Availability, Call, Capabilities, Event, Outcome, Runtime, Session, ToolKind, clip,
+};
 
 /// The runtime for an agent program that speaks `claude -p`: Claude Code itself, or
 /// `fallow-fake-agent` in tests.
@@ -58,6 +60,20 @@ fn probe(cmd: &mut std::process::Command) -> Option<std::process::Output> {
 impl Runtime for Claude {
     fn name(&self) -> &str {
         "claude"
+    }
+
+    /// 012 (FR-010a): checked on the installed `claude` by T001 (specs/012-solo-session/checks/
+    /// claude-check.md): images in a stream-json message, web tools off by `--disallowedTools`,
+    /// and the settings files it would read from a working copy.
+    fn capabilities(&self) -> Capabilities {
+        Capabilities {
+            images: true,
+            web_off: true,
+            control_files: vec![
+                ".claude/settings.json".into(),
+                ".claude/settings.local.json".into(),
+            ],
+        }
     }
 
     fn available(&self) -> Availability {

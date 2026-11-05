@@ -53,15 +53,15 @@ and fixtures every story needs.
     7. Whether the project's `CLAUDE.md` is still loaded, and whether any plugin or user MCP tool loads with `--setting-sources user --strict-mcp-config`.
   - **The other points** (R-8): a call with `--input-format stream-json` and a base64 png image block is answered about the image; `WebFetch` and `WebSearch` in `--disallowedTools` are refused.
   - **The record**: the results go in `specs/012-solo-session/checks/claude-check.md`, with the `claude --version`, each point's outcome and the exact flags used. Fallow never reads the engineer's settings file.
-- [ ] T002 [P] Extend the fake runtime in `src/bin/fallow-fake-agent.rs` and `src/agent/fake.rs`, and document each new key in the binary's header.
+- [X] T002 [P] Extend the fake runtime in `src/bin/fallow-fake-agent.rs` and `src/agent/fake.rs`, and document each new key in the binary's header.
   - Its profile declares capabilities: `images`, `web_off` and `control_files`.
   - A scenario step may carry `expect_images = n`. The step fails when it receives a different number of images; it reads them from a stream-json stdin message the way the Claude adapter writes it.
   - A step may carry `web = ["<url>"]`, which emits `tool_call` events of kind `web`.
   - A step's `output` may carry `proposed_feature {title, brief}` and `proposed_pipeline`.
-  - A step may carry `run = [...]` commands that move git refs. It runs them in its working directory through the permission prompt tool, so `tool_call` sees them, and it waits for the answer.
+  - A step may carry `exec = [...]` commands that move git refs (`run` already names the scripted commands of 006). It runs them in its working directory through the permission prompt tool, so `tool_call` sees them, and it waits for the answer.
   - When `FALLOW_FAKE_ARGS_LOG` is set, every invocation's argv goes to that file, so tests can check the adapter's flags.
   - Unit tests for each new key.
-- [ ] T003 Add helpers to `tests/common/mod.rs`:
+- [X] T003 Add helpers to `tests/common/mod.rs` (done: `MARKER_HOOKS`, `repo_with_markers`, `hooks_ran`, `studio_settings_caps`, `assistant_on_fake`, `assistant_step`; the session helpers `start_session`, `say_solo`, `wait_turn` and `approve_next` need US1's requests and come with T012):
   - `start_session(tx, project, agent) -> session` and `say_solo(tx, session, text, attachments)`;
   - `wait_turn(tx, session, n)` and `approve_next(tx, session, answer)`;
   - `repo_with_markers(root)`: a project repository whose `pre-commit`, `prepare-commit-msg`, `post-commit`, `post-checkout` and `reference-transaction` hooks each append their name to `<root>/hooks.log`, plus `hooks_ran(root) -> Vec<String>`;
@@ -69,7 +69,7 @@ and fixtures every story needs.
   - `bare_remote(repo)`, reused from 010.
 
   It runs after T002.
-- [ ] T004 [P] Add the Assistant kind.
+- [X] T004 [P] Add the Assistant kind.
   - `src/defs/agent.rs`: `Kind::Assistant` (`kind: assistant`), which returns `assistant_reply`.
   - `assets/agents/assistant.md`: the shipped default, `runtime: claude`, with a plain-text body.
   - `src/defs/mod.rs`: `DEFAULT_AGENTS` installs it, and `install_defaults` copies it.

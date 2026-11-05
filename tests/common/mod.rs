@@ -708,3 +708,87 @@ pub fn locked_calc_prepared(
     let id = lock_calc_in(&e.tx, &repo, pipeline, Some((5.0, 60)), level);
     (e, repo, id)
 }
+
+// ---- 012: solo sessions ----
+
+/// The git hooks a solo session's repository carries (012 T003): each writes its name to
+/// `<root>/hooks.log`, so a test sees whether any Fallow git command ran one (research R-2, R-3).
+pub const MARKER_HOOKS: [&str; 5] = [
+    "pre-commit",
+    "prepare-commit-msg",
+    "post-commit",
+    "post-checkout",
+    "reference-transaction",
+];
+
+/// `repo` with `MARKER_HOOKS` installed in `.git/hooks`.
+pub fn repo_with_markers(root: &Path) -> PathBuf {
+    let r = repo(root);
+    let log = root.join("hooks.log").display().to_string().replace('\\', "/");
+    for h in MARKER_HOOKS {
+        let p = r.join(".git/hooks").join(h);
+        std::fs::write(&p, format!("#!/bin/sh\necho {h} >> \"{log}\"\nexit 0\n")).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+    }
+    // The log starts empty: only what runs after this counts.
+    let _ = std::fs::remove_file(root.join("hooks.log"));
+    r
+}
+
+/// The hooks that ran since `repo_with_markers`, in order.
+pub fn hooks_ran(root: &Path) -> Vec<String> {
+    std::fs::read_to_string(root.join("hooks.log"))
+        .unwrap_or_default()
+        .lines()
+        .map(str::to_string)
+        .collect()
+}
+
+/// Settings with the `claude` runtime playing `scenario` (as `studio_settings`), and a `fake`
+/// runtime playing it too, whose profile declares `caps` (`--images`, `--web-off`,
+/// `--control-file <path>`), for an assistant defined on `runtime: fake` (`assistant_on_fake`).
+pub fn studio_settings_caps(scenario: &Path, caps: &[&str]) -> Settings {
+    let exe = env!("CARGO_BIN_EXE_fallow-fake-agent");
+    let sc = scenario.display().to_string();
+    let caps: Vec<String> = caps.iter().map(|c| format!("{c:?}")).collect();
+    let text = format!(
+        "[agents.claude]\ncommand = {exe:?}\nargs = [\"--scenario\", {sc:?}]\n[agents.fake]\ncommand = {exe:?}\nargs = [\"--scenario\", {sc:?}{}{}]\n",
+        if caps.is_empty() { "" } else { ", " },
+        caps.join(", ")
+    );
+    let mut n = Vec::new();
+    let s = Settings::parse("settings.toml", &text, &mut n);
+    assert!(n.is_empty(), "{n:?}");
+    s
+}
+
+/// The project's `assistant` overridden to run on the `fake` runtime (its capabilities from
+/// `studio_settings_caps`), committed so the project folder stays clean.
+pub fn assistant_on_fake(repo: &Path) {
+    let dir = repo.join(".fallow/agents");
+    std::fs::create_dir_all(&dir).unwrap();
+    let shipped = fallow::defs::DEFAULT_AGENTS
+        .iter()
+        .find(|(n, _)| *n == "assistant")
+        .unwrap()
+        .1;
+    std::fs::write(
+        dir.join("assistant.md"),
+        shipped.replacen("runtime: claude", "runtime: fake", 1),
+    )
+    .unwrap();
+    git(repo, &["add", "."]);
+    git(repo, &["commit", "-q", "-m", "assistant on fake"]);
+}
+
+/// One scripted assistant turn (`Fallow step: assistant_turn`), with `extra` TOML lines.
+pub fn assistant_step(reply: &str, extra: &str) -> String {
+    format!(
+        "[[step]]\nkind = \"assistant_turn\"\n{extra}\noutput = {{ reply = {} }}\n\n",
+        lit(reply)
+    )
+}

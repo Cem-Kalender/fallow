@@ -159,6 +159,9 @@ pub fn parse(
         match kind_of(&s.agent) {
             None => problems.push(at(format!("no agent named {:?}", s.agent))),
             Some(Kind::Lead) => problems.push(at("the lead is not a pipeline step".into())),
+            Some(Kind::Assistant) => {
+                problems.push(at("the assistant is not a pipeline step".into()))
+            }
             Some(Kind::Maker) => {
                 if s.when == When::Task {
                     makers_per_task += 1;
@@ -236,8 +239,20 @@ mod tests {
             "builder" | "test-writer" | "docs-writer" => Some(Kind::Maker),
             "reviewer" | "security-reviewer" => Some(Kind::Checker),
             "lead" => Some(Kind::Lead),
+            "assistant" => Some(Kind::Assistant),
             _ => None,
         }
+    }
+
+    #[test]
+    fn the_assistant_is_not_a_pipeline_step() {
+        let e = p("name = \"p\"
+[[step]]
+agent = \"assistant\"
+when = \"task\"
+on_fail = \"repair\"
+").unwrap_err();
+        assert!(e.iter().any(|x| x.contains("the assistant is not a pipeline step")), "{e:?}");
     }
 
     fn p(text: &str) -> Result<Pipeline, Vec<String>> {

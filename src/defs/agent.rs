@@ -12,6 +12,8 @@ pub enum Kind {
     Maker,
     Checker,
     Lead,
+    /// 012: the coding assistant of a solo session (constitution VI, FR-005).
+    Assistant,
 }
 
 impl Kind {
@@ -21,6 +23,7 @@ impl Kind {
             Kind::Maker => "work",
             Kind::Checker => "verdict",
             Kind::Lead => "reply",
+            Kind::Assistant => "assistant_reply",
         }
     }
 }
@@ -409,8 +412,12 @@ pub fn parse(
             "maker" => Some(Kind::Maker),
             "checker" => Some(Kind::Checker),
             "lead" => Some(Kind::Lead),
+            "assistant" => Some(Kind::Assistant),
             _ => {
-                problems.push(p(at, format!("kind {k:?}: maker, checker or lead")));
+                problems.push(p(
+                    at,
+                    format!("kind {k:?}: maker, checker, lead or assistant"),
+                ));
                 None
             }
         },
@@ -426,11 +433,12 @@ pub fn parse(
                     problems.push(p(
                         at,
                         format!(
-                            "returns {r:?}: a {} returns {:?}",
+                            "returns {r:?}: {} returns {:?}",
                             match k {
-                                Kind::Maker => "maker",
-                                Kind::Checker => "checker",
-                                Kind::Lead => "lead",
+                                Kind::Maker => "a maker",
+                                Kind::Checker => "a checker",
+                                Kind::Lead => "a lead",
+                                Kind::Assistant => "an assistant",
                             },
                             k.returns()
                         ),
@@ -528,6 +536,17 @@ pub fn parse(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_shipped_assistant_parses_as_kind_assistant() {
+        let text = include_str!("../../assets/agents/assistant.md");
+        let d = parse("assistant.md", "assistant", text, Source::Default, &["claude"]).unwrap();
+        assert_eq!(d.kind, Kind::Assistant);
+        assert_eq!(d.returns, "assistant_reply");
+        let wrong = text.replace("returns: assistant_reply", "returns: reply");
+        let e = parse("assistant.md", "assistant", &wrong, Source::Default, &["claude"]).unwrap_err();
+        assert!(e.iter().any(|p| p.message.contains("an assistant returns")), "{e:?}");
+    }
 
     #[test]
     fn fields_change_only_their_lines() {
