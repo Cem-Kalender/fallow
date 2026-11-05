@@ -629,6 +629,8 @@ fn part_reasons(p: &Part, ctx: &Ctx, base: &mut PathBuf) -> Vec<String> {
             push(&mut r, w.to_string());
         } else if let Some(x) = path_reason(ctx, base, t, true) {
             push(&mut r, format!("writes or reads a file: {x}"));
+        } else if let Some(x) = secret_reason(ctx, base, t) {
+            push(&mut r, x);
         }
     }
     // Shell keywords before the command (`if`, `then`, `!`…): the command after them is judged;
@@ -898,6 +900,13 @@ fn part_reasons(p: &Part, ctx: &Ctx, base: &mut PathBuf) -> Vec<String> {
                 if let Some(x) = path_reason(ctx, base, c, output) {
                     let x = if output { format!("writes a file: {x}") } else { x };
                     push(&mut r, x);
+                    continue;
+                }
+            }
+            // A file that may hold secrets, however it is written (`cat .env`, `less a.pem`).
+            if !c.starts_with('-') {
+                if let Some(x) = secret_reason(ctx, base, c) {
+                    push(&mut r, x);
                 }
             }
         }
@@ -1128,6 +1137,230 @@ fn git_reasons(args: &[&str], ctx: &Ctx, base: &Path, r: &mut Vec<String>) {
         _ => {}
     }
 }
+
+/// 012 (FR-043): why a word that names a file in the working copy is asked about: the file
+/// may hold secrets (the same test as everywhere in Fallow).
+fn secret_reason(ctx: &Ctx, base: &Path, arg: &str) -> Option<String> {
+    // Quoted text (a commit message, an `echo`) is not a file name.
+    if arg.contains(char::is_whitespace) {
+        return None;
+    }
+    // A file as git holds it (`git show HEAD:.env`, `git cat-file -p main:a.pem`).
+    if let Some((rev, rest)) = arg.split_once(':') {
+        if rev.len() != 1 && !rest.is_empty() && !rest.starts_with(['\\', '/']) {
+            let rel = rest.trim_start_matches("./").replace('\\', "/");
+            if super::files::is_secret(&rel) {
+                return Some(format!("names {rel} as git holds it ({arg}), a file that may hold secrets"));
+            }
+        }
+    }
+    let wild = arg.contains(['*', '?', '[']);
+    // A plain word (`grep -rn token src`) is a search word, unless it has a file's form
+    // (`server.pem`) or a file has that name.
+    if !wild && !looks_like_path(arg) && !arg.contains('.') && !resolve(&canon(base), arg).exists()
+    {
+        return None;
+    }
+    if wild {
+        return wildcard_secret(ctx, base, arg);
+    }
+    match place(ctx, base, arg) {
+        Place::Inside(rel) if super::files::is_secret(&rel) => {
+            Some(format!("names {rel}, a file that may hold secrets"))
+        }
+        _ => None,
+    }
+}
+
+/// A wildcard word (`cat .e*`): the files of its folder it matches, one that may hold secrets
+/// asked about (fourth review of FR-043, 10).
+fn wildcard_secret(ctx: &Ctx, base: &Path, arg: &str) -> Option<String> {
+    let w = arg.replace('\\', "/");
+    let (dir, pat) = match w.rsplit_once('/') {
+        Some((d, p)) => (if d.is_empty() { "/".to_string() } else { d.to_string() }, p.to_string()),
+        None => (".".to_string(), w.clone()),
+    };
+    // Wildcards in the folders too: a regex or a sed script as often as a path, so the folders
+    // are not followed; but a last part naming a file that may hold secrets is asked about
+    // (`cat */.env`, `head **/a.pem`).
+    if dir.contains(['*', '?', '[']) {
+        let plain = pat.trim_start_matches('*');
+        return (super::files::is_secret(&pat) || (!plain.is_empty() && super::files::is_secret(plain)))
+            .then(|| format!("names {pat} in any folder ({arg}), a file that may hold secrets"));
+    }
+    let m = globset::GlobBuilder::new(&pat)
+        .case_insensitive(cfg!(windows))
+        .literal_separator(true)
+        .build()
+        .ok()?
+        .compile_matcher();
+    let folder = resolve(&canon(base), &dir);
+    for e in std::fs::read_dir(&folder).into_iter().flatten().flatten() {
+        let name = e.file_name().to_string_lossy().to_string();
+        // Dot-names too: PowerShell's and cmd's `*` match them, though Bash's does not.
+        if !m.is_match(&name) {
+            continue;
+        }
+        if let Place::Inside(rel) = place(ctx, &folder, &name) {
+            if super::files::is_secret(&rel) {
+                return Some(format!("names {rel} by a pattern, a file that may hold secrets"));
+            }
+        }
+    }
+    None
+}
+
+/// 012 (FR-043): why the assistant's read of `path` is asked (a read tool's file or folder;
+/// `None`: the working copy itself): outside the working copy, in the engineer's folder, or a
+/// file that may hold secrets. A read in the working copy goes unasked.
+pub fn read_problem(path: Option<&str>, ctx: &Ctx) -> Option<String> {
+    let path = path.map(str::trim).filter(|p| !p.is_empty())?;
+    let base = canon(ctx.wt);
+    match place(ctx, &base, path) {
+        Place::Inside(rel) if super::files::is_secret(&rel) => {
+            Some(format!("reads {rel}, a file that may hold secrets"))
+        }
+        Place::Inside(_) => None,
+        Place::Folder => Some(format!("reads in your project folder ({path})")),
+        Place::Outside => Some(format!("reads outside the session's working copy ({path})")),
+    }
+}
+
+/// 012 (FR-043): why a listing of names (`Glob`) is asked: its folder, or the folder its
+/// pattern starts from when the pattern names one (absolute, `..`, `~`) (review of FR-043, 1).
+pub fn listing_problem(path: Option<&str>, pattern: Option<&str>, ctx: &Ctx) -> Option<String> {
+    if let Some(why) = read_problem(path, ctx) {
+        return Some(why);
+    }
+    let pat = pattern.map(str::trim).unwrap_or_default().replace('\\', "/");
+    if pat.starts_with('~') || pat.starts_with("$") || pat.contains("$env:") {
+        return Some(format!("lists names from a folder Fallow cannot follow ({pat})"));
+    }
+    // The fixed folders before the first wildcard.
+    let fixed: Vec<&str> = pat
+        .split('/')
+        .take_while(|c| !c.contains(['*', '?', '[', '{']))
+        .collect();
+    let lead = if pat.starts_with('/') { format!("/{}", fixed.join("/").trim_start_matches('/')) } else { fixed.join("/") };
+    let absolute = pat.starts_with('/') || (pat.len() >= 2 && pat.as_bytes()[1] == b':');
+    // `..` anywhere, in braces too (`{..,src}/*`).
+    if !(absolute || pat.contains("..")) {
+        return None;
+    }
+    if pat.split('/').skip(fixed.len()).any(|c| c.contains("..")) {
+        return Some(format!("lists names outside the session's working copy ({pat})"));
+    }
+    let start = match path.map(str::trim).filter(|p| !p.is_empty()) {
+        Some(p) if !absolute => format!("{p}/{lead}"),
+        _ => lead,
+    };
+    read_problem(Some(if start.is_empty() { "." } else { &start }), ctx)
+}
+
+/// 012 (FR-043): why the assistant's search in the contents of files is asked: `read_problem`
+/// for its folder, a file pattern naming a file that may hold secrets, or such a file in the
+/// folder searched (its contents would show). Folders git and package managers keep are not
+/// looked in.
+pub fn search_problem(path: Option<&str>, pattern: Option<&str>, ctx: &Ctx) -> Option<String> {
+    if let Some(why) = read_problem(path, ctx) {
+        return Some(why);
+    }
+    if let Some(g) = pattern.map(str::trim).filter(|g| !g.is_empty()) {
+        let plain = g.trim_start_matches("**/").trim_start_matches('*');
+        if super::files::is_secret(g) || (!plain.is_empty() && super::files::is_secret(plain)) {
+            return Some(format!("searches files named {g}, which may hold secrets"));
+        }
+    }
+    let base = canon(ctx.wt);
+    let dir = match path.map(str::trim).filter(|p| !p.is_empty()) {
+        Some(p) => resolve(&base, p),
+        None => base.clone(),
+    };
+    if dir.is_file() {
+        return None;
+    }
+    let under = dir
+        .strip_prefix(&base)
+        .map(|r| r.to_string_lossy().replace('\\', "/"))
+        .unwrap_or_default();
+    let Some(files) = crate::verify::git::session_files(&base, &under) else {
+        return Some("searches files Fallow could not list".into());
+    };
+    if let Some(f) = files.iter().find(|f| super::files::is_secret(f)) {
+        return Some(format!("searches {f} too, a file that may hold secrets"));
+    }
+    // A file pattern reaches the search past git's ignore rules: the ignored files it matches.
+    if let Some(g) = pattern.map(str::trim).filter(|g| !g.is_empty()) {
+        let Some(ignored) = crate::verify::git::session_ignored(&base, &under) else {
+            return Some("searches files Fallow could not list".into());
+        };
+        let m = globset::GlobBuilder::new(g)
+            .case_insensitive(cfg!(windows))
+            .build()
+            .map(|g| g.compile_matcher());
+        for f in &ignored {
+            let f = f.trim_end_matches('/');
+            let name = f.rsplit('/').next().unwrap_or(f);
+            let matched = match &m {
+                Ok(m) => m.is_match(f) || m.is_match(name),
+                Err(_) => true,
+            };
+            // An ignored folder is one entry: one that is itself a secret's folder counts.
+            let secret = super::files::is_secret(f) || super::files::is_secret(&format!("{f}/x"));
+            let folder = ignored_folder(&base, f);
+            if secret && (matched || folder) {
+                return Some(format!("searches {f} too, which git ignores and may hold secrets"));
+            }
+            // A pattern matching an ignored folder's name takes the search into it (`*`, `**`).
+            if folder && matched {
+                if let Some(why) = walk_secret(&base, &base.join(f), f) {
+                    return Some(why);
+                }
+            }
+        }
+    }
+    // Named on purpose, an ignored folder is searched all the same.
+    if !under.is_empty() && crate::verify::git::is_ignored(&base, &under) {
+        return walk_secret(&base, &dir, &under);
+    }
+    None
+}
+
+/// A folder git ignores that a search goes into, looked through for files that may hold
+/// secrets (up to `SEARCH_LOOK` entries; a bigger one is asked about).
+fn walk_secret(base: &Path, dir: &Path, name: &str) -> Option<String> {
+    let mut seen = 0usize;
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        for e in std::fs::read_dir(&d).into_iter().flatten().flatten() {
+            seen += 1;
+            if seen > SEARCH_LOOK {
+                return Some(format!("searches {name}, a folder git ignores, too big to look through"));
+            }
+            let p = e.path();
+            if e.file_type().is_ok_and(|t| t.is_dir()) {
+                stack.push(p);
+                continue;
+            }
+            let rel = p
+                .strip_prefix(base)
+                .map(|r| r.to_string_lossy().replace('\\', "/"))
+                .unwrap_or_default();
+            if super::files::is_secret(&rel) {
+                return Some(format!("searches {rel} too, a file that may hold secrets"));
+            }
+        }
+    }
+    None
+}
+
+/// Whether `rel` is a folder in the working copy.
+fn ignored_folder(base: &Path, rel: &str) -> bool {
+    base.join(rel).is_dir()
+}
+
+/// The most entries an ignored folder a search names is looked through.
+const SEARCH_LOOK: usize = 20_000;
 
 /// 012 (R-6): why the assistant may not write the file `path` (an edit tool's), if it may
 /// not: outside its working copy, in the engineer's folder, a protected file, or `.git`.
@@ -1476,5 +1709,95 @@ EOF
         assert!(p[1].redirects.is_empty());
         let p = split("make >> log.txt").unwrap();
         assert_eq!(p[0].redirects, ["log.txt"]);
+    }
+
+    #[test]
+    fn files_that_may_hold_secrets_are_asked_however_named() {
+        for cmd in ["cat .env", "less server.pem", "type config/prod.env", "grep x < .env"] {
+            let v = judge(cmd);
+            assert!(
+                matches!(&v, Verdict::Ask(w) if w.iter().any(|r| r.contains("secrets"))),
+                "{cmd}: {v:?}"
+            );
+        }
+        assert_eq!(judge("cat notes.txt"), Verdict::Allow);
+        assert_eq!(judge("cat .env.example"), Verdict::Allow);
+        // Search words, messages and scripts are not files (reviews of FR-043).
+        assert_eq!(judge("grep -rn token src"), Verdict::Allow);
+        assert_eq!(judge("git log --grep=credentials"), Verdict::Allow);
+        assert_eq!(judge("git commit -m \"load settings from .env\""), Verdict::Allow);
+        assert_eq!(judge("grep -E '[0-9]+/[a-z]*' Cargo.toml"), Verdict::Allow);
+        assert_eq!(judge("ls src/*/mod.rs"), Verdict::Allow);
+        assert!(matches!(judge("git show HEAD:.env"), Verdict::Ask(_)));
+        // A wildcard matching one (review of FR-043, 10).
+        let (wt, _) = dirs();
+        std::fs::write(wt.join(".env"), "").unwrap();
+        assert!(matches!(judge("cat .e*"), Verdict::Ask(_)));
+        assert!(matches!(judge("cat ./.en?"), Verdict::Ask(_)));
+        assert_eq!(judge("cat src/*.rs"), Verdict::Allow);
+        assert!(matches!(judge("Get-Content *"), Verdict::Ask(_)), "PowerShell's * matches .env");
+        assert!(matches!(judge("cat */.env"), Verdict::Ask(_)));
+        assert!(matches!(judge("git show :.npmrc"), Verdict::Ask(_)));
+    }
+
+    #[test]
+    fn reads_in_the_copy_go_and_secret_or_outside_ones_are_asked() {
+        let root = std::env::temp_dir().join(format!("fallow-judge-reads-{}", std::process::id()));
+        let wt = root.join("wt");
+        let folder = root.join("shop");
+        std::fs::create_dir_all(wt.join("src/deep")).unwrap();
+        std::fs::create_dir_all(wt.join("node_modules/x")).unwrap();
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(wt.join("src/a.rs"), "").unwrap();
+        std::fs::write(wt.join("node_modules/x/.env"), "").unwrap();
+        let protect = Vec::new();
+        let ctx = Ctx { wt: &wt, branch: "fallow/solo/fix", folder: &folder, protect: &protect };
+        assert_eq!(read_problem(Some("src/a.rs"), &ctx), None);
+        assert_eq!(read_problem(None, &ctx), None);
+        assert!(read_problem(Some(".env"), &ctx).is_some_and(|w| w.contains("secrets")));
+        assert!(read_problem(Some("../shop/x"), &ctx).is_some_and(|w| w.contains("project folder")));
+        let far = root.join("far.txt").display().to_string();
+        assert!(read_problem(Some(&far), &ctx).is_some_and(|w| w.contains("outside")));
+        // A search: its folder, its file pattern, and the files it would read.
+        assert!(search_problem(None, Some("**/*.env"), &ctx).is_some_and(|w| w.contains("named")));
+        assert_eq!(search_problem(Some("src/a.rs"), None, &ctx), None);
+        // A listing whose pattern names its own folder.
+        assert_eq!(listing_problem(None, Some("src/**/*.rs"), &ctx), None);
+        let far = format!("{}/**/*", root.join("shop").display());
+        assert!(listing_problem(None, Some(&far), &ctx).is_some_and(|w| w.contains("project folder")), "{far}");
+        assert!(listing_problem(None, Some("../../**/*"), &ctx).is_some());
+        assert!(listing_problem(None, Some("~/.ssh/*"), &ctx).is_some());
+        assert!(listing_problem(None, Some("{..,src}/**/*"), &ctx).is_some());
+        // Tool paths are paths: a `$` in a file name is not a variable.
+        assert_eq!(read_problem(Some("src/$id.tsx"), &ctx), None);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_search_pattern_reaches_ignored_secrets_and_is_asked() {
+        let root = std::env::temp_dir().join(format!("fallow-judge-ign-{}", std::process::id()));
+        let wt = root.join("wt");
+        let folder = root.join("shop");
+        std::fs::create_dir_all(wt.join("src")).unwrap();
+        std::fs::create_dir_all(&folder).unwrap();
+        let git = |args: &[&str]| {
+            std::process::Command::new("git").args(args).current_dir(&wt).output().unwrap()
+        };
+        git(&["init", "-q"]);
+        std::fs::write(wt.join(".gitignore"), ".env\nbuild/\n").unwrap();
+        std::fs::write(wt.join(".env"), "").unwrap();
+        std::fs::write(wt.join("src/a.rs"), "").unwrap();
+        let protect = Vec::new();
+        let ctx = Ctx { wt: &wt, branch: "fallow/solo/fix", folder: &folder, protect: &protect };
+        assert_eq!(search_problem(None, None, &ctx), None, "the search skips ignored files");
+        assert!(search_problem(None, Some("*"), &ctx).is_some_and(|w| w.contains(".env")));
+        assert_eq!(search_problem(None, Some("*.rs"), &ctx), None);
+        // A pattern matching an ignored folder goes into it (fourth review, 1).
+        std::fs::remove_file(wt.join(".env")).unwrap();
+        std::fs::create_dir_all(wt.join("build")).unwrap();
+        std::fs::write(wt.join("build/.env"), "").unwrap();
+        assert!(search_problem(None, Some("*"), &ctx).is_some_and(|w| w.contains("build/.env")));
+        assert_eq!(search_problem(None, Some("*.rs"), &ctx), None);
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

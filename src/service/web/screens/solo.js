@@ -74,10 +74,11 @@
     const t = (s.turns || []).slice(-1)[0];
     const asked = t && (t.approvals || []).find((x) => x.id === a.id);
     const reasons = (asked && asked.reasons) || [];
-    return h`<div class="card approval"><div class="b">The assistant asks to run a command</div>
+    const read = a.kind === "read";
+    return h`<div class="card approval"><div class="b">${read ? "The assistant asks to read" : "The assistant asks to run a command"}</div>
       <div class="term">${a.command}</div>
       ${reasons.length ? h`<ul class="small mt-6">${reasons.map((r) => h`<li>${r}</li>`)}</ul>` : ""}
-      <div class="tiny muted mt-6">Fallow judges the command as written; it cannot see what a script does inside.</div>
+      <div class="tiny muted mt-6">${read ? "Reads in the session's copy go without asking; Fallow asks about a read outside it, or of a file that may hold secrets." : "Fallow judges the command as written; it cannot see what a script does inside."}</div>
       <div class="row wrap gap-8 mt-10">
         <button class="btn" data-act="approve" data-id="${a.id}" data-answer="once">Allow once</button>
         ${a.always ? h`<button class="btn btn2" data-act="approve" data-id="${a.id}" data-answer="always" data-command="${a.always}">Always in this project</button>` : ""}

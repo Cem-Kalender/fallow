@@ -92,11 +92,12 @@ pub struct PermissionRequest {
     pub kind: RequestKind,
     /// The command, for `Run`.
     pub command: Option<String>,
-    /// The file written, for `Edit`.
+    /// The file written, for `Edit`; the file or folder read, for `Read` (none: the working
+    /// directory).
     pub path: Option<String>,
     /// The page fetched, for `Web`.
     pub url: Option<String>,
-    /// The search, for `Web`.
+    /// The search, for `Web`; the file pattern of a search, for `Read`.
     pub query: Option<String>,
     /// The runtime's own name for the tool, for the record only.
     pub tool: String,
@@ -107,6 +108,8 @@ pub enum RequestKind {
     Run,
     Edit,
     Web,
+    /// 012 (FR-043): a file read, a search in files, or a listing of names.
+    Read,
     Other,
 }
 

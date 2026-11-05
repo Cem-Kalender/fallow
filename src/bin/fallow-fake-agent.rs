@@ -46,6 +46,9 @@
 //!                                # many image blocks
 //! web = ["https://example.com"]  # 012: WebFetch tool calls; refused when --disallowedTools or
 //!                                # --tools leaves WebFetch out
+//! read = ["notes.txt"]           # 012: Read tool calls through the same rules as `exec`: a
+//!                                # `Read` ask rule sends each to the prompt tool; an allowed
+//!                                # read returns the file's text
 //! ```
 //!
 //! 012: with `FALLOW_FAKE_ARGS_LOG` set, each invocation appends its arguments to that file, one
@@ -108,6 +111,8 @@ struct Step {
     expect_images: Option<usize>,
     #[serde(default)]
     web: Vec<String>,
+    #[serde(default)]
+    read: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -599,6 +604,41 @@ fn main() -> ExitCode {
         emit(json!({"type": "user", "message": {"content": [
             {"type": "tool_result", "tool_use_id": id, "is_error": off,
              "content": if off { "No such tool available: WebFetch" } else { "fetched" }}]}}));
+    }
+    // 012 (FR-043): files read, through the rules as Claude Code applies them.
+    for path in &step.read {
+        let id = tool_id();
+        let input = json!({"file_path": path});
+        emit(json!({"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "id": id, "name": "Read", "input": input}]}}));
+        let whole = |rules: &[String]| rules.iter().any(|r| r == "Read" || r.starts_with("Read("));
+        let verdict = if !tool_on("Read") || whole(&disallowed) {
+            json!({"behavior": "deny", "message": "Permission to use Read has been denied."})
+        } else if whole(&asked) {
+            match (&prompt_tool, mode.as_str(), &mcp_config) {
+                (Some(t), "default", Some(c)) => {
+                    let tool = t.trim_start_matches("mcp__fallow__");
+                    mcp_call(c, tool, json!({"tool_name": "Read", "input": input, "tool_use_id": id}))
+                        .ok()
+                        .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+                        .unwrap_or_else(|| json!({"behavior": "deny", "message": "the prompt tool failed"}))
+                }
+                _ => json!({"behavior": "deny", "message": "Permission to use Read has been denied."}),
+            }
+        } else {
+            json!({"behavior": "allow"})
+        };
+        let (bad, text) = if verdict["behavior"] == "allow" {
+            match std::fs::read_to_string(cwd.join(path)) {
+                Ok(t) => (false, t),
+                Err(e) => (true, e.to_string()),
+            }
+        } else {
+            prompt_denials.push(json!({"tool_name": "Read", "tool_use_id": id, "tool_input": input}));
+            (true, verdict["message"].as_str().unwrap_or("denied").to_string())
+        };
+        emit(json!({"type": "user", "message": {"content": [
+            {"type": "tool_result", "tool_use_id": id, "is_error": bad, "content": text}]}}));
     }
     // 012: commands really run, through the rules as Claude Code applies them (T001's check).
     for cmd in &step.exec {

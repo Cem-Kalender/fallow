@@ -832,6 +832,41 @@ impl Studio {
                     Some(why) => Err(format!("The assistant may not change {path}: {why}")),
                 }
             }
+            // 012 (FR-043): a read in the working copy goes unasked; one outside it, or of a
+            // file that may hold secrets, is the engineer's, whatever the mode.
+            agent::RequestKind::Read => {
+                let path = req.path.as_deref();
+                let problem = match req.tool.as_str() {
+                    "Grep" => judge::search_problem(path, req.query.as_deref(), &ctxj),
+                    "Glob" => judge::listing_problem(path, req.query.as_deref(), &ctxj),
+                    _ => judge::read_problem(path, &ctxj),
+                };
+                let Some(why) = problem else {
+                    allow(&reply);
+                    return Ok(());
+                };
+                if c.pending.is_some() {
+                    return Err(
+                        "Another request is waiting for the engineer: ask for this read again once it is answered."
+                            .into(),
+                    );
+                }
+                let what = match (req.tool.as_str(), path, req.query.as_deref()) {
+                    ("Grep", p, g) => format!(
+                        "search in {}{}",
+                        p.unwrap_or("the working copy"),
+                        g.map(|g| format!(" (files {g})")).unwrap_or_default()
+                    ),
+                    ("Glob", p, g) => format!(
+                        "list {} in {}",
+                        g.unwrap_or("files"),
+                        p.unwrap_or("the working copy")
+                    ),
+                    (_, p, _) => format!("read {}", p.unwrap_or_default()),
+                };
+                let tool = req.tool.clone();
+                self.ask_engineer(conv, runtime, &tool, true, what, vec![why], raw, reply)
+            }
             agent::RequestKind::Other => Err(format!(
                 "{} is not a tool Fallow can judge.",
                 if req.tool.is_empty() {
@@ -860,36 +895,56 @@ impl Studio {
                     judge::Verdict::Ask(why) => why,
                     judge::Verdict::Allow => Vec::new(),
                 };
-                let id = format!(
-                    "a{}",
-                    c.state
-                        .turns
-                        .iter()
-                        .map(|t| t.approvals.len())
-                        .sum::<usize>()
-                        + 1
-                );
-                let wait = self.approval_wait;
-                let c = self.conv_mut(conv)?;
-                c.append(CEvent::ApprovalAsked {
-                    id: id.clone(),
-                    command: command.clone(),
-                    reasons,
-                    merge: None,
-                })
-                .map_err(|_| "Fallow could not record the question.".to_string())?;
-                c.pending = Some(Pending {
-                    id,
-                    tool: req.tool.clone(),
-                    command,
-                    raw: raw.clone(),
-                    runtime: runtime.to_string(),
-                    reply,
-                    deadline: std::time::Instant::now() + wait,
-                });
-                Ok(())
+                let tool = req.tool.clone();
+                self.ask_engineer(conv, runtime, &tool, false, command, reasons, raw, reply)
             }
         }
+    }
+
+    /// 012 (FR-008, FR-043): a command or a read put to the engineer: recorded as asked, and
+    /// answered when they answer (or the wait runs out).
+    #[allow(clippy::too_many_arguments)]
+    fn ask_engineer(
+        &mut self,
+        conv: &str,
+        runtime: &str,
+        tool: &str,
+        read: bool,
+        command: String,
+        reasons: Vec<String>,
+        raw: &Value,
+        reply: Sender<Reply>,
+    ) -> Result<(), String> {
+        let c = self.convs.get(conv).ok_or("the session is gone")?;
+        let id = format!(
+            "a{}",
+            c.state
+                .turns
+                .iter()
+                .map(|t| t.approvals.len())
+                .sum::<usize>()
+                + 1
+        );
+        let wait = self.approval_wait;
+        let c = self.conv_mut(conv)?;
+        c.append(CEvent::ApprovalAsked {
+            id: id.clone(),
+            command: command.clone(),
+            reasons,
+            merge: None,
+        })
+        .map_err(|_| "Fallow could not record the question.".to_string())?;
+        c.pending = Some(Pending {
+            id,
+            tool: tool.to_string(),
+            read,
+            command,
+            raw: raw.clone(),
+            runtime: runtime.to_string(),
+            reply,
+            deadline: std::time::Instant::now() + wait,
+        });
+        Ok(())
     }
 
     /// 012 (FR-002, FR-025, contracts/web-api.md): the project's sessions for the dropdown:

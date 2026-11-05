@@ -171,6 +171,57 @@ pub fn files_between(dir: &Path, from: &str, to: &str) -> Result<Vec<String>, St
     .collect())
 }
 
+/// The flags for reading a session's working copy while its assistant works: no lock, no
+/// fsmonitor, names unquoted.
+const SESSION_READ: [&str; 6] = [
+    "--no-optional-locks",
+    "--literal-pathspecs",
+    "-c",
+    "core.quotePath=false",
+    "-c",
+    "core.fsmonitor=false",
+];
+
+/// 012 (FR-043): the files a search in a session's working copy reads by default, under the
+/// folder `under` (`""`: all): tracked and untracked ones; ignored ones are left out, as a
+/// search that follows git's ignore rules leaves them out.
+pub fn session_files(dir: &Path, under: &str) -> Option<Vec<String>> {
+    let mut a: Vec<&str> = SESSION_READ.to_vec();
+    a.extend(["ls-files", "-z", "--cached", "--others", "--exclude-standard", "--"]);
+    if !under.is_empty() {
+        a.push(under);
+    }
+    let out = git(dir, &a).ok()?;
+    Some(out.split('\0').filter(|s| !s.is_empty()).map(str::to_string).collect())
+}
+
+/// 012 (FR-043): whether git ignores `path` in a session's working copy (exit 0); an error
+/// (exit 128, or git not run) counts as ignored, so a caller looks closer, never less.
+pub fn is_ignored(dir: &Path, path: &str) -> bool {
+    let mut a: Vec<&str> = SESSION_READ.to_vec();
+    a.extend(["check-ignore", "-q", "--", path]);
+    let status = crate::platform::command("git")
+        .args(&a)
+        .current_dir(dir)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+    !matches!(status.map(|s| s.code()), Ok(Some(1)))
+}
+
+/// 012 (FR-043): the files and folders git ignores in a session's working copy under `under`
+/// (an ignored folder as one entry, `dir/`).
+pub fn session_ignored(dir: &Path, under: &str) -> Option<Vec<String>> {
+    let mut a: Vec<&str> = SESSION_READ.to_vec();
+    a.extend(["ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--directory", "--"]);
+    if !under.is_empty() {
+        a.push(under);
+    }
+    let out = git(dir, &a).ok()?;
+    Some(out.split('\0').filter(|s| !s.is_empty()).map(str::to_string).collect())
+}
+
 /// `files_between`, every name as it is (`-z`: never quoted), to match `session_changes`.
 pub fn files_between_z(dir: &Path, from: &str, to: &str) -> Result<Vec<String>, String> {
     Ok(git(

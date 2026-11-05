@@ -55,11 +55,12 @@ files are handed to every kind as plain text.
 
 ## Permission requests
 
-A runtime's permission prompt reaches Fallow as `Request { kind: run | edit | web | other,
+A runtime's permission prompt reaches Fallow as `Request { kind: run | edit | web | read | other,
 command?, path?, url?, query?, tool }` (`url` for a fetch, `query` for a search). The adapter maps its own tools to these kinds (Claude: `Bash` and
 `PowerShell` → `run`; `Edit`, `Write`, `MultiEdit` and `NotebookEdit` → `edit`, from `file_path` or
-`notebook_path`; `WebFetch` and `WebSearch` → `web`). Fallow judges only this shape and denies
-`other` (IX).
+`notebook_path`; `WebFetch` and `WebSearch` → `web`; `Read` → `read` from `file_path`, `Grep` →
+`read` from `path` and `glob`, `Glob` → `read` from `path` and `pattern`, FR-043). Fallow judges
+only this shape and denies `other` (IX).
 
 ## Events
 

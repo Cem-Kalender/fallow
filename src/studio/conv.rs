@@ -22,6 +22,8 @@ pub struct Pending {
     pub tool: String,
     /// The command asked about (012: from the contract's `PermissionRequest`).
     pub command: String,
+    /// 012 (FR-043): a read put to the engineer (the contract's `read` kind), not a command.
+    pub read: bool,
     /// The runtime's permission prompt as it came, for its answer.
     pub raw: Value,
     /// The runtime that asked, which shapes the answer (IX).
@@ -31,6 +33,11 @@ pub struct Pending {
 }
 
 impl Pending {
+    /// 012 (FR-043): a read put to the engineer, not a command.
+    pub fn is_read(&self) -> bool {
+        self.read
+    }
+
     /// The answer to send, in the asking runtime's own form.
     pub fn answer(&self, allow: bool, message: &str) -> Value {
         crate::agent::registry::permission_reply(&self.runtime, allow, message, &self.raw)
@@ -160,12 +167,19 @@ impl Conv {
                 } else {
                     &p.command
                 };
-                // What "always in this project" could allow, or why it cannot (008 T040).
-                let (always, why) = match crate::project::commands::always_prefix(command) {
-                    Ok(pre) => (Some(pre), None),
-                    Err(why) => (None, Some(why)),
+                // What "always in this project" could allow, or why it cannot (008 T040). A
+                // read (012, FR-043) is allowed once at a time.
+                let read = p.is_read();
+                let (always, why) = if read {
+                    (None, Some("a read is allowed once at a time"))
+                } else {
+                    match crate::project::commands::always_prefix(command) {
+                        Ok(pre) => (Some(pre), None),
+                        Err(why) => (None, Some(why)),
+                    }
                 };
-                json!({ "id": p.id, "command": command, "always": always, "always_not": why })
+                json!({ "id": p.id, "command": command, "always": always, "always_not": why,
+                        "kind": if read { "read" } else { "run" } })
             }
             None => Value::Null,
         };

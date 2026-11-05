@@ -293,6 +293,7 @@ Fallow as a whole depends on git: it is how its agents coordinate and how work i
 **Every agent kind**
 
 - **FR-042**: An agent's runtime MUST NOT apply settings from a working copy (a repository or an agent must not be able to grant a command). Unattended kinds (the lead, makers, checkers) MUST run with no settings of the runtime's own, so their rights are exactly Fallow's; the assistant may use the engineer's own user-level settings, but every command and edit it makes MUST still reach Fallow's judgement. Fallow MUST hand the project's instruction files (FR-007) to every kind as plain text. (The engineer's decisions of 2026-11-05.)
+- **FR-043**: The assistant's reads MUST reach Fallow's judgement too: a file read, a search in files' contents, or a listing of names. A read in the session's working copy goes without asking. A read outside it (the engineer's folder included), or of a file that may hold secrets (the same test as Fallow's own file view), MUST be put to the engineer, in either mode, allowed once at a time and never "always". A search MUST be asked when its file pattern names such a file or the folder it searches holds one. A command naming such a file is asked as well. (The engineer's answer of 2026-11-05.)
 
 ### Key Entities
 

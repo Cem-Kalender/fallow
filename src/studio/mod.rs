@@ -2082,6 +2082,7 @@ impl Studio {
         c.pending = Some(Pending {
             id,
             tool,
+            read: false,
             command,
             raw: args,
             runtime,
@@ -2103,6 +2104,9 @@ impl Studio {
             return Err("that command is no longer waiting".into());
         }
         let solo = c.state.solo.clone();
+        if answer == ApprovalAnswer::Always && c.pending.as_ref().is_some_and(Pending::is_read) {
+            return Err("a read is allowed once at a time".into());
+        }
         let command = c
             .pending
             .as_ref()
@@ -2160,6 +2164,9 @@ impl Studio {
         let c = self.conv_mut(conv)?;
         let pending = c.pending.take().expect("checked");
         let msg = match answer {
+            ApprovalAnswer::Deny if pending.is_read() => {
+                pending.answer(false, "The engineer refused this read.")
+            }
             ApprovalAnswer::Deny => pending.answer(false, "The engineer refused this command."),
             _ => pending.answer(true, ""),
         };

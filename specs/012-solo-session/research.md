@@ -962,6 +962,49 @@ in this order (review 11):
 
 Nothing is resent by itself (FR-026, SC-008).
 
+## R-21 The assistant's reads (FR-043)
+
+**Decision**: `Read`, `Grep` and `Glob` join the whole-tool ask rules the assistant runs with
+(R-6), so each one reaches Fallow's permission prompt; the adapter maps them to the contract's
+`read` kind (`path`: the file or folder, `query`: the file pattern).
+- `judge::read_problem`: a path in the working copy that is not a likely secret goes unasked;
+  one in the engineer's folder, outside the copy, or a likely secret (`files::is_secret`) is
+  asked, with its reason.
+- `judge::search_problem` (for `Grep`, which shows contents): also asked when the file pattern
+  names a likely secret, or the folder searched holds one. The files are git's list of the copy
+  (`git ls-files`: tracked and untracked, not ignored, as the search leaves ignored files out),
+  read without the copy's lock. A search that names a folder git ignores reads it all the same,
+  so that folder is looked through (up to 20,000 entries, then asked). A file pattern overrides
+  the ignore rules in the search, so the ignored files it matches count too, an ignored folder
+  that is itself a secret's (`.aws/`), and the files of an ignored folder it matches (`*` takes
+  the search into `build/`; looked through as above).
+- `judge::listing_problem` (for `Glob`, which shows names): its folder, or the folder its
+  pattern starts from when the pattern names one (absolute, `..`, `~`).
+- A tool's path is judged as a path: a `$` in a file name (`routes/$id.tsx`) is not a variable.
+- A command naming a likely secret (`cat .env`, `less a.pem`, a redirect from it, a wildcard
+  matching one in its folder, dot-names included as PowerShell matches them, `*/.env`,
+  `git show HEAD:.env` or `:.env`) is asked, in either mode. A plain word without a file's form (`grep -rn token src`) is a search word, unless a
+  file has that name; quoted text and words with wildcards in their folders are not followed.
+- A read put to the engineer has no "Always": it is allowed once at a time. The adapter keeps
+  no allow rule for `Read`, `Grep` or `Glob` beside their ask rules.
+
+**Limits**:
+- A command that reads files without naming them (`grep -r x .`) is judged like any command:
+  asked in "Ask for commands", run under "until I switch back" unless the judge asks.
+- A search of the whole copy is not asked about ignored files (a `.env` git ignores), as
+  Claude Code's search follows git's ignore rules; T055 checks that by hand. The contents of
+  submodules are not listed.
+- Files Fallow's file view treats as likely secrets (`credentials*`, `secrets.*`) are asked at
+  every read, ordinary source files with those names included.
+- A broad pattern (`*`, `**`) matches every ignored folder, so in a project with a large
+  ignored folder (`target/`, `node_modules/`) such a search is asked as too big to look through.
+- A word `:name` naming a likely secret is asked even outside git (`echo :token`): a rare extra
+  question.
+- Only one request waits for the engineer at a time: a second read needing an answer meanwhile
+  is refused with "ask again once it is answered".
+Whether Claude Code sends `Read`/`Grep`/`Glob` to the prompt tool under these rules is checked
+by hand in T055 (the fake runtime plays it as `exec` is played).
+
 ## R-20 Testing without a model
 
 **Decision**:

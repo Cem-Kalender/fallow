@@ -291,6 +291,11 @@ restart.
   - "Closed sessions…" and "Earlier conversations with the lead…" sit at the bottom.
   - There are no sessions anywhere else.
   - Screenshot `checks/solo-dropdown.png`.
+- [X] T022a [US1] The assistant's reads are judged (FR-043, R-21; the engineer's answer of 2026-11-05).
+  - `Read`, `Grep` and `Glob` are asked by rule and mapped to `read` in `src/agent/claude.rs`.
+  - `judge::read_problem`, `judge::search_problem`, and likely secrets named in commands, in `src/studio/judge.rs`.
+  - The read card ("The assistant asks to read", no "Always") in `screens/solo.js`.
+  - The fake runtime's `read` step; `tests/us12_reads.rs` and the judge's unit tests.
 
 **Checkpoint**: Q2 passes.
 
@@ -563,6 +568,7 @@ and web access.
   - a session from the start to a squash into the branch;
   - a pasted screenshot;
   - a web lookup;
+  - a read of a file outside the copy and of `.env`: both asked, as reads (FR-043, R-21);
   - making a feature;
   - the wording of the dropdown, the approval cards and the close and feature dialogs.
 

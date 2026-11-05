@@ -46,14 +46,14 @@ memory_budget_mb = 100000
 kind = "assistant_turn"
 when = "make it red"
 files = [{ path = "a.txt", text = "one\ntwo\nRED\n" }]
-linger_ms = 1500
+linger_ms = 5000
 output = { reply = "red" }
 
 [[step]]
 kind = "assistant_turn"
 when = "make it blue"
 files = [{ path = "a.txt", text = "one\ntwo\nBLUE\n" }]
-linger_ms = 1500
+linger_ms = 5000
 output = { reply = "blue" }
 "#,
     );

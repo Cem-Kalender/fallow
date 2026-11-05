@@ -171,8 +171,20 @@ pub fn rules(r: &Rights) -> (Vec<String>, Vec<String>, &'static str) {
 }
 
 /// 012: the tools a whole-tool ask rule sends to the permission prompt for the assistant
-/// (research R-6; T001 found no `MultiEdit` on 2.1.318, kept for older versions).
-const ASKED: [&str; 6] = ["Bash", "PowerShell", "Edit", "Write", "MultiEdit", "NotebookEdit"];
+/// (research R-6; T001 found no `MultiEdit` on 2.1.318, kept for older versions). The read
+/// tools too (FR-043): Fallow answers a read in the session's copy itself and asks the
+/// engineer about one outside it or of a file that may hold secrets.
+const ASKED: [&str; 9] = [
+    "Bash",
+    "PowerShell",
+    "Edit",
+    "Write",
+    "MultiEdit",
+    "NotebookEdit",
+    "Read",
+    "Grep",
+    "Glob",
+];
 
 /// 012: the files in a working copy through which Claude Code reads settings of its own.
 const CONTROL_FILES: [&str; 2] = [".claude/settings.json", ".claude/settings.local.json"];
@@ -194,6 +206,11 @@ pub fn args(c: &Call) -> Vec<String> {
         a.push(s.to_string());
     }
     let (mut allow, mut deny, mode) = rules(&c.rights);
+    // 012 (FR-043): the assistant's reads are Fallow's to answer, by ask rule; no allow rule
+    // may stand beside them.
+    if c.user_settings {
+        allow.retain(|r| !matches!(r.as_str(), "Read" | "Grep" | "Glob"));
+    }
     // 012 (research R-8): the web tools are the assistant's, on its switch; off for everyone
     // else.
     let web = ["WebFetch".to_string(), "WebSearch".to_string()];
@@ -362,6 +379,20 @@ pub fn permission_request(raw: &Value) -> super::PermissionRequest {
             r.kind = super::RequestKind::Web;
             r.query = s("query");
         }
+        "Read" => {
+            r.kind = super::RequestKind::Read;
+            r.path = s("file_path");
+        }
+        "Grep" => {
+            r.kind = super::RequestKind::Read;
+            r.path = s("path");
+            r.query = s("glob");
+        }
+        "Glob" => {
+            r.kind = super::RequestKind::Read;
+            r.path = s("path");
+            r.query = s("pattern");
+        }
         _ => {}
     }
     // A request whose input does not have the field it needs is one Fallow cannot judge.
@@ -369,6 +400,8 @@ pub fn permission_request(raw: &Value) -> super::PermissionRequest {
         super::RequestKind::Run => r.command.is_some(),
         super::RequestKind::Edit => r.path.is_some(),
         super::RequestKind::Web => r.url.is_some() || r.query.is_some(),
+        // A file read names its file; a search or a listing may go without a folder.
+        super::RequestKind::Read => tool != "Read" || r.path.is_some(),
         super::RequestKind::Other => true,
     };
     if !complete {
@@ -1244,5 +1277,22 @@ look");
         // Claude Code's own settings files are never editable.
         let d = a.iter().position(|x| x == "--disallowedTools").unwrap();
         assert!(a[d + 1..].iter().any(|x| x == "Write(.claude/settings.local.json)"));
+        // FR-043: no allow rule for the read tools beside their ask rules.
+        let al = a.iter().position(|x| x == "--allowedTools").unwrap();
+        let allowed: Vec<&String> = a[al + 1..].iter().take_while(|x| !x.starts_with("--")).collect();
+        assert!(!allowed.iter().any(|x| matches!(x.as_str(), "Read" | "Grep" | "Glob")), "{allowed:?}");
+    }
+
+    #[test]
+    fn the_read_tools_are_reads_with_their_paths_and_patterns() {
+        use super::super::RequestKind;
+        let r = permission_request(&json!({"tool_name": "Read", "input": {"file_path": "a.txt"}}));
+        assert_eq!((r.kind, r.path.as_deref()), (RequestKind::Read, Some("a.txt")));
+        let r = permission_request(&json!({"tool_name": "Read", "input": {}}));
+        assert_eq!(r.kind, RequestKind::Other, "a read without its file is not judged");
+        let r = permission_request(&json!({"tool_name": "Grep", "input": {"pattern": "x", "path": "src", "glob": "*.rs"}}));
+        assert_eq!((r.kind, r.path.as_deref(), r.query.as_deref()), (RequestKind::Read, Some("src"), Some("*.rs")));
+        let r = permission_request(&json!({"tool_name": "Glob", "input": {"pattern": "**/*.md"}}));
+        assert_eq!((r.kind, r.path, r.query.as_deref()), (RequestKind::Read, None, Some("**/*.md")));
     }
 }
