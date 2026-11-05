@@ -104,6 +104,7 @@ session's records and the command judge. These block all stories.
     - `--setting-sources user`;
     - `--settings <json>` with whole-tool `permissions.ask` rules for `Bash`, `PowerShell`, `Edit`, `Write`, `MultiEdit` and `NotebookEdit`, and `disableAllHooks: true`.
   - The runtime's `control_files` are added to every call's `protect`.
+  - `--tools` with the fixed list per kind (research R-6, "A fixed tool list"): `Read`, `Glob`, `Grep`, `Bash`, `PowerShell`, `Task` and Fallow's MCP tools; `Edit`, `Write`, `NotebookEdit` for makers, the lead and the assistant; `WebSearch`, `WebFetch` for the assistant with web on. The instruction goes on stdin, never after a list flag.
   - Unit tests check the arguments per kind.
   - Run every test from 007 to 011 (lead, loops, publishing) and keep them green. When a test relied on settings, the change is noted in this task.
 - [ ] T007 Hand the project's instruction files to every kind (FR-007, FR-042; R-7).

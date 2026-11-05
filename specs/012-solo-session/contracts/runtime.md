@@ -37,8 +37,13 @@ Claude:
   `permissions.ask` rules (`Bash`, `PowerShell`, `Edit`, `Write`, `MultiEdit`, `NotebookEdit`) and
   `disableAllHooks: true`.
 
-Fallow never reads the user's settings file. A first task checks this behaviour on the installed
-`claude`. The control files are added to every call's `protect`, and the project's instruction
+Every Claude call also passes `--tools` with a fixed list: `Read`, `Glob`, `Grep`, `Bash`,
+`PowerShell`, `Task` and Fallow's MCP tools for every kind; `Edit`, `Write` and `NotebookEdit` for
+makers, the lead and the assistant; `WebSearch` and `WebFetch` for the assistant with web access on.
+Every other tool is off. The instruction goes on stdin.
+
+Fallow never reads the user's settings file. T001 checked this behaviour on the installed `claude`
+(`checks/claude-check.md`). The control files are added to every call's `protect`, and the project's instruction
 files are handed to every kind as plain text.
 
 ## Call

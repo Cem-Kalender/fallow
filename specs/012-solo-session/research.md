@@ -314,6 +314,18 @@ default `assets/agents/assistant.md`. `rights::assistant(mode, approved, web)`:
     uses "Always in this project" or "until I switch back" (R-6). Their list keeps working in their
     own use of Claude outside Fallow.
   - Fallow never reads the user's settings file (it may hold keys, V).
+  - **A fixed tool list for every kind** (T001's check; the engineer's decision of 2026-11-05): the
+    installed `claude` has tools beyond files and commands (scheduling, remote triggers, worktrees,
+    messages, notifications, design sync, skills, monitors). A user allow rule for one of them
+    would bypass Fallow. Every Fallow call passes `--tools` with a fixed list, and every other tool
+    is off:
+    - all kinds: `Read`, `Glob`, `Grep`, `Bash`, `PowerShell`, `Task`, and Fallow's MCP tools;
+    - makers, the lead and the assistant also: `Edit`, `Write`, `NotebookEdit` (the lead's edits
+      stay limited to spec documents);
+    - the assistant also, while its web access is on: `WebSearch`, `WebFetch`.
+
+    Checkers get no edit tools. The adapter puts the instruction on stdin, since `--tools`,
+    `--allowedTools` and `--disallowedTools` take lists that would swallow it.
   - **Project instructions**: with the project source gone, `claude` may no longer load the
     project's `CLAUDE.md` by itself. Fallow hands the project's instruction files (R-7) as plain
     text to every kind, as IX asks anyway. When `claude` loads them too, the text is only repeated.
