@@ -3,7 +3,7 @@
 Q1 to Q10 run without network or a model. They use:
 - the fake runtime, with `images` and `web_off` set in its profile;
 - a project repository that has hooks writing a marker file (`pre-commit`, `prepare-commit-msg`,
-  `post-commit` and `reference-transaction`);
+  `post-commit`, `post-checkout` and `reference-transaction`);
 - a local bare remote, where a push is needed.
 
 Q11 is by hand. Build and test as usual, one test file at a time when memory is short:
@@ -15,9 +15,11 @@ CARGO_PROFILE_DEV_DEBUG=0 CARGO_INCREMENTAL=0 CARGO_TARGET_DIR=target/wip \
 
 ## Q1 A turn, committed on the session's branch (US1)
 
-1. Start a session on a project whose folder has an uncommitted change.
-2. The session says that change is not in it.
-3. Send "fix the Sunday bug". The fake assistant edits `picker.js`.
+1. On a project whose folder has an uncommitted change, pick "+ New session": an empty session is
+   ready at once, with no working copy yet.
+2. Send "fix the Sunday bug". The session gets its working copy and branch, and says the folder's
+   change is not in it. The fake assistant edits `picker.js`.
+3. The turn ends.
 4. Expect:
    - `fallow/solo/fix-the-sunday-bug` has exactly one new commit, `Fallow solo <id>, turn 1: fix the
      Sunday bug`;
@@ -128,7 +130,8 @@ CARGO_PROFILE_DEV_DEBUG=0 CARGO_INCREMENTAL=0 CARGO_TARGET_DIR=target/wip \
    branch is gone.
 3. Typing `/exit` sends a message.
 4. Closing during a turn asks to stop it first.
-5. A closed session reads under "Closed sessions…", and its record can be deleted.
+5. A merged and clean session with an undone turn asks once, naming the undone turn and its commit.
+6. A closed session reads under "Closed sessions…", and its record can be deleted.
 
 ## Q8 From a discussion to a feature (US7, SC-011)
 

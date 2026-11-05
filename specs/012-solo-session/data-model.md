@@ -20,7 +20,7 @@ What 012 stores. Every field added to an existing event is `#[serde(default)]`, 
 | `turn_committed` | n, commit | a failed turn commit succeeded on retry (R-4) |
 | `fold_next` | n | "Fix it in the next turn" (R-4) |
 | `uncommitted_discarded` | n, files[] | "Undo these changes" after a failed commit, confirmed (R-4) |
-| `engineer_edits` | before (turn n, or `undo`/`close`), commit, files[] | the engineer's between-turn edits snapshotted (R-4) |
+| `engineer_edits` | before (turn n, or `undo`/`close`/`gates`), commit, files[] | the engineer's between-turn edits snapshotted (R-4) |
 | `undo_started` | from, head_before, head_after | before an undo's git commands (R-5) |
 | `turns_undone` | from, to, head_before, head_after, keep_ref | an undo (R-5) |
 | `message_queued` | id, text, attachments[] | a message sent while a turn works (R-9) |
@@ -60,7 +60,7 @@ I switch back") and `why?` ("Fallow restarted").
 | pending_commit | the turn whose commit failed and is not yet committed, folded or discarded |
 | queue[] | waiting messages in order |
 | web | the last `web_set`, else `session_created.web` (true) |
-| gates | the last `gates_run`; `verified_label` derived: `not_run` / `passed_on(commit)` / `failed` / `stale` (head ≠ its commit) / `no_gates` |
+| gates | the last `gates_run`; `verified_label` derived: `not_run` / `passed` (with its commit) / `failed` / `stale` (head ≠ its commit) / `no_gates` |
 | suggestions[], features[] | `feature_suggested`, `feature_started` |
 | observed[] | `git_observed` and `folder_state`, newest last |
 | closed | `session_closed`, if any |

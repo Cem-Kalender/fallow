@@ -48,6 +48,7 @@ and fixtures every story needs.
     3. An allow rule in the working copy's `.claude/settings.json` does not apply.
     4. Under `dontAsk` with an empty source list, a user-level allow rule does not apply. The probe adds no file to the engineer's settings: it uses the user rules already there, read only through `claude`'s own behaviour. If no user rule can be found that way, it says so and the engineer confirms by hand.
     5. A whole-tool `permissions.ask` rule given through `--settings <json>` beats a user allow rule, an `--allowedTools` allow and an `additionalDirectories` path, and reaches `--permission-prompt-tool`.
+    5b. No other tool that can write files or run commands is open to a user allow rule (the ask rules cover `Bash`, `PowerShell`, `Edit`, `Write`, `MultiEdit` and `NotebookEdit`; any other writing tool the installed `claude` has is added to them, or the check fails).
     6. `disableAllHooks: true` through `--settings` stops a user hook.
     7. Whether the project's `CLAUDE.md` is still loaded, and whether any plugin or user MCP tool loads with `--setting-sources user --strict-mcp-config`.
   - **The other points** (R-8): a call with `--input-format stream-json` and a base64 png image block is answered about the image; `WebFetch` and `WebSearch` in `--disallowedTools` are refused.
@@ -90,21 +91,22 @@ session's records and the command judge. These block all stories.
   - `Capabilities { images, web_off, control_files }` and `Runtime::capabilities()`.
   - `Call.attachments: Vec<Attachment{path, media_type}>` and `Call.web: bool`, both default empty or false for every kind but the assistant.
   - `ToolKind::Web`, with `activity_of` showing "Fetched <url>" or "Searched <query>".
+  - Permission requests in the contract's terms (analyze D1, IX): `agent::Request { kind: Run | Edit | Web | Other, command, path, url, query, tool }`. The Claude adapter maps its tool names and input fields into it (`Bash`/`PowerShell` to `Run`; `Edit`/`Write`/`MultiEdit` with `file_path` and `NotebookEdit` with `notebook_path` to `Edit`; `WebFetch`/`WebSearch` to `Web`; anything else to `Other`). The MCP bridge hands `tool_call` this shape, and the lead's existing Bash/PowerShell check in `src/studio/mod.rs` moves to it.
   - The Claude adapter in `src/agent/claude.rs`:
     - maps `WebFetch` and `WebSearch` to `Web`;
     - puts them in `--allowedTools` when `web` is true and in `--disallowedTools` when it is false;
     - writes the instruction as a stream-json user message with base64 image blocks when there are attachments (`--input-format stream-json`).
   - `GET /api/runtimes` gains `capabilities`.
   - Unit tests for the adapter's arguments with each combination.
-- [ ] T006 Settings for every kind, in `src/agent/claude.rs` `args()` and `src/agent/rights.rs` (R-6).
+- [ ] T006 Settings for every kind (FR-042), in `src/agent/claude.rs` `args()` and `src/agent/rights.rs` (R-6).
   - The lead, makers and checkers: `--setting-sources` with an empty list, and `--model` always (the definition's, or the runtime profile's default).
   - The assistant:
     - `--setting-sources user`;
-    - `--settings <json>` with whole-tool `permissions.ask` rules for `Bash`, `PowerShell`, `Edit`, `Write` and `NotebookEdit`, and `disableAllHooks: true`.
+    - `--settings <json>` with whole-tool `permissions.ask` rules for `Bash`, `PowerShell`, `Edit`, `Write`, `MultiEdit` and `NotebookEdit`, and `disableAllHooks: true`.
   - The runtime's `control_files` are added to every call's `protect`.
   - Unit tests check the arguments per kind.
   - Run every test from 007 to 011 (lead, loops, publishing) and keep them green. When a test relied on settings, the change is noted in this task.
-- [ ] T007 Hand the project's instruction files to every kind (R-7).
+- [ ] T007 Hand the project's instruction files to every kind (FR-007, FR-042; R-7).
   - **The reader**: a new `src/agent/instructions.rs` reads `CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, `.github/copilot-instructions.md`, `.cursorrules`, `.cursor/rules/*.mdc` and `[instructions] extra` from a working copy.
     - The `extra` list is read from the project folder's `HEAD` with `git show`.
     - Each file is cut at 64 KiB, and the cut is marked.
@@ -197,6 +199,10 @@ session's own branch, with the engineer's folder untouched.
   - A taken branch name gets `-2` (FR-015).
   - An LFS-attributed file stays a pointer, and the session says so (`lfs`).
   - The activity shows edits and commands.
+  - A folder on a detached commit: the session starts from that commit and says so (analyze C7).
+  - The assistant commits by itself during a turn: its commit stays, and Fallow's snapshot holds only what is left (analyze C12).
+  - The assistant's runtime missing: the session says why and what to do, keeps its working copy, and the message can be sent again (analyze C5).
+  - The first turn's system text holds the squash instruction, the rule against force-pushing and when to suggest a feature (analyze C8).
 - [ ] T013 [US1] Create sessions, in a new `src/studio/solo.rs` (R-2).
   - `create(project, agent, first_message)`:
     1. writes `session_creating`;
@@ -216,11 +222,14 @@ session's own branch, with the engineer's folder untouched.
     - `schemas::assistant_reply`;
     - `Call.web` from the session.
   - **The slot**: a turn takes one (`Ctx.slots.take()`). When none is free, the message waits as `message_queued` with "waiting for a free agent slot".
-  - **`tool_call`'s assistant branch**:
-    - it allows `WebFetch` and `WebSearch` when web access is on;
-    - for edits, it reads `file_path` or `notebook_path`, resolves it, and denies one outside the copy or matching `protect`;
-    - Bash and PowerShell commands go to `judge::runs_unasked` with the live `approved_commands`. Otherwise, under `until_switch`, they go to `judge::assess`, and the rest is asked;
-    - any tool or input it does not know is denied.
+  - **`tool_call`'s assistant branch**, judging T005's `Request` only, never a runtime's tool names:
+    - `Web` is allowed when web access is on;
+    - `Edit`: its path is resolved, and denied outside the copy or matching `protect`;
+    - `Run` goes to `judge::runs_unasked` with the live `approved_commands` and the gates (each matched as a whole command). Otherwise, under `until_switch`, it goes to `judge::assess`, and the rest is asked;
+    - `Other` is denied.
+  - **`prompts::assistant_system`** holds R-7's content: work only in the current directory, Fallow commits each turn, bring work into another branch as one squashed commit in one command line unless asked for a plain merge, never force-push unless asked, suggest a feature in `proposed_feature` and never create it, put a designed pipeline in `proposed_pipeline` (analyze C8).
+  - **Waiting messages, minimal** (analyze F5): the engine's 1 s tick sends the oldest `message_queued` once a slot is free and the turn before ended normally. T045 adds editing, removing and the restart rule.
+  - **A runtime that cannot start**: the turn ends with the reason and what to do (`agent.problem`), the working copy stays, and the message can be sent again (analyze C5).
   - **"Always"** is refused unless the prefix is `prefix_safe`.
   - **The mode** is `Mode::Ask`, or `until_switch`, kept in memory in `Conv.allow_until_switch`.
 - [ ] T015 [US1] The end of a session's turn, in `src/studio/mod.rs` `turn_done` and `solo.rs` (R-3).
@@ -240,7 +249,7 @@ session's own branch, with the engineer's folder untouched.
   - The session header shows the branch, the start branch and commit, web access, "Open in my editor" and "Close session" (the last is a placeholder until US6).
   - The chat, `/` menu, working line, activity and stop come from `app.js`.
   - The approval card shows the judge's reasons and the fixed note.
-  - The mode chip reads "Ask for commands" or "until I switch back".
+  - The mode chip reads "Ask for commands" or "until I switch back". Turning "until I switch back" on shows the notice that Fallow judges commands as written and cannot see what scripts do inside (FR-008; analyze C11).
 - [ ] T018 [US1] Run the headless page check: a demo service, `serve_the_012_demo` (ignored) in `tests/us12_session.rs`, and screenshots `specs/012-solo-session/checks/solo-*.png` of a draft, a working turn, a finished turn and an approval card.
 
 **Checkpoint**: Q1 passes. The MVP works: a session edits code on its own branch, and every turn is
@@ -262,6 +271,8 @@ restart.
   - A restart during a turn: the turn is cut short, its changes are committed, nothing is repeated, and a pending approval is cancelled ("Fallow restarted") (SC-008).
   - A process left running is killed before the snapshot.
   - A half-done `session_creating` is reconciled.
+  - With `max_parallel = 1`, a second session's message waits with "waiting for a free agent slot" and is sent when the first turn ends (FR-027; analyze C4).
+  - A session's branch deleted outside Fallow: the session is marked `gone` and can only be closed (analyze C12).
 - [ ] T020 [US2] Add the list and renaming.
   - `GET /api/projects/<p>/sessions` (open, closed and earlier conversations, with `records_bytes`) and `POST /api/sessions/<s>/rename`, in `src/service/http.rs` and `src/studio/solo.rs`.
   - Each item carries its name, a working mark and its changed-file count (`git diff --name-only base.mark HEAD`, plus uncommitted changes).
@@ -270,7 +281,7 @@ restart.
   - `turn.pid` holds the root pid and its start time. Load kills the tree first, checking the start time; on Windows it walks the tree with Toolhelp.
   - Then the cut turn is snapshotted.
   - Pending approvals are cancelled (`why: "Fallow restarted"`).
-  - The half-done intents are reconciled: `session_creating`, `undo_started`, `close_started`, `feature_starting`.
+  - The half-done intents are reconciled through one hook point, `solo::reconcile`. This task handles `session_creating`; T030, T049 and T040 each add their own (`undo_started`, `close_started`, `feature_starting`) (analyze F6).
   - "Until I switch back" is off after a restart, and the session says so when it was on.
   - A session whose working copy or branch is missing is marked `gone`.
 - [ ] T022 [US2] Build the dropdown in `screens/solo.js` (FR-002).
@@ -334,6 +345,9 @@ back to before any turn.
   - Undoing turn 2 names turns 2–4 and the edits, the branch is at turn 1's commit, the undone ref exists, and the next prompt names what was undone.
   - A failed commit: undo and the next turn wait; "Fix it in the next turn" makes one commit for turns n–m; an edit made after the failure gets its own commit, marked as the engineer's.
   - `base_moved` when a turn merges the starting branch in, and again on undo.
+  - A restart between `undo_started` and `turns_undone` finishes the undo (analyze C3).
+  - Opening a file with "Open in my editor" during a turn sets `editor_during_turn`, and the session says those edits count as the turn's (analyze C12).
+  - The Changes panel and the undo confirmation say that they cover only the working copy (analyze C1).
 - [ ] T029 [US3] Settling the working copy, `solo::settle` (R-4).
   - A pending commit is retried, comparing paths by blob: what the turn left goes in `turn_committed`, and what changed since goes in `engineer_edits`.
   - The engineer's between-turn edits are snapshotted as `engineer_edits`.
@@ -345,9 +359,11 @@ back to before any turn.
   - `POST …/undo` follows: `undo_started`, then `refs/fallow/solo/<id>/undone/<k>`, then `reset --hard` without hooks and with no LFS download, then `turns_undone`.
   - `confirmed` is required when the undo goes back more than the last turn, past the engineer's edits, or over a turn that merged or pushed elsewhere.
   - At the end of each turn, `base_moved` is detected for a merge and for a rebase or fast-forward onto the starting branch, as R-5 decides.
-  - `start_moved` is read from the starting branch.
+  - `start_moved` is computed here from the starting branch (`rev-list --count base.gates..S`) when the session is read. The ref watcher (T035) refreshes it (analyze F7).
+  - `solo::reconcile` gains `undo_started` (analyze F6).
 - [ ] T031 [US3] Changes and files.
   - `GET /api/sessions/<s>/changes`: files against `base.mark`, with their turns and who changed them.
+  - FR-020's details (analyze C6): folders carry the number of changes inside; an "only changed files" filter; a changed file opens with a choice between its changes and the whole file, naming the turns that changed it and by whom. Deleted files are listed in Changes only.
   - In `src/studio/files.rs`: the `solo` version kind, `who_of` for session subjects ("assistant, turn n" or "you"), the version list per open session, and `POST /api/files/open` setting `editor_during_turn` while a turn works.
 - [ ] T032 [US3] Gates on a session, `solo::run_gates` (R-12).
   - Refused during a turn.
@@ -362,6 +378,8 @@ back to before any turn.
   - Undo on each turn, with its confirmation, and undone turns marked.
   - The pending-commit notice with its two ways on.
   - The start branch moved notice.
+  - The notice "Undo and Changes cover only this session's working copy: what a command wrote elsewhere is not seen or undone", on the Changes panel and in every undo confirmation (analyze C1).
+  - In the Files tab: change counts on folders, the "only changed" filter, and the changes/whole-file choice (analyze C6).
   - A file opening in the middle with the chat beside it, in `project.js`, `solo.js` and `files.js`; the same layout for a feature's spec session, in `spec.js` (FR-029).
   - Screenshots `checks/solo-changes.png`, `solo-gates.png`, `solo-undo.png` and `spec-file-beside.png`.
 
@@ -386,6 +404,9 @@ change to the project's branches shows, with a proven source.
   - A loop and a spec session at the same time: none of their changes shows as "outside Fallow" or as the session's, and they go in the quiet group.
   - A `.claude/settings.json` allowing `Bash(git:*)` and `Bash(rm:*)` in the copy: `git push --force` and `rm -rf <folder>` are still asked. The fake's argv log shows the settings flags.
   - Only the session's branch changed when nothing about git was asked.
+  - A non-merge command that changes the folder (`git -C <folder> reset --hard`) carries the folder's branch and uncommitted changes in its request (analyze C2).
+  - A merge that conflicts in the folder shows `folder_state: conflicted` in the session and on the project (analyze C12).
+  - After a restart, "until I switch back" is off (Q5 step 7; analyze C11).
 - [ ] T035 [US4] The ref watcher, in a new `src/studio/refwatch.rs` and `src/run/engine.rs` (R-10).
   - A thread per project, every 2 s: `ref_snapshot`, the folder's `HEAD` and status.
   - The diff gives `created`, `deleted`, `commits(n)`, `rewound` or `rewritten`.
@@ -403,6 +424,7 @@ change to the project's branches shows, with a proven source.
 - [ ] T037 [US4] Merge facts, in `judge.rs` and `tool_call`.
   - For a `merge`: the snapshot commits it would bring (`rev-list <target>..<head>`, by subject), "the assistant's own commits: unknown", whether it squashes, the folder's branch and uncommitted changes (`--no-optional-locks`), and the `.fallow/` paths it would change.
   - They go in `approval_asked.merge`.
+  - Every request the judge flags as changing the engineer's folder, not only a merge, carries the folder's checked-out branch and uncommitted changes (FR-016; analyze C2).
   - The approval card in `app.js` shows them.
 - [ ] T038 [US4] Show the changes: `GET /api/projects/<p>/git-changes` and the long-poll scope `project:<p>`; a "Branches" list on the project page with the quiet group folded; a session's own changes in its conversation. Screenshot `checks/solo-git.png`.
 
@@ -425,7 +447,9 @@ spec from it; the project conversation with the lead is retired.
   - A taken title is refused.
   - `/feature` asks for a suggestion.
   - A restart between `feature_starting` and `feature_started` is reconciled.
-  - An earlier project conversation is read-only, and its unstarted proposal opens the same dialog.
+  - Refusals: the folder on no branch (saying why), an empty brief or title; with Spec Kit missing the feature is created and its spec session says specify could not start; a second suggestion of the same discussion shows the feature already started (analyze C10).
+  - An earlier project conversation is read-only, and its unstarted proposal opens the same dialog; a proposal already started shows "Started" with its link (FR-037; analyze C10).
+  - "Ask about it" from a file puts the reference in the session open last, and a `proposed_pipeline` shows "Open in the designer" (FR-036; analyze C10).
 - [ ] T040 [US7] Suggestions and the handover, in `src/studio/solo.rs` and `src/studio/mod.rs` (R-15).
   - `feature_suggested` comes from `proposed_feature`.
   - `/feature` in a session's `/` menu, in `src/studio/commands.rs`, together with `/close`.
@@ -435,6 +459,7 @@ spec from it; the project conversation with the lead is retired.
   - `brief.md` is committed with `commit_all` as `spec: brief from solo session <name>`.
   - The first turn is `/speckit-specify` with the brief as `$ARGUMENTS`, or the constitution step first and specify after it.
   - `feature_started` is written, `Feature.origin` set, and the spec session's `conversation_created.origin` set.
+  - `solo::reconcile` gains `feature_starting` (analyze F6).
 - [ ] T041 [US7] Retire the project conversation (FR-035 to FR-038).
   - `POST /api/projects/<p>/conversation` answers 409, and `project_view` no longer has `conversation`.
   - Earlier conversations are listed through `…/sessions` and open read-only; `say` answers 409.
@@ -475,7 +500,7 @@ and web access.
 - [ ] T045 [US5] Waiting messages (R-9).
   - `message_queued` while a turn works or no slot is free.
   - `POST /api/sessions/<s>/queue/<id>` edits, removes or sends a message.
-  - The engine's 1 s tick sends the oldest waiting message when a turn ends normally and a slot is free. It does not after a failure, an approval refusal or a restart.
+  - T014's tick (sending the oldest waiting message when a turn ends normally and a slot is free) gains its exceptions: nothing is sent by itself after a failure, an approval refusal or a restart; each waiting message has "Send now".
 - [ ] T046 [US5] Web access and instruction files in the session.
   - `POST /api/sessions/<s>/web` sets `web_set`, refused without `web_off`.
   - The instruction files are re-handed when a sha changed, and shown in the view as `instructions`.
@@ -493,6 +518,7 @@ and web access.
 
 - [ ] T048 [US6] Write `tests/us12_close.rs` (Q7). It fails first.
   - A merged and clean session closes without a question (SC-010).
+  - A merged and clean session with undone turns asks once, naming the undone turns and their commits (constitution II; analyze D2).
   - One with a `.env` in the copy asks, naming it.
   - An unmerged session with an uncommitted change asks. "Keep" commits the change, keeps the branch and names it.
   - "Discard" names the commits and files, then the branch is gone.
@@ -505,7 +531,8 @@ and web access.
 - [ ] T049 [US6] Close, in `src/studio/solo.rs` (R-14, R-11).
   - "Merged" means every commit that is not undone is contained in another local or remote-tracking ref, or a `squashed` covers the last turn.
   - `POST /api/sessions/<s>/close`: the dry answer (`stop_first`, or `ask` with commits, files, edits and ignored files), then `close_started`, then keep or discard, then `session_closed`.
-  - The undone refs are deleted and the `-gates-*` worktrees pruned, all without hooks.
+  - The undone refs are deleted, after the close named them (analyze D2), and the `-gates-*` worktrees pruned, all without hooks.
+  - `solo::reconcile` gains `close_started` (analyze F6).
   - `POST …/remove-copy` and `DELETE /api/sessions/<s>`, both confirmed.
   - `records_bytes`.
 - [ ] T050 [US6] Build the page: "Close session" and `/close`, the close dialog naming what is lost, and the read-only "Closed sessions…" list with "Remove working copy" and "Delete record". Screenshots `checks/solo-close.png`.
@@ -523,6 +550,8 @@ and web access.
   - `solo_start`: from the first send to the turn's start under 5 s, on 10,000 files (SC-001);
   - `solo_four`: 4 scripted sessions at once, under 200 MB resident, with the activity shown within 2 s at p95 (SC-009);
   - `refwatch_latency`: a moved branch shown within 5 s (SC-004).
+
+  Each bench fails the build when its budget is exceeded (constitution VIII; analyze C13).
 - [ ] T053 [P] Audits and notes.
   - `tests/no_egress_no_push.rs` still finds no push, fetch or network in Fallow's own code for sessions (FR-018).
   - `specs/005-adaptive-delegation/contracts/task-set.md` gets the note that `setup/settings.local.json` no longer reaches run agents.

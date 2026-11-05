@@ -57,6 +57,9 @@ its own working copy and branch, and Fallow keeps what it always keeps.
 - **Per project**: `<data>/projects/<p>/git.jsonl` and `git-seen.json`.
 - **In `projects.json`**: `sessions`, `last_session`, `assistant`, and the features' `origin`.
 - **In the repository**: the undone refs `refs/fallow/solo/<id>/undone/<n>`.
+- **Per session**: `conversations/<id>/turn.pid` (the turn's root pid and start time, R-19).
+- **In `projects.json`** also: `Project.spec_root` for a project moved to its repository's top
+  folder (R-18).
 - **Compatibility**: everything is optional with defaults, so logs from before 012 load unchanged.
 
 **Testing**:
@@ -81,7 +84,7 @@ its own working copy and branch, and Fallow keeps what it always keeps.
 **Project Type**: local service with a browser page (one crate plus `xtask`).
 
 **Performance Goals**:
-- SC-001: a session is ready within 5 s of its first message on 10,000 files (`git worktree add`).
+- SC-001: the assistant starts working within 5 s of the first message being sent, on 10,000 files (`git worktree add` in between).
 - SC-004: a branch change shows within 5 s. The ref watch runs every 2 s for every project while
   Fallow runs, and after every command a session runs. It is local git only, on a thread.
 - SC-009: with 4 working sessions, Fallow stays under 200 MB, and the activity shows within 2 s
@@ -166,8 +169,12 @@ src/agent/
 ├── claude.rs            # stream-json input with images; web off; WebFetch/WebSearch mapping; --setting-sources (empty, or user for the assistant), --settings ask rules and disableAllHooks, --model always
 ├── rights.rs            # rights::assistant
 ├── prompts.rs           # assistant_system, assistant_turn; instruction files for every kind (lead_turn too)
+├── instructions.rs      # NEW: reading the project's instruction files (R-7)
+├── fake.rs              # the fake's capabilities from its profile
 └── schemas.rs           # assistant_reply
 src/defs/{agent.rs,mod.rs,pipeline.rs}   # Kind::Assistant; the shipped default; not a pipeline step
+src/config/squad.rs      # [instructions] extra
+Cargo.toml               # windows-sys feature Win32_System_Diagnostics_ToolHelp (walking a turn's process tree after a restart, R-19)
 assets/agents/assistant.md               # NEW
 src/verify/git.rs        # snapshot (plumbing, empty hooksPath), worktree with a new branch, for-each-ref snapshot, git check
 src/project/mod.rs       # Kind::NeedsGit (Folder retired); sessions, last_session, assistant; moving a subfolder project to its top folder
@@ -184,6 +191,8 @@ src/service/web/
     ├── spec.js          # file beside the chat (FR-029); the origin link
     ├── files.js         # solo versions; "Ask about it" to the session
     ├── pipelines.js     # "Ask the assistant"
+    ├── agents.js        # the Assistant kind
+    ├── loop.js          # "from solo session <name>" in a moved target (011)
     └── dashboard.js     # the git check; NeedsGit projects
 src/bin/fallow-fake-agent.rs   # expect_images, web, capabilities from the profile
 xtask/                   # benches solo_start, solo_four, refwatch_latency

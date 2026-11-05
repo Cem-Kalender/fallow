@@ -150,7 +150,7 @@ wait.
    - It first compares the working copy with `TurnFinished.changed` (review 14). Paths whose content
      is still what the turn left are committed as the turn's (`TurnCommitted{n, commit}`). Paths
      that differ since, or that are new, are the engineer's: they go in a second snapshot right
-     after, `EngineerEdits{before_turn, commit, files}`. That way no commit mixes them, and FR-013
+     after, `EngineerEdits{before, commit, files}`. That way no commit mixes them, and FR-013
      ("any commit that holds the engineer's between-turn edits names them") holds.
    - When it succeeds, `TurnCommitted{n, commit}` is written.
    - When it fails, the action waits. The session offers two ways on:
@@ -159,7 +159,7 @@ wait.
      - "Undo these changes": discards the working copy's uncommitted changes, after a confirmation
        naming the files.
 2. **Otherwise**, when the working copy differs from `HEAD`, the engineer edited it between turns.
-   Fallow snapshots the changes as the engineer's (`EngineerEdits{before_turn, commit, files}`).
+   Fallow snapshots the changes as the engineer's (`EngineerEdits{before, commit, files}`).
    When that commit fails, the action waits and the session says why (FR-013).
 
 Edits the engineer makes while a turn runs cannot be told apart from the assistant's (edge case).
@@ -186,8 +186,9 @@ written.
 **Afterwards**:
 - The turns are folded as undone and stay visible, marked so.
 - The next turn's prompt starts with "The engineer undid turns k–m: …" (FR-014).
-- The `undone/*` refs are deleted at close. This drops those commits without asking again
-  (Assumptions), except commits holding the engineer's edits, which count as unmerged work (R-14).
+- The `undone/*` refs are deleted at close, after the close names the undone turns and their
+  commits and asks once (R-14; analyze D2). Commits holding the engineer's edits count as unmerged
+  work (R-14).
 
 **The confirmation**, `GET …/undo?turn=k`, names:
 - the turns to be undone, with the turns that share one commit undone together;
@@ -251,8 +252,10 @@ default `assets/agents/assistant.md`. `rights::assistant(mode, approved, web)`:
   applies this rule): the gates, and the project's approved commands, *except*
   any approved prefix that could cover a command the judge asks per command (review 1). For the
   assistant, `rights::assistant` puts in the runtime's allow-list only the gate commands and the
-  approved prefixes for which `judge::prefix_safe` holds (second review A1: a gate that starts with
-  `git` or a shell goes through the judge like any other command). `cd` is never in the assistant's
+  approved prefixes for which `judge::prefix_safe` holds. A gate is matched as a whole command,
+  exactly as declared in the project's committed squad file, never as a prefix: it then runs
+  without asking whatever it starts with (FR-008), since the engineer declared it in their own
+  committed configuration (analyze F4). `cd` is never in the assistant's
   allow-list (second review B5), unlike the lead's, so a `cd` reaches the judge. A prefix is not safe when it starts with
   `git`, or with a shell or interpreter that can run other commands (`sh`, `bash`, `pwsh`, `cmd`,
   `node -e`, `python -c`, `npx`, …), or when it holds any form the judge parses as destructive or
@@ -277,7 +280,7 @@ default `assets/agents/assistant.md`. `rights::assistant(mode, approved, web)`:
   - **The assistant reads the user's settings, but every command and edit still reaches Fallow**
     (fifth review H1): `--setting-sources user`, plus Fallow's own `--settings <json>`, which takes
     precedence over the user's:
-    - whole-tool `permissions.ask` rules (`Bash`, `PowerShell`, `Edit`, `Write`, `NotebookEdit`).
+    - whole-tool `permissions.ask` rules (`Bash`, `PowerShell`, `Edit`, `Write`, `MultiEdit`, `NotebookEdit`).
       An ask rule beats an allow rule from any source, Fallow's own `--allowedTools` included, so
       every call reaches the permission prompt tool. There, `tool_call` allows by itself the gates,
       the `prefix_safe` approved commands, edits inside the working copy (outside `protect`) and,
@@ -288,7 +291,7 @@ default `assets/agents/assistant.md`. `rights::assistant(mode, approved, web)`:
     PowerShell command runs without asking only when the judge splits it (on `&&`, `||`, `;`, `|`,
     newlines), finds none of its "cannot tell" forms (`$(`, backticks, variables in a name or path,
     `~`, `&`, subshells, redirections), and every part is one of these:
-    - a gate command;
+    - a gate command, equal to a declared gate as a whole (not a prefix);
     - a `prefix_safe` approved prefix, matched against the live `Project.approved_commands` (an
       "Always" given during the turn counts at once; sixth review L2);
 
@@ -302,9 +305,10 @@ default `assets/agents/assistant.md`. `rights::assistant(mode, approved, web)`:
     So `npm test && rm -rf ../x`, `npm test > ../f` and `npm test; git push --force` are asked.
     Under "until I switch back", anything the judge allows also runs. Everything else is asked.
 
-    **Edits**: the branch reads the path from `file_path` (Edit, Write, MultiEdit) or
-    `notebook_path` (NotebookEdit). A tool or an input shape it does not know is denied, with the
-    reason (sixth review L1).
+    **Edits**: `tool_call` judges the `edit` request's path, which the adapter took from the
+    runtime's own input fields (for Claude, `file_path` or `notebook_path`; see "Permission requests
+    in the contract's terms" below). A request of kind `other`, or one whose shape the adapter
+    does not know, is denied, with the reason (sixth review L1; analyze D1).
 
     The user's allow rules therefore shortcut nothing in a session. To be asked less, the engineer
     uses "Always in this project" or "until I switch back" (R-6). Their list keeps working in their
@@ -343,6 +347,17 @@ default `assets/agents/assistant.md`. `rights::assistant(mode, approved, web)`:
   - A command that writes a control file (a redirection, `cp`, `Set-Content`) is asked per command.
 - **Every other command**, and every tool the allow-list does not cover, goes through `prompt_tool`
   (`Mode::Ask`), Fallow's `tool_call` and `approve`, as for the lead in Ask mode today.
+- **Permission requests in the contract's terms** (analyze D1, IX): the adapter, not Fallow, knows
+  a runtime's tool names and their inputs. It turns each permission request into
+  `Request { kind: run | edit | web | other, command?, path?, url?, query?, tool }`:
+  - `run`: a shell command, with its text;
+  - `edit`: a file write, with its path;
+  - `web`: a fetch or search, with its URL or query;
+  - `other`: anything else, which Fallow denies.
+
+  For Claude, `Bash`/`PowerShell` map to `run`, `Edit`/`Write`/`MultiEdit` (`file_path`) and
+  `NotebookEdit` (`notebook_path`) to `edit`, and `WebFetch`/`WebSearch` to `web`. `tool_call`
+  judges only that shape. The names below are Claude's, mapped in its adapter.
 - **`tool_call` gains an assistant branch** (today it denies everything but Bash and PowerShell
   for the lead) (review 2):
   - `WebFetch` and `WebSearch` are allowed when the session's web access is on. With web on, the
@@ -438,6 +453,9 @@ default `assets/agents/assistant.md`. `rights::assistant(mode, approved, web)`:
 
   The approval card shows them. An approval is per command line, so "squash and commit together" is
   one approval (SC-010).
+- **The folder's state in every request that changes it** (analyze C2, FR-016): any command the
+  judge flags as changing the engineer's folder (a `-C <folder>` command, a `cd` into it, a path in
+  it), not only a merge, carries the folder's checked-out branch and its uncommitted changes.
 - **Afterwards**, for a command that changed the engineer's folder (R-10's snapshot shows the
   folder's branch moved, or its status changed), `FolderState{state: changed | conflicted |
   staged_only | unchanged}` is written. `conflicted` means `git -C <folder> ls-files -u` is not
@@ -506,7 +524,7 @@ default `assets/agents/assistant.md`. `rights::assistant(mode, approved, web)`:
 ## R-8 The runtime contract gains capabilities, images and a web switch
 
 **Decision**: `Runtime` gains `fn capabilities(&self) -> Capabilities`, with `Capabilities { images:
-bool, web_off: bool }`, which every runtime declares (FR-010a). `Call` gains:
+bool, web_off: bool, control_files: Vec<String> }`, which every runtime declares (FR-010a). `Call` gains:
 - `attachments: Vec<Attachment{path, media_type}>`: only png, jpeg, gif and webp, up to 5 MiB each
   and 4 per message;
 - `web: bool`.
@@ -608,7 +626,7 @@ open is held until the call's closing snapshot, and is then attributed as below.
   log does not hold (named "outside Fallow").
 - **Otherwise**, "outside Fallow".
 
-Fallow never guesses (FR-017). A test in `us12_with_loops.rs` runs a loop and a spec session next to
+Fallow never guesses (FR-017). A test in `us12_git.rs` runs a loop and a spec session next to
 a session and checks that no change of theirs shows as "outside Fallow" or as the session's.
 
 **What is not shown**: the moves of a session's own branch by Fallow's snapshots, and the
@@ -623,7 +641,7 @@ load (R-19).
   snapshot goes in `git-seen.json`, so a change made while Fallow was stopped shows after a
   restart, as "outside Fallow".
 - A change a session made also goes in that session's log, as `GitObserved{ref, before, after,
-  how, commits[]}`. `commits` lists every first-parent commit in `before..after`, so a
+  how, commits[], turn}`. `commits` lists every first-parent commit in `before..after`, so a
   fast-forward or a merge of several commits is matched commit by commit (review 15).
 - The page reads them through the project's long-poll scope (`project:<p>`, new). SC-004's 5 s is
   met by the 2 s period, and by the snapshot after a session's commands.
@@ -672,6 +690,10 @@ A squash merge on a remote (a pull request) is not recognized, so Fallow asks fi
 4. It classifies the results with `gates::classify` against a baseline run at `base.gates`. The
    baseline is run the same way and cached per commit in the session's log.
 5. It writes `GatesRun{commit, base, results[]}` and removes the worktree.
+
+**What undo and Changes cover** (analyze C1, I): the Changes panel and every undo confirmation say
+"Undo and Changes cover only this session's working copy: what a command wrote elsewhere is not
+seen or undone".
 
 **What the session shows** (FR-022):
 - With no gates run on its head: "Not verified by Fallow: the gates did not run on <short>", or
@@ -722,6 +744,10 @@ rules exclude (`git status --ignored --porcelain`). The close dialog lists them,
 under the dependency and build folders of R-18, which it gives as a count ("node_modules: 1,204
 files"). With "keep", a list that is not empty is part of the question, so a `.env` the engineer put
 there is never lost unnamed.
+
+**Undone commits at close** (analyze D2, II): when the session holds `undone/*` refs, the close
+names them (the undone turns and their commits) and asks once, even for a merged and clean
+session; nothing is removed before the answer.
 
 **Intent first** (VII; review 11): `CloseStarted{choice}` is written before anything is removed. On
 load, a `CloseStarted` without `SessionClosed` is finished from git, and steps already done are
@@ -920,8 +946,8 @@ Nothing is resent by itself (FR-026, SC-008).
   `proposed_feature` outputs. There is one test file per story plus `us12_with_loops.rs` (011),
   for quickstart Q1–Q10. Q11 is by hand.
 - **Common helpers** in `tests/common/mod.rs`: `start_session`, `say_solo`, `wait_turn`,
-  `approve_next`, and a project repository with a hook that would fail (`pre-commit`,
-  `post-commit` and `reference-transaction` write a marker file), to prove R-3.
+  `approve_next`, and a project repository whose `pre-commit`, `prepare-commit-msg`, `post-commit`,
+  `post-checkout` and `reference-transaction` hooks write a marker file, to prove R-2 and R-3.
 - **Unit tests**:
   - `judge::assess`, with a table of commands and verdicts;
   - `snapshot`, with its no-op and its ignore rules;

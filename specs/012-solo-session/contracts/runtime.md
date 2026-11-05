@@ -34,7 +34,7 @@ Claude:
 - for the lead, makers and checkers: `--setting-sources` with an empty list, and `--model` always
   given;
 - for the assistant: `--setting-sources user` and `--settings <json>`, with whole-tool
-  `permissions.ask` rules (`Bash`, `PowerShell`, `Edit`, `Write`, `NotebookEdit`) and
+  `permissions.ask` rules (`Bash`, `PowerShell`, `Edit`, `Write`, `MultiEdit`, `NotebookEdit`) and
   `disableAllHooks: true`.
 
 Fallow never reads the user's settings file. A first task checks this behaviour on the installed
@@ -47,6 +47,14 @@ files are handed to every kind as plain text.
 |---|---|
 | attachments | `[{path, media_type}]`: png, jpeg, gif or webp, up to 4 of 5 MiB each, stored by Fallow. Empty for every kind but the assistant |
 | web | `true` only for the assistant with web access on. A runtime with `web_off` must disable its web tools when it is `false`; one without `web_off` is never given `false` for an assistant, and for other kinds `false` changes nothing (as before 012) |
+
+## Permission requests
+
+A runtime's permission prompt reaches Fallow as `Request { kind: run | edit | web | other,
+command?, path?, url?, query?, tool }` (`url` for a fetch, `query` for a search). The adapter maps its own tools to these kinds (Claude: `Bash` and
+`PowerShell` → `run`; `Edit`, `Write`, `MultiEdit` and `NotebookEdit` → `edit`, from `file_path` or
+`notebook_path`; `WebFetch` and `WebSearch` → `web`). Fallow judges only this shape and denies
+`other` (IX).
 
 ## Events
 
