@@ -16,7 +16,10 @@
     // 012 US3 (FR-014): each turn can be undone, back to before it; undone turns are marked.
     c.undone = (s && s.session && s.session.undone) || [];
     const quiet = !s || s.busy || !s.session || s.session.closed;
-    c.turnExtra = (t) => (quiet || t.reply === null || t.reply === undefined ? "" : h`<div class="row gap-8 mt-6"><button class="undo-link tiny" data-act="solo-undo" data-turn="${t.n}" aria-label="${`Undo turn ${t.n} and every turn after it`}">Undo back to before this turn</button></div>`);
+    // 012 US4 (FR-017): what the turn's commands changed outside the session's branch.
+    const seen = (s && s.session && s.session.observed) || [];
+    const moved = (t) => seen.filter((o) => o.turn === t.n).map((o) => h`<div class="tiny git-line mt-4">${refLine(o)}</div>`);
+    c.turnExtra = (t) => h`${moved(t)}${quiet || t.reply === null || t.reply === undefined ? "" : h`<div class="row gap-8 mt-6"><button class="undo-link tiny" data-act="solo-undo" data-turn="${t.n}" aria-label="${`Undo turn ${t.n} and every turn after it`}">Undo back to before this turn</button></div>`}`;
     return c;
   }
 
@@ -77,6 +80,18 @@
     return out;
   }
 
+  // What a command changing the engineer's folder shows (FR-016): the folder's branch and its
+  // uncommitted changes, and for a merge what it brings.
+  function facts(f) {
+    if (!f) return "";
+    const m = f.merge;
+    return h`<div class="facts small mt-8">
+      <div>Your folder is on <span class="mono">${f.folder_branch || "a detached commit"}</span>${(f.uncommitted || []).length ? h`, with ${f.uncommitted.length} uncommitted change${f.uncommitted.length === 1 ? "" : "s"}: <span class="mono">${f.uncommitted.slice(0, 5).map((l) => l.slice(3)).join(", ")}</span>` : ", with no uncommitted changes"}.</div>
+      ${m ? h`<div class="mt-4">Merging into <span class="mono">${m.into}</span>: ${m.commits.length} snapshot commit${m.commits.length === 1 ? "" : "s"} of the session · squashes: ${m.squash ? "yes" : "no"} · the assistant's own commits: not known apart</div>
+        ${m.fallow_changes.length ? h`<div class="notice mt-4">It changes Fallow's settings: <span class="mono">${m.fallow_changes.join(", ")}</span></div>` : ""}` : ""}
+    </div>`;
+  }
+
   // The command card (FR-008): the command, why it is asked, and the fixed note.
   function approval(s) {
     const a = s && s.pending_approval;
@@ -88,6 +103,7 @@
     return h`<div class="card approval"><div class="b">${read ? "The assistant asks to read" : "The assistant asks to run a command"}</div>
       <div class="term">${a.command}</div>
       ${reasons.length ? h`<ul class="small mt-6">${reasons.map((r) => h`<li>${r}</li>`)}</ul>` : ""}
+      ${facts(a.facts)}
       <div class="tiny muted mt-6">${read ? "Reads in the session's copy go without asking; Fallow asks about a read outside it, or of a file that may hold secrets." : "Fallow judges the command as written; it cannot see what a script does inside."}</div>
       <div class="row wrap gap-8 mt-10">
         <button class="btn" data-act="approve" data-id="${a.id}" data-answer="once">Allow once</button>
@@ -186,6 +202,30 @@
     try { await post(`/api/sessions/${encodeURIComponent(s.id)}/mode`, { mode: next }); } catch (e) { alertLine(e.message); }
   }
 
+  // ---- 012 US4: a ref's change in words (FR-017) ----------------------------------------------
+  const refName = (r) => String(r || "").replace(/^refs\/heads\//, "").replace(/^refs\/remotes\//, "");
+  function refLine(o) {
+    const how = o.how === "commits" ? `moved by ${o.n || "some"} commit${o.n === 1 ? "" : "s"}`
+      : o.how === "created" ? "created" : o.how === "deleted" ? "deleted" : o.how === "rewound" ? "moved back" : "rewritten";
+    return h`<span class="mono">${refName(o.refname)}</span> ${how}`;
+  }
+  function sourceLine(src) {
+    if (!src) return "";
+    if (src.kind === "session") return `from the session ${src.name || src.id}`;
+    if (src.kind === "loop") return `from the loop of ${src.feature}`;
+    if (src.kind === "spec") return `from the spec session of ${src.feature}`;
+    return "outside Fallow";
+  }
+  // The project's branch changes (FR-017): the main list, then Fallow's own branches folded.
+  function branchesPanel(data) {
+    if (!data) return h`<div class="small muted">Reading the branches…</div>`;
+    if (data.error) return h`<div class="notice">${data.error}</div>`;
+    const row = (c) => h`<li class="small">${refLine(c)} <span class="tiny muted">· ${sourceLine(c.source)} · ${String(c.at || "").replace("T", " ").replace("Z", "")}</span></li>`;
+    return h`${(data.changes || []).length ? h`<ul class="plain git-list">${data.changes.map(row)}</ul>` : h`<div class="small muted">No change to the project's branches seen yet.</div>`}
+      ${(data.quiet || []).length ? h`<details class="mt-8"><summary class="small">Fallow's own branches (${data.quiet.length} change${data.quiet.length === 1 ? "" : "s"})</summary><ul class="plain git-list mt-4">${data.quiet.map(row)}</ul></details>` : ""}
+      <div class="tiny muted mt-8 lh">Every change to the project's branches and its remote-tracking branches, with who made it: a session, a loop or a spec session by Fallow's own records, otherwise "outside Fallow". Remote branches are as git last saw them: Fallow never fetches.</div>`;
+  }
+
   // ---- 012 US3: Changes, Gates and undo ------------------------------------------------------
   const short = (c) => String(c || "").slice(0, 7);
   const MARKS = { A: ["added", "green"], M: ["changed", "orange"], D: ["deleted", "red"] };
@@ -266,6 +306,6 @@
     try { await post(`/api/sessions/${encodeURIComponent(s.id)}/gates`, {}); } catch (e) { alertLine(e.message); }
   }
 
-  Fallow.solo = { asConv, head, menu, notices, list, composer, say, setMode, stopTurn, openEditor, rename, changesPanel, gatesPanel, undo, pending, runGates };
+  Fallow.solo = { asConv, head, menu, notices, list, composer, say, setMode, stopTurn, openEditor, rename, changesPanel, gatesPanel, undo, pending, runGates, branchesPanel };
   void esc;
 })();

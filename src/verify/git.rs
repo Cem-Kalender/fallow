@@ -1861,6 +1861,32 @@ pub fn files_of(dir: &Path, commit: &str) -> Vec<String> {
     .collect()
 }
 
+/// The subjects of the commits of `range` (`a..b`), newest first.
+pub fn subjects(dir: &Path, range: &str) -> Vec<String> {
+    git(dir, &["--no-optional-locks", "log", "--format=%s", range])
+        .unwrap_or_default()
+        .lines()
+        .map(str::to_string)
+        .collect()
+}
+
+/// 012 (R-10): the first-parent commits of `from..to`, newest first.
+pub fn first_parents(dir: &Path, from: &str, to: &str) -> Vec<String> {
+    git(dir, &["rev-list", "--first-parent", &format!("{from}..{to}")])
+        .unwrap_or_default()
+        .lines()
+        .map(str::to_string)
+        .collect()
+}
+
+/// The blob `path` has in `commit`, if any (R-11).
+pub fn blob_at(dir: &Path, commit: &str, path: &str) -> Option<String> {
+    git(dir, &["rev-parse", "-q", "--verify", &format!("{commit}:{path}")])
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
 /// How many commits `to` has that `from` has not.
 pub fn count_between(dir: &Path, from: &str, to: &str) -> Option<u32> {
     git(dir, &["rev-list", "--count", &format!("{from}..{to}")])

@@ -6,6 +6,7 @@ pub mod dashboard;
 pub mod engine;
 pub mod events;
 pub mod feature;
+pub mod gitwatch;
 pub mod machine;
 pub mod questions;
 pub mod relock;

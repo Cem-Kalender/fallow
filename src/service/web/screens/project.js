@@ -357,8 +357,15 @@
   let drawn = { rail: "", panel: "" }; // what the rail and the panel were last given
   let shown = null; // the proposal "Where it was proposed" brought into view, while marked
   let unmark = 0; // the timer that ends that mark
-  const PANELS = { proposals: "Proposed features", knows: "What the lead knows", changes: "Changes", gates: "Gates" };
+  const PANELS = { proposals: "Proposed features", knows: "What the lead knows", changes: "Changes", gates: "Gates", branches: "Branches" };
   let changesData = null; // the open session's Changes, as last read
+  let branchesData = null; // the project's branch changes, as last read
+  let branchesStop = null; // the long poll on `project:<p>` while the panel is open
+
+  async function readBranches() {
+    if (!state) return;
+    try { branchesData = await get(`/api/projects/${encodeURIComponent(state.id)}/git-changes`); } catch (e) { branchesData = { error: e.message }; }
+  }
 
   async function readChanges() {
     const s = state && state.session;
@@ -377,6 +384,7 @@
         btn("changes", '<svg class="ri" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h10M4 18h7"/></svg>', sess.changes_count ? `Changes, ${sess.changes_count} file${sess.changes_count === 1 ? "" : "s"}` : "Changes", ""),
         btn("gates", '<svg class="ri" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12l4 4 10-10"/></svg>', `Gates: ${gl === "passed" ? "passed, no independent check" : gl === "failed" ? "failed" : "not verified"}`, ""),
       ] : []),
+      btn("branches", '<svg class="ri" viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="5" r="2"/><circle cx="6" cy="19" r="2"/><circle cx="18" cy="8" r="2"/><path d="M6 7v10M18 10c0 4-6 3-11 7"/></svg>', "Branches: every change, with who made it", ""),
       btn("proposals", '<svg class="ri" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3.5 10.9c.5.4.5 1 .5 1.6V16h6v-.5c0-.6 0-1.2.5-1.6A6 6 0 0 0 12 3z"/></svg>', n ? `Proposed features, ${n} not started` : "Proposed features, none", n ? String(n) : ""),
       btn("knows", '<svg class="ri" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg>', "What the lead knows", ""),
     ];
@@ -386,8 +394,9 @@
     const body = side === "proposals" ? proposalsPanel(proposals(p, c))
       : side === "changes" ? Fallow.solo.changesPanel(p.session, changesData)
       : side === "gates" ? Fallow.solo.gatesPanel(p.session)
+      : side === "branches" ? Fallow.solo.branchesPanel(branchesData)
       : knows(p, c);
-    const title = side === "proposals" ? "Proposed by the lead · not started" : side === "changes" ? "Changes in this session" : side === "gates" ? "Gates on this session" : PANELS.knows;
+    const title = side === "proposals" ? "Proposed by the lead · not started" : side === "changes" ? "Changes in this session" : side === "gates" ? "Gates on this session" : side === "branches" ? "The project's branches" : PANELS.knows;
     return h`<div class="row between gap-8 mb-8"><h2 class="th" id="side-title" tabindex="-1">${title}</h2><button class="linkish small" data-act="side-close" aria-label="Close ${PANELS[side]}">Close</button></div><div id="side-body">${body}</div>`;
   }
 
@@ -418,6 +427,13 @@
   function openSide(key, focus) {
     side = key;
     if (key === "changes") { changesData = null; readChanges().then(drawSide); }
+    if (branchesStop) { branchesStop(); branchesStop = null; }
+    if (key === "branches") {
+      branchesData = null;
+      readBranches().then(drawSide);
+      // Every change shows as it happens (SC-004).
+      branchesStop = Fallow.live(`project:${state.id}`, () => readBranches().then(drawSide));
+    }
     drawSide();
     if (focus) { const t = document.getElementById("side-title"); if (t) t.focus(); }
   }
@@ -426,6 +442,7 @@
   // the icon unless the engineer clicked somewhere else.
   function closeSide(focusIcon) {
     if (!side) return;
+    if (branchesStop) { branchesStop(); branchesStop = null; }
     const was = side;
     side = null;
     drawSide();

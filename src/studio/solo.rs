@@ -864,7 +864,7 @@ impl Studio {
                     (_, p, _) => format!("read {}", p.unwrap_or_default()),
                 };
                 let tool = req.tool.clone();
-                self.ask_engineer(conv, runtime, &tool, true, what, vec![why], raw, reply)
+                self.ask_engineer(conv, runtime, &tool, true, what, vec![why], raw, reply, None)
             }
             agent::RequestKind::Other => Err(format!(
                 "{} is not a tool Fallow can judge.",
@@ -878,12 +878,14 @@ impl Studio {
                 let command = req.command.clone().unwrap_or_default();
                 let p = self.project(&c.state.project)?;
                 if judge::runs_unasked(&command, &jc.gates, &p.approved_commands, &ctxj) {
+                    self.open_call(conv, raw, &command);
                     allow(&reply);
                     return Ok(());
                 }
                 let verdict = judge::assess(&command, &ctxj);
                 let until = c.allow_until_switch;
                 if until && verdict == judge::Verdict::Allow {
+                    self.open_call(conv, raw, &command);
                     allow(&reply);
                     return Ok(());
                 }
@@ -895,7 +897,13 @@ impl Studio {
                     judge::Verdict::Allow => Vec::new(),
                 };
                 let tool = req.tool.clone();
-                self.ask_engineer(conv, runtime, &tool, false, command, reasons, raw, reply)
+                // What a request that changes the engineer's folder shows (FR-016, T037).
+                let facts = self.project(&c.state.project).ok().and_then(|p| {
+                    super::refwatch::in_folder(&command, &p.path, &jc.wt).then(|| {
+                        super::refwatch::folder_facts(&p.path, &command, &jc.branch, &p.in_root(""), &jc.wt)
+                    })
+                });
+                self.ask_engineer(conv, runtime, &tool, false, command, reasons, raw, reply, facts)
             }
         }
     }
@@ -913,6 +921,7 @@ impl Studio {
         reasons: Vec<String>,
         raw: &Value,
         reply: Sender<Reply>,
+        facts: Option<Value>,
     ) -> Result<(), String> {
         let c = self.convs.get(conv).ok_or("the session is gone")?;
         let id = format!(
@@ -930,13 +939,14 @@ impl Studio {
             id: id.clone(),
             command: command.clone(),
             reasons,
-            merge: None,
+            merge: facts.clone(),
         })
         .map_err(|_| "Fallow could not record the question.".to_string())?;
         c.pending = Some(Pending {
             id,
             tool: tool.to_string(),
             read,
+            facts,
             command,
             raw: raw.clone(),
             runtime: runtime.to_string(),
@@ -1085,6 +1095,57 @@ impl Studio {
 
     /// 012 (R-19): marks a session whose working copy or branch is gone (outside Fallow, at
     /// any time: fourth review, 7); it can only be closed then.
+    /// `check_gone`, for the engine's ref watcher.
+    pub(crate) fn check_gone_pub(&mut self, id: &str) {
+        self.check_gone(id);
+    }
+
+    /// 012 (R-10): the opening snapshot of a session's command Fallow just allowed.
+    /// Only a command that can move a ref opens a window (a long `npm test` holds nothing up:
+    /// Phase 7 review, 5); a second one allowed before the first's result joins it.
+    pub(super) fn open_call(&mut self, conv: &str, raw: &Value, command: &str) {
+        let Some(c) = self.convs.get(conv) else {
+            return;
+        };
+        let Some(solo) = c.state.solo.as_ref() else {
+            return;
+        };
+        let Some(folder) = self.store.get(&c.state.project).map(|p| p.path.clone()) else {
+            return;
+        };
+        let id = raw["tool_use_id"].as_str().unwrap_or_default().to_string();
+        let turn = c.state.turns.last().map_or(0, |t| t.n);
+        let wt = solo.worktree.clone();
+        let branch = solo.branch.clone();
+        let joined = c.open_call.clone();
+        let opening = match &joined {
+            Some(o) => o.opening.clone(),
+            None => super::refwatch::take(&folder),
+        };
+        let head = opening.as_ref().and_then(|o| o.head.clone());
+        let targets = super::refwatch::targets(command, &folder, head.as_deref(), &branch, &wt);
+        let touches = super::refwatch::in_folder(command, &folder, &wt);
+        if targets.is_empty() && !touches {
+            return;
+        }
+        let mut call = joined.unwrap_or(super::refwatch::OpenCall {
+            ids: Vec::new(),
+            commands: Vec::new(),
+            opening,
+            turn,
+            targets: Vec::new(),
+            folder: false,
+            opened_at: std::time::Instant::now(),
+        });
+        call.ids.push(id);
+        call.commands.push(command.to_string());
+        call.targets.extend(targets);
+        call.folder |= touches;
+        if let Some(c) = self.convs.get_mut(conv) {
+            c.open_call = Some(call);
+        }
+    }
+
     pub(super) fn check_gone(&mut self, id: &str) {
         let Some(c) = self.convs.get(id) else {
             return;
@@ -1256,6 +1317,11 @@ impl Studio {
             }).filter(|n| *n > 0).map(|n| json!({ "commits": n })),
             "changes_notice": super::solo_check::ONLY_THE_COPY,
             "changes_count": changed_count(s),
+            // 012 (R-10, R-11): what the session's commands changed elsewhere, its squashes, and
+            // the engineer's folder after a command that touched it.
+            "observed": s.observed,
+            "squashes": s.squashes.iter().map(|(b, c, j)| json!({"branch": b, "commit": c, "upto_turn": j})).collect::<Vec<_>>(),
+            "folder": s.folder.last().map(|(t, st)| json!({"turn": t, "state": st})),
             "suggestions": s.suggestions.iter().map(|(n, t, b)| json!({"n": n, "title": t, "brief": b})).collect::<Vec<_>>(),
             "features": s.features.iter().map(|(f, t, cv)| json!({"feature": f, "title": t, "conversation": cv})).collect::<Vec<_>>(),
             "closed": s.closed.as_ref().map(|(how, b, w)| json!({"how": how, "branch": b, "worktree": w})),

@@ -444,6 +444,7 @@ fn studio_route(
             None => Some(Err("turn is required".into())),
         },
         ("GET", ["api", "sessions", c, "changes"]) => r(Req::SoloChanges { session: c.to_string() }),
+        ("GET", ["api", "projects", p, "git-changes"]) => r(Req::GitChanges { project: p.to_string() }),
         ("POST", ["api", "sessions", c, "gates"]) => r(Req::SoloGates { session: c.to_string() }),
         ("GET", ["api", "projects", p, "sessions"]) => r(Req::Sessions {
             project: p.to_string(),

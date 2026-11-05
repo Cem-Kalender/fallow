@@ -7,6 +7,7 @@ pub mod conv;
 pub mod defs;
 pub mod files;
 pub mod judge;
+pub mod refwatch;
 pub mod repo;
 pub mod solo;
 pub mod solo_check;
@@ -183,6 +184,10 @@ pub enum Req {
     /// 012 (FR-019): the session's changes against its base.
     SoloChanges {
         session: String,
+    },
+    /// 012 (FR-017): the project's branch changes with their sources.
+    GitChanges {
+        project: String,
     },
     /// 012 (R-12): run the project's gates on the session's head.
     SoloGates {
@@ -2109,6 +2114,7 @@ impl Studio {
             id,
             tool,
             read: false,
+            facts: None,
             command,
             raw: args,
             runtime,
@@ -2196,7 +2202,16 @@ impl Studio {
             ApprovalAnswer::Deny => pending.answer(false, "The engineer refused this command."),
             _ => pending.answer(true, ""),
         };
+        // 012 (R-10): a session's command allowed now opens its window (never earlier: what
+        // the engineer did while the card waited is not the session's).
+        let opens = solo.is_some() && answer != ApprovalAnswer::Deny && !pending.is_read();
+        let (raw, command) = (pending.raw.clone(), pending.command.clone());
+        // The window opens before the answer goes: a fast push is in it (Phase 7 review, 4).
+        if opens {
+            self.open_call(conv, &raw, &command);
+        }
         let _ = pending.reply.send(Reply::Ok(msg));
+        let c = self.conv_mut(conv)?;
         c.append(CEvent::ApprovalAnswered {
             id: id.to_string(),
             answer,

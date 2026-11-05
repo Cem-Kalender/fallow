@@ -398,6 +398,14 @@ pub enum Msg {
     },
     Tick,
     Shutdown,
+    /// 012 (R-10): a project's refs as the watcher thread read them, and when.
+    Refs {
+        project: String,
+        snap: crate::studio::refwatch::Snapshot,
+        at: Instant,
+    },
+    /// 012 (R-10): the watcher thread went round every project once.
+    RefsRound,
     /// 010: a project's remote (git) and its protection (the hosting tool), read on a thread
     /// (research R-1, R-3).
     Remote {
@@ -627,6 +635,9 @@ pub struct Engine {
     /// 012: each project's kind as last read for the gate, and when: reading it runs git, too
     /// slow for every request (SC-002); kept a few seconds, forgotten when the project changes.
     kinds: std::cell::RefCell<BTreeMap<String, (Instant, crate::project::Kind)>>,
+    /// 012 (R-10): each project's ref watch, and the projects the watcher thread reads.
+    pub(crate) watch: BTreeMap<String, crate::run::gitwatch::Watch>,
+    pub(crate) watch_list: crate::run::gitwatch::WatchList,
 }
 
 /// 010: how often a project's protection is read again: a known value once a minute, an unknown
@@ -683,6 +694,8 @@ impl Engine {
             published: BTreeMap::new(),
             git: crate::verify::git::git_check(),
             kinds: std::cell::RefCell::new(BTreeMap::new()),
+            watch: BTreeMap::new(),
+            watch_list: Default::default(),
         };
         let mut ids: Vec<u64> = std::fs::read_dir(runs_dir(&e.data))
             .map_err(|err| err.to_string())?
@@ -742,6 +755,9 @@ impl Engine {
 
     /// Runs the engine until `Shutdown`.
     pub fn serve(mut self, rx: Receiver<Msg>) {
+        // 012 (R-10): the ref watcher, every 2 s.
+        self.refresh_watch_list();
+        crate::run::gitwatch::spawn(self.ctx.tx.clone(), std::sync::Arc::clone(&self.watch_list));
         let ids: Vec<u64> = self.runs.keys().copied().collect();
         for id in ids {
             self.drive(id);
@@ -794,7 +810,29 @@ impl Engine {
                     }
                     self.drive(run);
                 }
+                Msg::Refs { project, snap, at } => self.on_refs(&project, snap, at),
+                Msg::RefsRound => self.refresh_watch_list(),
                 Msg::Studio(note) => {
+                    // 012 (R-10): a session's git command ended: its window closes.
+                    let closing = match &note {
+                        crate::studio::Note::Turn {
+                            conv,
+                            event: crate::agent::Event::ToolResult { id, .. },
+                            ..
+                        } => {
+                            let done = self.studio.convs.get_mut(conv).and_then(|c| c.open_call.as_mut()).is_some_and(|o| {
+                                // A command without an id waits for its turn's end (review, 5).
+                                o.ids.retain(|x| x != id);
+                                o.ids.is_empty()
+                            });
+                            done.then(|| conv.clone())
+                        }
+                        crate::studio::Note::TurnDone { conv, .. } => Some(conv.clone()),
+                        _ => None,
+                    };
+                    if let Some(conv) = closing {
+                        self.close_call(&conv);
+                    }
                     let done = matches!(
                         note,
                         crate::studio::Note::TurnDone { .. } | crate::studio::Note::GatesDone { .. }
@@ -885,6 +923,7 @@ impl Engine {
                 }
                 Msg::Tick => {
                     self.bus.prune();
+                    self.prune_watch_waiters();
                     self.studio.tick();
                     // 012 (R-9, R-13): waiting messages of solo sessions.
                     self.refresh_slots();
@@ -1346,6 +1385,9 @@ impl Engine {
     fn events(&mut self, scope: &str, after: u64, reply: Sender<Reply>) {
         if scope == "global" {
             return self.bus.wait(after, reply);
+        }
+        if let Some(p) = scope.strip_prefix("project:") {
+            return self.wait_project(p, after, reply);
         }
         if let Some(id) = scope.strip_prefix("conv:") {
             match self.studio.convs.get_mut(id) {
@@ -3920,7 +3962,8 @@ impl Engine {
             | Req::Doc { project, .. }
             | Req::PutDoc { project, .. }
             | Req::SetStep { project, .. }
-            | Req::Dismiss { project, .. } => Some(project.clone()),
+            | Req::Dismiss { project, .. }
+            | Req::GitChanges { project } => Some(project.clone()),
             Req::Agents { project } | Req::Pipelines { project } | Req::CheckPipeline { project, .. } => {
                 project.clone()
             }
@@ -4082,6 +4125,7 @@ impl Engine {
                 confirmed,
             } => self.studio.undo_turns(&session, turn, confirmed),
             Req::SoloChanges { session } => self.studio.solo_changes(&session),
+            Req::GitChanges { project } => self.git_changes(&project),
             Req::SoloGates { session } => self.studio.run_solo_gates(&self.ctx, &session),
             Req::Commands { conv } => self.studio.commands(&conv),
             Req::SetMode { conv, mode } => self.studio.set_mode(&conv, mode),
@@ -4839,6 +4883,7 @@ impl Engine {
                     Req::Project { .. }
                         | Req::UndoPreview { .. }
                         | Req::SoloChanges { .. }
+                        | Req::GitChanges { .. }
                         | Req::GitScan { .. }
                         | Req::Move { confirmed: false, .. }
                         | Req::CheckRemote { .. }
@@ -4864,6 +4909,8 @@ impl Engine {
                 let out = self.studio_request(req);
                 if changes {
                     self.kinds.borrow_mut().clear();
+                    // 012 (R-10): a project added or made usable is watched at once.
+                    self.refresh_watch_list();
                 }
                 if !reads {
                     self.bus.publish(json!({ "type": "studio" }));

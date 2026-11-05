@@ -721,3 +721,7 @@ fieldset.field.along legend { padding: 0; margin-bottom: 4px; }
 .ft-count { margin-left: 6px; font-size: 11px; padding: 0 5px; border-radius: 8px; background: var(--panel-2, #eee); color: var(--muted, #666); }
 .undo-link { background: none; border: 0; padding: 0; color: var(--muted, #777); cursor: pointer; font: inherit; }
 .undo-link:hover, .undo-link:focus-visible { color: var(--ink); text-decoration: underline; }
+/* 012 US4: branch changes. */
+.git-list li { padding: 3px 0; }
+.git-line { color: var(--muted, #666); }
+.facts { padding: 8px 10px; border: 1px solid var(--line, #ddd); border-radius: 6px; }

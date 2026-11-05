@@ -400,7 +400,7 @@ change to the project's branches shows, with a proven source.
 
 **Independent Test**: quickstart Q4 and Q5.
 
-- [ ] T034 [US4] Write `tests/us12_git.rs` (Q4 and Q5). It fails first.
+- [X] T034 [US4] Write `tests/us12_gitwatch.rs` (Q4 and Q5; `us12_git.rs` holds Phase 5's git check). It fails first.
   - A squash merge (`git -C <folder> merge --squash … && git -C <folder> commit …`) is one approval. The card shows the snapshot count, "squashes: yes", the folder's branch, uncommitted changes and `.fallow/` changes. After it, `main` moved by 1 with the session named as the source, `squashed` is recorded, the base moved, and `folder_state` is `changed` (SC-010).
   - The base mode: `npm test` approved; `ls`, `npm test; git push --force` and `npm test > ../f` are asked.
   - Under "until I switch back": every case of Q5 step 1 is asked, and `npm test` and `git status` run.
@@ -413,7 +413,7 @@ change to the project's branches shows, with a proven source.
   - A non-merge command that changes the folder (`git -C <folder> reset --hard`) carries the folder's branch and uncommitted changes in its request (analyze C2).
   - A merge that conflicts in the folder shows `folder_state: conflicted` in the session and on the project (analyze C12).
   - After a restart, "until I switch back" is off (Q5 step 7; analyze C11).
-- [ ] T035 [US4] The ref watcher, in a new `src/studio/refwatch.rs` and `src/run/engine.rs` (R-10).
+- [X] T035 [US4] The ref watcher, in a new `src/studio/refwatch.rs` and `src/run/engine.rs` (R-10).
   - A thread per project, every 2 s: `ref_snapshot`, the folder's `HEAD` and status.
   - The diff gives `created`, `deleted`, `commits(n)`, `rewound` or `rewritten`.
   - Sources come from records only: a session, a loop or a spec session, by commits their logs hold; otherwise "outside".
@@ -421,18 +421,18 @@ change to the project's branches shows, with a proven source.
   - `<data>/projects/<p>/git.jsonl`, capped at 1,000, and `git-seen.json`, so changes made while stopped show after a restart.
   - A session's branch or working copy missing marks it `gone`.
   - Unit tests for the diff and the source rules.
-- [ ] T036 [US4] Commands and what they moved (R-10, R-11, R-6).
+- [X] T036 [US4] Commands and what they moved (R-10, R-11, R-6).
   - The opening snapshot is taken in `tool_call` when it answers "allow", and the closing one at `tool_result`.
   - Attribution is per ref, by the parsed command's target: the refspec for a push, the folder's branch for `-C <folder> merge/commit`.
   - `git_observed` with first-parent `commits[]`, and `folder_state` (`changed`, `conflicted`, `staged_only` or `unchanged`).
   - Squash recognition by comparing trees, then `squashed` and `base_moved{why: squash}`.
   - Unit test of the tree comparison.
-- [ ] T037 [US4] Merge facts, in `judge.rs` and `tool_call`.
+- [X] T037 [US4] Merge facts, in `judge.rs` and `tool_call`.
   - For a `merge`: the snapshot commits it would bring (`rev-list <target>..<head>`, by subject), "the assistant's own commits: unknown", whether it squashes, the folder's branch and uncommitted changes (`--no-optional-locks`), and the `.fallow/` paths it would change.
   - They go in `approval_asked.merge`.
   - Every request the judge flags as changing the engineer's folder, not only a merge, carries the folder's checked-out branch and uncommitted changes (FR-016; analyze C2).
   - The approval card in `app.js` shows them.
-- [ ] T038 [US4] Show the changes: `GET /api/projects/<p>/git-changes` and the long-poll scope `project:<p>`; a "Branches" list on the project page with the quiet group folded; a session's own changes in its conversation. Screenshot `checks/solo-git.png`.
+- [X] T038 [US4] Show the changes: `GET /api/projects/<p>/git-changes` and the long-poll scope `project:<p>`; a "Branches" list on the project page with the quiet group folded; a session's own changes in its conversation. Screenshot `checks/solo-git.png`.
 
 **Checkpoint**: Q4 and Q5 pass.
 

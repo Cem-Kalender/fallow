@@ -28,6 +28,8 @@ pub struct Pending {
     pub raw: Value,
     /// The runtime that asked, which shapes the answer (IX).
     pub runtime: String,
+    /// 012 (FR-016; T037): what a command changing the engineer's folder must show.
+    pub facts: Option<serde_json::Value>,
     pub reply: Sender<Reply>,
     pub deadline: Instant,
 }
@@ -90,6 +92,8 @@ pub struct Conv {
     pub editor_during_turn: bool,
     /// 012 (R-5): the starting branch's commit when the running turn began.
     pub start_before: Option<String>,
+    /// 012 (R-10): the session's git command Fallow allowed, until its result.
+    pub open_call: Option<super::refwatch::OpenCall>,
 }
 
 impl Conv {
@@ -119,6 +123,7 @@ impl Conv {
             gate_baselines: std::collections::BTreeMap::new(),
             editor_during_turn: false,
             start_before: None,
+            open_call: None,
         }
     }
 
@@ -194,7 +199,7 @@ impl Conv {
                     }
                 };
                 json!({ "id": p.id, "command": command, "always": always, "always_not": why,
-                        "kind": if read { "read" } else { "run" } })
+                        "kind": if read { "read" } else { "run" }, "facts": p.facts })
             }
             None => Value::Null,
         };
