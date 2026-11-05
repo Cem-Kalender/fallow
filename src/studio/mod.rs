@@ -7,6 +7,7 @@ pub mod conv;
 pub mod defs;
 pub mod files;
 pub mod judge;
+pub mod solo;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -109,6 +110,17 @@ pub enum Req {
     Say {
         conv: String,
         text: String,
+    },
+    /// 012: a solo session from its first message (FR-001, FR-012).
+    NewSession {
+        project: String,
+        agent: Option<String>,
+        text: String,
+    },
+    /// 012: a session's mode, `ask` or `until_switch` (FR-008).
+    SessionMode {
+        session: String,
+        mode: String,
     },
     /// Cancels the lead's running turn; the message is withdrawn (008 T047).
     Cancel {
@@ -272,6 +284,54 @@ pub fn version_of(text: &str) -> String {
     format!("{h:016x}")
 }
 
+/// Runs one turn's call on a thread of its own: each event is kept in the turn's activity file
+/// and reported as a `Note::Turn`, its end as a `Note::TurnDone`. For the lead and for a solo
+/// session alike.
+fn spawn_turn(
+    tx: Sender<Msg>,
+    id: String,
+    n: u32,
+    runtime: Box<dyn agent::Runtime>,
+    call: Call,
+    stop: Arc<AtomicBool>,
+    turn_file: PathBuf,
+) -> Result<(), String> {
+    std::thread::Builder::new()
+        .name(format!("turn-{id}-{n}"))
+        .spawn(move || {
+            let started = Instant::now();
+            let mut file = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&turn_file)
+                .ok();
+            let tx2 = tx.clone();
+            let id2 = id.clone();
+            let mut sink = |event: agent::Event| {
+                let t = started.elapsed().as_millis() as u64;
+                if let (Some(f), Some(a)) = (file.as_mut(), agent::activity_of(&event, t)) {
+                    use std::io::Write;
+                    if let Ok(line) = serde_json::to_string(&a) {
+                        let _ = writeln!(f, "{line}");
+                    }
+                }
+                let _ = tx2.send(Msg::Studio(Note::Turn {
+                    conv: id2.clone(),
+                    event,
+                    t,
+                }));
+            };
+            let outcome = runtime.start(&call, &mut sink, &stop);
+            let _ = tx.send(Msg::Studio(Note::TurnDone {
+                conv: id,
+                n,
+                outcome,
+            }));
+        })
+        .map(|_| ())
+        .map_err(|e| format!("cannot start a thread: {e}"))
+}
+
 fn conv_dir(data: &Path, id: &str) -> PathBuf {
     data.join("conversations").join(id)
 }
@@ -345,6 +405,9 @@ impl Studio {
             console: Vec::new(),
             settings,
         };
+        // 012 (R-2, R-3): the empty folder Fallow's own git commands on a session use as their
+        // hooks path, so no hook runs.
+        git::set_nohooks(data.join("nohooks"))?;
         let dir = data.join("conversations");
         crate::platform::private_dir(&dir)?;
         for e in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
@@ -357,7 +420,13 @@ impl Studio {
                 Ok((log, state, notes)) => {
                     s.console.extend(notes);
                     let mut c = Conv::new(e.path(), log, state);
-                    if let Some(cancel) = c.state.cancelling().cloned() {
+                    // 012 (R-9): after a restart, waiting messages wait for the engineer.
+                    c.queue_hold = c.state.solo.as_ref().is_some_and(|s| !s.queue.is_empty());
+                    if c.state.kind == Kind::Solo && c.state.busy {
+                        // 012 (FR-026, review 1): what the turn changed is committed as cut
+                        // short; a session's turn is never withdrawn.
+                        solo::cut_on_load(&mut c);
+                    } else if let Some(cancel) = c.state.cancelling().cloned() {
                         let n = c.state.turns.last().map_or(0, |t| t.n);
                         let failure = match s.store.get(&c.state.project) {
                             Some(p) => undo(p, &c.state.workdir, &cancel),
@@ -474,6 +543,23 @@ impl Studio {
         workdir: PathBuf,
         lead: Option<String>,
     ) -> Result<String, String> {
+        self.new_conv_with(kind, project, feature, forked_from, workdir, lead, None, None)
+    }
+
+    /// `new_conv` with 012's `agent` (a solo session's assistant) and `origin` (the session a
+    /// spec session was started from).
+    #[allow(clippy::too_many_arguments)]
+    fn new_conv_with(
+        &mut self,
+        kind: Kind,
+        project: &str,
+        feature: Option<String>,
+        forked_from: Option<String>,
+        workdir: PathBuf,
+        lead: Option<String>,
+        agent: Option<String>,
+        origin: Option<String>,
+    ) -> Result<String, String> {
         let id = format!(
             "c{}",
             crate::platform::random::hex(4).map_err(|e| e.to_string())?
@@ -499,8 +585,8 @@ impl Studio {
             lead_runtime: None,
             lead_model: None,
             lead_pending: None,
-            agent: None,
-            origin: None,
+            agent: agent.clone(),
+            origin: origin.clone(),
             solo: (kind == Kind::Solo).then(crate::conversation::solo::Solo::default),
         };
         let mut c = Conv::new(dir, log, state);
@@ -511,8 +597,8 @@ impl Studio {
             forked_from,
             workdir,
             lead,
-            agent: None,
-            origin: None,
+            agent,
+            origin,
         })?;
         self.convs.insert(id.clone(), c);
         Ok(id)
@@ -601,6 +687,13 @@ impl Studio {
                 return Err(why);
             }
             p.lead = Some(v.to_string()).filter(|l| l != "lead");
+        }
+        // 012 (FR-005): the assistant new sessions start with.
+        if let Some(v) = patch.get("assistant").and_then(Value::as_str) {
+            if let Some(why) = self.assistant_problem(&p.path, v) {
+                return Err(why);
+            }
+            p.assistant = Some(v.to_string()).filter(|a| a != solo::ASSISTANT);
         }
         *self.project_mut(id)? = p;
         self.store.save()?;
@@ -712,6 +805,10 @@ impl Studio {
     pub fn conv_view(&self, id: &str) -> Option<Value> {
         let c = self.convs.get(id)?;
         let mut v = c.view();
+        if c.state.kind == Kind::Solo {
+            self.solo_view(c, &mut v);
+            return Some(v);
+        }
         let Ok(p) = self.project(&c.state.project) else {
             return Some(v);
         };
@@ -818,6 +915,10 @@ impl Studio {
             .convs
             .get(conv)
             .ok_or_else(|| format!("there is no conversation {conv}"))?;
+        // 012: a solo session's turn is its own (studio/solo.rs).
+        if c.state.kind == Kind::Solo {
+            return self.say_solo(ctx, conv, text, refs);
+        }
         if c.state.busy {
             return Err("the lead is still answering".into());
         }
@@ -1134,6 +1235,7 @@ impl Studio {
             instructions: instr_recs,
             attachments: Vec::new(),
             slot_waited_ms: None,
+            head: None,
         })?;
         c.live.clear();
         c.head_before = if git_project && c.state.workdir != p.path {
@@ -1161,43 +1263,9 @@ impl Studio {
             .collect();
         c.stop = Arc::new(AtomicBool::new(false));
         let stop = Arc::clone(&c.stop);
-        let tx = ctx.tx.clone();
-        let id = conv.to_string();
         let turn_file = c.turns_dir().join(format!("{n}.jsonl"));
         let _ = std::fs::create_dir_all(c.turns_dir());
-        std::thread::Builder::new()
-            .name(format!("turn-{id}-{n}"))
-            .spawn(move || {
-                let started = Instant::now();
-                let mut file = std::fs::OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open(&turn_file)
-                    .ok();
-                let tx2 = tx.clone();
-                let id2 = id.clone();
-                let mut sink = |event: agent::Event| {
-                    let t = started.elapsed().as_millis() as u64;
-                    if let (Some(f), Some(a)) = (file.as_mut(), agent::activity_of(&event, t)) {
-                        use std::io::Write;
-                        if let Ok(line) = serde_json::to_string(&a) {
-                            let _ = writeln!(f, "{line}");
-                        }
-                    }
-                    let _ = tx2.send(Msg::Studio(Note::Turn {
-                        conv: id2.clone(),
-                        event,
-                        t,
-                    }));
-                };
-                let outcome = runtime.start(&call, &mut sink, &stop);
-                let _ = tx.send(Msg::Studio(Note::TurnDone {
-                    conv: id,
-                    n,
-                    outcome,
-                }));
-            })
-            .map_err(|e| format!("cannot start a thread: {e}"))?;
+        spawn_turn(ctx.tx.clone(), conv.to_string(), n, runtime, call, stop, turn_file)?;
         Ok(json!({ "turn": n }))
     }
 
@@ -1264,6 +1332,9 @@ impl Studio {
             let _ = p.reply.send(Reply::Ok(p.answer(false, "The turn ended.")));
         }
         let kind = c.state.kind;
+        if kind == Kind::Solo {
+            return self.solo_turn_done(conv, n, outcome);
+        }
         let workdir = c.state.workdir.clone();
         let project_id = c.state.project.clone();
         let feature_name = c.state.feature.clone();
@@ -1949,6 +2020,16 @@ impl Studio {
             let _ = reply.send(deny("The engineer cancelled this turn."));
             return;
         }
+        if c.state.kind == Kind::Solo {
+            let reply2 = reply.clone();
+            match self.solo_tool_call(&conv, &runtime, &req, &args, reply) {
+                Ok(()) => {}
+                Err(why) => {
+                    let _ = reply2.send(deny(&why));
+                }
+            }
+            return;
+        }
         if c.state.mode != Mode::Ask {
             let _ = reply.send(deny("Only Ask mode asks the engineer."));
             return;
@@ -2008,6 +2089,7 @@ impl Studio {
         if c.pending.as_ref().map(|p| p.id.as_str()) != Some(id) {
             return Err("that command is no longer waiting".into());
         }
+        let solo = c.state.solo.clone();
         let command = c
             .pending
             .as_ref()
@@ -2025,6 +2107,28 @@ impl Studio {
                     .is_some_and(|r| r.is_empty() || r.starts_with([' ', '&', ';', '|', '>', '<']))
                 {
                     return Err(format!("{pre:?} is not the start of {command:?}"));
+                }
+                // 012 (R-6): in a session, never a prefix that could cover a command asked
+                // per command.
+                if solo.is_some() {
+                    let runtime = self
+                        .convs
+                        .get(conv)
+                        .and_then(|c| c.pending.as_ref())
+                        .map(|p| p.runtime.clone())
+                        .unwrap_or_default();
+                    let jx = self.judge_cx(conv, &runtime)?;
+                    let jc = judge::Ctx {
+                        wt: &jx.wt,
+                        branch: &jx.branch,
+                        folder: &jx.folder,
+                        protect: &jx.protect,
+                    };
+                    if !judge::prefix_safe(&pre, &jc) {
+                        return Err(format!(
+                            "{pre:?} could also allow commands Fallow asks about one by one: allow it once instead"
+                        ));
+                    }
                 }
                 Some(pre)
             }

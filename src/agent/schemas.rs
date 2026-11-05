@@ -205,6 +205,28 @@ pub fn reply() -> Value {
     })
 }
 
+/// 012 (contracts/runtime.md, research R-7): the assistant's turn. A feature is suggested only
+/// through `proposed_feature`, never read from the text (FR-030).
+pub fn assistant_reply() -> Value {
+    json!({
+        "type": "object",
+        "required": ["reply"],
+        "properties": {
+            "reply": { "type": "string", "description": "Markdown the engineer reads in the chat" },
+            "proposed_feature": {
+                "type": "object",
+                "description": "Only when the discussion has settled enough to become a feature",
+                "required": ["title", "brief"],
+                "properties": {
+                    "title": { "type": "string" },
+                    "brief": { "type": "string", "description": "What the discussion settled: the goal, what is in and out, open questions" }
+                }
+            },
+            "proposed_pipeline": { "type": "string", "description": "A pipeline as TOML" }
+        }
+    })
+}
+
 /// 007: the lead's answer to an agent's question during a loop (contracts/step-results.md,
 /// `answer`). Fallow, not the lead, has the last word on whether it is relayed.
 pub fn answer() -> Value {

@@ -427,8 +427,8 @@ const Fallow = (() => {
   // The files the lead read in a turn's activity.
   const filesRead = (activity) => [...new Set((activity || []).filter((a) => a.kind === "read").map((a) => a.text))];
 
-  function leadMsg(meta, body, extra) {
-    return h`<div class="lead"><div class="avatar" aria-hidden="true">L</div><div class="lead-body">${meta ? h`<div class="lead-meta">${meta}</div>` : ""}${body}${extra || ""}</div></div>`;
+  function leadMsg(meta, body, extra, letter = "L") {
+    return h`<div class="lead"><div class="avatar" aria-hidden="true">${letter}</div><div class="lead-body">${meta ? h`<div class="lead-meta">${meta}</div>` : ""}${body}${extra || ""}</div></div>`;
   }
 
   function question(q) {
@@ -470,7 +470,7 @@ const Fallow = (() => {
       if (t.reply === null || t.reply === undefined) {
         const reads = filesRead(c.activity);
         out.push(leadMsg(h`<b>${leadName(c)}</b>${workingInline(c)}`, c.live ? md(c.live) : raw(""),
-          reads.length ? h`<div class="act small mt-6">${icon.file} Read ${reads.slice(0, 6).join(" · ")}</div>` : ""));
+          reads.length ? h`<div class="act small mt-6">${icon.file} Read ${reads.slice(0, 6).join(" · ")}</div>` : "", c.avatar));
         return;
       }
       const meta = [h`<b>${leadName(c)}</b>`];
@@ -484,7 +484,7 @@ const Fallow = (() => {
       if (i === asked && !c.busy && r.question) extras.push(question(r.question));
       if (r.proposed_feature) extras.push(proposal(r.proposed_feature));
       if (r.proposed_pipeline) extras.push(h`<div class="card pad-12 mt-8"><div class="row between"><span class="pill blue">proposed pipeline</span><button class="btn btn2 sm" data-draft="${r.proposed_pipeline}">Open in the designer</button></div><pre class="term">${r.proposed_pipeline}</pre></div>`);
-      out.push(leadMsg(meta, md(t.reply), extras));
+      out.push(leadMsg(meta, md(t.reply), extras, c.avatar));
     });
     if (c.pending_approval) {
       const a = c.pending_approval;
@@ -934,7 +934,7 @@ const Fallow = (() => {
   }
 
   return { deleteSession, chatWide, expandBtn, saveFor, scopeOf, esc, h, raw, md, inline, LOGO, icon, api, get, post, watch, live, here, confirm, register, route, show, start, money,
-    MODE_LABEL, messages, composer, syncComposer, chatAct, sendSay, alertLine, atEnd, stagePill, filesRead, leadHead, leadNotice, working, leaveAsked, restamp,
+    MODE_LABEL, messages, composer, syncComposer, chatAct, sendSay, alertLine, atEnd, stagePill, filesRead, leadHead, leadNotice, working, leaveAsked, restamp, showWorking,
     get headerWatch() { return headerWatch; } };
 
 })();

@@ -97,6 +97,9 @@ pub enum Event {
         /// 012 (FR-027): how long the message waited for a free agent slot.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         slot_waited_ms: Option<u64>,
+        /// 012: the session's head as the turn began, so a restart knows the turn's commits.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        head: Option<String>,
     },
     TurnFinished {
         n: u32,
@@ -206,6 +209,12 @@ pub struct Turn {
     pub instructions: Vec<InstructionRec>,
     /// 012: the images sent with the message.
     pub attachments: Vec<super::solo::AttachmentRec>,
+    /// 012: the turn was cut short (stopped, or Fallow restarted).
+    pub cut: bool,
+    /// 012: the session's head as the turn began.
+    pub head: Option<String>,
+    /// 012: why Fallow's commit at the end of the turn failed.
+    pub commit_failed: Option<String>,
     /// Cancelled by the engineer: the message was withdrawn.
     pub withdrawn: bool,
     /// The cancel asked while the turn ran, until it ends.
@@ -232,6 +241,8 @@ pub struct Approval {
     pub command: String,
     pub answer: Option<ApprovalAnswer>,
     pub prefix: Option<String>,
+    /// 012: why the judge asks the engineer, per command.
+    pub reasons: Vec<String>,
 }
 
 /// A conversation, folded from its events.
@@ -333,6 +344,7 @@ impl State {
                 new_session,
                 instructions,
                 attachments,
+                head,
                 ..
             } => {
                 self.busy = true;
@@ -354,6 +366,9 @@ impl State {
                     approvals: Vec::new(),
                     instructions: instructions.clone(),
                     attachments: attachments.clone(),
+                    cut: false,
+                    head: head.clone(),
+                    commit_failed: None,
                     withdrawn: false,
                     cancel: None,
                 });
@@ -411,6 +426,8 @@ impl State {
                     t.failure = failure.clone();
                     t.withdrawn = *withdrawn;
                     t.cancel = None;
+                    t.cut = *cut;
+                    t.commit_failed = commit_failed.clone();
                     // The edits that went with a withdrawn message go with the next one.
                     if *withdrawn {
                         // A session that was never saved has no runtime or model either.
@@ -434,13 +451,19 @@ impl State {
                     });
                 }
             }
-            Event::ApprovalAsked { id, command, .. } => {
+            Event::ApprovalAsked {
+                id,
+                command,
+                reasons,
+                ..
+            } => {
                 if let Some(t) = self.turns.last_mut() {
                     t.approvals.push(Approval {
                         id: id.clone(),
                         command: command.clone(),
                         answer: None,
                         prefix: None,
+                        reasons: reasons.clone(),
                     });
                 }
             }
@@ -591,6 +614,7 @@ mod tests {
                     instructions: Vec::new(),
                     attachments: Vec::new(),
                     slot_waited_ms: None,
+                    head: None,
                 },
             ),
             logged(
@@ -702,6 +726,7 @@ mod tests {
                 instructions: Vec::new(),
                 attachments: Vec::new(),
                 slot_waited_ms: None,
+                head: None,
             },
         )
     }

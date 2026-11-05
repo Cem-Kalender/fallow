@@ -792,3 +792,34 @@ pub fn assistant_step(reply: &str, extra: &str) -> String {
         lit(reply)
     )
 }
+
+/// 012: a session from its first message; returns its id (the turn has started).
+pub fn start_session(tx: &Sender<Msg>, project: &str, text: &str) -> String {
+    let v = sreq(
+        tx,
+        Req::NewSession {
+            project: project.to_string(),
+            agent: None,
+            text: text.to_string(),
+        },
+    )
+    .unwrap();
+    v["session"].as_str().unwrap().to_string()
+}
+
+/// 012: a message in a session.
+pub fn say_solo(tx: &Sender<Msg>, session: &str, text: &str) -> Value {
+    sreq(
+        tx,
+        Req::Say {
+            conv: session.to_string(),
+            text: text.to_string(),
+        },
+    )
+    .unwrap()
+}
+
+/// 012: the session's view once turn `n` has ended.
+pub fn wait_turn(tx: &Sender<Msg>, session: &str, n: usize) -> Value {
+    turn_ended(tx, session, n)
+}

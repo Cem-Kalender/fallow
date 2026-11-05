@@ -872,6 +872,9 @@ impl Engine {
                 Msg::Tick => {
                     self.bus.prune();
                     self.studio.tick();
+                    // 012 (R-9, R-13): waiting messages of solo sessions.
+                    self.refresh_slots();
+                    self.studio.solo_tick(&self.ctx);
                     let ids: Vec<u64> = self.runs.keys().copied().collect();
                     for id in ids {
                         if let Some(r) = self.runs.get_mut(&id) {
@@ -3539,6 +3542,14 @@ impl Engine {
         v["approved_commands"] = json!(p.approved_commands);
         v["budget_per_task"] = json!(p.budget_per_task);
         v["notifications"] = json!(p.notifications);
+        // 012 (FR-001): the session open last, if it is still open.
+        v["session_last"] = json!(p.last_session.as_ref().filter(|s| {
+            self.studio
+                .convs
+                .get(*s)
+                .and_then(|c| c.state.solo.as_ref())
+                .is_some_and(|x| x.closed.is_none())
+        }));
         // The project's lead (009): the default, and why it is not used if it cannot lead.
         let lead = p.lead.clone().unwrap_or_else(|| "lead".into());
         v["lead"] = match p
@@ -3637,6 +3648,35 @@ impl Engine {
         id: &str,
     ) -> Result<crate::studio::files::Version, String> {
         let id = if id.is_empty() { "folder" } else { id };
+        // 012: a session's working copy (US3 lists these versions; "Open in my editor" uses it
+        // now, FR-004).
+        if let Some(sid) = id.strip_prefix("solo:") {
+            let c = self
+                .studio
+                .convs
+                .get(sid)
+                .filter(|c| c.state.project == project)
+                .ok_or_else(|| crate::studio::files::GONE.to_string())?;
+            let s = c
+                .state
+                .solo
+                .as_ref()
+                .filter(|s| s.closed.is_none())
+                .ok_or_else(|| crate::studio::files::GONE.to_string())?;
+            return Ok(crate::studio::files::Version {
+                id: id.to_string(),
+                label: s.name.clone().unwrap_or_else(|| "Session".into()),
+                kind: "solo".into(),
+                running: c.state.busy,
+                base: Some(s.base().mark),
+                dir: s.worktree.clone(),
+                rev: None,
+                feature_dir: None,
+                git: true,
+                lead: "assistant".into(),
+                at_work: c.state.busy.then(|| "assistant".to_string()),
+            });
+        }
         // The folder needs no feature; a feature, only itself.
         let only = id.strip_prefix("feature:").unwrap_or("\u{0}");
         self.versions_of(project, Some(only))?
@@ -3742,7 +3782,12 @@ impl Engine {
                     .into(),
             );
         }
-        let abs = files::safe_path(&v.dir, path)?;
+        // 012 (FR-004): `.` is the version's whole working copy ("Open in my editor").
+        let abs = if path.is_empty() || path == "." {
+            v.dir.clone()
+        } else {
+            files::safe_path(&v.dir, path)?
+        };
         let data = &self.studio.data;
         let chosen = match (command, editor) {
             (Some(c), _) => Some(files::parse_command(&c)?),
@@ -3880,6 +3925,12 @@ impl Engine {
                 self.studio.say(&self.ctx, &conv, &text, refs)
             }
             Req::Cancel { conv } => self.studio.cancel(&conv),
+            Req::NewSession {
+                project,
+                agent,
+                text,
+            } => self.studio.new_session(&self.ctx, &project, agent, &text, Vec::new()),
+            Req::SessionMode { session, mode } => self.studio.set_solo_mode(&session, &mode),
             Req::Commands { conv } => self.studio.commands(&conv),
             Req::SetMode { conv, mode } => self.studio.set_mode(&conv, mode),
             Req::Approve {

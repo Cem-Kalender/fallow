@@ -1129,6 +1129,15 @@ fn git_reasons(args: &[&str], ctx: &Ctx, base: &Path, r: &mut Vec<String>) {
     }
 }
 
+/// 012 (R-6): why the assistant may not write the file `path` (an edit tool's), if it may
+/// not: outside its working copy, in the engineer's folder, a protected file, or `.git`.
+pub fn edit_problem(path: &str, ctx: &Ctx) -> Option<String> {
+    if let Some(why) = opaque_word(path) {
+        return Some(why.to_string());
+    }
+    path_reason(ctx, &canon(ctx.wt), path, true)
+}
+
 /// Whether an approved prefix may be allowed as a whole: never one starting with git or with a
 /// program that runs other code, nor one the judge would ask about itself.
 pub fn prefix_safe(prefix: &str, ctx: &Ctx) -> bool {

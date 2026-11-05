@@ -138,6 +138,15 @@ pub struct Project {
     /// 010: the remote as last seen, shown at once after a restart, with its time.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub remote_seen: Option<crate::publish::Remote>,
+    /// 012: the project's solo sessions, open and closed, newest last.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sessions: Vec<String>,
+    /// 012 (FR-001): the session open last.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_session: Option<String>,
+    /// 012 (FR-005): the assistant new sessions start with; none is the agent named `assistant`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assistant: Option<String>,
 }
 
 fn standard() -> String {
@@ -343,6 +352,9 @@ impl Store {
             features: Vec::new(),
             lead: None,
             remote_seen: None,
+            sessions: Vec::new(),
+            last_session: None,
+            assistant: None,
         };
         self.projects.push(p.clone());
         self.save()?;

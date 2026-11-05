@@ -189,7 +189,7 @@ session's own branch, with the engineer's folder untouched.
 
 **Independent Test**: quickstart Q1.
 
-- [ ] T012 [US1] Write `tests/us12_session.rs` (Q1). It fails first.
+- [X] T012 [US1] Write `tests/us12_session.rs` (Q1). It fails first.
   - A draft's first send creates the session and branch `fallow/solo/fix-the-sunday-bug`, and says the folder's uncommitted change is not in it.
   - Turn 1 edits `picker.js`, and there is exactly one commit, named `Fallow solo <id>, turn 1: …`.
   - `hooks_ran` is empty after creation, renaming and the commit.
@@ -204,7 +204,7 @@ session's own branch, with the engineer's folder untouched.
   - The assistant commits by itself during a turn: its commit stays, and Fallow's snapshot holds only what is left (analyze C12).
   - The assistant's runtime missing: the session says why and what to do, keeps its working copy, and the message can be sent again (analyze C5).
   - The first turn's system text holds the squash instruction, the rule against force-pushing and when to suggest a feature (analyze C8).
-- [ ] T013 [US1] Create sessions, in a new `src/studio/solo.rs` (R-2).
+- [X] T013 [US1] Create sessions, in a new `src/studio/solo.rs` (R-2).
   - `create(project, agent, first_message)`:
     1. writes `session_creating`;
     2. makes `worktree_add_new` at the project folder's `HEAD` under `worktrees/<p>/_solo/<id>`;
@@ -215,7 +215,7 @@ session's own branch, with the engineer's folder untouched.
   - `Studio` keeps the project's `sessions` and `last_session` in `projects.json`, through `src/project/mod.rs`.
   - `Req::NewSession{project, agent, text, attachments}` lives in `src/studio/mod.rs`.
   - The project's default assistant: `Project.assistant`, set through `PATCH /api/projects/<p>` and checked as `lead` is.
-- [ ] T014 [US1] A session's turn, in `src/studio/mod.rs` `say`, for `Kind::Solo` (R-6, R-7, R-13).
+- [X] T014 [US1] A session's turn, in `src/studio/mod.rs` `say`, for `Kind::Solo` (R-6, R-7, R-13).
   - **What the call is built from**:
     - the assistant's definition and runtime;
     - `rights::assistant(mode, approved, web)`: in-copy edits with `protect` (`CONTROL_GLOBS` and the control files), and an allow-list of only the gates and the `prefix_safe` approved prefixes, never `cd`;
@@ -233,25 +233,25 @@ session's own branch, with the engineer's folder untouched.
   - **A runtime that cannot start**: the turn ends with the reason and what to do (`agent.problem`), the working copy stays, and the message can be sent again (analyze C5).
   - **"Always"** is refused unless the prefix is `prefix_safe`.
   - **The mode** is `Mode::Ask`, or `until_switch`, kept in memory in `Conv.allow_until_switch`.
-- [ ] T015 [US1] The end of a session's turn, in `src/studio/mod.rs` `turn_done` and `solo.rs` (R-3).
+- [X] T015 [US1] The end of a session's turn, in `src/studio/mod.rs` `turn_done` and `solo.rs` (R-3).
   - `snapshot` on the session's branch, with the identity.
   - `TurnFinished.commit` and `commits` come from `rev-list <before>..<after>`, which keeps the assistant's own commits.
   - When the commit fails: `commit_failed` with `changed[{path, blob}]`, and the changes stay in the working copy.
   - Cancel commits the turn as `(cut short)`.
   - The working-copy reset of 009's withdrawal never applies to a session.
-- [ ] T016 [US1] Add the session routes in `src/service/http.rs` and the engine dispatch (`Engine::studio_request` in `src/run/engine.rs`), per contracts/web-api.md:
+- [X] T016 [US1] Add the session routes in `src/service/http.rs` and the engine dispatch (`Engine::studio_request` in `src/run/engine.rs`), per contracts/web-api.md:
   - `POST /api/projects/<p>/sessions`;
   - `GET /api/sessions/<s>`, long-polled on `conv:<s>`;
   - `POST …/say`, `…/cancel`, `…/mode` and `…/approve`.
 
   The session view gains the fields that exist so far.
-- [ ] T017 [US1] Build the page, in a new `src/service/web/screens/solo.js` and in `screens/project.js` (R-16, FR-001, FR-004, FR-006).
+- [X] T017 [US1] Build the page, in a new `src/service/web/screens/solo.js` and in `screens/project.js` (R-16, FR-001, FR-004, FR-006).
   - The middle column is the session open last, or a draft: an empty composer with the assistant picker.
   - The session header shows the branch, the start branch and commit, web access, "Open in my editor" and "Close session" (the last is a placeholder until US6).
   - The chat, `/` menu, working line, activity and stop come from `app.js`.
   - The approval card shows the judge's reasons and the fixed note.
   - The mode chip reads "Ask for commands" or "until I switch back". Turning "until I switch back" on shows the notice that Fallow judges commands as written and cannot see what scripts do inside (FR-008; analyze C11).
-- [ ] T018 [US1] Run the headless page check: a demo service, `serve_the_012_demo` (ignored) in `tests/us12_session.rs`, and screenshots `specs/012-solo-session/checks/solo-*.png` of a draft, a working turn, a finished turn and an approval card.
+- [X] T018 [US1] Run the headless page check: a demo service, `serve_the_012_demo` (ignored) in `tests/us12_session.rs`, and screenshots `specs/012-solo-session/checks/solo-*.png` of a draft, a working turn, a finished turn and an approval card.
 
 **Checkpoint**: Q1 passes. The MVP works: a session edits code on its own branch, and every turn is
 committed by Fallow.
@@ -499,6 +499,7 @@ and web access.
   - `Call.attachments`.
   - Refused when the runtime lacks `images`.
 - [ ] T045 [US5] Waiting messages (R-9).
+  - A waiting message keeps the files its text refers to with `@`: they are resolved again when it is sent (Phase 3 review, low).
   - `message_queued` while a turn works or no slot is free.
   - `POST /api/sessions/<s>/queue/<id>` edits, removes or sends a message.
   - T014's tick (sending the oldest waiting message when a turn ends normally and a slot is free) gains its exceptions: nothing is sent by itself after a failure, an approval refusal or a restart; each waiting message has "Send now".

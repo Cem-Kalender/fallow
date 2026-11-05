@@ -22,6 +22,93 @@ per tool call, without chaining. Finish every turn by returning the structured r
     )
 }
 
+/// 012 (research R-7): Fallow's standing rules for the assistant of a solo session, before the
+/// definition's own instruction. Plain text, naming no runtime's commands or files (IX).
+pub fn assistant_system(body: &str) -> String {
+    format!(
+        "You are a coding assistant in a Fallow solo session, in a chat with the engineer. You work \
+only in the current directory: the session's own working copy, on its own branch. Fallow commits \
+what you changed at the end of every turn; you need not commit yourself. Commands that are not \
+the project's gates or approved commands may be asked of the engineer before they run.\n\n\
+When the engineer asks to bring this work into another branch (to merge it), do it as one \
+squashed commit, written as one command line, for example `git -C <project folder> merge --squash \
+<this branch> && git -C <project folder> commit -m \"<message>\"`, so the project's hooks and \
+signing run on it; make a plain merge only when the engineer asks for one. Never force-push, and \
+never delete or rewrite a branch other than this session's own, unless the engineer asks.\n\n\
+When the discussion has settled enough to become a feature worth a specification, suggest it in \
+`proposed_feature` with a title and a brief of what was settled; never create the feature, its \
+folder or its files yourself: Fallow does that when the engineer confirms. A pipeline you design \
+goes in `proposed_pipeline`, as TOML. Finish every turn by returning the structured result asked \
+for.\n\n{body}"
+    )
+}
+
+/// 012: one turn of a solo session.
+pub struct AssistantTurn<'a> {
+    pub said: &'a str,
+    /// The project's instruction files as text, when handed with this turn.
+    pub instructions: &'a str,
+    /// Files the engineer refers to with `@`.
+    pub refs: &'a [FileRef],
+    /// Turns the engineer undid since the last turn (R-5), each with what it said.
+    pub undone: &'a [(u32, String)],
+    /// The previous turn's commit failed, and this turn's commit holds both (R-4).
+    pub failed_commit: Option<&'a str>,
+    /// Files the engineer edited in the working copy since the last turn (R-4).
+    pub engineer_edits: &'a [String],
+    /// `/feature`: the engineer asks for a suggestion from the discussion so far.
+    pub feature_request: bool,
+}
+
+/// The instruction of a solo session's turn (header `Fallow step: assistant_turn`).
+pub fn assistant_turn(t: &AssistantTurn) -> String {
+    let mut s = header("assistant_turn", None);
+    s.push_str(t.instructions);
+    if !t.undone.is_empty() {
+        s.push_str("The engineer undid these turns: their changes are gone from the working copy. Do not build on them:\n");
+        for (n, said) in t.undone {
+            s.push_str(&format!("- turn {n}: {}\n", said.lines().next().unwrap_or_default()));
+        }
+        s.push('\n');
+    }
+    if let Some(why) = t.failed_commit {
+        s.push_str(&format!(
+            "Fallow could not commit the previous turn's changes ({why}). They are still in the working copy; the engineer chose to go on, and this turn's commit will hold both turns. Fix what made the commit fail if it is in the working copy.\n\n"
+        ));
+    }
+    if !t.engineer_edits.is_empty() {
+        s.push_str("The engineer edited these files in the working copy since your last turn (Fallow committed them as the engineer's):\n");
+        for f in t.engineer_edits {
+            s.push_str(&format!("- {f}\n"));
+        }
+        s.push('\n');
+    }
+    if !t.refs.is_empty() {
+        s.push_str("The engineer refers to these files:\n");
+        for r in t.refs {
+            s.push_str(&format!("\n`{}` ({}):", r.path, r.version));
+            match (&r.text, &r.note) {
+                (Some(text), note) => {
+                    let fence = if text.contains("```") { "````" } else { "```" };
+                    s.push_str(&format!("\n{fence}\n{}\n{fence}\n", text.trim_end()));
+                    if let Some(n) = note {
+                        s.push_str(&format!("({n})\n"));
+                    }
+                }
+                (None, Some(n)) => s.push_str(&format!(" {n}.\n")),
+                (None, None) => s.push('\n'),
+            }
+        }
+        s.push('\n');
+    }
+    if t.feature_request {
+        s.push_str("The engineer asks you to suggest a feature from the discussion so far: give a title and a brief in `proposed_feature`.\n\n");
+    }
+    s.push_str("The engineer says:\n\n");
+    s.push_str(&quoted(t.said));
+    s
+}
+
 /// A document the engineer edited on the page since the lead's last turn.
 pub struct Edit<'a> {
     pub path: &'a str,

@@ -58,6 +58,14 @@ pub struct Conv {
     /// The engineer's edited documents as the turn began, put back if it is withdrawn: they
     /// are not committed until a turn ends.
     pub kept: Vec<crate::conversation::events::KeptDoc>,
+    /// 012 (R-6): "until I switch back", in memory only: a restart reads as "Ask".
+    pub allow_until_switch: bool,
+    /// 012 (R-9): after a restart, waiting messages wait for the engineer.
+    pub queue_hold: bool,
+    /// 012 (R-9): the engineer said something since the last failed turn: waiting messages go.
+    pub queue_go: bool,
+    /// 012 (FR-027): why the next message waits (no agent slot free).
+    pub slot_wait: Option<String>,
 }
 
 impl Conv {
@@ -75,6 +83,10 @@ impl Conv {
             head_before: None,
             token: None,
             kept: Vec::new(),
+            allow_until_switch: false,
+            queue_hold: false,
+            queue_go: false,
+            slot_wait: None,
         }
     }
 

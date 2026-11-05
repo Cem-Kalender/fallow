@@ -1,6 +1,7 @@
-// Screen 5: the project conversation (mockup/Project.dc.html; FR-034, FR-007a). The project's
-// features and files on the left, the chat with the lead in the rest; a rail on the right opens
-// the lead's proposals and what it knows at will (009 follow-up, mockup/project-proposals.html).
+// Screen 5: the project page (mockup/Project.dc.html; FR-034, FR-007a). The project's features
+// and files on the left; 012 (FR-001): in the middle the solo session open last, or a draft whose
+// first message makes one (screens/solo.js); a rail on the right opens the lead's proposals and
+// what it knows at will (009 follow-up, mockup/project-proposals.html).
 "use strict";
 (() => {
   const { h, raw, get, post, messages, composer, syncComposer, chatAct, sendSay, alertLine, atEnd, stagePill, live, confirm, chatWide, expandBtn } = Fallow;
@@ -131,15 +132,41 @@
   // Updates the live parts only, so typing in the message box is never interrupted.
   function update() {
     const p = state;
-    const c = p.conversation || { turns: [], mode: "ask" };
     const chat = document.getElementById("chat");
     const wasAtEnd = atEnd(chat);
-    document.getElementById("chat-list").innerHTML = h`${messages(c)}`.s;
+    drawSolo();
     markStarted();
     if (wasAtEnd) chat.scrollTop = chat.scrollHeight;
-    syncComposer(c);
     drawSide();
     reshow();
+    void p;
+  }
+
+  // 012: the session's head, notices and conversation drawn again; its composer only when the
+  // turn starts or ends, so typing is never interrupted.
+  function drawSolo() {
+    const s = state.session;
+    const set = (id, html) => {
+      const el = document.getElementById(id);
+      if (el && el.innerHTML !== html) el.innerHTML = html;
+    };
+    set("solo-head", Fallow.solo.head(s).s);
+    set("solo-notices", h`${Fallow.solo.notices(s)}`.s);
+    set("chat-list", h`${Fallow.solo.list(s)}`.s);
+    const comp = document.getElementById("solo-composer");
+    const busy = !!(s && s.busy);
+    const mode = (s && s.session && s.session.mode) || "";
+    if (comp && (comp.dataset.busy !== String(busy) || comp.dataset.mode !== mode)) {
+      const box = document.getElementById("say");
+      const typed = box ? box.value : "";
+      const focused = box && document.activeElement === box;
+      comp.innerHTML = Fallow.solo.composer(s).s;
+      comp.dataset.busy = String(busy);
+      comp.dataset.mode = mode;
+      const now = document.getElementById("say");
+      if (now) { now.value = typed; if (focused) now.focus(); }
+    }
+    if (Fallow.showWorking) Fallow.showWorking(busy, Fallow.solo.asConv(s));
   }
 
   function render(app) {
@@ -183,13 +210,12 @@
           </div>
         </aside>
         <section class="file-col card" id="file-view" aria-label="A file"${raw(fc && fc.isOpen() ? "" : " hidden")}>${fc && fc.isOpen() ? fc.viewHtml() : ""}</section>
-        <section class="chat-col" id="chat-col" aria-label="Conversation with the lead"${raw(fc && fc.isOpen() ? " hidden" : "")}>
-          <div class="chat-head"><div class="avatar" aria-hidden="true">L</div><div><b>Project conversation</b> <span class="small muted">· reads the code, never edits it here</span><div id="lead-head">${Fallow.leadHead(c)}</div></div><span class="grow"></span>${expandBtn("project")}</div>
-          ${p.kind === "folder" ? h`<div class="notice">This project is a plain folder: Fallow cannot check what a command the lead runs writes. Set up git to work in a copy of your own.</div>` : ""}
-          ${p.lead && p.lead.problem ? h`<div class="notice">The project's lead: ${p.lead.problem}.</div>` : ""}
-          <div id="lead-notice">${Fallow.leadNotice(c)}</div>
-          <div class="chat" id="chat"><div id="chat-list">${messages(c)}</div>${Fallow.working(c)}</div>
-          ${composer(c, "Ask about the code, plan features, or design a pipeline…")}
+        <section class="chat-col" id="chat-col" aria-label="Session with the assistant"${raw(fc && fc.isOpen() ? " hidden" : "")}>
+          <div id="solo-head">${Fallow.solo.head(p.session)}</div>
+          ${p.kind === "folder" ? h`<div class="notice">This project is a plain folder: sessions need git. Set up git to start one.</div>` : ""}
+          <div id="solo-notices">${Fallow.solo.notices(p.session)}</div>
+          <div class="chat" id="chat"><div id="chat-list">${Fallow.solo.list(p.session)}</div>${Fallow.working(Fallow.solo.asConv(p.session))}</div>
+          <div id="solo-composer" data-busy="${String(!!(p.session && p.session.busy))}" data-mode="${(p.session && p.session.session && p.session.session.mode) || ""}">${Fallow.solo.composer(p.session)}</div>
         </section>
         <div class="rail" id="rail" role="group" aria-label="Side panels">${railButtons(p, c)}</div>
         <section class="side-panel card" id="side-panel" role="region" aria-labelledby="side-title"${raw(side ? "" : " hidden")}>${side ? sideHtml(p, c) : ""}</section>
@@ -206,8 +232,9 @@
     if (pre && box) { box.value = pre; box.focus(); }
     // Always: a screen without a conversation leaves the menu with none (009 review).
     if (Fallow.menu) {
-      Fallow.menu.attach({ conv: c.id || null, project: p.id, actions: () => actions(state), pickAgent: (a) => pickLead(state, a) });
+      Fallow.menu.attach({ conv: (p.session && p.session.id) || null, project: p.id, actions: () => actions(state), pickAgent: (a) => pickLead(state, a) });
     }
+    if (Fallow.showWorking) Fallow.showWorking(!!(p.session && p.session.busy), Fallow.solo.asConv(p.session));
   }
 
   // 009 US2: in the `/` menu, a lead picked before the session's first message becomes its lead.
@@ -242,6 +269,12 @@
       if (!s.conversation) {
         await post(`/api/projects/${encodeURIComponent(id)}/conversation`);
         s = await get(`/api/projects/${encodeURIComponent(id)}`);
+        if (!Fallow.here(app)) return;
+      }
+      // 012 (FR-001): the session open last, or a draft.
+      s.session = null;
+      if (s.session_last) {
+        try { s.session = await get(`/api/sessions/${encodeURIComponent(s.session_last)}`); } catch (_) { s.session = null; }
         if (!Fallow.here(app)) return;
       }
       state = s;
@@ -442,6 +475,17 @@
     mine.start();
   }
 
+  // 012: the page follows the session open (and the next one a first message makes).
+  let listening = null;
+  function listenSession(app, project) {
+    const id = state && state.id === project && state.session && state.session.id;
+    if (listening === id) return;
+    if (stop) stop();
+    stop = null;
+    listening = id || null;
+    if (id) stop = live(`conv:${id}`, () => load(app, project));
+  }
+
   let current = null;
   Fallow.register("project", {
     // A new address of the Files tab, on the same project, is followed without a reload.
@@ -469,14 +513,14 @@
         if (!Fallow.here(app)) return;
         if (stop) stop();
         stop = null;
-        // Only this project's conversation: a page that failed to load listens to nothing.
-        const conv = state && state.id === r.project && state.conversation && state.conversation.id;
-        if (conv) stop = live(`conv:${conv}`, () => load(app, r.project));
+        // Only this project's session: a page that failed to load listens to nothing.
+        listenSession(app, r.project);
       });
     },
     leave() {
       if (stop) stop();
       stop = null;
+      listening = null;
       // The Files tab comes back closed: Features, and the chat, as the page opens.
       if (fc) fc.stop();
       fc = null;
@@ -521,11 +565,28 @@
       if (name === "side-close") return closeSide(true);
       if (name === "side-where") return showProposal(el.dataset.title);
       if (fc && name.startsWith("f-") && (await fc.act(name, el))) return;
-      const conv = state && state.conversation && state.conversation.id;
-      const again = () => load(current.app, current.id);
+      const conv = state && state.session && state.session.id;
+      const again = () => load(current.app, current.id).then(() => listenSession(current.app, current.id));
       if (conv && (await chatAct(conv, name, el, again))) return;
       try {
-        if (name === "say") return sendSay(conv, again);
+        // 012: the session's messages and mode.
+        if (name === "solo-say" || name === "say") {
+          const id = await Fallow.solo.say(state.id, state.session);
+          if (id) await again();
+          return;
+        }
+        if (name === "solo-mode") {
+          if (state.session) await Fallow.solo.setMode(state.session);
+          return again();
+        }
+        if (name === "solo-stop") {
+          if (state.session) await Fallow.solo.stopTurn(state.session);
+          return again();
+        }
+        if (name === "solo-editor") {
+          if (state.session) await Fallow.solo.openEditor(state.id, state.session);
+          return;
+        }
         if (name === "new-feature" || name === "start-feature") {
           const title = name === "start-feature" ? el.dataset.title : document.getElementById("feature-title").value.trim();
           if (!title) return alertLine("Name the feature first.");

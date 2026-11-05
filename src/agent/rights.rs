@@ -168,6 +168,21 @@ pub fn lead(mode: Mode, approved: Vec<String>) -> Rights {
     r
 }
 
+/// 012 (FR-008, research R-6): the assistant of a solo session. It edits its working copy,
+/// never `protect` (the control files); `commands` (the gates and the approved prefixes the
+/// judge finds safe) run without asking; everything else goes to Fallow's permission prompt,
+/// where the judge and the engineer decide.
+pub fn assistant(commands: Vec<String>, protect: Vec<String>) -> Rights {
+    Rights {
+        edits: Edits::Anywhere,
+        protect,
+        commands,
+        any_command: false,
+        no_commands: false,
+        prompt_tool: Some(APPROVE_TOOL.into()),
+    }
+}
+
 /// The lead answering an agent's question during a loop: approved commands only, whatever its
 /// chat's mode (FR-007a).
 pub fn lead_in_loop(approved: Vec<String>) -> Rights {

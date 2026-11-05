@@ -32,6 +32,7 @@ const SCREENS: &[(&str, &str)] = &[
     ("agents.js", include_str!("web/screens/agents.js")),
     ("cmdmenu.js", include_str!("web/screens/cmdmenu.js")),
     ("files.js", include_str!("web/screens/files.js")),
+    ("solo.js", include_str!("web/screens/solo.js")),
 ];
 
 /// The fonts Fallow ships (research S-3), served at `/fonts/<name>`.
@@ -397,6 +398,34 @@ fn studio_route(
             Err(e) => Some(Err(e)),
         },
         ("GET", ["api", "conversations", c]) => r(Req::Conversation { id: c.to_string() }),
+        // 012: solo sessions (contracts/web-api.md, "Sessions"). A session is a conversation:
+        // its view, messages, stop and approvals go through the same requests.
+        ("POST", ["api", "projects", p, "sessions"]) => match need("text") {
+            Ok(t) => r(Req::NewSession {
+                project: p.to_string(),
+                agent: s("agent").filter(|a| !a.trim().is_empty()),
+                text: t,
+            }),
+            Err(e) => Some(Err(e)),
+        },
+        ("GET", ["api", "sessions", c]) => r(Req::Conversation { id: c.to_string() }),
+        ("POST", ["api", "sessions", c, "say"]) => match need("text") {
+            Ok(t) => r(Req::Say {
+                conv: c.to_string(),
+                text: t,
+            }),
+            Err(e) => Some(Err(e)),
+        },
+        ("POST", ["api", "sessions", c, "cancel"]) => r(Req::Cancel {
+            conv: c.to_string(),
+        }),
+        ("POST", ["api", "sessions", c, "mode"]) => match need("mode") {
+            Ok(m) => r(Req::SessionMode {
+                session: c.to_string(),
+                mode: m,
+            }),
+            Err(e) => Some(Err(e)),
+        },
         ("POST", ["api", "conversations", c, "say"]) => match need("text") {
             Ok(t) => r(Req::Say {
                 conv: c.to_string(),
@@ -465,7 +494,7 @@ fn studio_route(
                 None => Some(Err("mode: read_only, approved, ask or run_anything".into())),
             }
         }
-        ("POST", ["api", "conversations", c, "approve"]) => {
+        ("POST", ["api", "conversations" | "sessions", c, "approve"]) => {
             use crate::conversation::events::ApprovalAnswer;
             let answer = match s("answer").as_deref() {
                 Some("once") => ApprovalAnswer::Once,
