@@ -103,7 +103,6 @@
     return h`<div class="lock-bar"><div class="grow small body-ink lh">You can edit any document here; the lead sees your changes on its next turn. Locking commits spec, plan and tasks; after that, only answers to questions change them.
       ${problems.length ? h`<ul class="problems">${problems.slice(0, 6).map((p) => h`<li>${p}</li>`)}</ul>` : ""}</div>
       ${f.findings.some((x) => x.severity.toUpperCase() === "CRITICAL" && !x.dismissed) ? h`<button class="btn btn2 sm" data-act="dismiss">Dismiss critical findings</button>` : ""}
-      ${f.kind === "folder" ? h`<button class="btn btn2" data-act="git-init">Set up git</button>` : ""}
       <button class="btn" data-act="lock-open"${raw(lc.ok ? "" : " disabled")}>Lock &amp; start the loop</button>
       ${lc.ok ? "" : h`<span class="tiny muted">after Tasks and Analyze</span>`}</div>`;
   }
@@ -354,7 +353,7 @@
       try {
         if (name === "delete-session") {
           const f = state;
-          if (await deleteSession(f.project, f.name, !!f.locked_before, !!f.plain)) location.hash = "#/specs";
+          if (await deleteSession(f.project, f.name, !!f.locked_before)) location.hash = "#/specs";
           return;
         }
         if (name === "say") return sendSay(conv, again);
@@ -410,11 +409,6 @@
           const ok = await confirm({ title: "Dismiss the critical findings?", text: "The lock will no longer be blocked by them. This is recorded.", items: crit.map(([x]) => x.text), ok: "Dismiss" });
           if (ok) for (const [, i] of crit) await post(`${base()}/dismiss`, { finding: i });
           return again();
-        }
-        if (name === "git-init") {
-          const ok = await confirm({ title: "Set up git in this folder?", text: "A loop needs git. Fallow runs git init and commits what is there.", items: [state.project_name], ok: "Set up git" });
-          if (ok) { await post(`/api/projects/${encodeURIComponent(route.project)}/git-init`, { confirm: true }); again(); }
-          return;
         }
         if (name === "lock") {
           const usd = parseFloat(document.getElementById("lk-usd").value);

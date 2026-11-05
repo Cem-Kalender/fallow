@@ -125,8 +125,6 @@ pub struct LeadTurn<'a> {
     pub first: bool,
     pub said: &'a str,
     pub edits: &'a [Edit<'a>],
-    /// A plain folder: Fallow cannot check what commands write.
-    pub plain_folder: bool,
     /// Messages the engineer withdrew since the lead's last answer (008 T047), each with
     /// whether Fallow undid what the lead changed for it.
     pub withdrawn: &'a [(String, bool)],
@@ -192,9 +190,6 @@ pub fn lead_turn(t: &LeadTurn) -> String {
                 "Feature folder: `{dir}`. The Spec Kit step to work on: {step}. Run it with its skill when the engineer's message asks for it or when the step before is done, and set `step` to the step you ran. Ask clarify questions one at a time as `question`. After analyze, return every finding in `findings`. When you change spec.md, plan.md or tasks.md after analyze ran (to fix a finding, say), analyze must run again before the feature can be locked: say so, and do not tell the engineer it can be locked until analyze has run on the documents as they are. Spec Kit is installed in your working copy, at every turn: use its skills, templates and scripts.\n\n"
             ));
         }
-    }
-    if t.plain_folder && t.first {
-        s.push_str("This project is a plain folder, not a git repository: Fallow cannot check what a command writes. Change only the spec documents.\n\n");
     }
     if !t.edits.is_empty() {
         s.push_str("The engineer edited these documents on the page since your last turn; take the edits as decisions:\n");
@@ -605,7 +600,6 @@ mod tests {
             first: false,
             said: "/plan keep it small",
             edits: &[],
-            plain_folder: false,
             withdrawn: &[],
             command,
             refs: &[],
@@ -621,7 +615,6 @@ mod tests {
             first: false,
             said: "hi",
             edits: &[],
-            plain_folder: false,
             withdrawn: &[],
             command: None,
             refs: &[],

@@ -308,29 +308,29 @@ plain folders are retired.
 
 **Independent Test**: quickstart Q9.
 
-- [ ] T023 [US8] Write `tests/us12_repo.rs` (Q9). It fails first.
+- [X] T023 [US8] Write `tests/us12_repo.rs` (Q9). It fails first.
   - A folder holding `node_modules/` and `.env`: the scan names them, the file count, the size and a proposed `.gitignore`; nothing changes before the click; afterwards there is one commit without them.
   - A subfolder of a repository is refused, with `inside`.
   - A subfolder project added before, with a feature, moves to the top folder (`NeedsMove`). Its feature gets a branch, its documents stay where they were, and it can be locked.
   - A plain-folder project from before gets the question.
   - A fake `git` on `PATH` reporting 2.30, or none at all: `GET /api/git` names the problem, every project request answers 409, and "Check again" passes once git is back.
   - With no identity, the first commit is refused, saying how to set one (SC-012).
-- [ ] T024 [US8] The git check, in `src/run/engine.rs` and `src/service/http.rs` (FR-040).
+- [X] T024 [US8] The git check, in `src/run/engine.rs` and `src/service/http.rs` (FR-040).
   - `git_check` runs at start and when a project is added.
   - `GET /api/git` and `POST /api/git/check`.
   - While git is not ok, project requests answer 409 "Fallow needs git 2.38 or later".
   - The start page (`screens/dashboard.js`) shows the message, the minimum version, the installation hint for the system and "Check again".
-- [ ] T025 [US8] Projects without git, and the retirement of plain folders, in `src/project/mod.rs` and `src/studio/mod.rs` (FR-039, FR-041).
+- [X] T025 [US8] Projects without git, and the retirement of plain folders, in `src/project/mod.rs` and `src/studio/mod.rs` (FR-039, FR-041).
   - `Kind::NeedsGit` replaces `Kind::Folder`.
   - `GET /api/projects/<p>/git-init` returns the scan: the dependency and build folders and the likely secrets of R-18, the size, and the proposed `.gitignore`.
   - `POST …/git-init {gitignore?}` checks the identity, then `git init`, the ignore file, `add -A` and the first commit (the engineer's git as set up), then the existing feature moves.
   - Plain-folder handling is retired everywhere: `undo`, `say`, `turn_done`, `lock_check`, `files::versions`, the lead's plain-folder instructions, and the page notices in `project.js`, `spec.js` and `dashboard.js`.
   - `tests/us1_projects.rs` and other tests that built plain folders move to the `NeedsGit` flow, with each change noted.
-- [ ] T026 [US8] Projects inside a bigger repository: `Kind::NeedsMove {top}` and `Project.spec_root` (R-18).
+- [X] T026 [US8] Projects inside a bigger repository: `Kind::NeedsMove {top}` and `Project.spec_root` (R-18).
   - `GET`/`POST /api/projects/<p>/move` moves the project to its top folder. The features' `dir` gets the subfolder as a prefix, and each feature gets a branch and a worktree, with a `spec:` commit when its documents are not committed.
   - `.specify/` and `.fallow/` stay where they are, read under `spec_root`.
   - The code that assumes `specs/` at the project's root uses the spec root instead: `rights::SPEC_GLOBS`, `SPEC_DIRS` and `CONTROL_GLOBS` per project, `next_dir`, `spec_dirs`, `update.rs` `doc_dir`, `files` `feature_dir`, `lock_prepare`, `SQUAD_FILE`, the project library in `defs`, and the `.specify/` paths in `say` and `new_feature`.
-- [ ] T027 [US8] Build the pages: "Make it a git repository" and "Use the repository's top folder", with the scan and an editable `.gitignore`, in `screens/project.js` and `screens/dashboard.js`. Screenshots `checks/git-*.png`.
+- [X] T027 [US8] Build the pages: "Make it a git repository" and "Use the repository's top folder", with the scan and an editable `.gitignore`, in `screens/project.js` and `screens/dashboard.js`. Screenshots `checks/git-*.png`.
 
 **Checkpoint**: Q9 passes. Every test from 007 to 011 is green without plain folders.
 

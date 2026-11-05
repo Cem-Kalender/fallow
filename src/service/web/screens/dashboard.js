@@ -21,7 +21,9 @@
   function project(p) {
     const pills = [];
     if (p.kind === "git") pills.push(h`<span class="pill blue">git</span>`);
-    else if (p.kind === "folder") pills.push(h`<span class="pill grey">folder, no git</span>`);
+    else if (p.kind === "needs_git") pills.push(h`<span class="pill orange">not a git repository yet</span>`);
+    else if (p.kind === "needs_move") pills.push(h`<span class="pill orange">inside a bigger repository</span>`);
+    else if (p.kind === "unknown") pills.push(h`<span class="pill orange">git needed</span>`);
     else pills.push(h`<span class="pill orange">missing</span>`);
     if (p.spec_kit) pills.push(h`<span class="pill green">Spec Kit ${p.spec_kit}</span>`);
     if (p.features) pills.push(h`<span class="pill grey">${p.features} feature${p.features === 1 ? "" : "s"}</span>`);
@@ -126,8 +128,18 @@
       : loop ? "Locked · implement" : "Locked";
     const verb = { spec_session: "Continue", locked: "Open", building: "Watch", ready_to_merge: "Review", done_unverified: "Review", pull_request: "Follow", stopped: "Open", merged: "History" }[f.stage] || "Open";
     // A spec session can be deleted from here (008 T038); a loop that runs keeps it.
-    const del = f.stage === "spec_session" ? h` <button class="btn btn2 xs" data-act="delete-session" data-project="${f.project}" data-feature="${f.name}" data-locked="${f.locked_before ? "1" : ""}" data-plain="${f.plain ? "1" : ""}" aria-label="${`Delete the spec session of ${f.name}`}">Delete…</button>` : "";
+    const del = f.stage === "spec_session" ? h` <button class="btn btn2 xs" data-act="delete-session" data-project="${f.project}" data-feature="${f.name}" data-locked="${f.locked_before ? "1" : ""}" aria-label="${`Delete the spec session of ${f.name}`}">Delete…</button>` : "";
     return h`<tr><td class="b">${f.name}</td><td class="muted">${f.project_name}</td><td>${stagePill(f.stage, true)}</td><td class="body-ink">${step}</td><td class="right"><a href="${href}">${verb}</a>${del}</td></tr>`;
+  }
+
+  // 012 (FR-040): git missing or too old: said here, with the minimum and how to install it.
+  function gitBanner(g) {
+    if (!g || g.ok) return "";
+    return h`<section class="card notice pad-14" role="alert" aria-labelledby="git-need">
+      <h2 class="th" id="git-need">Fallow needs git ${g.min} or later</h2>
+      <div class="small body-ink lh mt-4">${g.found ? `Fallow found git ${g.found}, which is too old.` : "Fallow could not find git on this computer."} No project opens until git is there. Install it with ${g.hint}, then check again.</div>
+      <div class="row gap-8 mt-8"><button class="btn sm" data-act="git-check">Check again</button></div>
+    </section>`;
   }
 
   function render(app, d) {
@@ -137,16 +149,17 @@
     const projects = d.projects || [];
     app.innerHTML = h`<div class="page"><div class="split">
       <aside class="side col" aria-label="Projects">
-        <div class="row between"><h2 class="th">Projects</h2><button class="btn btn2 xs plus-btn" type="button" data-act="pick" aria-label="Add a project folder" title="Add a project folder: Spec Kit's skills and the default agents are installed in it; git is set up when its first loop starts, if you agree.">+</button></div>
+        <div class="row between"><h2 class="th">Projects</h2><button class="btn btn2 xs plus-btn" type="button" data-act="pick" aria-label="Add a project folder" title="Add a project folder: a git repository, or a folder that becomes one when you say so. Spec Kit's skills and the default agents are installed in it.">+</button></div>
         ${typing ? h`<form class="col gap-8" data-submit="add">
           <label for="add-path" class="small body-ink">The folder's path</label>
           <div class="row gap-8"><input id="add-path" type="text" class="grow min0" placeholder="C:\\Repos\\my-project"><button class="btn btn2 xs" type="submit">Add</button></div>
         </form>` : ""}
         ${projects.map(project)}
-        ${projects.length ? "" : h`<div class="card dashed pad-14"><div class="small body-ink lh">Add a project with +: choose its folder. Fallow installs Spec Kit's skills and the default agents in it; git is set up when its first loop starts, if you agree.</div></div>`}
+        ${projects.length ? "" : h`<div class="card dashed pad-14"><div class="small body-ink lh">Add a project with +: choose its folder. Every project is a git repository: a folder that is not one yet becomes one when you say so, and nothing in it changes before. Fallow installs Spec Kit's skills and the default agents in it.</div></div>`}
         <a class="small" href="#/data">What Fallow keeps on disk</a>
       </aside>
       <div class="main col gap-28">
+        ${gitBanner(d.git)}
         ${filter ? "" : h`<section aria-labelledby="needs">
           <h2 id="needs" class="section-title">Needs you</h2>
           ${needs.length ? h`<div class="grid-cards">${needs.map(need)}</div>` : h`<div class="card empty">Nothing needs you now.</div>`}
@@ -193,7 +206,9 @@
   async function load(app) {
     appRoot = app;
     try {
-      render(app, await get("/api/dashboard"));
+      const [d, g] = await Promise.all([get("/api/dashboard"), get("/api/git").catch(() => null)]);
+      d.git = g;
+      render(app, d);
     } catch (e) {
       app.innerHTML = h`<div class="page"><div class="card empty">${e.message}</div></div>`.s;
     }
@@ -212,8 +227,13 @@
     },
     async act(name, el) {
       if (name === "delete-session") {
-        await Fallow.deleteSession(el.dataset.project, el.dataset.feature, el.dataset.locked === "1", el.dataset.plain === "1");
+        await Fallow.deleteSession(el.dataset.project, el.dataset.feature, el.dataset.locked === "1");
         return;
+      }
+      if (name === "git-check") {
+        const g = await Fallow.post("/api/git/check", {});
+        if (!g.ok) alertLine(g.found ? `git ${g.found} is still too old.` : "git is still not found.");
+        return load(appRoot);
       }
       if (name === "pick") {
         // 008 T044: Windows' folder picker opens on the desktop; without one, type the path.

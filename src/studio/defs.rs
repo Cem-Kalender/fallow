@@ -55,7 +55,7 @@ impl Studio {
                 .as_ref()
                 .map(|c| c.join(sub))
                 .ok_or_else(|| "Fallow has no folder of its own to save in".to_string()),
-            Scope::Project(p) => Ok(self.project(p)?.path.join(".fallow").join(sub)),
+            Scope::Project(p) => Ok(self.project(p)?.root_dir().join(".fallow").join(sub)),
         }
     }
 
@@ -69,7 +69,7 @@ impl Studio {
     fn library_for(&self, scope: &Scope) -> Result<Library, String> {
         match scope {
             Scope::User => Ok(self.library(None)),
-            Scope::Project(p) => Ok(self.library(Some(&self.project(p)?.path.clone()))),
+            Scope::Project(p) => Ok(self.library(Some(&self.project(p)?.root_dir()))),
         }
     }
 
@@ -182,7 +182,7 @@ impl Studio {
             Scope::User => std::iter::once(None)
                 .chain(self.store.projects.iter().map(|p| Some(p.path.clone())))
                 .collect(),
-            Scope::Project(p) => vec![Some(self.project(p)?.path.clone())],
+            Scope::Project(p) => vec![Some(self.project(p)?.root_dir())],
         };
         let user = self.library(None);
         let mut broken: Vec<String> = Vec::new();
@@ -306,7 +306,7 @@ impl Studio {
             Err(_) => {
                 let path = match scope {
                     Scope::User => None,
-                    Scope::Project(p) => Some(self.project(p)?.path.clone()),
+                    Scope::Project(p) => Some(self.project(p)?.root_dir()),
                 };
                 let lib = self.library(path.as_deref());
                 let a = lib

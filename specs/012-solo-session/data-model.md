@@ -104,7 +104,7 @@ own branches (R-10).
 
 | Field | Change |
 |---|---|
-| kind | derived as today, `Folder` retired: `Git` \| `NeedsGit` \| `NeedsMove {top}` \| `Missing` (R-18) |
+| kind | derived as today, `Folder` retired: `Git` \| `NeedsGit` \| `NeedsMove` (its top folder read with it, `git.top` in the view) \| `Missing` \| `Unknown` (git could not be run, FR-040) (R-18) |
 | spec_root | new, optional: the subfolder holding `specs/` and `.specify/` for a project moved to its repository's top folder (R-18); empty otherwise |
 | assistant? | the project's default assistant (absent: `assistant`), set as `lead` is (009) |
 | sessions[] | ids of the project's sessions, open and closed, newest first |

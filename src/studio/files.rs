@@ -72,7 +72,7 @@ pub struct FeatureCopy {
 
 /// The versions of a project: the folder first, then each feature that still has a copy or a
 /// branch (FR-028).
-pub fn versions(project: &Path, git_project: bool, features: Vec<FeatureCopy>) -> Vec<Version> {
+pub fn versions(project: &Path, features: Vec<FeatureCopy>) -> Vec<Version> {
     let mut out = vec![Version {
         id: "folder".into(),
         label: "Project folder".into(),
@@ -82,13 +82,11 @@ pub fn versions(project: &Path, git_project: bool, features: Vec<FeatureCopy>) -
         dir: project.to_path_buf(),
         rev: None,
         feature_dir: None,
-        git: git_project,
+        // 012 (FR-041): every project is a git repository.
+        git: true,
         lead: "lead".into(),
         at_work: None,
     }];
-    if !git_project {
-        return out;
-    }
     for f in features {
         let (kind, dir, rev, running, at_work) = match (&f.loop_wt, &f.spec_wt, &f.branch) {
             (Some((wt, running, who)), _, _) if wt.is_dir() => {

@@ -11,7 +11,9 @@
   function kindPills(p) {
     const pills = [];
     if (p.kind === "git") pills.push(h`<span class="pill blue">git${p.branch ? ` · ${p.branch}` : ""}</span>`, remotePill(p.remote));
-    else if (p.kind === "folder") pills.push(h`<span class="pill grey">folder, no git</span>`);
+    else if (p.kind === "needs_git") pills.push(h`<span class="pill orange">not a git repository yet</span>`);
+    else if (p.kind === "needs_move") pills.push(h`<span class="pill orange">inside a bigger repository</span>`);
+    else if (p.kind === "unknown") pills.push(h`<span class="pill orange">git needed</span>`);
     else pills.push(h`<span class="pill orange">folder missing</span>`);
     if (p.spec_kit) pills.push(h`<span class="pill green">Spec Kit ${p.spec_kit}</span>`);
     pills.push(h`<a class="pill grey" href="#/pipelines/${encodeURIComponent(p.id)}">pipeline ${p.pipeline}</a>`);
@@ -210,14 +212,12 @@
           <a class="feat" href="#/agents/${encodeURIComponent(p.id)}"><span>.fallow/agents/</span><span class="tiny muted">${p.agent_overrides} override${p.agent_overrides === 1 ? "" : "s"}</span></a>
           <div class="feat"><span>approved commands</span><span class="tiny muted">${p.approved_commands.length}</span></div>
           <label class="feat" for="notify-toggle"><span>Desktop notifications</span><input id="notify-toggle" type="checkbox" data-change="notifications"${raw(p.notifications ? " checked" : "")}></label>
-          ${p.kind === "folder" ? h`<button class="btn btn2 sm mt-8" data-act="git-init">Set up git</button>` : ""}
           <button class="btn btn2 sm mt-8" data-act="remove">Remove from Fallow</button>
           </div>
         </aside>
         <section class="file-col card" id="file-view" aria-label="A file"${raw(fc && fc.isOpen() ? "" : " hidden")}>${fc && fc.isOpen() ? fc.viewHtml() : ""}</section>
         <section class="chat-col" id="chat-col" aria-label="Session with the assistant"${raw(fc && fc.isOpen() ? " hidden" : "")}>
           <div id="solo-head">${Fallow.solo.head(p.session)}</div>
-          ${p.kind === "folder" ? h`<div class="notice">This project is a plain folder: sessions need git. Set up git to start one.</div>` : ""}
           <div id="solo-notices">${Fallow.solo.notices(p.session)}</div>
           <div class="chat" id="chat"><div id="chat-list">${Fallow.solo.list(p.session)}</div>${Fallow.working(Fallow.solo.asConv(p.session))}</div>
           <div id="solo-composer" data-busy="${String(!!(p.session && p.session.busy))}" data-mode="${(p.session && p.session.session && p.session.session.mode) || ""}">${Fallow.solo.composer(p.session)}</div>
@@ -267,10 +267,64 @@
 
   // An answer for a page the engineer has left (another screen, or another project) is dropped:
   // it never becomes the state of the page they are on.
+  // 012 (FR-039, R-18): a project that is not a git repository yet, or sits inside a bigger
+  // one, shows only the question that makes it usable; nothing changes before the click.
+  async function renderGate(app, p) {
+    const id = encodeURIComponent(p.id);
+    let info = null;
+    let err = null;
+    try { info = await get(`/api/projects/${id}/${p.kind === "needs_move" ? "move" : "git-init"}`); } catch (e) { err = e.message; }
+    if (!Fallow.here(app)) return;
+    const head = h`<div class="subbar"><div><div class="crumb"><a href="#/">Projects</a> ›</div><h1 class="page-title">${p.name}</h1></div>
+      <span class="mono tiny muted">${p.path}</span><div class="row wrap gap-6">${kindPills(p)}</div><div class="grow"></div></div>`;
+    let body;
+    if (err || !info) {
+      body = h`<div class="card empty">${err || "Fallow could not read this folder."}</div>`;
+    } else if (info.needs === "branches") {
+      body = h`<section class="card pad-14 gate" aria-labelledby="gate-t">
+        <h2 class="th" id="gate-t">Finish setting up git</h2>
+        <p class="small body-ink lh">This project is a git repository, but ${info.features.length ? h`its features ${info.features.map((x, i) => h`${i ? ", " : ""}<span class="mono">${x}</span>`)} have` : "its conversation has"} no branch and working copy of their own yet. Fallow makes them from the current commit; nothing in your folder changes.</p>
+        <div class="row gap-8 mt-12"><button class="btn" data-act="git-init-go">Give them their branches</button><button class="btn btn2" data-act="remove">Remove from Fallow</button></div>
+      </section>`;
+    } else if (p.kind === "needs_move") {
+      body = h`<section class="card pad-14 gate" aria-labelledby="gate-t">
+        <h2 class="th" id="gate-t">Use the repository's top folder</h2>
+        <p class="small body-ink lh">This project's folder is inside the git repository <span class="mono">${info.top}</span>. Fallow works on whole repositories, so the project moves to that folder. Nothing changes before you click.</p>
+        ${(info.features || []).length ? h`<div class="small b mt-8">Its features keep their documents where they are</div>
+          <table class="tbl small mt-4"><thead><tr><th scope="col">Feature</th><th scope="col">Its documents, from the top folder</th></tr></thead>
+          <tbody>${info.features.map((f) => h`<tr><td>${f.feature}</td><td class="mono">${f.to}</td></tr>`)}</tbody></table>
+          <div class="tiny muted mt-4">Each feature gets its branch and working copy, as in any repository.</div>` : ""}
+        <div class="small body-ink mt-8">These stay where they are: ${(info.stay || []).map((s, i) => h`${i ? ", " : ""}<span class="mono">${s}</span>`)}.</div>
+        ${(info.uncommitted || []).length ? h`<div class="notice mt-8">Not committed in the repository yet: ${info.uncommitted.map((s, i) => h`${i ? ", " : ""}<span class="mono">${s}</span>`)}. Fallow reads the gates and the constitution from the commit: commit them for them to apply.</div>` : ""}
+        <div class="row gap-8 mt-12"><button class="btn" data-act="move-go">Use the repository's top folder</button><button class="btn btn2" data-act="remove">Remove from Fallow</button></div>
+      </section>`;
+    } else {
+      const mb = (n) => (n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : n >= 1024 ? `${Math.round(n / 1024)} KB` : `${n} bytes`);
+      body = h`<section class="card pad-14 gate" aria-labelledby="gate-t">
+        <h2 class="th" id="gate-t">Make it a git repository</h2>
+        <p class="small body-ink lh">Every project in Fallow is a git repository. This folder ${info.needs === "first_commit" ? "is a repository without any commit yet" : "is not one yet"}. Fallow ${info.needs === "first_commit" ? "" : "runs git init and "}commits what is there, with your git as it is set up. Nothing in the folder changes before you click.</p>
+        <div class="small body-ink mt-8">With the proposed ignore file, the first commit holds <b>${info.files} file${info.files === 1 ? "" : "s"}</b> (${mb(info.bytes)}).</div>
+        ${info.heavy.length ? h`<div class="small body-ink mt-6">The proposed ignore file leaves out these dependencies or build output: ${info.heavy.map((x, i) => h`${i ? ", " : ""}<span class="mono">${x}</span>`)}</div>` : ""}
+        ${info.secrets.length ? h`<div class="small body-ink mt-6">And these files that may hold secrets: ${info.secrets.map((x, i) => h`${i ? ", " : ""}<span class="mono">${x}</span>`)}. Without it, they are committed too.</div>` : ""}
+        <div class="tiny muted mt-6">The commit is your own: your git's hooks and signing apply to it.</div>
+        ${info.identity ? "" : h`<div class="notice mt-8" role="alert">Set your name and e-mail in git first: <span class="mono">git config --global user.name "Your Name"</span> and <span class="mono">git config --global user.email you@example.com</span>. Fallow does not set them.</div>`}
+        <label class="row gap-8 mt-12 small" for="gi-use"><input id="gi-use" type="checkbox" checked> Write this <span class="mono">.gitignore</span></label>
+        <label for="gi-text" class="sr">The .gitignore to write</label>
+        <textarea id="gi-text" class="mono small mt-4" rows="8" spellcheck="false">${info.gitignore}</textarea>
+        <div class="row gap-8 mt-12"><button class="btn" data-act="git-init-go"${raw(info.identity ? "" : " disabled")}>Make it a git repository</button><button class="btn btn2" data-act="remove">Remove from Fallow</button></div>
+      </section>`;
+    }
+    app.innerHTML = h`<div class="screen" id="project-gate" data-id="${p.id}">${head}<div class="page">${body}</div></div>`.s;
+  }
+
   async function load(app, id) {
     try {
       let s = await get(`/api/projects/${encodeURIComponent(id)}`);
       if (!Fallow.here(app)) return;
+      if ((s.kind !== "git" && s.kind !== "missing") || (s.git && s.git.setup_left)) {
+        state = s;
+        return renderGate(app, s);
+      }
       if (!s.conversation) {
         await post(`/api/projects/${encodeURIComponent(id)}/conversation`);
         s = await get(`/api/projects/${encodeURIComponent(id)}`);
@@ -716,10 +770,22 @@
           await Fallow.api("PATCH", `/api/projects/${encodeURIComponent(state.id)}`, { notifications: el.checked });
           return again();
         }
-        if (name === "git-init") {
-          const ok = await Fallow.confirm({ title: "Set up git in this folder?", text: "Fallow runs git init and commits what is there, so loops can build on branches.", items: [state.path], ok: "Set up git" });
-          if (ok) { await post(`/api/projects/${encodeURIComponent(state.id)}/git-init`, { confirm: true }); again(); }
-          return;
+        // 012 (FR-039): the click that makes the folder a repository, or moves the project.
+        if (name === "git-init-go") {
+          const use = document.getElementById("gi-use");
+          const text = document.getElementById("gi-text");
+          el.disabled = true;
+          try {
+            await post(`/api/projects/${encodeURIComponent(state.id)}/git-init`, { confirm: true, gitignore: use && use.checked && text ? text.value : null });
+          } finally { el.disabled = false; }
+          return load(current.app, current.id).then(() => listenSession(current.app, current.id));
+        }
+        if (name === "move-go") {
+          el.disabled = true;
+          try {
+            await post(`/api/projects/${encodeURIComponent(state.id)}/move`, { confirm: true });
+          } finally { el.disabled = false; }
+          return load(current.app, current.id).then(() => listenSession(current.app, current.id));
         }
         if (name === "remove") {
           const ok = await confirm({ title: `Remove ${state.name} from Fallow?`, text: "Fallow forgets the project and deletes its own data for it. Nothing in the folder is touched.", items: ["its conversations and spec sessions in Fallow", "Fallow's worktrees for it"], ok: "Remove" });

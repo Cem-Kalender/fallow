@@ -7,6 +7,7 @@ pub mod conv;
 pub mod defs;
 pub mod files;
 pub mod judge;
+pub mod repo;
 pub mod solo;
 
 use std::collections::BTreeMap;
@@ -90,8 +91,21 @@ pub enum Req {
         id: String,
         commands: Vec<String>,
     },
+    /// 012 (FR-039): `git init` where needed and the first commit, with the ignore file the
+    /// engineer accepted (or none).
     GitInit {
         id: String,
+        gitignore: Option<String>,
+    },
+    /// 012 (FR-039): what "Make it a git repository" would commit (read only).
+    GitScan {
+        id: String,
+    },
+    /// 012 (FR-039, R-18): a project inside a bigger repository moved to its top folder;
+    /// `confirmed: false` only says what would move.
+    Move {
+        id: String,
+        confirmed: bool,
     },
     Project {
         id: String,
@@ -352,14 +366,23 @@ fn conv_dir(data: &Path, id: &str) -> PathBuf {
 /// engineer's edited documents, not committed yet, are put back. Best effort: answers what could
 /// not be undone, for the chat and the lead's next turn. In a plain folder (or a repository with
 /// no commit yet) the lead works in the engineer's own files, so nothing is undone.
+/// 012 (Phase 5 review, 1): a working copy of Fallow's own is a linked worktree, whose `.git`
+/// is a file; the engineer's checkout (its `.git` a folder, or none) never is, wherever the
+/// project's folder is now. Only in one does Fallow reset, discard or commit for the lead.
+pub(crate) fn own_copy(workdir: &Path) -> bool {
+    workdir.join(".git").is_file()
+}
+
 fn undo(
     p: &Project,
     workdir: &Path,
     cancel: &crate::conversation::events::Cancel,
 ) -> Option<String> {
-    if p.kind() != project::Kind::Git || workdir == p.path {
+    let _ = p;
+    // 012 (FR-041): every project is a git repository; the lead always works in a worktree.
+    if !own_copy(workdir) {
         return Some(
-            "Fallow cannot undo the lead's changes here (a plain folder, or a repository without a commit yet): what it changed before you cancelled stays".into(),
+            "Fallow cannot undo the lead's changes here: what it changed before you cancelled stays".into(),
         );
     }
     let mut failed = Vec::new();
@@ -370,7 +393,7 @@ fn undo(
             }
         }
     }
-    let feature_json = workdir.join(".specify/feature.json");
+    let feature_json = workdir.join(p.in_root(".specify/feature.json"));
     let keep = std::fs::read(&feature_json).ok();
     if let Err(e) = git::discard_changes(workdir) {
         failed.push(e);
@@ -497,7 +520,15 @@ impl Studio {
     }
 
     pub fn library(&self, project: Option<&Path>) -> Library {
-        Library::load(self.config.as_deref(), project)
+        // 012 (R-18): a moved project's `.fallow/` stays at its spec root.
+        let root = project.and_then(|path| {
+            self.store
+                .projects
+                .iter()
+                .find(|p| p.path == path && !p.spec_root.is_empty())
+                .map(|p| p.root_dir())
+        });
+        Library::load(self.config.as_deref(), root.as_deref().or(project))
     }
 
     /// Why `name` cannot be a lead in the project at `path`, if it cannot (009, FR-019, FR-020):
@@ -662,11 +693,14 @@ impl Studio {
             if !path.is_dir() {
                 return Err(format!("{v} is not a folder"));
             }
+            if !p.spec_root.is_empty() && path != p.path {
+                return Err("this project was moved to its repository's top folder: its folder cannot be changed here".into());
+            }
             p.path = path;
         }
         if let Some(v) = patch.get("pipeline").and_then(Value::as_str) {
             // Only a pipeline in force for the project, saved and checked (FR-027, FR-028).
-            if !self.library(Some(&p.path)).pipelines.contains_key(v) {
+            if !self.library(Some(&p.root_dir())).pipelines.contains_key(v) {
                 return Err(format!("there is no pipeline {v:?} for this project"));
             }
             p.pipeline = v.to_string();
@@ -693,7 +727,7 @@ impl Studio {
         if let Some(v) = patch.get("lead").and_then(Value::as_str) {
             // An agent of kind Lead of the project's library, on a runtime that is there (009,
             // FR-013, FR-020).
-            if self.library(Some(&p.path)).agent(v).is_none() {
+            if self.library(Some(&p.root_dir())).agent(v).is_none() {
                 return Err(format!("there is no lead {v} for this project"));
             }
             if let Some(why) = self.lead_problem(&p.path, v) {
@@ -729,61 +763,6 @@ impl Studio {
         Ok(json!(clean))
     }
 
-    /// `git init` and an initial commit of what is there, at the engineer's request (edge cases).
-    pub fn git_init(&mut self, id: &str) -> Result<Value, String> {
-        let p = self.project(id)?.clone();
-        if p.kind() == project::Kind::Git {
-            return Err(format!("{} is already a git repository", p.name));
-        }
-        if let Some(top) = git::inside_repo(&p.path) {
-            return Err(format!(
-                "{} is inside the repository {}: add that folder as the project instead",
-                p.path.display(),
-                top.display()
-            ));
-        }
-        let path = p.path.clone();
-        let run = |args: &[&str]| -> Result<(), String> {
-            let out = crate::platform::command("git")
-                .current_dir(&path)
-                .args(args)
-                .output()
-                .map_err(|e| format!("git: {e}"))?;
-            if out.status.success() {
-                Ok(())
-            } else {
-                Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
-            }
-        };
-        run(&["init", "-q"])?;
-        git::commit_all(&path, "Initial commit (Fallow)", None)?;
-        // The features and conversations move onto branches and worktrees, as in any git
-        // project (research S-6), so nothing more is written in the engineer's own checkout.
-        let head = git::head(&path)?;
-        let base = git::branch(&path).ok_or("git init left no branch checked out")?;
-        std::fs::create_dir_all(self.worktrees(&p.id)).map_err(|e| e.to_string())?;
-        for f in &p.features {
-            let name = f.name().to_string();
-            git::create_branch(&path, &name, &head)?;
-            let wd = self.worktrees(&p.id).join(&name);
-            git::worktree_add(&path, &wd, Some(&name), &head)?;
-            if let Some(c) = f.conversation.as_ref().and_then(|c| self.convs.get_mut(c)) {
-                c.append(CEvent::WorkdirSet { workdir: wd })?;
-            }
-            if let Some(fm) = self.project_mut(id)?.feature_mut(&name) {
-                fm.base_branch = Some(base.clone());
-                fm.branch = Some(name.clone());
-            }
-        }
-        let wd = self.worktrees(&p.id).join("_project");
-        if let Some(c) = p.conversation.as_ref().and_then(|c| self.convs.get_mut(c)) {
-            git::worktree_add(&path, &wd, None, &head)?;
-            c.append(CEvent::WorkdirSet { workdir: wd })?;
-        }
-        self.store.save()?;
-        Ok(json!({ "kind": "git", "branch": base }))
-    }
-
     // ---- Conversations ----------------------------------------------------------------------
 
     /// The project conversation, created on first use (FR-034). In a git project the lead works
@@ -797,14 +776,13 @@ impl Studio {
         {
             return Ok(c.clone());
         }
-        let workdir = match (p.kind(), git::head(&p.path)) {
-            (project::Kind::Git, Ok(head)) => {
-                let wd = self.worktrees(&p.id).join("_project");
-                std::fs::create_dir_all(self.worktrees(&p.id)).map_err(|e| e.to_string())?;
-                git::worktree_add(&p.path, &wd, None, &head)?;
-                wd
-            }
-            _ => p.path.clone(),
+        // 012 (FR-041): always a worktree of the project's commit; never the folder itself.
+        let head = git::head(&p.path).map_err(|_| format!("{} has no commit yet", p.name))?;
+        let workdir = {
+            let wd = self.worktrees(&p.id).join("_project");
+            std::fs::create_dir_all(self.worktrees(&p.id)).map_err(|e| e.to_string())?;
+            git::worktree_add(&p.path, &wd, None, &head)?;
+            wd
         };
         let lead = self.default_lead(&p);
         let id = self.new_conv(Kind::Project, &p.id, None, None, workdir, lead)?;
@@ -895,14 +873,14 @@ impl Studio {
         let workdir = &c.state.workdir;
         // A working copy of its own is Fallow's worktree of a git project (no git call here: the
         // menu opens as the engineer types, SC-002). As at every turn, Spec Kit's skills are in it.
-        if *workdir != p.path
+        if own_copy(workdir)
             && !workdir
                 .join(".claude/skills/speckit-specify/SKILL.md")
                 .is_file()
         {
             project::install::scaffold(workdir)?;
         }
-        let list = commands::catalogue(&p.path, workdir, c.state.kind == Kind::Project);
+        let list = commands::catalogue(&p.root_dir(), &workdir.join(&p.spec_root), c.state.kind == Kind::Project);
         Ok(json!({ "commands": list }))
     }
 
@@ -952,14 +930,6 @@ impl Studio {
                 if let Some(why) = self.lead_problem(&p.path, &lead) {
                     return Err(why);
                 }
-                if p.kind() != project::Kind::Git
-                    && !p
-                        .path
-                        .join(".claude/skills/speckit-specify/SKILL.md")
-                        .is_file()
-                {
-                    return Err("/specify cannot be sent: Spec Kit is not installed here".into());
-                }
                 let mut f = self.new_feature(&project, &title, None)?;
                 let spec = f["conversation"].as_str().unwrap_or_default().to_string();
                 // The feature exists now: if specify cannot start, the engineer opens it anyway.
@@ -985,9 +955,8 @@ impl Studio {
                 return Err("the feature is locked: unlock it to change its spec".into());
             }
         }
-        let git_project = p.kind() == project::Kind::Git;
-        // The lead's working copy.
-        if git_project && workdir != p.path {
+        // The lead's working copy (012 FR-041: every project is a git repository).
+        if own_copy(&workdir) {
             match kind {
                 Kind::Project => {
                     if let Ok(head) = git::head(&p.path) {
@@ -1001,23 +970,25 @@ impl Studio {
                 Kind::Spec | Kind::Solo => {}
             }
         }
-        if git_project && workdir != p.path {
+        if own_copy(&workdir) {
             // Spec Kit, installed into the engineer's folder but not committed, is not in a
             // worktree: the lead gets its skills and templates there too, never committed.
-            project::install::scaffold(&workdir)?;
+            project::install::scaffold(&workdir.join(&p.spec_root))?;
         }
         if let Some(f) = &feature {
-            // Spec Kit's skills find the feature through this file (research S-8).
-            let fj = workdir.join(".specify").join("feature.json");
+            // Spec Kit's skills find the feature through this file (research S-8), relative to
+            // its own root (012 R-18).
+            let fj = workdir.join(p.in_root(".specify/feature.json"));
             if let Some(d) = fj.parent() {
                 let _ = std::fs::create_dir_all(d);
             }
-            let _ = std::fs::write(&fj, json!({ "feature_directory": f.dir }).to_string());
+            let rel = f.dir.strip_prefix(project::feature_root(&f.dir)).unwrap_or(&f.dir);
+            let _ = std::fs::write(&fj, json!({ "feature_directory": rel }).to_string());
             let _ = std::fs::create_dir_all(workdir.join(&f.dir));
         }
         // 009 US1: a message whose first word names a command of the `/` menu runs it; any other
         // message is plain text (FR-005).
-        let catalogue = commands::catalogue(&p.path, &workdir, kind == Kind::Project);
+        let catalogue = commands::catalogue(&p.root_dir(), &workdir.join(&p.spec_root), kind == Kind::Project);
         let command = match commands::resolve(&catalogue, text) {
             Some((cmd, _)) if !cmd.available => {
                 return Err(format!(
@@ -1059,7 +1030,7 @@ impl Studio {
         let def_model = Some(def.model.clone()).filter(|m| !m.is_empty());
         // The project's approved commands, with its gates (FR-007a).
         let mut approved = p.approved_commands.clone();
-        let squad_text = std::fs::read_to_string(workdir.join(crate::config::squad::SQUAD_FILE))
+        let squad_text = std::fs::read_to_string(workdir.join(p.in_root(crate::config::squad::SQUAD_FILE)))
             .unwrap_or_default();
         let mut notices = Vec::new();
         let squad = crate::config::Squad::parse(
@@ -1147,7 +1118,7 @@ impl Studio {
         // copy, handed with a session's first turn and again when one of them changed.
         let instr = agent::instructions::read(
             &workdir,
-            &agent::instructions::extra_at_head(&p.path),
+            &agent::instructions::extra_at_head(&p.root_dir()),
         );
         let now: Vec<(String, String)> = instr
             .iter()
@@ -1180,7 +1151,6 @@ impl Studio {
             first,
             said: text,
             edits: &prompt_edits,
-            plain_folder: !git_project,
             withdrawn: &withdrawn,
             command,
             refs: &refs,
@@ -1226,7 +1196,8 @@ impl Studio {
             session: session.clone(),
             model: Some(def.model.clone()).filter(|m| !m.is_empty()),
             budget_usd: Some(def.limits.usd.unwrap_or(2.0)),
-            cwd: workdir,
+            // 012 (R-18): Spec Kit runs from its own root, a subfolder for a moved project.
+            cwd: workdir.join(&p.spec_root),
             time_limit: Duration::from_secs(def.limits.minutes.unwrap_or(20) * 60),
             system: Some(prompts::lead_system(&def.body)),
             partial: true,
@@ -1251,7 +1222,7 @@ impl Studio {
             head: None,
         })?;
         c.live.clear();
-        c.head_before = if git_project && c.state.workdir != p.path {
+        c.head_before = if own_copy(&c.state.workdir) {
             git::head(&c.state.workdir).ok()
         } else {
             None
@@ -1366,7 +1337,7 @@ impl Studio {
         let mut commit = None;
         let mut discarded = Vec::new();
         let mut changed: Vec<String> = Vec::new();
-        if p.kind() == project::Kind::Git && workdir != p.path {
+        if own_copy(&workdir) {
             // Commits the lead made itself are undone; their changes are judged like any other
             // (Phase 3 review: Fallow alone commits, and only spec documents).
             let before = self.convs.get(conv).and_then(|c| c.head_before.clone());
@@ -1376,16 +1347,18 @@ impl Studio {
                 }
             }
             let all = git::changes_all(&workdir).unwrap_or_default();
+            let dirs: Vec<String> = rights::SPEC_DIRS.iter().map(|d| p.in_root(d)).collect();
             let is_spec = |path: &str| {
-                rights::SPEC_DIRS
-                    .iter()
-                    .any(|d| path == *d || path.starts_with(&format!("{d}/")))
+                dirs.iter()
+                    .any(|d| path == d || path.starts_with(&format!("{d}/")))
             };
+            let root = p.in_root("");
             for path in all {
                 let path = path.trim_matches('"').to_string();
-                if path == ".specify/feature.json"
-                    || path == ".specify/"
-                    || project::install::is_scaffold(&path)
+                let in_root = path.strip_prefix(root.as_str()).unwrap_or(&path);
+                if in_root == ".specify/feature.json"
+                    || in_root == ".specify/"
+                    || project::install::is_scaffold(in_root)
                 {
                     continue;
                 }
@@ -1405,12 +1378,13 @@ impl Studio {
             }
             if !discarded.is_empty() {
                 // Keep the feature file Fallow wrote; everything else not committed goes.
-                let keep = std::fs::read(workdir.join(".specify/feature.json")).ok();
+                let fj = workdir.join(p.in_root(".specify/feature.json"));
+                let keep = std::fs::read(&fj).ok();
                 git::discard_changes(&workdir)?;
                 if let Some(k) = keep {
-                    let _ = std::fs::write(workdir.join(".specify/feature.json"), k);
+                    let _ = std::fs::write(&fj, k);
                 }
-                let _ = project::install::scaffold(&workdir);
+                let _ = project::install::scaffold(&workdir.join(&p.spec_root));
             }
         } else if let Some(r) = &result {
             changed = r["documents_changed"]
@@ -1570,7 +1544,8 @@ impl Studio {
         let p = self.project(project_id)?.clone();
         let dir = p.next_dir(title);
         let name = dir.rsplit('/').next().unwrap_or(&dir).to_string();
-        let (base_branch, branch, workdir) = if p.kind() == project::Kind::Git {
+        // 012 (FR-041): a feature always has its branch and worktree.
+        let (base_branch, branch, workdir) = {
             let head = git::head(&p.path).map_err(|_| {
                 "the repository has no commit yet: commit something first".to_string()
             })?;
@@ -1581,8 +1556,6 @@ impl Studio {
             std::fs::create_dir_all(self.worktrees(&p.id)).map_err(|e| e.to_string())?;
             git::worktree_add(&p.path, &wd, Some(&name), &head)?;
             (Some(base), Some(name.clone()), wd)
-        } else {
-            (None, None, p.path.clone())
         };
         std::fs::create_dir_all(workdir.join(&dir)).map_err(|e| e.to_string())?;
         let conv = self.new_conv(
@@ -1594,7 +1567,7 @@ impl Studio {
             lead,
         )?;
         // A project whose constitution is still the template starts with the constitution.
-        let constitution = std::fs::read_to_string(p.path.join(".specify/memory/constitution.md"))
+        let constitution = std::fs::read_to_string(p.root_dir().join(".specify/memory/constitution.md"))
             .unwrap_or_default();
         let step = if constitution.is_empty() || constitution.contains("[PROJECT_NAME]") {
             "constitution"
@@ -1642,6 +1615,11 @@ impl Studio {
             .as_ref()
             .and_then(|c| self.convs.get(c))
             .map(|c| c.state.workdir.clone())
+            // Without a chat: the feature's own worktree, when it has one (012 R-18).
+            .or_else(|| {
+                let w = self.worktrees(&p.id).join(f.name());
+                w.is_dir().then_some(w)
+            })
             .unwrap_or_else(|| p.path.clone());
         Ok((p, f, wd))
     }
@@ -1654,7 +1632,7 @@ impl Studio {
         feature: &str,
     ) -> Result<crate::run::questions::Lead, String> {
         let (p, f, wd) = self.feature_ctx(project, feature)?;
-        if wd == p.path {
+        if !own_copy(&wd) {
             return Err("the feature has no worktree of its own".into());
         }
         let conv = f.conversation.as_ref().and_then(|c| self.convs.get(c));
@@ -1695,7 +1673,7 @@ impl Studio {
         .iter()
         .map(|d| format!("{}/{d}", f.dir))
         .collect();
-        v.push(".specify/memory/constitution.md".into());
+        v.push(format!("{}.specify/memory/constitution.md", project::feature_root(&f.dir)));
         v
     }
 
@@ -1703,7 +1681,7 @@ impl Studio {
         !path.contains("..")
             && !path.starts_with('/')
             && !path.contains('\\')
-            && (path == ".specify/memory/constitution.md"
+            && (path == format!("{}.specify/memory/constitution.md", project::feature_root(&f.dir))
                 || path.starts_with(&format!("{}/", f.dir)))
             && (path.ends_with(".md")
                 || path.ends_with(".json")
@@ -1872,14 +1850,9 @@ impl Studio {
 
     /// The lock's checks over the documents in the feature's working copy.
     pub fn lock_check(&self, project: &str, feature: &str) -> Result<lock::Locked, Vec<String>> {
-        let (p, f, wd) = self.feature_ctx(project, feature).map_err(|e| vec![e])?;
+        let (_, f, wd) = self.feature_ctx(project, feature).map_err(|e| vec![e])?;
         let read = |name: &str| std::fs::read_to_string(wd.join(&f.dir).join(name)).ok();
         let mut problems = Vec::new();
-        if p.kind() != project::Kind::Git {
-            problems.push(
-                "the project is a plain folder: a loop needs git (Fallow can set it up)".into(),
-            );
-        }
         let analyzed = f.analyzed;
         let outdated = f.analyze_outdated;
         // Say why analyze must run: never ran, or the documents changed after it (008 T042).
@@ -1919,7 +1892,7 @@ impl Studio {
         if !f.locks.is_empty() && !f.unlocked {
             return Err(vec!["the feature is already locked".into()]);
         }
-        if f.base_branch.is_none() || wd == p.path {
+        if f.base_branch.is_none() || !own_copy(&wd) {
             return Err(vec![
                 "the feature has no branch of its own: set up git for the project first".into(),
             ]);
@@ -1930,7 +1903,8 @@ impl Studio {
             }
         }
         let n = f.locks.len() as u32 + 1;
-        let dirs: Vec<&str> = rights::SPEC_DIRS.to_vec();
+        let rooted: Vec<String> = rights::SPEC_DIRS.iter().map(|d| p.in_root(d)).collect();
+        let dirs: Vec<&str> = rooted.iter().map(String::as_str).collect();
         git::commit_all(&wd, &format!("lock {n}: {}", f.title), Some(&dirs))
             .map_err(|e| vec![e])?;
         let commit = git::head(&wd).map_err(|e| vec![e])?;

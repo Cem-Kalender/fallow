@@ -195,10 +195,31 @@ pub fn session_files(dir: &Path, under: &str) -> Option<Vec<String>> {
     Some(out.split('\0').filter(|s| !s.is_empty()).map(str::to_string).collect())
 }
 
+/// 012 (R-18): whether `path` (a file or folder) is in `dir`'s `HEAD` as it is in the folder:
+/// committed, and not changed since.
+pub fn committed_as_is(dir: &Path, path: &str) -> bool {
+    let at_head = git(dir, &["--literal-pathspecs", "ls-tree", "--name-only", "HEAD", "--", path])
+        .is_ok_and(|s| !s.trim().is_empty());
+    let untracked = git(
+        dir,
+        &["--literal-pathspecs", "ls-files", "--others", "--exclude-standard", "--", path],
+    )
+    .map_or(true, |s| !s.trim().is_empty());
+    at_head
+        && !untracked
+        && git(dir, &["--literal-pathspecs", "diff", "--quiet", "HEAD", "--", path]).is_ok()
+}
+
 /// 012 (FR-043): whether git ignores `path` in a session's working copy (exit 0); an error
 /// (exit 128, or git not run) counts as ignored, so a caller looks closer, never less.
 pub fn is_ignored(dir: &Path, path: &str) -> bool {
-    let mut a: Vec<&str> = SESSION_READ.to_vec();
+    ignore_state(dir, path).unwrap_or(true)
+}
+
+/// Whether git ignores `path` in `dir`, or `None` when git could not tell (an error).
+pub fn ignore_state(dir: &Path, path: &str) -> Option<bool> {
+    // `check-ignore` refuses `--literal-pathspecs`: it reads `path` as a path anyway.
+    let mut a: Vec<&str> = SESSION_READ.iter().copied().filter(|f| *f != "--literal-pathspecs").collect();
     a.extend(["check-ignore", "-q", "--", path]);
     let status = crate::platform::command("git")
         .args(&a)
@@ -207,7 +228,11 @@ pub fn is_ignored(dir: &Path, path: &str) -> bool {
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .status();
-    !matches!(status.map(|s| s.code()), Ok(Some(1)))
+    match status.map(|s| s.code()) {
+        Ok(Some(0)) => Some(true),
+        Ok(Some(1)) => Some(false),
+        _ => None,
+    }
 }
 
 /// 012 (FR-043): the files and folders git ignores in a session's working copy under `under`
@@ -1784,15 +1809,46 @@ pub struct GitCheck {
     pub found: Option<String>,
     pub ok: bool,
     pub min: String,
+    /// How to install git on this system (R-18).
+    pub hint: String,
 }
 
 /// Runs `git --version` (FR-040). A missing git is never taken for a folder without a
-/// repository.
+/// repository. `FALLOW_GIT_CHECK` names another program to ask, for the tests of a missing or
+/// old git (Fallow's own git calls always run `git`).
 pub fn git_check() -> GitCheck {
-    let v = git_version(&std::env::temp_dir());
+    let program = std::env::var("FALLOW_GIT_CHECK").unwrap_or_else(|_| "git".into());
+    let v = crate::platform::command(&program)
+        .arg("--version")
+        .current_dir(std::env::temp_dir())
+        .stdin(std::process::Stdio::null())
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .and_then(|o| {
+            let t = String::from_utf8_lossy(&o.stdout).to_string();
+            let nums = t
+                .split_whitespace()
+                .find(|w| w.starts_with(|c: char| c.is_ascii_digit()))?
+                .to_string();
+            let mut it = nums.split('.');
+            Some((it.next()?.parse().ok()?, it.next()?.parse().ok()?))
+        });
     GitCheck {
-        found: v.map(|(a, b)| format!("{a}.{b}")),
+        found: v.map(|(a, b): (u32, u32)| format!("{a}.{b}")),
         ok: v.is_some_and(|v| v >= MIN_GIT),
         min: format!("{}.{}", MIN_GIT.0, MIN_GIT.1),
+        hint: install_hint().to_string(),
+    }
+}
+
+/// How to install git here (R-18).
+pub fn install_hint() -> &'static str {
+    if cfg!(windows) {
+        "winget install --id Git.Git -e, or the installer from git-scm.com"
+    } else if cfg!(target_os = "macos") {
+        "xcode-select --install, or brew install git"
+    } else {
+        "your distribution's package manager (for example sudo apt install git)"
     }
 }

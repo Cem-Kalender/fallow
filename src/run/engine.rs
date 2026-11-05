@@ -265,6 +265,10 @@ pub enum Request {
     },
     /// 007: the dashboard's summary (contracts/web-api.md `GET /api/dashboard`).
     Dashboard,
+    /// 012 (FR-040): git as last checked; `check` reads it again ("Check again").
+    Git {
+        check: bool,
+    },
     /// 007: waits for a change in a scope (`global`, `loop:<id>`, `conv:<id>`) after `after`
     /// (research S-4): answered at once if there is one.
     Events {
@@ -618,6 +622,11 @@ pub struct Engine {
     /// 011: loops ending their wait while the remote target is fetched: the loop waited for,
     /// and why the wait ends.
     starting: BTreeMap<u64, (u64, String)>,
+    /// 012 (FR-040): git as last checked, at start, when a project is added, on "Check again".
+    pub git: crate::verify::git::GitCheck,
+    /// 012: each project's kind as last read for the gate, and when: reading it runs git, too
+    /// slow for every request (SC-002); kept a few seconds, forgotten when the project changes.
+    kinds: std::cell::RefCell<BTreeMap<String, (Instant, crate::project::Kind)>>,
 }
 
 /// 010: how often a project's protection is read again: a known value once a minute, an unknown
@@ -672,6 +681,8 @@ impl Engine {
             bus: crate::service::bus::Bus::default(),
             studio,
             published: BTreeMap::new(),
+            git: crate::verify::git::git_check(),
+            kinds: std::cell::RefCell::new(BTreeMap::new()),
         };
         let mut ids: Vec<u64> = std::fs::read_dir(runs_dir(&e.data))
             .map_err(|err| err.to_string())?
@@ -1078,7 +1089,7 @@ impl Engine {
     }
 
     /// Deletes a spec session (008 T038). Before the lock, its draft goes too: the chat, the
-    /// feature's worktree and branch (or, in a plain folder, its `specs/NNN` folder), and the
+    /// feature's worktree and branch, and the
     /// feature leaves the project. After a lock, only the chat goes; the documents stay where
     /// the loop and the merge put them. Refused while the lead answers or a loop still goes.
     fn delete_feature(&mut self, project: &str, feature: &str) -> Result<Value, String> {
@@ -1094,7 +1105,6 @@ impl Engine {
             .ok_or_else(|| format!("there is no feature {feature}"))?
             .clone();
         let repo = p.path.clone();
-        let plain = p.kind() != crate::project::Kind::Git;
         if let Some(r) = f.run.and_then(|n| self.runs.get(&n)) {
             if !r.state.stage.is_final() {
                 return Err(format!(
@@ -1114,7 +1124,7 @@ impl Engine {
             }
         }
         // The branch must be deletable before anything goes, so a delete never stops half-way.
-        if f.locks.is_empty() && !plain {
+        if f.locks.is_empty() {
             if let Some(b) = &f.branch {
                 if git::branch(&repo).as_deref() == Some(b.as_str()) {
                     return Err(format!(
@@ -1134,24 +1144,15 @@ impl Engine {
         if f.locks.is_empty() {
             // The draft: never locked, so nothing of it was built or merged.
             if let Some(b) = &f.branch {
-                if !plain {
-                    // The worktree's folder is gone; git forgets it, then lets the branch go.
-                    git::worktree_prune(&repo);
-                    if let Err(e) = git::delete_branch(&repo, b) {
-                        self.studio.store.save()?;
-                        return Err(format!(
-                            "the chat is deleted, but the branch {b} could not be: {e}"
-                        ));
-                    }
-                    removed.push(format!("the branch {b}"));
+                // The worktree's folder is gone; git forgets it, then lets the branch go.
+                git::worktree_prune(&repo);
+                if let Err(e) = git::delete_branch(&repo, b) {
+                    self.studio.store.save()?;
+                    return Err(format!(
+                        "the chat is deleted, but the branch {b} could not be: {e}"
+                    ));
                 }
-            }
-            if plain {
-                let d = repo.join(&f.dir);
-                if d.exists() {
-                    std::fs::remove_dir_all(&d).map_err(|e| format!("{}: {e}", d.display()))?;
-                    removed.push(f.dir.clone());
-                }
+                removed.push(format!("the branch {b}"));
             }
             if let Some(p) = self.studio.store.get_mut(project) {
                 p.features.retain(|x| x.name() != feature);
@@ -1445,7 +1446,6 @@ impl Engine {
             "conversation": f.conversation,
             // Deleting its spec session keeps the documents once it was locked (008 T038).
             "locked_before": !f.locks.is_empty(),
-            "plain": p.kind() != crate::project::Kind::Git,
         })
     }
 
@@ -2100,7 +2100,7 @@ impl Engine {
         let (p, f, wd) = self.studio.feature_ctx(project, feature)?;
         // FR-016c: `[updates] overlap = false` turns the warnings off.
         let file = crate::config::squad::SQUAD_FILE;
-        let text = std::fs::read_to_string(p.path.join(file)).unwrap_or_default();
+        let text = std::fs::read_to_string(p.root_dir().join(file)).unwrap_or_default();
         if !Squad::parse(file, &text, &mut Vec::new()).updates.overlap {
             return Ok(json!({ "overlaps": [], "off": true }));
         }
@@ -3542,6 +3542,16 @@ impl Engine {
         v["approved_commands"] = json!(p.approved_commands);
         v["budget_per_task"] = json!(p.budget_per_task);
         v["notifications"] = json!(p.notifications);
+        // 012 (FR-039, contracts/web-api.md): what the folder is, and its repository's top.
+        let kind = p.kind();
+        v["git"] = json!({
+            "kind": kind,
+            "setup_left": kind == crate::project::Kind::Git && self.studio.setup_left(&p),
+            "top": (kind == crate::project::Kind::NeedsMove)
+                .then(|| crate::project::top_of(&p.path))
+                .flatten(),
+        });
+        v["spec_root"] = json!(p.spec_root);
         // 012 (FR-001): the session open last, if it is still open.
         v["session_last"] = json!(p.last_session.as_ref().filter(|s| {
             self.studio
@@ -3609,7 +3619,6 @@ impl Engine {
             .get(project)
             .cloned()
             .ok_or_else(|| format!("there is no project {project}"))?;
-        let git_project = p.kind() == crate::project::Kind::Git;
         let feats = p
             .features
             .iter()
@@ -3639,7 +3648,7 @@ impl Engine {
                 }
             })
             .collect();
-        Ok(files::versions(&p.path, git_project, feats))
+        Ok(files::versions(&p.path, feats))
     }
 
     fn file_version(
@@ -3875,10 +3884,119 @@ impl Engine {
         Ok(v)
     }
 
+    /// 012 (FR-039, FR-040): the project a request is about, when it is about one.
+    fn project_of(&self, req: &crate::studio::Req) -> Option<String> {
+        use crate::studio::Req;
+        let conv = |c: &str| self.studio.convs.get(c).map(|c| c.state.project.clone());
+        match req {
+            Req::RemoveProject { id }
+            | Req::PatchProject { id, .. }
+            | Req::SetCommands { id, .. }
+            | Req::GitInit { id, .. }
+            | Req::GitScan { id }
+            | Req::Move { id, .. }
+            | Req::Project { id }
+            | Req::CheckRemote { id } => Some(id.clone()),
+            Req::ProjectConversation { project }
+            | Req::NewSession { project, .. }
+            | Req::Sessions { project }
+            | Req::NewFeature { project, .. }
+            | Req::FileVersions { project }
+            | Req::Files { project, .. }
+            | Req::File { project, .. }
+            | Req::OpenFile { project, .. }
+            | Req::Feature { project, .. }
+            | Req::Doc { project, .. }
+            | Req::PutDoc { project, .. }
+            | Req::SetStep { project, .. }
+            | Req::Dismiss { project, .. } => Some(project.clone()),
+            Req::Agents { project } | Req::Pipelines { project } | Req::CheckPipeline { project, .. } => {
+                project.clone()
+            }
+            Req::PutAgent { scope, .. }
+            | Req::PutAgentFields { scope, .. }
+            | Req::DeleteAgent { scope, .. }
+            | Req::PutPipeline { scope, .. }
+            | Req::DeletePipeline { scope, .. } => scope.strip_prefix("project:").map(str::to_string),
+            Req::Conversation { id } => conv(id),
+            Req::Say { conv: c, .. }
+            | Req::Cancel { conv: c }
+            | Req::Commands { conv: c }
+            | Req::SetMode { conv: c, .. }
+            | Req::Approve { conv: c, .. }
+            | Req::SetLead { conv: c, .. } => conv(c),
+            Req::SessionMode { session, .. }
+            | Req::RenameSession { session, .. }
+            | Req::OpenSession { session } => conv(session),
+            _ => None,
+        }
+    }
+
+    /// 012 (FR-039 to FR-041): why a request about `project` is refused: git is missing or too
+    /// old, or the project is not a git repository yet (only its page, making it one, moving it
+    /// to its repository's top folder and removing it are open then).
+    fn project_refusal(&self, project: &str, open: bool) -> Option<String> {
+        self.project_refusal_for(project, open, true)
+    }
+
+    /// `project_refusal`; `new_work: false` for a loop already made, which is not held back
+    /// by its project's setup left (third review, 2).
+    fn project_refusal_for(&self, project: &str, open: bool, new_work: bool) -> Option<String> {
+        if !self.git.ok {
+            return Some(crate::project::GIT_NEEDED.to_string());
+        }
+        let p = self.studio.store.get(project)?;
+        let kind = {
+            let mut k = self.kinds.borrow_mut();
+            match k.get(project) {
+                Some((at, kind)) if at.elapsed() < Duration::from_secs(5) => *kind,
+                _ => {
+                    let kind = p.kind();
+                    k.insert(project.to_string(), (Instant::now(), kind));
+                    kind
+                }
+            }
+        };
+        match kind {
+            crate::project::Kind::Git if !open && new_work && self.studio.setup_left(p) => Some(format!(
+                "{} is not set up yet: give its features their branches first",
+                p.name
+            )),
+            crate::project::Kind::Git | crate::project::Kind::Missing => None,
+            _ if open => None,
+            crate::project::Kind::NeedsMove => Some(format!(
+                "{} is inside a bigger repository: use the repository's top folder first",
+                p.name
+            )),
+            crate::project::Kind::Unknown => Some(crate::project::GIT_NEEDED.to_string()),
+            _ => Some(format!("{} is not a git repository yet: make it one first", p.name)),
+        }
+    }
+
     fn studio_request(&mut self, req: crate::studio::Req) -> Result<Value, String> {
         use crate::studio::Req;
+        if let Some(p) = self.project_of(&req) {
+            let open = matches!(
+                req,
+                Req::Project { .. }
+                    | Req::GitInit { .. }
+                    | Req::GitScan { .. }
+                    | Req::Move { .. }
+                    | Req::RemoveProject { .. }
+            );
+            if let Some(why) = self.project_refusal(&p, open) {
+                return Err(why);
+            }
+        }
         match req {
-            Req::AddProject { path } => self.studio.add_project(&path),
+            Req::AddProject { path } => {
+                // Git is read again when a project is added (FR-040).
+                self.git = crate::verify::git::git_check();
+                if !self.git.ok {
+                    return Err(crate::project::GIT_NEEDED.to_string());
+                }
+                self.studio.add_project(&path)
+            }
             Req::RemoveProject { id } => {
                 // Its loops still going would lose their spec sessions and vanish from the data
                 // view while they build: they are stopped, or merged, first.
@@ -3900,7 +4018,9 @@ impl Engine {
             }
             Req::PatchProject { id, patch } => self.studio.patch_project(&id, &patch),
             Req::SetCommands { id, commands } => self.studio.set_commands(&id, commands),
-            Req::GitInit { id } => self.studio.git_init(&id),
+            Req::GitInit { id, gitignore } => self.studio.git_init(&id, gitignore),
+            Req::GitScan { id } => self.studio.git_scan(&id),
+            Req::Move { id, confirmed } => self.studio.move_project(&id, confirmed),
             Req::Project { id } => self.project_view(&id),
             // 010: the engineer opened the project: its remote is read again now (FR-003).
             Req::CheckRemote { id } => {
@@ -4356,7 +4476,7 @@ impl Engine {
         }
         git::create_branch(&p.path, &build, &prep.commit)?;
         let mut notices = Vec::new();
-        let squad = match git::show(&p.path, &prep.commit, crate::config::squad::SQUAD_FILE) {
+        let squad = match git::show(&p.path, &prep.commit, &p.in_root(crate::config::squad::SQUAD_FILE)) {
             Ok(Some(text)) => Squad::parse(crate::config::squad::SQUAD_FILE, &text, &mut notices),
             _ => Squad::parse(crate::config::squad::SQUAD_FILE, "", &mut notices),
         };
@@ -4433,6 +4553,7 @@ impl Engine {
                 line: squad.updates.line,
                 overlap: squad.updates.overlap,
             },
+            spec_root: p.spec_root.clone(),
         })?;
         run.append(Event::Stage {
             to: Stage::Building,
@@ -4610,6 +4731,42 @@ impl Engine {
     }
 
     fn request(&mut self, r: Request) -> Reply {
+        // 012 (FR-039, FR-040): a loop's requests are project requests too.
+        let of_run = |id: &u64| {
+            self.runs
+                .get(id)
+                .and_then(|r| r.state.feature_loop.as_ref())
+                .map(|l| l.project.clone())
+        };
+        let new_work = matches!(
+            &r,
+            Request::Lock { .. }
+                | Request::Unlock { .. }
+                | Request::RelockPreview { .. }
+                | Request::DeleteFeature { .. }
+                | Request::Overlap { .. }
+        );
+        let about = match &r {
+            Request::Lock { project, .. }
+            | Request::Unlock { project, .. }
+            | Request::RelockPreview { project, .. }
+            | Request::DeleteFeature { project, .. }
+            | Request::Overlap { project, .. } => Some(project.clone()),
+            Request::Answer { id, .. }
+            | Request::Publish { id, .. }
+            | Request::Limits { id, .. }
+            | Request::Retry { id }
+            | Request::Merge { id, .. }
+            | Request::Update { id }
+            | Request::LeavePr { id }
+            | Request::Wait { id, .. }
+            | Request::StopWaiting { id }
+            | Request::LockAgain { id } => of_run(id),
+            _ => None,
+        };
+        if let Some(why) = about.and_then(|p| self.project_refusal_for(&p, false, new_work)) {
+            return Reply::Err(why);
+        }
         let out: Result<Value, String> = match r {
             Request::List => Ok(Value::Array(
                 self.runs.values().rev().map(summary).collect(),
@@ -4625,6 +4782,13 @@ impl Engine {
                 )
             }),
             Request::Dashboard => Ok(self.dashboard()),
+            Request::Git { check } => {
+                if check {
+                    self.git = crate::verify::git::git_check();
+                    self.bus.publish(json!({ "type": "studio" }));
+                }
+                Ok(json!(self.git))
+            }
 
             Request::Events { .. } | Request::ToolCall { .. } => {
                 Err("answered by the engine's loop".into())
@@ -4634,6 +4798,8 @@ impl Engine {
                 let reads = matches!(
                     req,
                     Req::Project { .. }
+                        | Req::GitScan { .. }
+                        | Req::Move { confirmed: false, .. }
                         | Req::CheckRemote { .. }
                         | Req::Conversation { .. }
                         | Req::Feature { .. }
@@ -4645,7 +4811,19 @@ impl Engine {
                         | Req::GetEditor
                         | Req::ToolOpen { .. }
                 );
+                // What changes a project's kind forgets the one kept for the gate, once done.
+                let changes = matches!(
+                    req,
+                    Req::AddProject { .. }
+                        | Req::GitInit { .. }
+                        | Req::Move { .. }
+                        | Req::RemoveProject { .. }
+                        | Req::PatchProject { .. }
+                );
                 let out = self.studio_request(req);
+                if changes {
+                    self.kinds.borrow_mut().clear();
+                }
                 if !reads {
                     self.bus.publish(json!({ "type": "studio" }));
                 }

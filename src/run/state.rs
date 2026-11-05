@@ -185,11 +185,34 @@ pub struct QuestionChange {
     pub commit: Option<String>,
 }
 
+impl LoopState {
+    /// `rel` under the project's spec root (012 R-18).
+    pub fn in_root(&self, rel: &str) -> String {
+        if self.spec_root.is_empty() {
+            rel.to_string()
+        } else {
+            format!("{}/{rel}", self.spec_root)
+        }
+    }
+
+    /// The feature's spec folder (`specs/001-cart`, or `app/specs/001-cart`).
+    pub fn dir(&self) -> String {
+        self.in_root(&format!("specs/{}", self.feature))
+    }
+
+    /// The project's constitution.
+    pub fn constitution(&self) -> String {
+        self.in_root(".specify/memory/constitution.md")
+    }
+}
+
 /// 007: the loop over a locked feature's `tasks.md`.
 #[derive(Debug, Clone, Serialize)]
 pub struct LoopState {
     pub project: String,
     pub feature: String,
+    /// 012 (R-18): the project's spec root (empty, or a subfolder).
+    pub spec_root: String,
     pub lock: u32,
     pub lock_commit: String,
     pub base_branch: String,
@@ -868,6 +891,7 @@ impl RunState {
                 update_limit,
                 run_after: _,
                 switches,
+                spec_root,
             } => {
                 let mut tasks = BTreeMap::new();
                 for p in phases {
@@ -887,6 +911,7 @@ impl RunState {
                 self.feature_loop = Some(LoopState {
                     project: project.clone(),
                     feature: feature.clone(),
+                    spec_root: spec_root.clone(),
                     lock: *lock,
                     lock_commit: lock_commit.clone(),
                     base_branch: base_branch.clone(),

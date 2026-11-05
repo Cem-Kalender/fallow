@@ -43,7 +43,9 @@ fn lp(run: &Run) -> Result<LoopState, String> {
 }
 
 pub(crate) fn library(run: &Run, ctx: &Ctx) -> Library {
-    Library::load(ctx.config.as_deref(), Some(&run.state.repo))
+    // 012 (R-18): a moved project's `.fallow/` is at its spec root.
+    let root = run.state.feature_loop.as_ref().map_or("", |l| l.spec_root.as_str());
+    Library::load(ctx.config.as_deref(), Some(&run.state.repo.join(root)))
 }
 
 pub(crate) fn pipeline_of(run: &Run, lib: &Library) -> Result<Pipeline, String> {
@@ -82,7 +84,7 @@ fn build_wt(run: &Run) -> PathBuf {
 /// The locked documents a maker may never change (FR-009): the feature's spec documents and
 /// the constitution. `tasks.md` changes only by Fallow's ticks.
 fn protected(l: &LoopState) -> Vec<String> {
-    let dir = format!("specs/{}", l.feature);
+    let dir = l.dir();
     let mut v: Vec<String> = [
         "spec.md",
         "plan.md",
@@ -95,14 +97,14 @@ fn protected(l: &LoopState) -> Vec<String> {
     .map(|f| format!("{dir}/{f}"))
     .collect();
     v.push(format!("{dir}/contracts/**"));
-    v.push(".specify/memory/constitution.md".into());
+    v.push(l.constitution());
     v
 }
 
 fn is_protected(l: &LoopState, path: &str) -> bool {
-    let dir = format!("specs/{}/", l.feature);
+    let dir = format!("{}/", l.dir());
     (path.starts_with(&dir) && !path.starts_with(&format!("{dir}handover/")))
-        || path == ".specify/memory/constitution.md"
+        || path == l.constitution()
 }
 
 pub(crate) fn doc_at(run: &Run, commit: &str, name: &str) -> Option<String> {
@@ -110,14 +112,14 @@ pub(crate) fn doc_at(run: &Run, commit: &str, name: &str) -> Option<String> {
     git::show(
         &run.state.repo,
         commit,
-        &format!("specs/{}/{name}", l.feature),
+        &format!("{}/{name}", l.dir()),
     )
     .ok()
     .flatten()
 }
 
 fn handover_path(l: &LoopState, n: u32) -> String {
-    format!("specs/{}/handover/phase-{n}.md", l.feature)
+    format!("{}/handover/phase-{n}.md", l.dir())
 }
 
 /// The commands a step may run besides reading: its definition's `may_run`, with the gates and
@@ -960,7 +962,7 @@ fn loop_cx<'a>(
     handovers: &'a [String],
 ) -> prompts::LoopCx<'a> {
     prompts::LoopCx {
-        feature_dir: Box::leak(format!("specs/{}", l.feature).into_boxed_str()),
+        feature_dir: Box::leak(l.dir().into_boxed_str()),
         title: &l.feature,
         may_run: may,
         handovers,
@@ -1058,7 +1060,7 @@ fn take_lock(run: &mut Run, l: &LoopState, wt: &std::path::Path) -> Result<(), S
             options: vec!["retry".into(), "stop".into()],
         });
     }
-    let rel = format!("specs/{}/tasks.md", l.feature);
+    let rel = format!("{}/tasks.md", l.dir());
     let file = wt.join(&rel);
     let mut text = std::fs::read_to_string(&file).unwrap_or_default();
     for (id, t) in &l.tasks {
@@ -1425,7 +1427,7 @@ fn phase(
                             &run.state.repo,
                             old,
                             &l.lock_commit,
-                            &format!("specs/{}", l.feature),
+                            &l.dir(),
                         )
                         .ok()
                     })
@@ -2296,8 +2298,8 @@ fn finish(run: &mut Run, pl: &Pipeline) -> Result<(), String> {
         git::commits_between(&run.state.repo, &lp(run)?.lock_commit, &head).unwrap_or_default();
     if let Some(g) = history.iter().find(|c| gated.contains(*c)) {
         let l = lp(run)?;
-        let handovers = format!("specs/{}/handover/", l.feature);
-        let tasks = format!("specs/{}/tasks.md", l.feature);
+        let handovers = format!("{}/handover/", l.dir());
+        let tasks = format!("{}/tasks.md", l.dir());
         let after: Vec<String> = git::files_between(&run.state.repo, g, &head)
             .unwrap_or_default()
             .into_iter()
@@ -2490,7 +2492,9 @@ fn start(run: &mut Run, ctx: &Ctx, n: u32) -> Result<(), String> {
             // worktree, with every step (a builder or checker never reads them by itself).
             let instr = crate::agent::instructions::block(&crate::agent::instructions::read(
                 &worktree,
-                &crate::agent::instructions::extra_at_head(&repo),
+                &crate::agent::instructions::extra_at_head(&repo.join(
+                    run.state.feature_loop.as_ref().map_or("", |l| l.spec_root.as_str()),
+                )),
             ));
             if !instr.is_empty() {
                 text.push_str("\n\n");
@@ -2805,7 +2809,7 @@ fn locked_changes(
     task: Option<&str>,
 ) -> Vec<String> {
     let files = git::files_between(&run.state.repo, base, commit).unwrap_or_default();
-    let tasks_md = format!("specs/{}/tasks.md", l.feature);
+    let tasks_md = format!("{}/tasks.md", l.dir());
     files
         .into_iter()
         .filter(|f| is_protected(l, f))
@@ -2875,7 +2879,7 @@ fn work_done(run: &mut Run, step: &Step, value: &Value) -> Result<(), String> {
             // Fallow ticks the task in tasks.md, in the task's own commit (research S-8).
             if matches!(step.kind, StepKind::Build | StepKind::Repair) {
                 if let Some(t) = &step.task {
-                    let p = wt.join(format!("specs/{}/tasks.md", l.feature));
+                    let p = wt.join(format!("{}/tasks.md", l.dir()));
                     if let Ok(text) = std::fs::read_to_string(&p) {
                         if let Some(ticked) = speckit::tasks::tick(&text, t) {
                             let _ = std::fs::write(&p, ticked);

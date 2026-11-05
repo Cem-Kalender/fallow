@@ -674,10 +674,10 @@ const Fallow = (() => {
 
   // Deleting a spec session (008 T038), after a confirmation that names what goes: before the
   // lock, its draft too. Resolves to true when it was deleted.
-  async function deleteSession(project, feature, locked, plain) {
+  async function deleteSession(project, feature, locked) {
     const items = locked
       ? ["the chat with the lead", "the documents stay where the loop and the merge put them"]
-      : ["the chat with the lead", plain ? `the draft: the folder specs/${feature}` : `the draft: specs/${feature} and its branch ${feature}`, "the feature leaves the project"];
+      : ["the chat with the lead", `the draft: specs/${feature} and its branch ${feature}`, "the feature leaves the project"];
     const ok = await confirm({ title: `Delete the spec session of ${feature}?`, text: locked ? "Only the chat goes." : "Nothing of it was locked; this cannot be undone.", items, ok: "Delete" });
     if (!ok) return false;
     try {

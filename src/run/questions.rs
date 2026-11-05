@@ -349,7 +349,7 @@ fn start_lead(
     let spec_text = git::show(
         &run.state.repo,
         &at,
-        &format!("specs/{}/spec.md", l.feature),
+        &format!("{}/spec.md", l.dir()),
     )
     .ok()
     .flatten()
@@ -366,7 +366,7 @@ fn start_lead(
         .get(&q.step)
         .and_then(|s| s.def.clone())
         .unwrap_or_else(|| "builder".into());
-    let feature_dir = format!("specs/{}", l.feature);
+    let feature_dir = l.dir();
     let instruction = prompts::loop_answer(&prompts::AskCx {
         id: &q.id,
         feature_dir: &feature_dir,
@@ -507,7 +507,7 @@ pub fn lead_done(
     let reserved = lead
         .and_then(|ld| git::head(&ld.workdir).ok())
         .and_then(|h| {
-            git::show(&run.state.repo, &h, &format!("specs/{}/spec.md", l.feature))
+            git::show(&run.state.repo, &h, &format!("{}/spec.md", l.dir()))
                 .ok()
                 .flatten()
         })
@@ -663,7 +663,7 @@ fn commit_answer(
     who: &str,
     answer: &str,
 ) -> Result<String, String> {
-    let rel = format!("specs/{}/spec.md", l.feature);
+    let rel = format!("{}/spec.md", l.dir());
     let path = lead.workdir.join(&rel);
     // Only the clarification goes into an answer's commit: an edit of spec.md not committed
     // would reach the build with it, past the lock (Phase 6 review).

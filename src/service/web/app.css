@@ -708,3 +708,8 @@ fieldset.field.along legend { padding: 0; margin-bottom: 4px; }
 .solo-item .tick { width: 14px; text-align: center; }
 .solo-item .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent, #2f52c9); }
 .you.waiting { opacity: .65; border-style: dashed; }
+
+/* 012: a project that is not a git repository yet (FR-039). */
+.gate { max-width: 760px; }
+.gate textarea { width: 100%; box-sizing: border-box; padding: 8px; border: 1px solid var(--line, #ddd); border-radius: 6px; background: var(--panel, #fff); color: var(--ink); }
+.gate .tbl td, .gate .tbl th { padding: 4px 8px; text-align: left; }

@@ -262,11 +262,17 @@ fn the_lock_names_every_problem_then_commits_and_creates_the_loop() {
 }
 
 #[test]
-fn a_plain_folder_gets_git_and_its_features_their_branches() {
+fn a_folder_without_git_gets_its_first_commit_then_features_their_branches() {
+    // 012 (FR-039, FR-041): plain folders are retired. A repository without a commit is not
+    // used until the engineer's click makes its first commit; then a feature has its branch.
     let root = scratch("lock-plain");
     let folder = root.join("thesis");
     std::fs::create_dir_all(&folder).unwrap();
     std::fs::write(folder.join("plot.py"), "print(1)\n").unwrap();
+    git(&folder, &["init", "-q", "-b", "main"]);
+    git(&folder, &["config", "user.email", "t@example.invalid"]);
+    git(&folder, &["config", "user.name", "t"]);
+    git(&folder, &["config", "commit.gpgsign", "false"]);
     let scenario = root.join("scenario.toml");
     std::fs::write(
         &scenario,
@@ -285,6 +291,39 @@ fn a_plain_folder_gets_git_and_its_features_their_branches() {
         .as_str()
         .unwrap()
         .to_string();
+    let refused = sreq(
+        tx,
+        Req::NewFeature {
+            project: project.clone(),
+            title: "Plots".into(),
+            lead: None,
+        },
+    )
+    .unwrap_err();
+    assert!(refused.contains("not a git repository yet"), "{refused}");
+    // A folder inside another repository is refused when it is added.
+    let inner = root.join("repo-around");
+    std::fs::create_dir_all(inner.join("sub")).unwrap();
+    git(&inner, &["init", "-q"]);
+    let err = sreq(
+        tx,
+        Req::AddProject {
+            path: inner.join("sub"),
+        },
+    )
+    .unwrap_err();
+    assert!(err.contains("inside the repository"), "{err}");
+    // The first commit; then the feature gets its branch and worktree.
+    sreq(
+        tx,
+        Req::GitInit {
+            id: project.clone(),
+            gitignore: None,
+        },
+    )
+    .unwrap();
+    git(&folder, &["add", "."]);
+    git(&folder, &["commit", "-q", "-m", "spec kit"]);
     let f = sreq(
         tx,
         Req::NewFeature {
@@ -304,50 +343,6 @@ fn a_plain_folder_gets_git_and_its_features_their_branches() {
     )
     .unwrap();
     turn_ended(tx, &conv, 1);
-    // In a plain folder the lead wrote in the folder itself.
-    assert!(folder.join("specs/001-plots/spec.md").exists());
-    let fv = sreq(
-        tx,
-        Req::Feature {
-            project: project.clone(),
-            feature: "001-plots".into(),
-        },
-    )
-    .unwrap();
-    assert!(
-        fv["lock_check"]["problems"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|p| p.as_str().unwrap().contains("plain folder"))
-    );
-    // A folder inside another repository is refused.
-    let inner = root.join("repo-around");
-    std::fs::create_dir_all(inner.join("sub")).unwrap();
-    git(&inner, &["init", "-q"]);
-    let sub = sreq(
-        tx,
-        Req::AddProject {
-            path: inner.join("sub"),
-        },
-    )
-    .unwrap()["project"]
-        .as_str()
-        .unwrap()
-        .to_string();
-    assert!(
-        sreq(tx, Req::GitInit { id: sub })
-            .unwrap_err()
-            .contains("inside the repository")
-    );
-    // Git for the thesis: the feature gets its branch and worktree, the session moves there.
-    sreq(
-        tx,
-        Req::GitInit {
-            id: project.clone(),
-        },
-    )
-    .unwrap();
     let fv = sreq(
         tx,
         Req::Feature {
@@ -361,6 +356,7 @@ fn a_plain_folder_gets_git_and_its_features_their_branches() {
     let c = sreq(tx, Req::Conversation { id: conv.clone() }).unwrap();
     let wd = c["workdir"].as_str().unwrap();
     assert!(wd.contains("worktrees"), "{wd}");
+    assert!(!folder.join("specs/001-plots/spec.md").exists(), "never in the folder itself");
     let d = sreq(
         tx,
         Req::Doc {

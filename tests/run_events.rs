@@ -219,6 +219,7 @@ fn a_loop_folds_its_phases_tasks_questions_and_outcome() {
             update_limit: 3,
             run_after: None,
             switches: Default::default(),
+            spec_root: String::new(),
         },
         Event::Phase {
             n: 1,
@@ -351,6 +352,7 @@ fn an_update_folds_into_the_loop_and_reopens_every_story() {
                 line: false,
                 overlap: true,
             },
+            spec_root: String::new(),
         },
         Event::Stage {
             to: Stage::Building,

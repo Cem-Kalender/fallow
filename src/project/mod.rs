@@ -147,6 +147,10 @@ pub struct Project {
     /// 012 (FR-005): the assistant new sessions start with; none is the agent named `assistant`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub assistant: Option<String>,
+    /// 012 (R-18): where `.specify/`, `.fallow/` and `specs/` are, relative to `path`: empty,
+    /// or the subfolder a project moved to its repository's top folder was added at.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub spec_root: String,
 }
 
 fn standard() -> String {
@@ -157,13 +161,22 @@ fn yes() -> bool {
     true
 }
 
-/// Git or a plain folder, read each time (data-model.md).
+/// What the project's folder is, read each time (data-model.md; 012 FR-039 to FR-041): every
+/// project is used as the top of a git repository with a commit; a folder that is not one yet
+/// waits for the engineer's click.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Kind {
+    /// The top of a git repository with at least one commit: the only kind that is used.
     Git,
-    Folder,
+    /// No repository, or one without any commit: "Make it a git repository" (FR-039).
+    NeedsGit,
+    /// A folder inside a bigger repository, added before 012: "Use the repository's top
+    /// folder" (FR-039, R-18).
+    NeedsMove,
     Missing,
+    /// git could not be run: never taken for a folder without a repository (FR-040).
+    Unknown,
 }
 
 impl Project {
@@ -179,16 +192,34 @@ impl Project {
         self.features.iter_mut().find(|f| f.name() == name)
     }
 
+    /// `rel` under the project's spec root (012 R-18): `specs/x`, or `app/specs/x`.
+    pub fn in_root(&self, rel: &str) -> String {
+        if self.spec_root.is_empty() {
+            rel.to_string()
+        } else {
+            format!("{}/{rel}", self.spec_root)
+        }
+    }
+
+    /// The folder `.specify/`, `.fallow/` and `specs/` are in (012 R-18).
+    pub fn root_dir(&self) -> PathBuf {
+        if self.spec_root.is_empty() {
+            self.path.clone()
+        } else {
+            self.path.join(&self.spec_root)
+        }
+    }
+
     /// Every `specs/NNN-*` folder, the ones Fallow started and the others.
     pub fn spec_dirs(&self) -> Vec<String> {
-        let mut out: Vec<String> = std::fs::read_dir(self.path.join("specs"))
+        let mut out: Vec<String> = std::fs::read_dir(self.root_dir().join("specs"))
             .into_iter()
             .flatten()
             .flatten()
             .filter(|e| e.path().is_dir())
             .filter_map(|e| e.file_name().to_str().map(str::to_string))
             .filter(|n| feature_number(n).is_some())
-            .map(|n| format!("specs/{n}"))
+            .map(|n| self.in_root(&format!("specs/{n}")))
             .collect();
         out.sort();
         out
@@ -207,12 +238,24 @@ impl Project {
             .unwrap_or(0)
             + 1;
         let slug = slug(title);
-        format!(
+        self.in_root(&format!(
             "specs/{n:03}-{}",
             if slug.is_empty() { "feature" } else { &slug }
-        )
+        ))
     }
 }
+
+/// The spec root a feature's folder is under (012 R-18): `""` for `specs/001-x`, `app/` for
+/// `app/specs/001-x`.
+pub fn feature_root(dir: &str) -> &str {
+    match dir.rfind("specs/") {
+        Some(i) if i == 0 || dir[..i].ends_with('/') => &dir[..i],
+        _ => "",
+    }
+}
+
+/// What every project request answers while git is missing or too old (FR-040).
+pub const GIT_NEEDED: &str = "Fallow needs git 2.38 or later";
 
 /// `007-fallow-studio` gives 7.
 pub fn feature_number(name: &str) -> Option<u32> {
@@ -232,26 +275,54 @@ pub fn slug(s: &str) -> String {
         .join("-")
 }
 
-/// Whether `path` is the top of a git repository, a plain folder, or gone.
+/// What `path` is: the top of a git repository with a commit, a folder that needs git or its
+/// repository's top folder, gone, or unknown when git cannot be run.
 pub fn kind_of(path: &Path) -> Kind {
     if !path.is_dir() {
         return Kind::Missing;
     }
-    let top = crate::platform::command("git")
+    let git = |args: &[&str]| {
+        crate::platform::command("git")
+            .arg("-C")
+            .arg(path)
+            .args(args)
+            .stdin(std::process::Stdio::null())
+            .output()
+    };
+    let Ok(out) = git(&["rev-parse", "--show-toplevel"]) else {
+        return Kind::Unknown;
+    };
+    if !out.status.success() {
+        return Kind::NeedsGit;
+    }
+    let top = PathBuf::from(String::from_utf8_lossy(&out.stdout).trim());
+    match (top.canonicalize().ok(), path.canonicalize().ok()) {
+        (Some(t), Some(p)) if t == p => {
+            let head = git(&["rev-parse", "--verify", "-q", "HEAD"]);
+            if head.is_ok_and(|o| o.status.success()) {
+                Kind::Git
+            } else {
+                Kind::NeedsGit
+            }
+        }
+        (Some(_), Some(_)) => Kind::NeedsMove,
+        _ => Kind::Unknown,
+    }
+}
+
+/// The top folder of the repository `path` is inside of, when it is not that top itself.
+pub fn top_of(path: &Path) -> Option<PathBuf> {
+    let out = crate::platform::command("git")
         .arg("-C")
         .arg(path)
         .args(["rev-parse", "--show-toplevel"])
+        .stdin(std::process::Stdio::null())
         .output()
         .ok()
-        .filter(|o| o.status.success())
-        .map(|o| PathBuf::from(String::from_utf8_lossy(&o.stdout).trim()));
-    match (
-        top.and_then(|t| t.canonicalize().ok()),
-        path.canonicalize().ok(),
-    ) {
-        (Some(t), Some(p)) if t == p => Kind::Git,
-        _ => Kind::Folder,
-    }
+        .filter(|o| o.status.success())?;
+    let top = PathBuf::from(String::from_utf8_lossy(&out.stdout).trim());
+    let (t, p) = (top.canonicalize().ok()?, path.canonicalize().ok()?);
+    (t != p).then(|| PathBuf::from(top.display().to_string().trim_start_matches(r"\\?\")))
 }
 
 /// The projects, kept in `projects.json` (contracts/storage.md), written atomically.
@@ -336,7 +407,20 @@ impl Store {
             id = format!("{base}-{n}");
             n += 1;
         }
-        let report = install::install(&path)?;
+        if let Some(top) = top_of(&path) {
+            return Err(format!(
+                "{} is inside the repository {}: add that folder as the project instead (inside: {})",
+                path.display(),
+                top.display(),
+                top.display()
+            ));
+        }
+        // Nothing is written in a folder before it is a git repository (FR-039).
+        let report = match kind_of(&path) {
+            Kind::Git => install::install(&path)?,
+            Kind::Unknown => return Err(GIT_NEEDED.to_string()),
+            _ => install::Report::default(),
+        };
         let p = Project {
             id,
             path,
@@ -355,6 +439,7 @@ impl Store {
             sessions: Vec::new(),
             last_session: None,
             assistant: None,
+            spec_root: String::new(),
         };
         self.projects.push(p.clone());
         self.save()?;

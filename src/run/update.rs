@@ -56,13 +56,19 @@ fn doc_dir(feature: &str) -> String {
 
 fn is_doc(feature: &str, path: &str) -> bool {
     let dir = doc_dir(feature);
-    path.starts_with(&dir) && !path.starts_with(&format!("{dir}handover/"))
+    // Under the project's spec root, which may be a subfolder (012 R-18).
+    let at = if path.starts_with(&dir) {
+        Some(0)
+    } else {
+        path.find(&format!("/{dir}")).map(|i| i + 1)
+    };
+    at.is_some_and(|i| !path[i..].starts_with(&format!("{dir}handover/")))
 }
 
 /// Protected files that are not this feature's documents: changed on both sides so that they
 /// conflict, they go to the engineer too (a builder may not edit them).
 fn is_other_protected(path: &str) -> bool {
-    path == ".specify/memory/constitution.md"
+    path == ".specify/memory/constitution.md" || path.ends_with("/.specify/memory/constitution.md")
 }
 
 /// The feature's documents the target changed since `since` whose content differs from the

@@ -417,6 +417,10 @@ pub enum Event {
         /// 011: the parts switched on for this run (`.fallow/squad.toml` `[updates]`).
         #[serde(default)]
         switches: Switches,
+        /// 012 (R-18): where the project's `specs/` and `.specify/` are, relative to its
+        /// folder: empty, or the subfolder of a project moved to its repository's top.
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        spec_root: String,
     },
     Task {
         id: String,

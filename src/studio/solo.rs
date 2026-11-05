@@ -58,7 +58,8 @@ pub fn squad_at_head(project: &Path) -> crate::config::Squad {
         .args([
             "--no-optional-locks",
             "show",
-            &format!("HEAD:{}", crate::config::squad::SQUAD_FILE),
+            // `./`: relative to `project`, the spec root of a moved project (012 R-18).
+            &format!("HEAD:./{}", crate::config::squad::SQUAD_FILE),
         ])
         .output()
         .ok()
@@ -314,11 +315,15 @@ impl Studio {
             .iter()
             .map(|s| s.to_string())
             .collect();
+        // 012 (R-18): a moved project's controls are under its spec root too.
+        if !p.spec_root.is_empty() {
+            protect.extend(rights::CONTROL_GLOBS.iter().map(|g| p.in_root(g)));
+        }
         protect.extend(caps.control_files);
         // The copy's link to its repository: rewritten, it would point Fallow's own git at a
         // config the assistant wrote (fourth review, security).
         protect.extend([".git".to_string(), ".git/**".to_string()]);
-        let gates = squad_at_head(&p.path)
+        let gates = squad_at_head(&p.root_dir())
             .gates
             .iter()
             .map(|g| g.command.clone())
@@ -502,7 +507,7 @@ impl Studio {
         );
         // The project's instruction files: with a new agent session, and when they changed.
         let c = self.convs.get(conv).ok_or("there is no session")?;
-        let instr = agent::instructions::read(&wt, &agent::instructions::extra_at_head(&p.path));
+        let instr = agent::instructions::read(&wt, &agent::instructions::extra_at_head(&p.root_dir()));
         let now: Vec<(String, String)> = instr
             .iter()
             .map(|i| (i.path.clone(), i.sha.clone()))
@@ -1191,7 +1196,7 @@ impl Studio {
         let head = git::head(&s.worktree).unwrap_or_default();
         let declared = self
             .project(&c.state.project)
-            .map(|p| !squad_at_head(&p.path).gates.is_empty())
+            .map(|p| !squad_at_head(&p.root_dir()).gates.is_empty())
             .unwrap_or(false);
         let base = s.base();
         // "Always in this project" only for a prefix the server would accept (review 6).

@@ -121,14 +121,16 @@ pub fn read(wt: &Path, extra: &[String]) -> Vec<Instruction> {
 }
 
 /// The project's `[instructions] extra`, from the squad file as committed at the project
-/// folder's `HEAD` (research R-6: never the agent's own copy).
+/// folder's `HEAD` (research R-6: never the agent's own copy). `project` is the folder the squad
+/// file is in: the spec root of a moved project (012 R-18).
 pub fn extra_at_head(project: &Path) -> Vec<String> {
     let text = crate::platform::command("git")
         .current_dir(project)
         .args([
             "--no-optional-locks",
             "show",
-            &format!("HEAD:{}", crate::config::squad::SQUAD_FILE),
+            // `./`: relative to `project`, not to the repository's top.
+            &format!("HEAD:./{}", crate::config::squad::SQUAD_FILE),
         ])
         .output()
         .ok()

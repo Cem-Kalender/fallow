@@ -379,9 +379,23 @@ fn studio_route(
                 commands,
             })
         }
-        ("POST", ["api", "projects", p, "git-init"]) => {
-            Some(confirmed().map(|()| Request::Studio(Req::GitInit { id: p.to_string() })))
-        }
+        ("GET", ["api", "projects", p, "git-init"]) => r(Req::GitScan { id: p.to_string() }),
+        ("POST", ["api", "projects", p, "git-init"]) => Some(confirmed().map(|()| {
+            Request::Studio(Req::GitInit {
+                id: p.to_string(),
+                gitignore: s("gitignore"),
+            })
+        })),
+        ("GET", ["api", "projects", p, "move"]) => r(Req::Move {
+            id: p.to_string(),
+            confirmed: false,
+        }),
+        ("POST", ["api", "projects", p, "move"]) => Some(confirmed().map(|()| {
+            Request::Studio(Req::Move {
+                id: p.to_string(),
+                confirmed: true,
+            })
+        })),
         ("POST", ["api", "projects", p, "conversation"]) => r(Req::ProjectConversation {
             project: p.to_string(),
         }),
@@ -724,6 +738,10 @@ fn handle(mut req: tiny_http::Request, tx: &Sender<Msg>, port: u16, secret: &str
             None => respond(req, 404, "text/plain", "not found".into()),
         },
         (true, ["api", "dashboard"]) => json_reply(req, ask(tx, Request::Dashboard)),
+        (true, ["api", "git"]) => json_reply(req, ask(tx, Request::Git { check: false })),
+        (false, ["api", "git", "check"]) if method == "POST" => {
+            json_reply(req, ask(tx, Request::Git { check: true }))
+        }
         (true, ["api", "data"]) => json_reply(req, ask(tx, Request::Data)),
         (true, ["api", "events"]) => {
             let q = url.split_once('?').map(|(_, q)| q).unwrap_or("");

@@ -1,7 +1,8 @@
 //! 007 US1 (T022, FR-001, FR-002, constitution VI): adding a project installs Spec Kit only where
 //! files are missing and overwrites nothing; an existing Spec Kit version is reported and left
-//! alone; git and plain folders are told apart; a missing folder is shown as missing; removing
-//! a project deletes nothing in its folder.
+//! alone; a repository, a folder that needs git and a subfolder of a repository are told apart
+//! (012 FR-039: Spec Kit is written only into a repository); a missing folder is shown as
+//! missing; removing a project deletes nothing in its folder.
 
 use std::path::{Path, PathBuf};
 
@@ -24,6 +25,16 @@ fn git(dir: &Path, args: &[&str]) {
     assert!(ok, "git {args:?}");
 }
 
+/// `dir` as a repository with one commit (012: only a repository gets Spec Kit).
+fn committed(dir: &Path) {
+    git(dir, &["init", "-q"]);
+    git(dir, &["config", "user.email", "t@example.invalid"]);
+    git(dir, &["config", "user.name", "t"]);
+    git(dir, &["config", "commit.gpgsign", "false"]);
+    git(dir, &["add", "-A"]);
+    git(dir, &["commit", "-q", "--allow-empty", "-m", "seed"]);
+}
+
 #[test]
 fn adding_installs_spec_kit_only_where_files_are_missing() {
     let root = scratch("install");
@@ -34,10 +45,11 @@ fn adding_installs_spec_kit_only_where_files_are_missing() {
     // The engineer's own constitution and an unrelated file must survive untouched.
     std::fs::write(proj.join(".specify/memory/constitution.md"), "# Ours\n").unwrap();
     std::fs::write(proj.join("main.py"), "print(1)\n").unwrap();
+    committed(&proj);
     let mut store = Store::load(&data).unwrap();
     let (p, report) = store.add(&proj, "2026-10-30T12:00:00Z").unwrap();
     assert_eq!(p.id, "shop-demo");
-    assert_eq!(p.kind(), Kind::Folder);
+    assert_eq!(p.kind(), Kind::Git);
     assert_eq!(report.found, None);
     assert!(
         report
@@ -80,6 +92,7 @@ fn another_spec_kit_version_is_reported_and_left_alone() {
         "{\"version\": \"0.9.0\"}",
     )
     .unwrap();
+    committed(&proj);
     let mut store = Store::load(&root).unwrap();
     let (_, report) = store.add(&proj, "now").unwrap();
     assert_eq!(report.found.as_deref(), Some("0.9.0"));
@@ -96,19 +109,28 @@ fn git_and_folder_kinds_a_missing_folder_and_removal() {
     let root = scratch("kinds");
     let repo = root.join("repo");
     std::fs::create_dir_all(&repo).unwrap();
-    git(&repo, &["init", "-q"]);
+    committed(&repo);
     let folder = root.join("plain");
     std::fs::create_dir_all(&folder).unwrap();
+    let fresh = root.join("fresh");
+    std::fs::create_dir_all(&fresh).unwrap();
+    git(&fresh, &["init", "-q"]);
     let mut store = Store::load(&root).unwrap();
     let (r, _) = store.add(&repo, "now").unwrap();
     let (f, _) = store.add(&folder, "now").unwrap();
+    let (n, _) = store.add(&fresh, "now").unwrap();
     assert_eq!(r.kind(), Kind::Git);
-    assert_eq!(f.kind(), Kind::Folder);
-    // A subfolder of a repository is a plain folder: worktrees are of whole repositories.
+    // 012 (FR-039): a folder without git, or a repository without a commit, needs git; nothing
+    // is written in it.
+    assert_eq!(f.kind(), Kind::NeedsGit);
+    assert_eq!(n.kind(), Kind::NeedsGit);
+    assert!(!folder.join(".specify").exists());
+    // A subfolder of a repository is refused, naming the top folder: worktrees are of whole
+    // repositories.
     let sub = repo.join("sub");
     std::fs::create_dir_all(&sub).unwrap();
-    let (s, _) = store.add(&sub, "now").unwrap();
-    assert_eq!(s.kind(), Kind::Folder);
+    let err = store.add(&sub, "now").unwrap_err();
+    assert!(err.contains("inside"), "{err}");
     // Moved away: shown as missing, its record kept.
     std::fs::rename(&folder, root.join("moved")).unwrap();
     let again = Store::load(&root).unwrap();
