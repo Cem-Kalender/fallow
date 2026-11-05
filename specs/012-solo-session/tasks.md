@@ -40,7 +40,7 @@ the confirmed findings before the next phase. That is done outside this list.
 **Purpose**: confirm what the plan assumes about the installed `claude`, and build the test doubles
 and fixtures every story needs.
 
-- [ ] T001 **The check on the installed `claude`** (research R-6, R-8; contracts/runtime.md, "Which settings apply"). Run it first; **if any point fails, stop and report to the engineer before any other task**.
+- [X] T001 **The check on the installed `claude`** (done 2026-11-05: `checks/claude-check.md`; point 4 accepted on Claude's documented behaviour, and the extra tools led to the fixed tool list) (research R-6, R-8; contracts/runtime.md, "Which settings apply"). Run it first; **if any point fails, stop and report to the engineer before any other task**.
   - **Where**: an ignored test `check_012_claude` in `tests/agent_claude.rs`, run by hand with `--ignored`. Each probe is a short `claude -p` call in a scratch repository, with the engineer's normal login and the cheapest model, and the whole check spends at most $0.50.
   - **The settings points** (R-6), each confirmed or refuted:
     1. `--setting-sources` with an empty list is accepted, and the login and `--model` still work.
