@@ -747,7 +747,9 @@ there is never lost unnamed.
 
 **Undone commits at close** (analyze D2, II): when the session holds `undone/*` refs, the close
 names them (the undone turns and their commits) and asks once, even for a merged and clean
-session; nothing is removed before the answer.
+session; nothing is removed before the answer. When that is the only question, the engineer
+confirms (`{confirmed: true}`, no choice), `CloseStarted{choice: merged}` is written, and the
+session closes as merged with its undone commits dropped.
 
 **Intent first** (VII; review 11): `CloseStarted{choice}` is written before anything is removed. On
 load, a `CloseStarted` without `SessionClosed` is finished from git, and steps already done are

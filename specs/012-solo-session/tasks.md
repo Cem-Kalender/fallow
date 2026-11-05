@@ -518,7 +518,7 @@ and web access.
 
 - [ ] T048 [US6] Write `tests/us12_close.rs` (Q7). It fails first.
   - A merged and clean session closes without a question (SC-010).
-  - A merged and clean session with undone turns asks once, naming the undone turns and their commits (constitution II; analyze D2).
+  - A merged and clean session with undone turns asks once, naming the undone turns and their commits; confirming closes it as `merged`, with the undone refs gone (constitution II; analyze D2).
   - One with a `.env` in the copy asks, naming it.
   - An unmerged session with an uncommitted change asks. "Keep" commits the change, keeps the branch and names it.
   - "Discard" names the commits and files, then the branch is gone.
@@ -530,7 +530,7 @@ and web access.
   - A restart in the middle of a close finishes it (SC-007).
 - [ ] T049 [US6] Close, in `src/studio/solo.rs` (R-14, R-11).
   - "Merged" means every commit that is not undone is contained in another local or remote-tracking ref, or a `squashed` covers the last turn.
-  - `POST /api/sessions/<s>/close`: the dry answer (`stop_first`, or `ask` with commits, files, edits, ignored files and undone turns); a merged and clean session asked only about its undone turns closes with `{confirmed: true}`, then `close_started`, then keep or discard, then `session_closed`.
+  - `POST /api/sessions/<s>/close`: the dry answer (`stop_first`, or `ask` with commits, files, edits, ignored files and undone turns); a merged and clean session asked only about its undone turns closes with `{confirmed: true}`, then `close_started`, then keep, discard or (when only undone turns were asked about) merged, then `session_closed`.
   - The undone refs are deleted, after the close named them (analyze D2), and the `-gates-*` worktrees pruned, all without hooks.
   - `solo::reconcile` gains `close_started` (analyze F6).
   - `POST …/remove-copy` and `DELETE /api/sessions/<s>`, both confirmed.
