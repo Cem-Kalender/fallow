@@ -5,7 +5,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
 use std::time::Duration;
 
@@ -78,13 +78,31 @@ pub(super) fn cut_on_load(c: &mut super::Conv) {
     let Some(t) = c.state.turns.last().cloned() else {
         return;
     };
+    // First the agent, if it outlived Fallow (R-19): nothing writes after the snapshot.
+    for f in pid_files(&c.dir) {
+        crate::platform::job::kill_recorded(&f);
+    }
+    // A command waiting for the engineer is cancelled, said so (FR-026).
+    if let Some(a) = c.state.pending_approval().cloned() {
+        let _ = c.append(CEvent::ApprovalAnswered {
+            id: a.id,
+            answer: crate::conversation::events::ApprovalAnswer::Deny,
+            prefix: None,
+            auto: false,
+            why: Some("Fallow restarted".into()),
+        });
+    }
     let msg = format!(
         "Fallow solo {}, turn {}: {} (cut short)",
         c.id(),
         t.n,
         agent::clip(t.said.lines().next().unwrap_or_default(), 60)
     );
-    let before = c.state.cancelling().and_then(|x| x.head.clone()).or_else(|| t.head.clone());
+    let before = c
+        .state
+        .cancelling()
+        .and_then(|x| x.head.clone())
+        .or_else(|| t.head.clone());
     let snap = git::snapshot(&s.worktree, &s.branch, &msg);
     let commit_failed = snap.err();
     let head = git::head(&s.worktree).ok();
@@ -164,8 +182,8 @@ impl Studio {
         if let Some(why) = self.assistant_problem(&p.path, &assistant) {
             return Err(why);
         }
-        let start_commit = git::head(&p.path)
-            .map_err(|_| "the repository has no commit yet".to_string())?;
+        let start_commit =
+            git::head(&p.path).map_err(|_| "the repository has no commit yet".to_string())?;
         let start_branch = git::branch(&p.path);
         let dirty = !git::folder_status(&p.path).unwrap_or_default().is_empty();
         let placeholder = self.worktrees(&p.id).join("_solo");
@@ -247,14 +265,40 @@ impl Studio {
     /// Nothing is left of a session that could not be made (second review, low 3; third review,
     /// low 2): its record, its working copy, and the branch made for it.
     fn forget_half_made(&mut self, id: &str, repo: &Path, wt: &Path, branch: &str) {
-        let dir = self.convs.remove(id).map(|c| c.dir.clone());
+        let gone = self.convs.remove(id);
+        let dir = gone.as_ref().map(|c| c.dir.clone());
+        // The branch it is on now: the first message may have renamed it (fourth review, 3).
+        // Read only from its own working copy, never a repository around the folder.
+        let mut branches = vec![branch.to_string()];
+        if wt.join(".git").is_file() {
+            if let Some(now) = git::branch(wt).filter(|b| b.starts_with("fallow/solo/")) {
+                branches.push(now);
+            }
+        }
+        // Nor listed in its project.
+        if let Some(p) = gone.map(|c| c.state.project.clone()) {
+            if let Ok(pm) = self.project_mut(&p) {
+                let listed = pm.sessions.len();
+                pm.sessions.retain(|s| s != id);
+                let was_last = pm.last_session.as_deref() == Some(id);
+                if was_last {
+                    pm.last_session = None;
+                }
+                if listed != pm.sessions.len() || was_last {
+                    let _ = self.store.save();
+                }
+            }
+        }
         if wt.exists() {
             let _ = git::worktree_remove(repo, wt);
         }
         git::worktree_prune(repo);
-        if git::rev_exists(repo, &format!("refs/heads/{branch}")) {
-            let _ = git::delete_branch(repo, branch);
+        for b in branches {
+            if git::rev_exists(repo, &format!("refs/heads/{b}")) {
+                let _ = git::delete_branch(repo, &b);
+            }
         }
+
         if let Some(d) = dir {
             let _ = std::fs::remove_dir_all(d);
         }
@@ -266,8 +310,14 @@ impl Studio {
         let solo = c.state.solo.as_ref().ok_or("not a session")?;
         let p = self.project(&c.state.project)?;
         let caps = agent::registry::capabilities(runtime, &self.settings);
-        let mut protect: Vec<String> = rights::CONTROL_GLOBS.iter().map(|s| s.to_string()).collect();
+        let mut protect: Vec<String> = rights::CONTROL_GLOBS
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
         protect.extend(caps.control_files);
+        // The copy's link to its repository: rewritten, it would point Fallow's own git at a
+        // config the assistant wrote (fourth review, security).
+        protect.extend([".git".to_string(), ".git/**".to_string()]);
         let gates = squad_at_head(&p.path)
             .gates
             .iter()
@@ -311,10 +361,14 @@ impl Studio {
         if text.is_empty() {
             return Err("say something to the assistant".into());
         }
+        self.check_gone(conv);
         let c = self.convs.get(conv).ok_or("there is no session")?;
         let solo = c.state.solo.clone().ok_or("not a session")?;
         if solo.closed.is_some() {
             return Err("the session is closed".into());
+        }
+        if let Some(why) = &c.gone {
+            return Err(format!("{why}: the session can only be closed"));
         }
         if let Some(n) = solo.pending_commit {
             if !solo.fold_next {
@@ -401,13 +455,13 @@ impl Studio {
         let mut engineer_edits = Vec::new();
         let dirty = git::changes_all(&wt).unwrap_or_default();
         if !dirty.is_empty() && solo.pending_commit.is_none() {
-            let msg = format!(
-                "Fallow solo {conv}: the engineer's edits before turn {n}"
-            );
+            let msg = format!("Fallow solo {conv}: the engineer's edits before turn {n}");
             match git::snapshot(&wt, &solo.branch, &msg) {
                 Ok(Some(commit)) => {
-                    let files: Vec<String> =
-                        dirty.iter().map(|f| f.trim_matches('"').to_string()).collect();
+                    let files: Vec<String> = dirty
+                        .iter()
+                        .map(|f| f.trim_matches('"').to_string())
+                        .collect();
                     engineer_edits = files.clone();
                     self.conv_mut(conv)?
                         .append(CEvent::Solo(SoloEvent::EngineerEdits {
@@ -534,11 +588,12 @@ impl Studio {
             time_limit: Duration::from_secs(def.limits.minutes.unwrap_or(30) * 60),
             system: Some(prompts::assistant_system(&def.body)),
             partial: true,
-            group: Some(group),
+            group: Some(Arc::clone(&group)),
             attachments: Vec::new(),
             web: solo.web,
             user_settings: true,
         };
+        let group_for_record = group;
         c.slot_wait = None;
         if let Some(qid) = queued {
             c.append(CEvent::Solo(SoloEvent::QueueSent {
@@ -568,7 +623,40 @@ impl Studio {
         let stop = Arc::clone(&c.stop);
         let turn_file = c.turns_dir().join(format!("{n}.jsonl"));
         let _ = std::fs::create_dir_all(c.turns_dir());
-        if let Err(e) = spawn_turn(ctx.tx.clone(), conv.to_string(), n, runtime, call, stop, turn_file) {
+        let pid_file = c.dir.join(format!("turn-{n}.pid"));
+        let recorded = Arc::clone(&group_for_record);
+        c.turn_ended = Arc::new(AtomicBool::new(false));
+        let ended = Arc::clone(&c.turn_ended);
+        let spawned = spawn_turn(
+            ctx.tx.clone(),
+            conv.to_string(),
+            n,
+            runtime,
+            call,
+            stop,
+            turn_file,
+        );
+        if spawned.is_ok() {
+            // The agent's group, recorded once it is adopted, so a restart can stop it (R-19).
+            let _ = std::thread::Builder::new()
+                .name(format!("turn-pid-{conv}"))
+                .spawn(move || {
+                    for _ in 0..200 {
+                        if ended.load(Ordering::SeqCst) {
+                            return;
+                        }
+                        if recorded.record(&pid_file) {
+                            // The turn ended while this was written: nothing is left to stop.
+                            if ended.load(Ordering::SeqCst) {
+                                let _ = std::fs::remove_file(&pid_file);
+                            }
+                            break;
+                        }
+                        std::thread::sleep(Duration::from_millis(50));
+                    }
+                });
+        }
+        if let Err(e) = spawned {
             // The turn never ran: it ends now, so the session is not left busy (review 7).
             let outcome = agent::Outcome {
                 result: None,
@@ -594,7 +682,8 @@ impl Studio {
     ) -> Result<(), String> {
         let c = self.conv_mut(conv)?;
         let solo = c.state.solo.clone().ok_or("not a session")?;
-        let cut = c.state.cancelling().is_some() || c.stop.load(std::sync::atomic::Ordering::Relaxed);
+        let cut =
+            c.state.cancelling().is_some() || c.stop.load(std::sync::atomic::Ordering::Relaxed);
         let said = c
             .state
             .turns
@@ -621,7 +710,11 @@ impl Studio {
             _ => Vec::new(),
         };
         let (commit, commit_failed, changed) = match &snap {
-            Ok(_) => (head.clone().filter(|_| !commits.is_empty()), None, Vec::new()),
+            Ok(_) => (
+                head.clone().filter(|_| !commits.is_empty()),
+                None,
+                Vec::new(),
+            ),
             Err(e) => {
                 let changed = git::changes_all(&wt)
                     .unwrap_or_default()
@@ -634,7 +727,11 @@ impl Studio {
                         }
                     })
                     .collect();
-                (head.clone().filter(|_| !commits.is_empty()), Some(e.clone()), changed)
+                (
+                    head.clone().filter(|_| !commits.is_empty()),
+                    Some(e.clone()),
+                    changed,
+                )
             }
         };
         let result = outcome.result.clone();
@@ -648,6 +745,8 @@ impl Studio {
             (None, None) => String::new(),
         };
         let c = self.conv_mut(conv)?;
+        c.turn_ended.store(true, Ordering::SeqCst);
+        let _ = std::fs::remove_file(c.dir.join(format!("turn-{n}.pid")));
         if let Some(t) = c.token.take() {
             self.tools.remove(&t);
         }
@@ -679,7 +778,11 @@ impl Studio {
             .as_ref()
             .and_then(crate::conversation::solo::suggestion_of)
         {
-            c.append(CEvent::Solo(SoloEvent::FeatureSuggested { n, title, brief }))?;
+            c.append(CEvent::Solo(SoloEvent::FeatureSuggested {
+                n,
+                title,
+                brief,
+            }))?;
         }
         c.tick();
         Ok(())
@@ -731,7 +834,11 @@ impl Studio {
             }
             agent::RequestKind::Other => Err(format!(
                 "{} is not a tool Fallow can judge.",
-                if req.tool.is_empty() { "That" } else { &req.tool }
+                if req.tool.is_empty() {
+                    "That"
+                } else {
+                    &req.tool
+                }
             )),
             agent::RequestKind::Run => {
                 let command = req.command.clone().unwrap_or_default();
@@ -785,6 +892,168 @@ impl Studio {
         }
     }
 
+    /// 012 (FR-002, FR-025, contracts/web-api.md): the project's sessions for the dropdown:
+    /// open ones (the one open last first), closed ones, earlier conversations with the lead,
+    /// and how much the sessions' records hold.
+    pub fn list_sessions(&mut self, project: &str) -> Result<Value, String> {
+        let ids = self.project(project)?.sessions.clone();
+        for id in &ids {
+            self.check_gone(id);
+        }
+        let p = self.project(project)?;
+        let mut open = Vec::new();
+        let mut closed = Vec::new();
+        let mut bytes = 0u64;
+        for id in p.sessions.iter().rev() {
+            let Some(c) = self.convs.get(id) else {
+                continue;
+            };
+            let Some(s) = c.state.solo.as_ref() else {
+                continue;
+            };
+            bytes += dir_size(&c.dir);
+            let changes = if s.closed.is_some() || c.gone.is_some() {
+                0
+            } else {
+                changed_count(s)
+            };
+            let item = json!({
+                "id": id,
+                "name": s.name,
+                "busy": c.state.busy,
+                "changes": changes,
+                "gone": c.gone,
+                "branch": s.branch,
+            });
+            if s.closed.is_some() {
+                closed.push(item);
+            } else if p.last_session.as_deref() == Some(id.as_str()) {
+                open.insert(0, item);
+            } else {
+                open.push(item);
+            }
+        }
+        let earlier: Vec<Value> = p
+            .conversation
+            .iter()
+            .filter_map(|id| self.convs.get(id))
+            .filter(|c| !c.state.turns.is_empty())
+            .map(|c| {
+                json!({
+                    "conversation": c.id(),
+                    "title": "Project conversation with the lead",
+                    "at": c.state.turns.last().map(|t| t.started.clone()),
+                })
+            })
+            .collect();
+        Ok(json!({ "open": open, "closed": closed, "earlier": earlier, "records_bytes": bytes }))
+    }
+
+    /// 012 (FR-004): renames a session; its branch keeps its name.
+    pub fn rename_session(&mut self, conv: &str, name: &str) -> Result<Value, String> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err("give the session a name".into());
+        }
+        let c = self.conv_mut(conv)?;
+        if c.state.solo.is_none() {
+            return Err("not a session".into());
+        }
+        c.append(CEvent::Solo(SoloEvent::SessionRenamed {
+            name: agent::clip(name, 80),
+            by: None,
+        }))?;
+        Ok(json!({}))
+    }
+
+    /// 012 (FR-001): the session the engineer opened, shown first next time.
+    pub fn open_session(&mut self, conv: &str) -> Result<Value, String> {
+        self.check_gone(conv);
+        let c = self.convs.get(conv).ok_or("there is no session")?;
+        if c.state.solo.as_ref().is_none_or(|s| s.closed.is_some()) {
+            return Err("that session is closed".into());
+        }
+        let project = c.state.project.clone();
+        let pm = self.project_mut(&project)?;
+        pm.last_session = Some(conv.to_string());
+        self.store.save()?;
+        Ok(json!({}))
+    }
+
+    /// 012 (R-2, R-19): after a restart: a session made only halfway is forgotten (the draft's
+    /// message was never sent), one whose working copy or branch is gone is marked so, and one
+    /// that was in "until I switch back" says it is back to asking.
+    pub(super) fn solo_on_load(&mut self) {
+        let ids: Vec<String> = self
+            .convs
+            .iter()
+            .filter(|(_, c)| c.state.kind == Kind::Solo)
+            .map(|(id, _)| id.clone())
+            .collect();
+        for id in ids {
+            let Some(c) = self.convs.get_mut(&id) else {
+                continue;
+            };
+            let mark = c.dir.join("until_switch");
+            if mark.exists() {
+                let _ = std::fs::remove_file(&mark);
+                c.mode_reset = true;
+            }
+            let Some(s) = c.state.solo.clone() else {
+                continue;
+            };
+            let repo = self.store.get(&c.state.project).map(|p| p.path.clone());
+            if let Some((branch, _)) = s.creating.clone() {
+                if let Some(repo) = repo {
+                    let wt = c.state.workdir.join(&id);
+                    self.forget_half_made(&id, &repo, &wt, &branch);
+                }
+                continue;
+            }
+            if s.closed.is_some() {
+                continue;
+            }
+            let project = c.state.project.clone();
+            self.check_gone(&id);
+            // Made, but Fallow stopped before the project listed it (fourth review, 4).
+            if let Ok(pm) = self.project_mut(&project) {
+                if !pm.sessions.contains(&id) {
+                    pm.sessions.push(id.clone());
+                    let _ = self.store.save();
+                }
+            }
+        }
+    }
+
+    /// 012 (R-19): marks a session whose working copy or branch is gone (outside Fallow, at
+    /// any time: fourth review, 7); it can only be closed then.
+    pub(super) fn check_gone(&mut self, id: &str) {
+        let Some(c) = self.convs.get(id) else {
+            return;
+        };
+        let Some(s) = c.state.solo.as_ref() else {
+            return;
+        };
+        if s.closed.is_some() || s.creating.is_some() || c.gone.is_some() {
+            return;
+        }
+        let repo = self.store.get(&c.state.project).map(|p| p.path.clone());
+        let why = match repo {
+            None => Some("the project is gone".to_string()),
+            Some(_) if !s.worktree.join(".git").is_file() => {
+                Some("the session's working copy is gone".to_string())
+            }
+            Some(repo) if !git::rev_exists(&repo, &format!("refs/heads/{}", s.branch)) => {
+                Some(format!("the session's branch {} is gone", s.branch))
+            }
+            Some(_) => None,
+        };
+        if let (Some(why), Some(c)) = (why, self.convs.get_mut(id)) {
+            c.gone = Some(why);
+            c.ticks += 1;
+        }
+    }
+
     /// 012 (FR-008): "Ask for commands" or "until I switch back" (in memory only).
     pub fn set_solo_mode(&mut self, conv: &str, mode: &str) -> Result<Value, String> {
         let c = self.conv_mut(conv)?;
@@ -796,6 +1065,14 @@ impl Studio {
             "until_switch" => true,
             other => return Err(format!("no mode {other:?}: ask or until_switch")),
         };
+        // Never the mode after a restart (FR-008): only a mark that it was on, to say so.
+        let mark = c.dir.join("until_switch");
+        if c.allow_until_switch {
+            let _ = std::fs::write(&mark, "");
+        } else {
+            let _ = std::fs::remove_file(&mark);
+        }
+        c.mode_reset = false;
         c.tick();
         Ok(json!({}))
     }
@@ -903,6 +1180,8 @@ impl Studio {
             })),
             "queue": s.queue,
             "slot_wait": c.slot_wait,
+            "gone": c.gone,
+            "mode_reset": c.mode_reset,
             "gates": { "label": s.gates_label(&head, declared) },
             "suggestions": s.suggestions.iter().map(|(n, t, b)| json!({"n": n, "title": t, "brief": b})).collect::<Vec<_>>(),
             "features": s.features.iter().map(|(f, t, cv)| json!({"feature": f, "title": t, "conversation": cv})).collect::<Vec<_>>(),
@@ -912,13 +1191,65 @@ impl Studio {
     }
 }
 
+/// The files a session changed since its base, its uncommitted ones included (FR-002).
+fn changed_count(s: &crate::conversation::solo::Solo) -> usize {
+    // Without its link git would read a repository around the folder (fifth review, 4).
+    if !s.worktree.join(".git").is_file() {
+        return 0;
+    }
+    let base = s.base().mark;
+    let mut files: std::collections::BTreeSet<String> =
+        git::files_between_z(&s.worktree, &base, "HEAD")
+            .unwrap_or_default()
+            .into_iter()
+            .collect();
+    for f in git::session_changes(&s.worktree).unwrap_or_default() {
+        files.insert(f);
+    }
+    files.len()
+}
+
+/// The turns' process records in a session's folder (`turn-<n>.pid`, R-19).
+fn pid_files(dir: &Path) -> Vec<PathBuf> {
+    std::fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.starts_with("turn") && n.ends_with(".pid"))
+        })
+        .collect()
+}
+
+/// How many bytes a folder holds, for "how much its sessions' records hold" (FR-025).
+fn dir_size(dir: &Path) -> u64 {
+    let mut total = 0;
+    for e in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+        let Ok(m) = e.metadata() else {
+            continue;
+        };
+        total += if m.is_dir() {
+            dir_size(&e.path())
+        } else {
+            m.len()
+        };
+    }
+    total
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn a_branch_slug_comes_from_the_first_words() {
-        assert_eq!(slug("Fix the Sunday bug, please now!"), "fix-the-sunday-bug-please");
+        assert_eq!(
+            slug("Fix the Sunday bug, please now!"),
+            "fix-the-sunday-bug-please"
+        );
         assert_eq!(slug("¿?"), "session");
         assert_eq!(name_of("first line\nsecond"), "first line");
     }

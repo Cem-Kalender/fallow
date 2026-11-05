@@ -86,6 +86,40 @@ pub fn changes_all(dir: &Path) -> Result<Vec<String>, String> {
     )
 }
 
+/// 012 (FR-002): the paths a session's working copy changed, read while its assistant may be at
+/// work: no optional locks (its own git commands never meet Fallow's `index.lock`), no
+/// fsmonitor (a program its config names), names unquoted, a rename as its new name.
+pub fn session_changes(dir: &Path) -> Result<Vec<String>, String> {
+    let out = git(
+        dir,
+        &[
+            "--no-optional-locks",
+            "-c",
+            "core.quotePath=false",
+            "-c",
+            "core.fsmonitor=false",
+            "status",
+            "--porcelain=v1",
+            "-z",
+            "--untracked-files=all",
+        ],
+    )?;
+    let mut files = Vec::new();
+    let mut parts = out.split('\0');
+    while let Some(e) = parts.next() {
+        if e.len() < 4 {
+            continue;
+        }
+        files.push(e[3..].to_string());
+        // A rename or copy, in the index or in the working tree: its old name follows.
+        let b = e.as_bytes();
+        if matches!(b[0], b'R' | b'C') || matches!(b[1], b'R' | b'C') {
+            let _ = parts.next();
+        }
+    }
+    Ok(files)
+}
+
 /// Commits in `to` that are not in `from` (`rev-list from..to`).
 pub fn commits_between(dir: &Path, from: &str, to: &str) -> Result<Vec<String>, String> {
     Ok(git(dir, &["rev-list", &format!("{from}..{to}")])?
@@ -133,6 +167,18 @@ pub fn files_between(dir: &Path, from: &str, to: &str) -> Result<Vec<String>, St
         ],
     )?
     .lines()
+    .map(str::to_string)
+    .collect())
+}
+
+/// `files_between`, every name as it is (`-z`: never quoted), to match `session_changes`.
+pub fn files_between_z(dir: &Path, from: &str, to: &str) -> Result<Vec<String>, String> {
+    Ok(git(
+        dir,
+        &["diff", "--name-only", "-z", &format!("{from}..{to}")],
+    )?
+    .split('\0')
+    .filter(|s| !s.is_empty())
     .map(str::to_string)
     .collect())
 }
@@ -1568,7 +1614,12 @@ pub fn worktree_add_new(repo: &Path, dir: &Path, branch: &str, start: &str) -> R
         return Err(format!("the branch {branch} exists already"));
     }
     let d = dir.display().to_string();
-    git_nohooks(repo, &["worktree", "add", "-q", "-b", branch, &d, start], &[]).map(|_| ())
+    git_nohooks(
+        repo,
+        &["worktree", "add", "-q", "-b", branch, &d, start],
+        &[],
+    )
+    .map(|_| ())
 }
 
 /// Renames a branch, without hooks (a session's branch named after its first message).
@@ -1603,7 +1654,15 @@ pub fn snapshot(wt: &Path, branch: &str, message: &str) -> Result<Option<String>
     }
     let mut args: Vec<&str> = author_args(wt);
     args.extend(["-c", "commit.gpgSign=false"]);
-    args.extend(["commit-tree", &tree, "-p", &old, "--no-gpg-sign", "-m", message]);
+    args.extend([
+        "commit-tree",
+        &tree,
+        "-p",
+        &old,
+        "--no-gpg-sign",
+        "-m",
+        message,
+    ]);
     let new = git_nohooks(wt, &args, &[])?.trim().to_string();
     let r = format!("refs/heads/{branch}");
     git_nohooks(wt, &["update-ref", &r, &new, &old], &[])?;
@@ -1645,10 +1704,12 @@ pub fn ref_snapshot(repo: &Path) -> Result<std::collections::BTreeMap<String, St
 
 /// The engineer's folder's status lines, read without taking its index lock (R-2).
 pub fn folder_status(dir: &Path) -> Result<Vec<String>, String> {
-    Ok(git(dir, &["--no-optional-locks", "status", "--porcelain=v1"])?
-        .lines()
-        .map(str::to_string)
-        .collect())
+    Ok(
+        git(dir, &["--no-optional-locks", "status", "--porcelain=v1"])?
+            .lines()
+            .map(str::to_string)
+            .collect(),
+    )
 }
 
 /// The blob a file's content would be (`hash-object`, nothing written), or `None` when it is

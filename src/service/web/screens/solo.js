@@ -16,24 +16,49 @@
     return c;
   }
 
-  function head(s) {
+  // The dropdown's button (FR-002): the open session's name; clicking it only opens the list.
+  // `open`: whether the list is open, so a redraw of the head keeps saying so.
+  const menuBtn = (label, open) => h`<button class="linkish b solo-menu-btn" data-act="solo-menu" aria-haspopup="menu" aria-expanded="${open ? "true" : "false"}" aria-controls="solo-menu" title="Your sessions">${label} <span aria-hidden="true">▾</span></button>`;
+
+  function head(s, open) {
     const x = s && s.session;
     if (!x) {
-      return h`<div class="chat-head"><div class="avatar" aria-hidden="true">A</div><div><b>New session</b> <span class="small muted">· your first message makes its own copy and branch of the project</span></div></div>`;
+      return h`<div class="chat-head"><div class="avatar" aria-hidden="true">A</div><div>${menuBtn("New session", open)} <span class="small muted">· your first message makes its own copy and branch of the project</span></div></div>`;
     }
     const start = x.start.branch ? `${x.start.branch} at ${x.start.commit.slice(0, 7)}` : `the commit ${x.start.commit.slice(0, 7)} (no branch)`;
     return h`<div class="chat-head"><div class="avatar" aria-hidden="true">A</div><div>
-      <b>${x.name || "Session"}</b>
+      ${menuBtn(x.name || "Session", open)} <button class="linkish tiny muted" data-act="solo-rename" title="Rename this session">rename</button>
       <div class="small muted">branch <span class="mono">${x.branch}</span> · from ${start} · web ${x.web.on ? "on" : "off"}</div>
     </div><span class="grow"></span>
     <button class="btn btn2 xs" data-act="solo-editor" title="Open the session's working copy in your editor">Open in my editor</button>
     <button class="btn btn2 xs" data-act="solo-close" disabled title="Closing a session comes with US6">Close session</button></div>`;
   }
 
+  // The list of the project's sessions (FR-002): the open one ticked and on top, a dot on those
+  // at work, their changed files, "+ New session"; closed ones and earlier conversations below.
+  function menu(list, current) {
+    const open = (list && list.open) || [];
+    const closed = (list && list.closed) || [];
+    const earlier = (list && list.earlier) || [];
+    return h`<div class="solo-menu card" id="solo-menu" role="menu" aria-label="Sessions">
+      ${open.map((i) => h`<button class="solo-item${i.id === current ? " on" : ""}" role="menuitem" data-act="solo-pick" data-id="${i.id}">
+        <span class="tick" aria-hidden="true">${i.id === current ? "✓" : ""}</span>
+        <span class="grow">${i.name || "Session"}${i.gone ? h` <span class="tiny muted">· gone</span>` : ""}</span>
+        ${i.busy ? h`<span class="dot" title="The assistant is working" aria-label="working"></span>` : ""}
+        <span class="tiny muted">${i.changes} change${i.changes === 1 ? "" : "s"}</span></button>`)}
+      <button class="solo-item" role="menuitem" data-act="solo-new"><span class="tick" aria-hidden="true">+</span><span class="grow">New session</span></button>
+      <div class="sep" role="separator"></div>
+      <button class="solo-item muted" role="menuitem" disabled title="Closing sessions comes with US6">Closed sessions… (${closed.length})</button>
+      <button class="solo-item muted" role="menuitem" disabled title="Comes with US7">Earlier conversations with the lead… (${earlier.length})</button>
+    </div>`;
+  }
+
   function notices(s) {
     const x = s && s.session;
     if (!x) return raw("");
     const out = [];
+    if (x.gone) out.push(h`<div class="notice" role="alert">${x.gone}. The session can only be closed; its conversation stays readable.</div>`);
+    if (x.mode_reset) out.push(h`<div class="notice">Fallow restarted: "Until I switch back" is off, and commands are asked again.</div>`);
     if (x.start.dirty) out.push(h`<div class="notice">Your project folder had uncommitted changes when this session started: they are not in the session's copy.</div>`);
     if (x.lfs) out.push(h`<div class="notice">This project uses Git LFS: the session's copy holds LFS pointers, not the files. Ask the assistant to run <span class="mono">git lfs pull</span> if it needs them.</div>`);
     if (x.pending_commit) out.push(h`<div class="notice" role="alert">Fallow could not commit turn ${x.pending_commit.n}: ${x.pending_commit.error || "unknown"}. The next turn waits.</div>`);
@@ -138,12 +163,18 @@
     } catch (e) { alertLine(e.message); }
   }
 
+  async function rename(s) {
+    const name = await Fallow.confirm({ title: "Rename this session", text: "Its branch keeps its name.", ok: "Rename", input: { label: "Name", value: (s.session && s.session.name) || "" } });
+    if (!name) return;
+    try { await post(`/api/sessions/${encodeURIComponent(s.id)}/rename`, { name }); } catch (e) { alertLine(e.message); }
+  }
+
   async function setMode(s) {
     const now = (s.session && s.session.mode) || "ask";
     const next = now === "ask" ? "until_switch" : "ask";
     try { await post(`/api/sessions/${encodeURIComponent(s.id)}/mode`, { mode: next }); } catch (e) { alertLine(e.message); }
   }
 
-  Fallow.solo = { asConv, head, notices, list, composer, say, setMode, stopTurn, openEditor };
+  Fallow.solo = { asConv, head, menu, notices, list, composer, say, setMode, stopTurn, openEditor, rename };
   void esc;
 })();

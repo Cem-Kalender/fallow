@@ -265,7 +265,7 @@ restart.
 
 **Independent Test**: quickstart Q2.
 
-- [ ] T019 [US2] Write `tests/us12_many.rs` (Q2). It fails first.
+- [X] T019 [US2] Write `tests/us12_many.rs` (Q2). It fails first.
   - Two sessions edit line 3 of `a.txt` at the same time, and each branch holds only its own change (SC-005).
   - The list shows both, with their working marks and changed-file counts.
   - A rename shows in the list.
@@ -274,18 +274,18 @@ restart.
   - A half-done `session_creating` is reconciled.
   - With `max_parallel = 1`, a second session's message waits with "waiting for a free agent slot" and is sent when the first turn ends (FR-027; analyze C4).
   - A session's branch deleted outside Fallow: the session is marked `gone` and can only be closed (analyze C12).
-- [ ] T020 [US2] Add the list and renaming.
+- [X] T020 [US2] Add the list and renaming.
   - `GET /api/projects/<p>/sessions` (open, closed and earlier conversations, with `records_bytes`) and `POST /api/sessions/<s>/rename`, in `src/service/http.rs` and `src/studio/solo.rs`.
   - Each item carries its name, a working mark and its changed-file count (`git diff --name-only base.mark HEAD`, plus uncommitted changes).
   - `last_session` is updated on open.
-- [ ] T021 [US2] Handle restarts, in `src/studio/solo.rs` and `Studio::load` (R-19).
-  - `turn.pid` holds the root pid and its start time. Load kills the tree first, checking the start time; on Windows it walks the tree with Toolhelp.
+- [X] T021 [US2] Handle restarts, in `src/studio/solo.rs` and `Studio::load` (R-19).
+  - `turn.pid` holds the root pid and its start time. Load kills the tree first, checking the start time. On Unix this is the process group, survivors of an ended leader included, and load waits until none is left. On Windows the job object (`KILL_ON_JOB_CLOSE`) has already ended the tree with Fallow, so no Toolhelp walk is needed (R-19).
   - Then the cut turn is snapshotted.
   - Pending approvals are cancelled (`why: "Fallow restarted"`).
   - The half-done intents are reconciled through one hook point, `solo::reconcile`. This task handles `session_creating`; T030, T049 and T040 each add their own (`undo_started`, `close_started`, `feature_starting`) (analyze F6).
   - "Until I switch back" is off after a restart, and the session says so when it was on.
   - A session whose working copy or branch is missing is marked `gone`.
-- [ ] T022 [US2] Build the dropdown in `screens/solo.js` (FR-002).
+- [X] T022 [US2] Build the dropdown in `screens/solo.js` (FR-002).
   - Clicking it only opens the list.
   - The open session is ticked and on top, with working dots, counts and "+ New session".
   - "Closed sessions…" and "Earlier conversations with the lead…" sit at the bottom.

@@ -66,6 +66,13 @@ pub struct Conv {
     pub queue_go: bool,
     /// 012 (FR-027): why the next message waits (no agent slot free).
     pub slot_wait: Option<String>,
+    /// 012 (R-19): the session's working copy or branch is gone: it can only be closed.
+    pub gone: Option<String>,
+    /// 012 (FR-008): "until I switch back" was on when Fallow stopped; it is off now.
+    pub mode_reset: bool,
+    /// 012 (R-19): set when the turn ends, so the thread recording its process group never
+    /// leaves `turn-<n>.pid` behind it (fourth review, 6).
+    pub turn_ended: Arc<AtomicBool>,
 }
 
 impl Conv {
@@ -87,6 +94,9 @@ impl Conv {
             queue_hold: false,
             queue_go: false,
             slot_wait: None,
+            gone: None,
+            mode_reset: false,
+            turn_ended: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -145,7 +155,11 @@ impl Conv {
         );
         v["pending_approval"] = match &self.pending {
             Some(p) => {
-                let command = if p.command.is_empty() { &p.tool } else { &p.command };
+                let command = if p.command.is_empty() {
+                    &p.tool
+                } else {
+                    &p.command
+                };
                 // What "always in this project" could allow, or why it cannot (008 T040).
                 let (always, why) = match crate::project::commands::always_prefix(command) {
                     Ok(pre) => (Some(pre), None),

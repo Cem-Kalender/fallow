@@ -105,6 +105,12 @@ impl Group {
         ok != 0 && result != 0
     }
 
+    /// 012 (research R-19): nothing to record: the job is created with `KILL_ON_JOB_CLOSE`, so
+    /// its processes end with Fallow and nothing of a turn runs on after a crash.
+    pub fn record(&self, _path: &std::path::Path) -> bool {
+        true
+    }
+
     /// Forced stop: ends every process in the job.
     pub fn kill(&self) {
         // SAFETY: `self.job` is a valid job handle.
@@ -117,4 +123,9 @@ impl Drop for Group {
         // SAFETY: closing our handle; KILL_ON_JOB_CLOSE ends the processes in it.
         unsafe { CloseHandle(self.job) };
     }
+}
+
+/// 012: see `Group::record`; the job already ended the processes.
+pub fn kill_recorded(path: &std::path::Path) {
+    let _ = std::fs::remove_file(path);
 }

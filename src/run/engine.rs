@@ -3931,6 +3931,9 @@ impl Engine {
                 text,
             } => self.studio.new_session(&self.ctx, &project, agent, &text, Vec::new()),
             Req::SessionMode { session, mode } => self.studio.set_solo_mode(&session, &mode),
+            Req::Sessions { project } => self.studio.list_sessions(&project),
+            Req::RenameSession { session, name } => self.studio.rename_session(&session, &name),
+            Req::OpenSession { session } => self.studio.open_session(&session),
             Req::Commands { conv } => self.studio.commands(&conv),
             Req::SetMode { conv, mode } => self.studio.set_mode(&conv, mode),
             Req::Approve {

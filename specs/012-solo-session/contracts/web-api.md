@@ -21,6 +21,7 @@ same:
 | `POST /api/sessions/<s>/mode` | `{mode: "ask" \| "until_switch"}` | `{}`. `ask` is `Mode::Ask`; `until_switch` is Ask plus the judge, in memory only (R-6) |
 | `POST /api/sessions/<s>/approve` | `{id, answer: once \| always \| deny}` | `{}`. `always` is refused (409) unless the command's prefix is `prefix_safe` (R-6): a prefix that could cover a command asked per command is never added |
 | `POST /api/sessions/<s>/rename` | `{name}` | `{}` |
+| `POST /api/sessions/<s>/open` | | `{}`: the session the engineer opened from the dropdown, shown first next time (`last_session`); 409 when it is closed |
 | `POST /api/sessions/<s>/web` | `{on}` | `{}`; 409 "This assistant's runtime cannot switch web access off" (FR-009) |
 | `GET /api/sessions/<s>/undo` | `turn` | `{turns: [n], shared: [[n, m]], edits: [{commit, files}], elsewhere: [GitChange], base_moves: bool}`: what the confirmation names (R-5) |
 | `POST /api/sessions/<s>/undo` | `{turn, confirmed: true}` | `{head}`. 409 while a turn works, a commit is pending without a choice, or `confirmed` is missing when the undo goes back more than one turn, past the engineer's edits, or over a turn that merged or pushed elsewhere |

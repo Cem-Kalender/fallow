@@ -148,9 +148,14 @@
     const s = state.session;
     const set = (id, html) => {
       const el = document.getElementById(id);
-      if (el && el.innerHTML !== html) el.innerHTML = html;
+      if (!el || el.innerHTML === html) return;
+      const a = document.activeElement;
+      const act = a && el.contains(a) && a.dataset ? a.dataset.act : null;
+      el.innerHTML = html;
+      const back = act && el.querySelector(`[data-act="${act}"]`);
+      if (back) back.focus();
     };
-    set("solo-head", Fallow.solo.head(s).s);
+    set("solo-head", Fallow.solo.head(s, !!document.getElementById("solo-menu")).s);
     set("solo-notices", h`${Fallow.solo.notices(s)}`.s);
     set("chat-list", h`${Fallow.solo.list(s)}`.s);
     const comp = document.getElementById("solo-composer");
@@ -271,9 +276,9 @@
         s = await get(`/api/projects/${encodeURIComponent(id)}`);
         if (!Fallow.here(app)) return;
       }
-      // 012 (FR-001): the session open last, or a draft.
+      // 012 (FR-001): the session open last, or a draft ("+ New session" keeps the draft).
       s.session = null;
-      if (s.session_last) {
+      if (s.session_last && !(draftFor === id)) {
         try { s.session = await get(`/api/sessions/${encodeURIComponent(s.session_last)}`); } catch (_) { s.session = null; }
         if (!Fallow.here(app)) return;
       }
@@ -398,6 +403,41 @@
     if (card) mark(card, document.activeElement === document.body || !document.activeElement);
   }
 
+  // 012: the session list closes on Escape or a click outside; the arrows move through it.
+  let menuLoading = false;
+  document.addEventListener("focusout", (ev) => {
+    const m = document.getElementById("solo-menu");
+    const to = ev.relatedTarget;
+    if (!m || !m.contains(ev.target) || !to || m.contains(to)) return;
+    if (to.closest && to.closest("[data-act=solo-menu]")) return;
+    closeMenu(false);
+  });
+  function closeMenu(focusButton) {
+    const m = document.getElementById("solo-menu");
+    if (m) m.remove();
+    const b = document.querySelector("[data-act=solo-menu]");
+    if (b) { b.setAttribute("aria-expanded", "false"); if (focusButton) b.focus(); }
+  }
+  document.addEventListener("keydown", (ev) => {
+    const m = document.getElementById("solo-menu");
+    if (!m) return;
+    if (ev.key === "Escape") { ev.preventDefault(); ev.stopPropagation(); closeMenu(true); return; }
+    if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(ev.key) || !m.contains(ev.target)) return;
+    const items = [...m.querySelectorAll(".solo-item:not([disabled])")];
+    if (!items.length) return;
+    ev.preventDefault();
+    const i = items.indexOf(document.activeElement);
+    const next = ev.key === "Home" ? 0 : ev.key === "End" ? items.length - 1
+      : ev.key === "ArrowDown" ? (i + 1) % items.length : (i - 1 + items.length) % items.length;
+    items[next].focus();
+  }, true);
+  document.addEventListener("click", (ev) => {
+    const m = document.getElementById("solo-menu");
+    const t = ev.target;
+    if (!m || !t || !t.isConnected || !t.closest) return;
+    if (m.contains(t) || t.closest("[data-act=solo-menu]")) return;
+    closeMenu(false);
+  });
   document.addEventListener("keydown", (ev) => {
     if (ev.key !== "Escape" || !side) return;
     const t = ev.target;
@@ -477,6 +517,7 @@
 
   // 012: the page follows the session open (and the next one a first message makes).
   let listening = null;
+  let draftFor = null; // the project whose "+ New session" draft is open
   function listenSession(app, project) {
     const id = state && state.id === project && state.session && state.session.id;
     if (listening === id) return;
@@ -521,6 +562,8 @@
       if (stop) stop();
       stop = null;
       listening = null;
+      draftFor = null;
+      closeMenu(false);
       // The Files tab comes back closed: Features, and the chat, as the page opens.
       if (fc) fc.stop();
       fc = null;
@@ -572,8 +615,43 @@
         // 012: the session's messages and mode.
         if (name === "solo-say" || name === "say") {
           const id = await Fallow.solo.say(state.id, state.session);
-          if (id) await again();
+          if (id) { draftFor = null; await again(); }
           return;
+        }
+        // 012 (FR-002): the session dropdown.
+        if (name === "solo-menu") {
+          if (document.getElementById("solo-menu")) return closeMenu(false);
+          if (menuLoading) return;
+          menuLoading = true;
+          const pid = state.id;
+          let list;
+          try { list = await get(`/api/projects/${encodeURIComponent(pid)}/sessions`); } finally { menuLoading = false; }
+          if (document.getElementById("solo-menu") || !state || state.id !== pid) return;
+
+          // Beside the head, not in it: the head is drawn again on every update.
+          const headEl = document.getElementById("solo-head");
+          if (!headEl) return; // the engineer left the page while the list loaded
+          const btn = document.querySelector("[data-act=solo-menu]");
+          if (btn) btn.setAttribute("aria-expanded", "true");
+          headEl.insertAdjacentHTML("afterend", Fallow.solo.menu(list, state.session && state.session.id).s);
+          const first = document.querySelector("#solo-menu .solo-item");
+          if (first) first.focus();
+          return;
+        }
+        if (name === "solo-pick") {
+          closeMenu(false);
+          draftFor = null;
+          await post(`/api/sessions/${encodeURIComponent(el.dataset.id)}/open`, {});
+          return again();
+        }
+        if (name === "solo-new") {
+          closeMenu(false);
+          draftFor = state.id;
+          return again();
+        }
+        if (name === "solo-rename") {
+          if (state.session) await Fallow.solo.rename(state.session);
+          return again();
         }
         if (name === "solo-mode") {
           if (state.session) await Fallow.solo.setMode(state.session);

@@ -696,3 +696,15 @@ fieldset.field.along legend { padding: 0; margin-bottom: 4px; }
 
 /* 010: the project's remote; its longer states wrap on a narrow screen. */
 #remote-pill { white-space: normal; }
+
+/* 012: the session dropdown (FR-002). */
+.solo-menu-btn { font-size: 15px; color: var(--ink); text-decoration: none; }
+.solo-menu { position: absolute; z-index: 20; margin: 0 16px; min-width: 280px; max-width: 420px; padding: 6px; display: flex; flex-direction: column; gap: 2px; box-shadow: 0 8px 24px rgba(0, 0, 0, .12); }
+.chat-col { position: relative; }
+.solo-item { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border: 0; background: none; border-radius: 6px; text-align: left; font: inherit; color: var(--ink); cursor: pointer; }
+.solo-item:hover, .solo-item:focus-visible { background: var(--panel-2, #f4f4f1); }
+.solo-item.on { font-weight: 600; }
+.solo-item[disabled] { cursor: default; opacity: .7; }
+.solo-item .tick { width: 14px; text-align: center; }
+.solo-item .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent, #2f52c9); }
+.you.waiting { opacity: .65; border-style: dashed; }

@@ -120,6 +120,12 @@ pub fn run(
         Ok(g) => g,
         Err(e) => return done(Outcome::NotStarted { why: e.to_string() }, BTreeSet::new()),
     };
+    // Its own process group, as the agents': a stop ends what the gate started too.
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
     let mut child = match cmd.spawn() {
         Ok(c) => c,
         Err(e) => {

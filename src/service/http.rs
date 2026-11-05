@@ -409,6 +409,19 @@ fn studio_route(
             Err(e) => Some(Err(e)),
         },
         ("GET", ["api", "sessions", c]) => r(Req::Conversation { id: c.to_string() }),
+        ("GET", ["api", "projects", p, "sessions"]) => r(Req::Sessions {
+            project: p.to_string(),
+        }),
+        ("POST", ["api", "sessions", c, "rename"]) => match need("name") {
+            Ok(n) => r(Req::RenameSession {
+                session: c.to_string(),
+                name: n,
+            }),
+            Err(e) => Some(Err(e)),
+        },
+        ("POST", ["api", "sessions", c, "open"]) => r(Req::OpenSession {
+            session: c.to_string(),
+        }),
         ("POST", ["api", "sessions", c, "say"]) => match need("text") {
             Ok(t) => r(Req::Say {
                 conv: c.to_string(),

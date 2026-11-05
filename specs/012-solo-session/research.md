@@ -937,11 +937,20 @@ Tests that built plain-folder projects (`us1_projects.rs`) are changed to the `N
 **Decision**: `Studio::load` already closes turns that a crash cut off. For a session it also,
 in this order (review 11):
 - stops the turn's process if it is still alive, *before* anything is snapshotted, so a running
-  agent cannot write after the snapshot. The turn's root pid and its start time are kept in
-  `conversations/<id>/turn.pid`. The process tree is killed only when a process with that pid
-  still has that start time, so a reused pid is never killed. On Windows the job object cannot be
-  reopened after a restart, so the tree is walked from the root pid
-  (`CreateToolhelp32Snapshot`'s parent pids, with start times checked);
+  agent cannot write after the snapshot. On Unix `conversations/<id>/turn-<n>.pid` holds the
+  turn's process group (its leader is the root) and its leader's start time. Once the leader has
+  ended, the members still in the group are the turn's own, because POSIX gives no new process
+  or group that id while any member is left, so they are killed too. Load waits until none is
+  left, at most five seconds. When Fallow is interrupted (Ctrl-C), terminated or hung up, it
+  stops its agents' groups itself. On Windows nothing is left to kill (Phase 4 review): every turn runs in a job object
+  made with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` and no breakaway, and its handle is never
+  inherited, so Windows ends the whole tree when Fallow's process ends, crash included. The
+  Toolhelp walk planned here is not needed. Known limits (Phase 4 review, kept): on Windows a
+  process the agent starts in the milliseconds before it is put in the job, or every process
+  when that fails, is outside the job (the agent is not started suspended; this is as old as
+  the job objects). On Unix a process that leaves the group (`setsid`, a detached spawn) is not
+  killed. Either can write after the cut turn's snapshot; its changes show as the engineer's
+  edits at the next turn;
 - then snapshots the working copy's changes as the cut turn's commit (`(cut short)`) and writes
   `TurnFinished{cut: true}`;
 - finishes the intents left half-done: `SessionCreating` (R-2), `UndoStarted` (R-5),

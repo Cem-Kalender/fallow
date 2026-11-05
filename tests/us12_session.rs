@@ -40,7 +40,11 @@ fn a_session_commits_each_turn_on_its_own_branch_and_never_touches_the_folder() 
     let root = scratch("us12-session");
     let repo = repo_with_markers(&root);
     std::fs::write(repo.join("picker.js"), "const firstDay = 0;\n").unwrap();
-    std::fs::write(repo.join(".gitattributes"), "*.psd filter=lfs diff=lfs merge=lfs -text\n").unwrap();
+    std::fs::write(
+        repo.join(".gitattributes"),
+        "*.psd filter=lfs diff=lfs merge=lfs -text\n",
+    )
+    .unwrap();
     git(&repo, &["add", "."]);
     git(&repo, &["commit", "-q", "-m", "picker"]);
     let scenario = root.join("scenario.toml");
@@ -65,20 +69,37 @@ fn a_session_commits_each_turn_on_its_own_branch_and_never_touches_the_folder() 
     assert_eq!(sess["branch"], "fallow/solo/fix-the-sunday-bug", "{sess}");
     assert_eq!(sess["name"], "fix the Sunday bug");
     assert_eq!(sess["start"]["branch"], "main");
-    assert_eq!(sess["start"]["dirty"], true, "the folder's own change is not in it");
+    assert_eq!(
+        sess["start"]["dirty"], true,
+        "the folder's own change is not in it"
+    );
     assert_eq!(sess["lfs"], true);
     assert_eq!(v["turns"][0]["reply"], "Fixed: weeks start on Monday now.");
     let wt = std::path::PathBuf::from(sess["worktree"].as_str().unwrap());
-    assert!(!wt.join("notes.txt").exists(), "the engineer's uncommitted change is not in it");
+    assert!(
+        !wt.join("notes.txt").exists(),
+        "the engineer's uncommitted change is not in it"
+    );
     let log = git(&wt, &["log", "--format=%s", "main..HEAD"]);
     assert_eq!(log, format!("Fallow solo {s}, turn 1: fix the Sunday bug"));
     let commit = v["turns"][0]["commit"].as_str().unwrap().to_string();
     let raw = git(&wt, &["cat-file", "-p", &commit]);
     assert!(!raw.contains("gpgsig"), "not signed: {raw}");
-    assert!(hooks_ran(&root).is_empty(), "no hook ran: {:?}", hooks_ran(&root));
-    assert_eq!(std::fs::read_to_string(wt.join("picker.js")).unwrap(), "const firstDay = 1;\n");
     assert!(
-        v["activity"].as_array().unwrap().iter().any(|a| a["kind"] == "write" || a["kind"] == "edit"),
+        hooks_ran(&root).is_empty(),
+        "no hook ran: {:?}",
+        hooks_ran(&root)
+    );
+    assert_eq!(
+        std::fs::read_to_string(wt.join("picker.js")).unwrap(),
+        "const firstDay = 1;\n"
+    );
+    assert!(
+        v["activity"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|a| a["kind"] == "write" || a["kind"] == "edit"),
         "the activity shows the edit: {}",
         v["activity"]
     );
@@ -91,7 +112,9 @@ fn a_session_commits_each_turn_on_its_own_branch_and_never_touches_the_folder() 
 
     // A stopped turn: what it changed is committed, marked as cut short.
     say_solo(tx, &s, "slow change");
-    wait_conv(tx, &s, "the slow turn writing", |_| wt.join("slow.txt").exists());
+    wait_conv(tx, &s, "the slow turn writing", |_| {
+        wt.join("slow.txt").exists()
+    });
     sreq(tx, Req::Cancel { conv: s.clone() }).unwrap();
     let v = wait_turn(tx, &s, 3);
     assert_eq!(v["turns"][2]["cut"], true, "{}", v["turns"][2]);
@@ -139,7 +162,11 @@ output = { reply = "I committed a.txt myself." }
     let s = start_session(tx, &project, "make a");
     let v = wait_turn(tx, &s, 1);
     assert_eq!(v["turns"][0]["reply"], "I committed a.txt myself.", "{v}");
-    assert!(v["session"]["start"]["branch"].is_null(), "started from a commit: {}", v["session"]);
+    assert!(
+        v["session"]["start"]["branch"].is_null(),
+        "started from a commit: {}",
+        v["session"]
+    );
     let wt = std::path::PathBuf::from(v["session"]["worktree"].as_str().unwrap());
     // The assistant's own commit stays; Fallow had nothing left to commit.
     assert_eq!(git(&wt, &["log", "-1", "--format=%s"]), "assistant: a");
@@ -197,22 +224,52 @@ output = { reply = "done" }
     git(&repo, &["add", "."]);
     git(&repo, &["commit", "-q", "-m", "spec kit"]);
     let s = start_session(tx, &project, "run the tests then tidy up");
-    let w = wait_conv(tx, &s, "a command waiting", |v| !v["pending_approval"].is_null());
-    assert_eq!(w["pending_approval"]["command"], "git branch -D main", "{w}");
+    let w = wait_conv(tx, &s, "a command waiting", |v| {
+        !v["pending_approval"].is_null()
+    });
+    assert_eq!(
+        w["pending_approval"]["command"], "git branch -D main",
+        "{w}"
+    );
     let asked = &w["turns"][0]["approvals"][0];
-    assert_eq!(asked["command"], "git branch -D main", "the gate was not asked: {}", w["turns"][0]);
+    assert_eq!(
+        asked["command"], "git branch -D main",
+        "the gate was not asked: {}",
+        w["turns"][0]
+    );
     let id = w["pending_approval"]["id"].as_str().unwrap().to_string();
     // "Always" is refused for a git prefix in a session (R-6).
     let refused = sreq(
         tx,
-        Req::Approve { conv: s.clone(), id: id.clone(), answer: ApprovalAnswer::Always, prefix: Some("git branch".into()) },
+        Req::Approve {
+            conv: s.clone(),
+            id: id.clone(),
+            answer: ApprovalAnswer::Always,
+            prefix: Some("git branch".into()),
+        },
     )
     .unwrap_err();
     assert!(!refused.is_empty());
-    sreq(tx, Req::Approve { conv: s.clone(), id, answer: ApprovalAnswer::Deny, prefix: None }).unwrap();
+    sreq(
+        tx,
+        Req::Approve {
+            conv: s.clone(),
+            id,
+            answer: ApprovalAnswer::Deny,
+            prefix: None,
+        },
+    )
+    .unwrap();
     let v = wait_turn(tx, &s, 1);
-    assert_eq!(v["turns"][0]["approvals"][0]["answer"], "deny", "{}", v["turns"][0]);
-    assert!(git(&repo, &["branch", "--list", "main"]).contains("main"), "main is still there");
+    assert_eq!(
+        v["turns"][0]["approvals"][0]["answer"], "deny",
+        "{}",
+        v["turns"][0]
+    );
+    assert!(
+        git(&repo, &["branch", "--list", "main"]).contains("main"),
+        "main is still there"
+    );
 }
 
 /// 012 T018: the page check's demo. Not a test: run it by hand with `FALLOW_VISUAL_ROOT=<empty
@@ -223,8 +280,12 @@ output = { reply = "done" }
 #[test]
 #[ignore]
 fn serve_the_012_demo() {
-    let root = std::path::PathBuf::from(std::env::var("FALLOW_VISUAL_ROOT").expect("FALLOW_VISUAL_ROOT"));
-    let secs: u64 = std::env::var("FALLOW_VISUAL_SECS").ok().and_then(|s| s.parse().ok()).unwrap_or(1800);
+    let root =
+        std::path::PathBuf::from(std::env::var("FALLOW_VISUAL_ROOT").expect("FALLOW_VISUAL_ROOT"));
+    let secs: u64 = std::env::var("FALLOW_VISUAL_SECS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(1800);
     std::fs::create_dir_all(&root).unwrap();
     let shop = repo_named(&root, "shop");
     let notes = repo_named(&root, "notes");
@@ -237,10 +298,16 @@ fn serve_the_012_demo() {
         r#"
 [[step]]
 kind = "assistant_turn"
-when = "Sunday"
+when = "wrong week on Sundays"
 say = "Looking at picker.js."
 files = [{ path = "picker.js", text = "const firstDay = 1; // weeks start on Monday\n" }]
 output = { reply = "Fixed: the picker counted weeks from Sunday. Weeks start on **Monday** now, in `picker.js`." }
+
+[[step]]
+kind = "assistant_turn"
+when = "Sunday test"
+files = [{ path = "picker_test.js", text = "test('sunday', () => {});\n" }]
+output = { reply = "Added a test." }
 
 [[step]]
 kind = "assistant_turn"
@@ -260,10 +327,20 @@ output = { reply = "Tidied up." }
         ids.push(v["project"].as_str().unwrap().to_string());
     }
     std::fs::write(shop.join("notes.txt"), "mine\n").unwrap();
-    let s = start_session(tx, &ids[0], "the date picker shows the wrong week on Sundays, fix it");
+    let s = start_session(
+        tx,
+        &ids[0],
+        "the date picker shows the wrong week on Sundays, fix it",
+    );
     wait_turn(tx, &s, 1);
+    // A second session, finished, for the dropdown.
+    let s2 = start_session(tx, &ids[0], "add a Sunday test for the picker");
+    wait_turn(tx, &s2, 1);
+    sreq(tx, Req::OpenSession { session: s.clone() }).unwrap();
     say_solo(tx, &s, "now tidy up the old branches");
-    wait_conv(tx, &s, "a command waiting", |v| !v["pending_approval"].is_null());
+    wait_conv(tx, &s, "a command waiting", |v| {
+        !v["pending_approval"].is_null()
+    });
     let web = fallow::service::http::Web::start(e.tx.clone(), "a".repeat(64)).unwrap();
     let url = format!("http://127.0.0.1:{}/?k={}", web.port, "a".repeat(64));
     std::fs::write(root.join("url.txt"), &url).unwrap();
@@ -283,7 +360,15 @@ fn the_projects_assistant_must_be_an_assistant() {
     let tx = &e.tx;
     let added = sreq(tx, Req::AddProject { path: repo.clone() }).unwrap();
     let project = added["project"].as_str().unwrap().to_string();
-    let patch = |v: serde_json::Value| sreq(tx, Req::PatchProject { id: project.clone(), patch: v });
+    let patch = |v: serde_json::Value| {
+        sreq(
+            tx,
+            Req::PatchProject {
+                id: project.clone(),
+                patch: v,
+            },
+        )
+    };
     let e = patch(serde_json::json!({ "assistant": "lead" })).unwrap_err();
     assert!(e.contains("lead is not an assistant"), "{e}");
     patch(serde_json::json!({ "assistant": "assistant" })).unwrap();
@@ -317,14 +402,21 @@ output = { reply = "never reached" }
         git(&repo, &["commit", "-q", "-m", "spec kit"]);
         s = start_session(tx, &project, "slow change");
         let v = wait_conv(tx, &s, "the turn writing", |v| {
-            v["session"]["worktree"].as_str().is_some_and(|w| std::path::Path::new(w).join("slow.txt").exists())
+            v["session"]["worktree"]
+                .as_str()
+                .is_some_and(|w| std::path::Path::new(w).join("slow.txt").exists())
         });
         wt = std::path::PathBuf::from(v["session"]["worktree"].as_str().unwrap());
         // Messages typed during the turn wait, in the order typed (FR-011).
         assert!(say_solo(tx, &s, "first after").get("queued").is_some());
         assert!(say_solo(tx, &s, "second after").get("queued").is_some());
         let v = sreq(tx, Req::Conversation { id: s.clone() }).unwrap();
-        let q: Vec<&str> = v["session"]["queue"].as_array().unwrap().iter().map(|w| w["text"].as_str().unwrap()).collect();
+        let q: Vec<&str> = v["session"]["queue"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|w| w["text"].as_str().unwrap())
+            .collect();
         assert_eq!(q, ["first after", "second after"]);
         // Stop, and Fallow goes down before the turn's end comes back.
         sreq(tx, Req::Cancel { conv: s.clone() }).unwrap();
@@ -335,10 +427,20 @@ output = { reply = "never reached" }
     let v = sreq(tx, Req::Conversation { id: s.clone() }).unwrap();
     let t = &v["turns"][0];
     assert_eq!(t["cut"], true, "{t}");
-    assert_eq!(t["withdrawn"], false, "a session's turn is never withdrawn: {t}");
+    assert_eq!(
+        t["withdrawn"], false,
+        "a session's turn is never withdrawn: {t}"
+    );
     assert!(git(&wt, &["log", "-1", "--format=%s"]).ends_with("(cut short)"));
-    assert!(git(&wt, &["show", "--name-only", "--format=", "HEAD"]).contains("slow.txt"), "the work is kept");
-    assert_eq!(v["session"]["queue"].as_array().unwrap().len(), 2, "after a restart the messages wait");
+    assert!(
+        git(&wt, &["show", "--name-only", "--format=", "HEAD"]).contains("slow.txt"),
+        "the work is kept"
+    );
+    assert_eq!(
+        v["session"]["queue"].as_array().unwrap().len(),
+        2,
+        "after a restart the messages wait"
+    );
 }
 
 #[test]
@@ -383,11 +485,21 @@ output = { reply = "second done" }
     // A stopped turn holds the waiting message (R-9)…
     std::thread::sleep(std::time::Duration::from_millis(2500));
     let v = sreq(tx, Req::Conversation { id: s.clone() }).unwrap();
-    assert_eq!(v["turns"].as_array().unwrap().len(), 1, "held after the stop: {}", v["session"]["queue"]);
+    assert_eq!(
+        v["turns"].as_array().unwrap().len(),
+        1,
+        "held after the stop: {}",
+        v["session"]["queue"]
+    );
     // …until the engineer says something: the waiting one goes first, this one after it.
     say_solo(tx, &s, "second after");
     let v = wait_turn(tx, &s, 3);
-    let said: Vec<&str> = v["turns"].as_array().unwrap().iter().map(|t| t["said"].as_str().unwrap()).collect();
+    let said: Vec<&str> = v["turns"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["said"].as_str().unwrap())
+        .collect();
     assert_eq!(said, ["slow change", "first after", "second after"]);
     assert_eq!(v["turns"][2]["reply"], "second done");
     assert!(v["session"]["queue"].as_array().unwrap().is_empty());

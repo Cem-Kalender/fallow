@@ -697,6 +697,13 @@ pub fn run(agent: &Agent, c: &Call, sink: &mut dyn FnMut(Event), stop: &AtomicBo
             // CREATE_NO_WINDOW: no console window for the service's children.
             cmd.creation_flags(0x0800_0000);
         }
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            // Its own process group, whose id is its pid: what `Group` stops, now and after a
+            // restart (R-19; sixth review, 1: it was left in Fallow's group, so nothing was).
+            cmd.process_group(0);
+        }
         match cmd.spawn() {
             Ok(ch) => break ch,
             // Only a program not found (its folder there): any other error will not go away.

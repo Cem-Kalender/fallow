@@ -122,6 +122,17 @@ pub enum Req {
         session: String,
         mode: String,
     },
+    /// 012: the project's sessions for the dropdown (FR-002).
+    Sessions {
+        project: String,
+    },
+    RenameSession {
+        session: String,
+        name: String,
+    },
+    OpenSession {
+        session: String,
+    },
     /// Cancels the lead's running turn; the message is withdrawn (008 T047).
     Cancel {
         conv: String,
@@ -480,6 +491,8 @@ impl Studio {
                     .push(format!("conversation {id} could not be loaded: {err}")),
             }
         }
+        // 012: sessions made halfway, gone, or whose mode was reset (R-2, R-19).
+        s.solo_on_load();
         Ok(s)
     }
 
