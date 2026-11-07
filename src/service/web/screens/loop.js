@@ -65,7 +65,7 @@
       lines.push(h`<div class="notice"><b>${v.base_branch} moved since this loop was verified</b>: ${n} commit${n === 1 ? "" : "s"}${(t.conflicts || []).length ? h`, which conflict with this feature in <span class="mono">${t.conflicts.join(", ")}</span>` : ""}.
         ${(t.docs_changed || []).length ? h` It changed this feature's documents (<span class="mono">${t.docs_changed.join(", ")}</span>): lock again with them, or stop.` : h` The loop is brought up to date in its own working copy and verified again before anything is merged.`}
         ${offer.includes("bring_up_to_date") ? h` <button class="btn btn2 sm" data-act="update">Bring up to date</button>` : ""}${offer.includes("lock_again") ? h` <button class="btn btn2 sm" data-act="lock-again">Lock again</button>` : ""}</div>`);
-      lines.push(h`<ul class="small muted plain">${(t.commits || []).map((c) => h`<li><span class="mono tiny">${short(c.sha)}</span> ${c.subject} <span class="pill ${c.from ? "blue" : "grey"}">${c.from || "outside Fallow"}</span></li>`)}</ul>`);
+      lines.push(h`<ul class="small muted plain">${(t.commits || []).map((c) => h`<li><span class="mono tiny">${short(c.sha)}</span> ${c.subject} <span class="pill ${c.from_kind === "session" ? "purple" : c.from ? "blue" : "grey"}">${c.from_kind === "session" ? `from solo session ${c.from}` : c.from || "outside Fallow"}</span></li>`)}</ul>`);
     }
     if (u) {
       const step = (u.docs_changed || []).length ? "waiting for you (the documents changed)" : !u.working && !u.merged ? "merging" : !u.merged ? "resolving the conflicts" : "gates and checking every story again";

@@ -150,6 +150,22 @@
   // turn starts or ends, so typing is never interrupted.
   function drawSolo() {
     // 012 (FR-037): an earlier project conversation, read-only, in place of the session.
+    if (earlier && earlier.session && earlier.session.closed) {
+      // 012 US6 (FR-024): a closed session, read-only; its copy and its record can go.
+      const x = earlier.session;
+      const cl = x.closed;
+      const copy = cl.how === "kept_with_copy" && !x.copy_removed;
+      const head = document.getElementById("solo-head");
+      if (head) head.innerHTML = h`<div class="chat-head"><div class="avatar" aria-hidden="true">A</div><div><b>${x.name || "Session"}</b> <span class="small muted">· closed: ${Fallow.solo.HOW[cl.how] || cl.how}${cl.branch ? h` · branch <span class="mono">${cl.branch}</span>` : ""}</span></div><span class="grow"></span>
+        ${copy ? h`<button class="btn btn2 xs" data-act="closed-copy" data-id="${earlier.id}">Remove working copy…</button>` : ""}
+        <button class="btn btn2 xs" data-act="closed-delete" data-id="${earlier.id}" ${raw(copy ? 'disabled title="Remove its working copy first"' : "")}>Delete record…</button>
+        <button class="btn btn2 xs" data-act="earlier-close">Back</button></div>`.s;
+      const list = document.getElementById("chat-list");
+      if (list) list.innerHTML = h`${messages(Fallow.solo.asConv(earlier))}`.s;
+      const comp = document.getElementById("solo-composer");
+      if (comp) { comp.innerHTML = h`<div class="composer small muted">This session is closed: its conversation is read-only.</div>`.s; comp.dataset.busy = "earlier"; }
+      return;
+    }
     if (earlier) {
       const head = document.getElementById("solo-head");
       if (head) head.innerHTML = h`<div class="chat-head"><div class="avatar" aria-hidden="true">L</div><div><b>Earlier conversation with the lead</b> <span class="small muted">· read-only: the project conversation is retired</span></div><span class="grow"></span><button class="btn btn2 xs" data-act="earlier-close">Back to the session</button></div>`.s;
@@ -716,7 +732,7 @@
       // The earlier conversation's view (Phase 8 review): inside it, only its own actions work
       // (its buttons never reach the session behind it); anything else closes it first.
       if (earlier) {
-        const own = ["solo-earlier", "earlier-close", "start-feature", "chat-expand"];
+        const own = ["solo-earlier", "solo-closed", "earlier-close", "start-feature", "chat-expand", "closed-copy", "closed-delete"];
         if (el.closest("#chat-list, #solo-composer, #solo-head") && !own.includes(name)) return;
         if (![...own, "solo-menu", "side", "side-close", "side-where"].includes(name)) { earlier = null; drawSolo(); }
       }
@@ -754,6 +770,25 @@
           drawSolo();
           markStarted(); // a proposal started already shows "Started" (FR-037)
           return;
+        }
+        if (name === "solo-closed") {
+          closeMenu(false);
+          earlier = await get(`/api/sessions/${encodeURIComponent(el.dataset.id)}`);
+          drawSolo();
+          return;
+        }
+        if (name === "closed-copy") {
+          if (await Fallow.solo.removeCopy(el.dataset.id)) earlier = await get(`/api/sessions/${encodeURIComponent(el.dataset.id)}`);
+          drawSolo();
+          return;
+        }
+        if (name === "closed-delete") {
+          if (await Fallow.solo.deleteRecord(el.dataset.id, earlier && earlier.session && earlier.session.name)) { earlier = null; return again(); }
+          return;
+        }
+        if (name === "solo-close") {
+          if (state.session) await Fallow.solo.closeSession(state.session);
+          return again();
         }
         if (name === "earlier-close") {
           earlier = null;

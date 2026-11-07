@@ -228,6 +228,10 @@ pub enum SoloEvent {
     },
     CloseStarted {
         choice: CloseChoice,
+        /// The fingerprint of what the engineer was shown (Phase 10 review): a restart finishes
+        /// the choice only while the session still holds exactly that.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        digest: Option<String>,
     },
     SessionClosed {
         how: Closed,
@@ -271,6 +275,7 @@ pub struct Solo {
     pub starting: Option<(String, String, Option<String>)>,
     pub features: Vec<(String, String, String)>,
     pub closing: Option<CloseChoice>,
+    pub closing_digest: Option<String>,
     pub closed: Option<(Closed, Option<String>, Option<std::path::PathBuf>)>,
     pub copy_removed: bool,
 }
@@ -416,7 +421,10 @@ impl Solo {
                     .push((feature.clone(), title.clone(), conversation.clone()))
             }
             SoloEvent::FeatureDropped { .. } => self.starting = None,
-            SoloEvent::CloseStarted { choice } => self.closing = Some(*choice),
+            SoloEvent::CloseStarted { choice, digest } => {
+                self.closing = Some(*choice);
+                self.closing_digest = digest.clone();
+            }
             SoloEvent::SessionClosed {
                 how,
                 branch,

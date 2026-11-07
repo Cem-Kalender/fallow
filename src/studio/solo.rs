@@ -347,6 +347,9 @@ impl Studio {
         text: &str,
         refs: Vec<prompts::FileRef>,
     ) -> Result<Value, String> {
+        if text.trim() == "/close" {
+            return self.close_session(conv, None, false, None).map(|v| json!({ "close": v }));
+        }
         self.solo_turn(ctx, conv, text, refs, None, Vec::new())
     }
 
@@ -973,6 +976,7 @@ impl Studio {
                 "changes": changes,
                 "gone": c.gone,
                 "branch": s.branch,
+                "closed": s.closed.as_ref().map(|(how, b, w)| json!({ "how": how, "branch": b, "worktree": w, "copy_removed": s.copy_removed })),
             });
             if s.closed.is_some() {
                 closed.push(item);
@@ -1046,6 +1050,7 @@ impl Studio {
             self.finish_undo_on_load(&id);
             self.forget_gate_copies(&id);
             self.finish_handover_on_load(&id);
+            self.finish_close_on_load(&id);
             let Some(c) = self.convs.get_mut(&id) else {
                 continue;
             };
@@ -1240,6 +1245,33 @@ impl Studio {
                 None
             }
         }
+    }
+
+    /// 012 (R-10, T051): the commits the sessions on `repo` made, with each session's name: its
+    /// turns' commits, its squashes, and the one commit a command of it made on another branch
+    /// (a merge commit). A move that only pointed a branch at commits, or brought in several
+    /// (a fast-forward, a pull), claims none of them: those may be the engineer's (review).
+    pub fn session_commits(&self, repo: &Path) -> Vec<(String, String)> {
+        let mut out = Vec::new();
+        for c in self.convs.values() {
+            let Some(s) = c.state.solo.as_ref() else {
+                continue;
+            };
+            if self.project(&c.state.project).map(|p| p.path != repo).unwrap_or(true) {
+                continue;
+            }
+            let name = s.name.clone().unwrap_or_else(|| "session".into());
+            for t in s.commits.values() {
+                out.extend(t.commits.iter().chain(t.commit.iter()).map(|k| (k.clone(), name.clone())));
+            }
+            for o in &s.observed {
+                if o.how == crate::conversation::solo::How::Commits && o.n == Some(1) && o.commits.len() == 1 {
+                    out.push((o.commits[0].clone(), name.clone()));
+                }
+            }
+            out.extend(s.squashes.iter().map(|(_, k, _)| (k.clone(), name.clone())));
+        }
+        out
     }
 
     /// The session's part of its view (contracts/web-api.md, "Session").

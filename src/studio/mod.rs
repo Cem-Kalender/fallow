@@ -6,6 +6,7 @@ pub mod commands;
 pub mod conv;
 pub mod defs;
 pub mod files;
+pub mod close;
 pub mod extras;
 pub mod handover;
 pub mod judge;
@@ -243,6 +244,25 @@ pub enum Req {
     SoloWeb {
         session: String,
         on: bool,
+    },
+    /// 012 US6 (R-14): close a session: without `choice`, what closing would lose (or the close
+    /// of a merged and clean one); with `keep` or `discard`, the engineer's choice.
+    CloseSession {
+        session: String,
+        choice: Option<String>,
+        confirmed: bool,
+        /// The digest of the question the choice answers.
+        digest: Option<String>,
+    },
+    /// 012 US6 (R-14): a session closed with its copy kept loses the copy, confirmed.
+    RemoveCopy {
+        session: String,
+        confirmed: bool,
+    },
+    /// 012 US6 (FR-025): a closed session's record deleted, confirmed.
+    DeleteSession {
+        session: String,
+        confirmed: bool,
     },
     /// Cancels the lead's running turn; the message is withdrawn (008 T047).
     Cancel {
@@ -982,7 +1002,7 @@ impl Studio {
         // steps (those are a spec session's).
         if c.state.kind == Kind::Solo {
             list.retain(|x| x.group == commands::Group::Project);
-            list.insert(0, commands::fallow("close", "Close this session: merge it, keep its branch, or discard it", false, Some("closing a session comes with US6")));
+            list.insert(0, commands::fallow("close", "Close this session: merge it, keep its branch, or discard it", true, None));
             list.insert(0, commands::fallow("feature", "Ask the assistant to suggest a feature from this discussion", true, None));
         }
         Ok(json!({ "commands": list }))

@@ -6,6 +6,8 @@
 
 **Status**: Draft
 
+> **Note (012, 2026-11-07):** the project conversation with the lead is retired by 012 (FR-035 to FR-038). Earlier project conversations open read-only, and their proposals can still start features; questions about the code go to a solo session with the assistant, and "Ask about it" from a file goes to the session open last. Where this spec says "the project conversation", read "a solo session" for new work.
+
 **Input**: User description: "The engineer's second round of remarks on Fallow Studio (008), as a feature of its own, built on 008 as it is: a '/' menu in the chat with the lead, Fallow's own and model-agnostic, with Spec Kit steps, Fallow actions, the project's agents and the project's own commands and skills; choosing the lead (a default per project, another per spec session, a session keeps its lead, the loop's lead is the spec session's); a loading animation while the lead answers; every way of leaving an agent or pipeline with unsaved changes asks first; and (added the same day) a read-only view of the project's files: a Files tab on the project page and a Files drawer on a feature's loop page and spec session. Out of scope: supplier adapters for other runtimes, the standalone app, changes to the loop engine beyond using the session's lead." (The full description is kept in the conversation of 2026-11-02.)
 
 ## Context

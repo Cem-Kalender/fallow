@@ -2001,3 +2001,63 @@ pub fn install_hint() -> &'static str {
         "your distribution's package manager (for example sudo apt install git)"
     }
 }
+
+/// 012 (R-11): whether `commit` is reachable from a local branch or a remote-tracking ref not
+/// under `exclude` (Fallow's own branches, `refs/heads/fallow/`, which Fallow deletes).
+pub fn contained_elsewhere(repo: &Path, commit: &str, exclude: &str) -> bool {
+    git(
+        repo,
+        &["--no-optional-locks", "for-each-ref", "--format=%(refname)", "--contains", commit, "refs/heads", "refs/remotes"],
+    )
+    .map(|out| out.lines().map(str::trim).any(|r| !r.is_empty() && !r.starts_with(exclude) && !r.ends_with("/HEAD")))
+    .unwrap_or(false)
+}
+
+/// 012 (R-14): the commits of `range` (`a..b`), oldest first, with their subjects.
+pub fn log_subjects(dir: &Path, range: &str) -> Vec<(String, String)> {
+    git(dir, &["--no-optional-locks", "log", "--reverse", "--format=%H %s", range])
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|l| l.split_once(' ').map(|(a, b)| (a.to_string(), b.to_string())))
+        .collect()
+}
+
+/// 012 (R-14): a working copy's uncommitted paths and its ignored files, one by one.
+pub fn status_with_ignored(wt: &Path) -> Result<(Vec<String>, Vec<String>), String> {
+    let out = git(wt, &["--no-optional-locks", "status", "--porcelain=v1", "-z", "--ignored", "--untracked-files=all"])?;
+    let mut changed = Vec::new();
+    let mut ignored = Vec::new();
+    let mut parts = out.split('\0').filter(|p| !p.is_empty());
+    while let Some(p) = parts.next() {
+        if p.len() < 4 {
+            continue;
+        }
+        let (code, path) = (&p[..2], p[3..].to_string());
+        if code == "!!" {
+            ignored.push(path);
+        } else {
+            // A rename names its source next: both are changed.
+            if code.contains('R') || code.contains('C') {
+                if let Some(from) = parts.next() {
+                    changed.push(from.to_string());
+                }
+            }
+            changed.push(path);
+        }
+    }
+    Ok((changed, ignored))
+}
+
+/// 012 (R-14): the refs under `prefix` with their commits.
+pub fn refs_under(dir: &Path, prefix: &str) -> Vec<(String, String)> {
+    git(dir, &["--no-optional-locks", "for-each-ref", "--format=%(refname) %(objectname)", prefix])
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|l| l.split_once(' ').map(|(a, b)| (a.to_string(), b.to_string())))
+        .collect()
+}
+
+/// 012 (R-14): deletes the local branch `branch`, without hooks.
+pub fn branch_delete_nohooks(repo: &Path, branch: &str) -> Result<(), String> {
+    git_nohooks(repo, &["branch", "-q", "-D", "--", branch], &[]).map(|_| ())
+}

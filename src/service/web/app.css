@@ -712,6 +712,8 @@ fieldset.field.along legend { padding: 0; margin-bottom: 4px; }
 .you-shots { align-self: flex-end; justify-content: flex-end; }
 .you.waiting .linkish { color: inherit; text-decoration: underline; }
 .solo-note { padding: 6px 24px 0; }
+.solo-sub { padding: 6px 10px 2px; }
+.btn2.danger { color: var(--bad); border-color: var(--bad-line); }
 .thumb { max-width: 220px; max-height: 160px; border-radius: 8px; border: 1px solid var(--line); display: block; }
 
 /* 012: a project that is not a git repository yet (FR-039). */

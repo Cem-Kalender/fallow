@@ -1846,20 +1846,24 @@ impl Engine {
         w.asked = Some(Instant::now());
         w.running = true;
         // Whose merge each target commit is: the other loops' merges and verified commits.
-        let mut merges: Vec<(String, String)> = Vec::new();
+        use super::update::From;
+        let mut merges: Vec<(String, String, From)> = Vec::new();
         for (oid, o) in &self.runs {
             if *oid == id || o.state.repo != r.state.repo {
                 continue;
             }
             if let Some(ol) = o.state.feature_loop.as_ref() {
                 for c in o.state.merged.iter().chain(o.state.integrated.iter()) {
-                    merges.push((c.clone(), ol.feature.clone()));
+                    merges.push((c.clone(), ol.feature.clone(), From::Feature));
                 }
                 if let Some(p) = &ol.publication {
-                    merges.push((p.commit.clone(), ol.feature.clone()));
+                    merges.push((p.commit.clone(), ol.feature.clone(), From::Feature));
                 }
             }
         }
+        // 012 (R-10, T051): a solo session's commits Fallow saw its commands make (its squashes
+        // among them), on the same repository.
+        merges.extend(self.studio.session_commits(&r.state.repo).into_iter().map(|(c, name)| (c, name, From::Session)));
         let (tx, repo, feature, target, reconciled, scratch) = (
             self.ctx.tx.clone(),
             r.state.repo.clone(),
@@ -4021,6 +4025,9 @@ impl Engine {
             | Req::SoloSay { session, .. }
             | Req::SoloQueue { session, .. }
             | Req::SoloWeb { session, .. }
+            | Req::CloseSession { session, .. }
+            | Req::RemoveCopy { session, .. }
+            | Req::DeleteSession { session, .. }
             | Req::FeatureDraft { session, .. }
             | Req::FeatureFromSession { session, .. } => conv(session),
             Req::FeatureFromConversation { conv: c, .. } => conv(c),
@@ -4203,6 +4210,11 @@ impl Engine {
                 out
             }
             Req::SoloWeb { session, on } => self.studio.solo_web(&self.ctx, &session, on),
+            Req::CloseSession { session, choice, confirmed, digest } => {
+                self.studio.close_session(&session, choice.as_deref(), confirmed, digest.as_deref())
+            }
+            Req::RemoveCopy { session, confirmed } => self.studio.remove_copy(&session, confirmed),
+            Req::DeleteSession { session, confirmed } => self.studio.delete_session(&session, confirmed),
             Req::Commands { conv } => self.studio.commands(&conv),
             Req::SetMode { conv, mode } => self.studio.set_mode(&conv, mode),
             Req::Approve {

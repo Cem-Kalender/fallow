@@ -14,7 +14,7 @@ use crate::verify::git;
 
 /// Folders of dependencies and build output, named in the confirmation and proposed for the
 /// ignore file (R-18).
-const HEAVY: &[&str] = &[
+pub(super) const HEAVY: &[&str] = &[
     "node_modules",
     ".venv",
     "venv",

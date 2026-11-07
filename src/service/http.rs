@@ -510,6 +510,20 @@ fn studio_route(
             remove: body.get("remove").and_then(Value::as_bool) == Some(true),
             send: body.get("send").and_then(Value::as_bool) == Some(true),
         }),
+        ("POST", ["api", "sessions", c, "close"]) => r(Req::CloseSession {
+            session: c.to_string(),
+            choice: s("choice"),
+            confirmed: body.get("confirmed").and_then(Value::as_bool) == Some(true),
+            digest: s("digest"),
+        }),
+        ("POST", ["api", "sessions", c, "remove-copy"]) => r(Req::RemoveCopy {
+            session: c.to_string(),
+            confirmed: body.get("confirmed").and_then(Value::as_bool) == Some(true),
+        }),
+        ("DELETE", ["api", "sessions", c]) => r(Req::DeleteSession {
+            session: c.to_string(),
+            confirmed: body.get("confirmed").and_then(Value::as_bool) == Some(true),
+        }),
         ("POST", ["api", "sessions", c, "web"]) => match body.get("on").and_then(Value::as_bool) {
             Some(on) => r(Req::SoloWeb { session: c.to_string(), on }),
             None => Some(Err("say whether web access is on".into())),

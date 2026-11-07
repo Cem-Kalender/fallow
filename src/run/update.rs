@@ -46,7 +46,19 @@ pub struct Moved {
 pub struct MovedCommit {
     pub sha: String,
     pub subject: String,
+    /// The feature whose merge it is, or the solo session's name; `None` outside Fallow.
     pub from: Option<String>,
+    /// 012 (R-10, T051): `feature`, `session` or `outside`.
+    pub from_kind: From,
+}
+
+/// 012 (R-10, T051): where a commit on a loop's target came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum From {
+    Feature,
+    Session,
+    Outside,
 }
 
 /// The paths of the feature's locked documents (its spec directory, without `handover/`).
@@ -528,7 +540,7 @@ pub fn watch(
     target: &str,
     integrated: &str,
     reconciled: Option<&str>,
-    merges: &[(String, String)],
+    merges: &[(String, String, From)],
     scratch: &Path,
 ) -> Result<Moved, String> {
     let Ok(tip) = git::rev(repo, &format!("refs/heads/{target}")) else {
@@ -556,11 +568,10 @@ pub fn watch(
         .into_iter()
         .map(|sha| {
             let subject = git::subject(repo, &sha).unwrap_or_default();
-            let from = merges
-                .iter()
-                .find(|(c, _)| *c == sha)
-                .map(|(_, f)| f.clone());
-            MovedCommit { sha, subject, from }
+            let m = merges.iter().find(|(c, _, _)| *c == sha);
+            let from = m.map(|(_, f, _)| f.clone());
+            let from_kind = m.map(|(_, _, k)| *k).unwrap_or(From::Outside);
+            MovedCommit { sha, subject, from, from_kind }
         })
         .collect();
     let since = match reconciled.filter(|r| git::is_ancestor(repo, r, &tip)) {

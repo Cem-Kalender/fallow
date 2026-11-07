@@ -61,8 +61,13 @@
         : h`<span title="This assistant's runtime cannot switch web access off">web on</span>`}</div>
     </div><span class="grow"></span>
     <button class="btn btn2 xs" data-act="solo-editor" title="Open the session's working copy in your editor">Open in my editor</button>
-    <button class="btn btn2 xs" data-act="solo-close" disabled title="Closing a session comes with US6">Close session</button></div>`;
+    <button class="btn btn2 xs" data-act="solo-close" title="Close this session: Fallow says first what closing would lose">Close session</button></div>`;
   }
+
+  const size = (b) => (b < 1024 ? `${b} B` : b < 1048576 ? `${(b / 1024).toFixed(0)} KB` : `${(b / 1048576).toFixed(1)} MB`);
+
+  // How a session was closed, in words (R-14).
+  const HOW = { merged: "merged", kept: "branch kept", kept_with_copy: "branch and copy kept", discarded: "discarded" };
 
   // The list of the project's sessions (FR-002): the open one ticked and on top, a dot on those
   // at work, their changed files, "+ New session"; closed ones and earlier conversations below.
@@ -78,7 +83,8 @@
         <span class="tiny muted">${i.changes} change${i.changes === 1 ? "" : "s"}</span></button>`)}
       <button class="solo-item" role="menuitem" data-act="solo-new"><span class="tick" aria-hidden="true">+</span><span class="grow">New session</span></button>
       <div class="sep" role="separator"></div>
-      <button class="solo-item muted" role="menuitem" disabled title="Closing sessions comes with US6">Closed sessions… (${closed.length})</button>
+      ${closed.length ? h`<div class="tiny muted solo-sub">Closed sessions, read-only</div>${closed.map((i) => h`<button class="solo-item" role="menuitem" data-act="solo-closed" data-id="${i.id}"><span class="tick" aria-hidden="true"></span><span class="grow">${i.name || "Session"} <span class="tiny muted">· ${HOW[(i.closed || {}).how] || "closed"}</span></span></button>`)}` : h`<button class="solo-item muted" role="menuitem" disabled>Closed sessions… (none)</button>`}
+      ${list && list.records_bytes ? h`<div class="tiny muted solo-sub">Session records kept by Fallow: ${size(list.records_bytes)}</div>` : ""}
       ${earlier.length ? earlier.map((e) => h`<button class="solo-item" role="menuitem" data-act="solo-earlier" data-id="${e.conversation}"><span class="tick" aria-hidden="true"></span><span class="grow">${e.title} <span class="tiny muted">· read-only</span></span></button>`) : h`<button class="solo-item muted" role="menuitem" disabled>Earlier conversations with the lead… (none)</button>`}
     </div>`;
   }
@@ -233,6 +239,8 @@
         if (v.error) { box.value = text; alertLine(v.error); }
         return v.session;
       }
+      // `/close` is Fallow's: the close dialog, not a message (a runtime's `/exit` is a message).
+      if (text === "/close" && !imgs.length) { await closeSession(s); return s.id; }
       await post(`/api/sessions/${encodeURIComponent(s.id)}/say`, imgs.length ? { text, attachments: imgs.map((a) => a.id) } : { text });
       attached.delete(s.id);
       drawChips(s.id);
@@ -455,6 +463,78 @@
     drawChips(s.id);
   }
 
-  Fallow.solo = { asConv, web, queueAct, unattach, makeFeature, makeFeatureFromEarlier, head, menu, notices, list, composer, say, setMode, stopTurn, openEditor, rename, changesPanel, gatesPanel, undo, pending, runGates, branchesPanel };
+  // ---- 012 US6: closing (R-14), in the middle of the screen -----------------------------------
+  const list5 = (xs, more) => h`<ul class="small mt-4">${xs.slice(0, 8).map((x) => h`<li class="mono">${x}</li>`)}${xs.length > 8 ? h`<li class="muted">and ${xs.length - 8} more${more || ""}</li>` : ""}</ul>`;
+  function closeDialog(ask) {
+    let d = document.getElementById("close-dlg");
+    if (!d) {
+      d = document.createElement("dialog");
+      d.id = "close-dlg";
+      d.className = "confirm wide";
+      d.setAttribute("aria-labelledby", "cd-title");
+      document.body.appendChild(d);
+    }
+    const counts = Object.entries((ask.ignored && ask.ignored.counts) || {});
+    const ignored = (ask.ignored && ask.ignored.files) || [];
+    const onlyUndone = ask.merged && !ask.files.length && !ignored.length && !ask.unreadable && !(ask.head_off || []).length;
+    d.innerHTML = h`<form method="dialog" class="col gap-8">
+      <h2 id="cd-title" class="th">Close this session?</h2>
+      ${ask.merged ? h`<p class="small body-ink lh">Its work is merged: closing removes its working copy and its branch.</p>` : h`<p class="small body-ink lh">Its work is not merged into another branch. Keep the branch to come back to it, or discard it.</p>`}
+      ${ask.commits.length ? h`<div class="small b">Commits not merged (${ask.commits.length})</div>${list5(ask.commits.map((c) => `${c.commit.slice(0, 7)} ${c.subject}`))}` : ""}
+      ${ask.files.length ? h`<div class="small b">Uncommitted changes in its copy</div>${list5(ask.files)}<div class="tiny muted">"Keep" commits them on the branch first.</div>` : ""}
+      ${ignored.length ? h`<div class="small b">Ignored files removed with the copy</div>${list5(ignored)}` : ""}
+      ${counts.length ? h`<div class="tiny muted">Also removed with the copy: ${counts.map(([k, n], i) => `${i ? ", " : ""}${k}: ${n} file${n === 1 ? "" : "s"}`).join("")}</div>` : ""}
+      ${ask.unreadable ? h`<div class="notice">Git cannot read its working copy (<span class="mono">${ask.unreadable}</span>): its files cannot be listed. Keep keeps the copy; discard removes it with whatever it holds.</div>` : ""}
+      ${(ask.head_off || []).length ? h`<div class="small b">Commits in its copy that are not on its branch</div>${list5(ask.head_off.map((c) => `${c.commit.slice(0, 7)} ${c.subject}`))}<div class="tiny muted">Keep keeps the copy with them; discard loses them.</div>` : ""}
+      ${ask.branch_gone ? h`<div class="notice">Its branch is gone: Fallow cannot tell whether its work is merged.</div>` : ""}
+      ${(ask.undone || []).length ? h`<div class="small b">Undone turns, dropped at close</div>${list5(ask.undone.map((u) => `turn ${u.turn} · ${u.commit.slice(0, 7)}`))}` : ""}
+      <div id="cd-error" class="notice" role="alert" hidden></div>
+      <div class="row gap-8 mt-8"><span class="grow"></span><button class="btn btn2" value="cancel" type="submit">Cancel</button>
+        ${onlyUndone ? h`<button class="btn" type="button" data-pick="merged">Close</button>` : h`<button class="btn btn2 danger" type="button" data-pick="discard">Discard the branch</button><button class="btn" type="button" data-pick="keep">Keep the branch</button>`}
+      </div></form>`.s;
+    d.showModal();
+    return new Promise((resolve) => {
+      d.querySelectorAll("[data-pick]").forEach((b) => { b.onclick = () => { d.close(); resolve(b.dataset.pick); }; });
+      d.addEventListener("close", () => resolve(null), { once: true });
+    });
+  }
+
+  async function closeSession(s) {
+    const path = `/api/sessions/${encodeURIComponent(s.id)}/close`;
+    try {
+      let r = await post(path, {});
+      if (r.stop_first) {
+        const ok = await Fallow.confirm({ title: "Stop the assistant first?", text: `Turn ${r.stop_first} is still at work. Stop it, then close the session.`, ok: "Stop the turn" });
+        if (ok !== false) await stopTurn(s);
+        return;
+      }
+      // Asked again when the session changed meanwhile (a file appeared): never dropped.
+      for (let i = 0; r.ask && i < 3; i++) {
+        const pick = await closeDialog(r.ask);
+        if (!pick) return;
+        r = await post(path, pick === "merged" ? { confirmed: true, digest: r.ask.digest } : { choice: pick, digest: r.ask.digest });
+      }
+      if (r.ask) alertLine("The session keeps changing while you choose: nothing was closed. Try again once it is quiet.");
+      if (r.closed === "kept_with_copy") alertLine("The branch is kept; Fallow could not commit what was left, so the working copy is kept too.");
+    } catch (e) { alertLine(e.message); }
+  }
+
+  async function removeCopy(id) {
+    try {
+      const v = await Fallow.get(`/api/sessions/${encodeURIComponent(id)}`);
+      const ok = await Fallow.confirm({ title: "Remove the working copy?", text: "Its uncommitted and ignored files are lost. The branch stays.", items: [(v.session && v.session.worktree) || "the working copy"], ok: "Remove it" });
+      if (ok === false) return false;
+      await post(`/api/sessions/${encodeURIComponent(id)}/remove-copy`, { confirmed: true });
+      return true;
+    } catch (e) { alertLine(e.message); return false; }
+  }
+
+  async function deleteRecord(id, name) {
+    const ok = await Fallow.confirm({ title: "Delete this session's record?", text: "Its conversation and images are deleted. Its branch, if kept, stays.", items: [name || "Session"], ok: "Delete" });
+    if (ok === false) return false;
+    try { await Fallow.api("DELETE", `/api/sessions/${encodeURIComponent(id)}`, { confirmed: true }); return true; } catch (e) { alertLine(e.message); return false; }
+  }
+
+  Fallow.solo = { asConv, web, queueAct, unattach, closeSession, removeCopy, deleteRecord, HOW, makeFeature, makeFeatureFromEarlier, head, menu, notices, list, composer, say, setMode, stopTurn, openEditor, rename, changesPanel, gatesPanel, undo, pending, runGates, branchesPanel };
   void esc;
 })();

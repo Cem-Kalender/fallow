@@ -525,7 +525,7 @@ and web access.
 
 **Independent Test**: quickstart Q7.
 
-- [ ] T048 [US6] Write `tests/us12_close.rs` (Q7). It fails first.
+- [X] T048 [US6] Write `tests/us12_close.rs` (Q7). It fails first.
   - A merged and clean session closes without a question (SC-010).
   - A merged and clean session with undone turns asks once, naming the undone turns and their commits; confirming closes it as `merged`, with the undone refs gone (constitution II; analyze D2).
   - One with a `.env` in the copy asks, naming it.
@@ -537,14 +537,15 @@ and web access.
   - A closed session reads under "Closed sessions…", and its record can be deleted.
   - The undone refs are gone.
   - A restart in the middle of a close finishes it (SC-007).
-- [ ] T049 [US6] Close, in `src/studio/solo.rs` (R-14, R-11).
+- [X] T049 [US6] Close, in `src/studio/solo.rs` (R-14, R-11).
   - "Merged" means every commit that is not undone is contained in another local or remote-tracking ref, or a `squashed` covers the last turn.
   - `POST /api/sessions/<s>/close`: the dry answer (`stop_first`, or `ask` with commits, files, edits, ignored files and undone turns); a merged and clean session asked only about its undone turns closes with `{confirmed: true}`, then `close_started`, then keep, discard or (when only undone turns were asked about) merged, then `session_closed`.
   - The undone refs are deleted, after the close named them (analyze D2), and the `-gates-*` worktrees pruned, all without hooks.
   - `solo::reconcile` gains `close_started` (analyze F6).
   - `POST …/remove-copy` and `DELETE /api/sessions/<s>`, both confirmed.
   - `records_bytes`.
-- [ ] T050 [US6] Build the page: "Close session" and `/close`, the close dialog naming what is lost, and the read-only "Closed sessions…" list with "Remove working copy" and "Delete record". Screenshots `checks/solo-close.png`.
+- [X] T050 [US6] Build the page: "Close session" and `/close`, the close dialog naming what is lost, and the read-only "Closed sessions…" list with "Remove working copy" and "Delete record". Screenshots `checks/solo-close.png`.
+  - Done with notes: `/close` typed in a session opens the same dialog (the server answers what closing would do, starting no turn); a merged session's branch is deleted with its copy. Screenshots `checks/solo-close.png` and `checks/solo-closed.png`.
 
 **Checkpoint**: Q7 passes.
 
@@ -552,7 +553,7 @@ and web access.
 
 ## Phase 11: Polish & Cross-Cutting Concerns
 
-- [ ] T051 Sessions and 011's loops (quickstart Q10, R-10).
+- [X] T051 Sessions and 011's loops (quickstart Q10, R-10).
   - **Code**: in `src/run/update.rs`, `MovedCommit.from` becomes `From { Feature | Session{id, name} | Outside }`, a plain string reading as `Feature`. A commit in a session's `git_observed.commits` is from that session. The loop view gains `from_kind`, and `loop.js` shows "from solo session <name>".
   - **Test** in `tests/us12_with_loops.rs`: a session's squash into a ready loop's target is named as the session's on the loop page. 011's rules apply (Free updates by itself, Normal asks), and the session never joins the merge line.
 - [ ] T052 [P] Add three benches to `xtask/src/bench.rs`, run in CI (R-17):
@@ -561,10 +562,11 @@ and web access.
   - `refwatch_latency`: a moved branch shown within 5 s (SC-004).
 
   Each bench fails the build when its budget is exceeded (constitution VIII; analyze C13).
-- [ ] T053 [P] Audits and notes.
+- [X] T053 [P] Audits and notes.
   - `tests/no_egress_no_push.rs` still finds no push, fetch or network in Fallow's own code for sessions (FR-018).
   - `specs/005-adaptive-delegation/contracts/task-set.md` gets the note that `setup/settings.local.json` no longer reaches run agents.
   - `specs/009-chat-commands-leads/spec.md` gets a note that the project conversation is retired by 012.
+  - Done with notes: T051 names as a session's only its turns' commits, its squashes, and a single commit its own command made; a fast-forward or pull a session ran claims none (they may be the engineer's). The close question carries a digest of what it shows; a choice is done only while the session still holds exactly that.
 - [ ] T054 Run the whole suite, file by file, and `cargo clippy --all-targets -- -D warnings`. Mark the tasks done, and record any test changed by the retirements (plain folders, the project conversation, settings).
 - [ ] T055 Quickstart Q11 by hand with the engineer, on the real `claude`:
   - a session from the start to a squash into the branch;
