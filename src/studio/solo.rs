@@ -1048,6 +1048,7 @@ impl Studio {
     /// message was never sent), one whose working copy or branch is gone is marked so, and one
     /// that was in "until I switch back" says it is back to asking.
     pub(super) fn solo_on_load(&mut self) {
+        self.briefs_on_load();
         let ids: Vec<String> = self
             .convs
             .iter()
@@ -1059,6 +1060,7 @@ impl Studio {
             // restart left go.
             self.finish_undo_on_load(&id);
             self.forget_gate_copies(&id);
+            self.finish_handover_on_load(&id);
             let Some(c) = self.convs.get_mut(&id) else {
                 continue;
             };
@@ -1199,6 +1201,8 @@ impl Studio {
     /// 012 (R-9, R-13): a waiting message is sent when the turn before it ended and a slot is
     /// free; after a restart it waits for the engineer.
     pub fn solo_tick(&mut self, ctx: &Ctx) {
+        // 012 (R-15): spec sessions whose constitution step is done run specify on the brief.
+        self.brief_tick(ctx);
         let ready: Vec<(String, String, String)> = self
             .convs
             .values()

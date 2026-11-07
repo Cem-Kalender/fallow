@@ -41,10 +41,13 @@ fn ask_mode_asks_the_engineer_and_the_other_modes_do_not() {
         .as_str()
         .unwrap()
         .to_string();
+    // 012 (FR-035): the project conversation is retired; the lead's turns run in a spec session.
     let conv = sreq(
         tx,
-        Req::ProjectConversation {
+        Req::NewFeature {
             project: project.clone(),
+            title: "Modes".into(),
+            lead: None,
         },
     )
     .unwrap()["conversation"]

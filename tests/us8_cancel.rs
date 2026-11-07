@@ -188,7 +188,8 @@ output = { reply = "Hello.", step = "none" }
         .to_string();
     git(&repo, &["add", "."]);
     git(&repo, &["commit", "-q", "-m", "spec kit"]);
-    let conv = sreq(tx, Req::ProjectConversation { project }).unwrap()["conversation"]
+    // 012 (FR-035): the project conversation is retired; the lead's turns run in a spec session.
+    let conv = sreq(tx, Req::NewFeature { project, title: "Quick".into(), lead: None }).unwrap()["conversation"]
         .as_str()
         .unwrap()
         .to_string();

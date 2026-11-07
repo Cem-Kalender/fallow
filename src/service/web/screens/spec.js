@@ -128,7 +128,7 @@
     const c = f.conversation || { turns: [], mode: "ask" };
     app.innerHTML = h`<div class="screen" id="spec-screen" data-key="${key}">
       <div class="subbar">
-        <div><div class="crumb"><a href="#/p/${encodeURIComponent(route.project)}">${f.project_name}</a> · <button class="linkish" data-act="delete-session">Delete this session…</button></div>
+        <div><div class="crumb"><a href="#/p/${encodeURIComponent(route.project)}">${f.project_name}</a> · <button class="linkish" data-act="delete-session">Delete this session…</button>${f.origin ? h` · <a href="#/p/${encodeURIComponent(route.project)}" data-act="origin-open" data-origin="${f.origin.id}">${f.origin.kind === "session" ? `from the session ${f.origin.name || ""}` : "from the earlier project conversation"}</a>` : ""}</div>
           <h1 class="page-title">${f.name} <span class="small muted">· ${f.title} · spec session with the lead</span></h1></div>
         <div class="grow"></div>
         <div id="stepper">${stepper(f)}</div>
@@ -403,6 +403,13 @@
           return;
         }
         if (name === "lk-when") { whenTouched = true; whenChoice = el.value; return; }
+        // 012 (FR-034): back to the session the feature was started from.
+        if (name === "origin-open") {
+          const f = state && state.feature ? state.feature : state;
+          if (f && f.origin && f.origin.kind === "session") { try { await post(`/api/sessions/${encodeURIComponent(f.origin.id)}/open`, { confirm: true }); } catch (_) { /* opens the project anyway */ } }
+          location.hash = `#/p/${encodeURIComponent(route.project)}`;
+          return;
+        }
         if (name === "dismiss") {
           const crit = state.findings.map((x, i) => [x, i]).filter(([x]) => x.severity.toUpperCase() === "CRITICAL" && !x.dismissed);
           const ok = await confirm({ title: "Dismiss the critical findings?", text: "The lock will no longer be blocked by them. This is recorded.", items: crit.map(([x]) => x.text), ok: "Dismiss" });

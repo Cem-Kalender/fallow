@@ -396,9 +396,10 @@ fn studio_route(
                 confirmed: true,
             })
         })),
-        ("POST", ["api", "projects", p, "conversation"]) => r(Req::ProjectConversation {
-            project: p.to_string(),
-        }),
+        // 012 (FR-035): the project conversation with the lead is retired.
+        ("POST", ["api", "projects", _p, "conversation"]) => Some(Err(
+            "The project conversation with the lead is retired: start a session with the assistant, or a feature".into(),
+        )),
         ("POST", ["api", "projects", p, "features"]) => match need("title") {
             Ok(t) => r(Req::NewFeature {
                 project: p.to_string(),
@@ -445,6 +446,22 @@ fn studio_route(
         },
         ("GET", ["api", "sessions", c, "changes"]) => r(Req::SoloChanges { session: c.to_string() }),
         ("GET", ["api", "projects", p, "git-changes"]) => r(Req::GitChanges { project: p.to_string() }),
+        ("GET", ["api", "sessions", c, "feature-draft"]) => r(Req::FeatureDraft {
+            session: c.to_string(),
+            suggestion: query_arg(url, "suggestion").and_then(|n| n.parse().ok()),
+        }),
+        ("POST", ["api", "sessions", c, "feature"]) => r(Req::FeatureFromSession {
+            session: c.to_string(),
+            title: s("title").unwrap_or_default(),
+            brief: s("brief").unwrap_or_default(),
+            lead: s("lead").filter(|l| !l.is_empty()),
+        }),
+        ("POST", ["api", "conversations", c, "feature"]) => r(Req::FeatureFromConversation {
+            conv: c.to_string(),
+            title: s("title").unwrap_or_default(),
+            brief: s("brief").unwrap_or_default(),
+            lead: s("lead").filter(|l| !l.is_empty()),
+        }),
         ("POST", ["api", "sessions", c, "gates"]) => r(Req::SoloGates { session: c.to_string() }),
         ("GET", ["api", "projects", p, "sessions"]) => r(Req::Sessions {
             project: p.to_string(),

@@ -96,6 +96,9 @@ pub struct Feature {
     pub analyze_outdated: bool,
     #[serde(default)]
     pub findings: Vec<crate::speckit::lock::Finding>,
+    /// 012 (FR-034): where it was started from: `solo:<session>` or `conv:<conversation>`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<String>,
 }
 
 fn first_step() -> String {

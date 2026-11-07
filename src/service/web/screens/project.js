@@ -149,6 +149,16 @@
   // 012: the session's head, notices and conversation drawn again; its composer only when the
   // turn starts or ends, so typing is never interrupted.
   function drawSolo() {
+    // 012 (FR-037): an earlier project conversation, read-only, in place of the session.
+    if (earlier) {
+      const head = document.getElementById("solo-head");
+      if (head) head.innerHTML = h`<div class="chat-head"><div class="avatar" aria-hidden="true">L</div><div><b>Earlier conversation with the lead</b> <span class="small muted">· read-only: the project conversation is retired</span></div><span class="grow"></span><button class="btn btn2 xs" data-act="earlier-close">Back to the session</button></div>`.s;
+      const list = document.getElementById("chat-list");
+      if (list) list.innerHTML = h`${messages(earlier)}`.s;
+      const comp = document.getElementById("solo-composer");
+      if (comp) { comp.innerHTML = h`<div class="composer small muted">This conversation is read-only. Its proposals can still become features.</div>`.s; comp.dataset.busy = "earlier"; }
+      return;
+    }
     const s = state.session;
     const set = (id, html) => {
       const el = document.getElementById(id);
@@ -320,6 +330,7 @@
   }
 
   async function load(app, id) {
+    if (state && state.id !== id) earlier = null; // another project: its earlier view closes
     try {
       let s = await get(`/api/projects/${encodeURIComponent(id)}`);
       if (!Fallow.here(app)) return;
@@ -327,11 +338,7 @@
         state = s;
         return renderGate(app, s);
       }
-      if (!s.conversation) {
-        await post(`/api/projects/${encodeURIComponent(id)}/conversation`);
-        s = await get(`/api/projects/${encodeURIComponent(id)}`);
-        if (!Fallow.here(app)) return;
-      }
+      // 012 (FR-035): the project conversation with the lead is retired; none is started.
       // 012 (FR-001): the session open last, or a draft ("+ New session" keeps the draft).
       s.session = null;
       if (s.session_last && !(draftFor === id)) {
@@ -582,6 +589,7 @@
     if (fc) fc.stop();
     fc = Fallow.files.create({
       project: id, version, file,
+      askLabel: "Ask the assistant about it",
       changed: (focusId) => drawFiles(focusId),
       // Back to the chat, with the file named in the message box (FR-031).
       ask: (path, label) => {
@@ -611,6 +619,7 @@
 
   // 012: the page follows the session open (and the next one a first message makes).
   let listening = null;
+  let earlier = null; // an earlier project conversation's view, open read-only
   let draftFor = null; // the project whose "+ New session" draft is open
   function listenSession(app, project) {
     const id = state && state.id === project && state.session && state.session.id;
@@ -704,6 +713,13 @@
       if (fc && name.startsWith("f-") && (await fc.act(name, el))) return;
       const conv = state && state.session && state.session.id;
       const again = () => load(current.app, current.id).then(() => listenSession(current.app, current.id));
+      // The earlier conversation's view (Phase 8 review): inside it, only its own actions work
+      // (its buttons never reach the session behind it); anything else closes it first.
+      if (earlier) {
+        const own = ["solo-earlier", "earlier-close", "start-feature", "chat-expand"];
+        if (el.closest("#chat-list, #solo-composer, #solo-head") && !own.includes(name)) return;
+        if (![...own, "solo-menu", "side", "side-close", "side-where"].includes(name)) { earlier = null; drawSolo(); }
+      }
       if (conv && (await chatAct(conv, name, el, again))) return;
       try {
         // 012: the session's messages and mode.
@@ -730,6 +746,27 @@
           headEl.insertAdjacentHTML("afterend", Fallow.solo.menu(list, state.session && state.session.id).s);
           const first = document.querySelector("#solo-menu .solo-item");
           if (first) first.focus();
+          return;
+        }
+        if (name === "solo-earlier") {
+          closeMenu(false);
+          earlier = await get(`/api/conversations/${encodeURIComponent(el.dataset.id)}`);
+          drawSolo();
+          markStarted(); // a proposal started already shows "Started" (FR-037)
+          return;
+        }
+        if (name === "earlier-close") {
+          earlier = null;
+          return again();
+        }
+        if (name === "solo-feature") {
+          if (state.session) await Fallow.solo.makeFeature(state.session, Number(el.dataset.n));
+          return;
+        }
+        if (name === "start-feature" && earlier) {
+          // An earlier conversation's unstarted proposal: the same dialog (FR-037).
+          const pf = ((earlier.turns || []).map((t) => t.result && t.result.proposed_feature).filter(Boolean)).reverse().find((p) => p.title === el.dataset.title) || {};
+          await Fallow.solo.makeFeatureFromEarlier(state.id, earlier.id, el.dataset.title, pf.summary || "", earlier.leads || [], earlier.lead && earlier.lead.name);
           return;
         }
         if (name === "solo-pick") {

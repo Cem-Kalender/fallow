@@ -168,20 +168,12 @@ output = { reply = "Plain text.", step = "none" }
 }
 
 #[test]
-fn specify_in_the_project_conversation_starts_a_feature() {
+fn specify_in_an_earlier_project_conversation_is_refused_as_read_only() {
+    // 012 (FR-035): the project conversation is retired; "/specify" there starts nothing.
     let root = scratch("cmds-specify");
     let repo = repo(&root);
     let scenario = root.join("scenario.toml");
-    std::fs::write(
-        &scenario,
-        r##"
-[[step]]
-kind = "lead_turn"
-when = "read `.claude/skills/speckit-specify/SKILL.md` in your working copy and follow it"
-output = { reply = "Specified.", step = "specify" }
-"##,
-    )
-    .unwrap();
+    std::fs::write(&scenario, "").unwrap();
     let e = start_studio(&root, &scenario, None);
     let tx = &e.tx;
     let project = sreq(tx, Req::AddProject { path: repo.clone() }).unwrap()["project"]
@@ -200,42 +192,17 @@ output = { reply = "Specified.", step = "specify" }
         .as_str()
         .unwrap()
         .to_string();
-    let list = sreq(tx, Req::Commands { conv: conv.clone() }).unwrap();
-    let steps: Vec<&Value> = list["commands"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .filter(|c| c["group"] == "spec_kit")
-        .collect();
-    assert_eq!(steps.len(), 1, "{list}");
-    assert_eq!(steps[0]["name"], "specify");
-
-    let empty = sreq(
-        tx,
-        Req::Say {
-            conv: conv.clone(),
-            text: "/specify".into(),
-        },
-    )
-    .unwrap_err();
-    assert!(empty.contains("Give the feature a name"), "{empty}");
-    let f = sreq(
+    let refused = sreq(
         tx,
         Req::Say {
             conv: conv.clone(),
             text: "/specify A receipts page".into(),
         },
     )
-    .unwrap();
-    let spec = f["conversation"].as_str().unwrap().to_string();
-    assert_ne!(spec, conv);
-    assert!(f["feature"].as_str().unwrap().contains("receipts"), "{f}");
-    let v = turn_ended(tx, &spec, 1);
-    assert_eq!(v["turns"][0]["said"], "/specify A receipts page");
-    assert_eq!(v["turns"][0]["reply"], "Specified.", "{v}");
-    // The project conversation itself had no turn.
-    let pc = sreq(tx, Req::Conversation { id: conv }).unwrap();
-    assert_eq!(pc["turns"].as_array().unwrap().len(), 0, "{pc}");
+    .unwrap_err();
+    assert!(refused.contains("read-only"), "{refused}");
+    let p = sreq(tx, Req::Project { id: project }).unwrap();
+    assert!(p["feature_list"].as_array().unwrap().is_empty(), "{p}");
 }
 
 /// SC-002 (CI): the catalogue of a project with 200 commands is ready within 100 ms.

@@ -445,7 +445,7 @@ spec from it; the project conversation with the lead is retired.
 
 **Independent Test**: quickstart Q8.
 
-- [ ] T039 [US7] Write `tests/us12_feature.rs` (Q8). It fails first.
+- [X] T039 [US7] Write `tests/us12_feature.rs` (Q8). It fails first.
   - A fake turn outputs `proposed_feature`, and "Make this a feature" shows.
   - Confirming with an edited brief: the feature exists from the engineer's branch, `brief.md` is committed with exactly that text, and the spec session's first turn runs `/speckit-specify` with the brief. The links go both ways (SC-011).
   - Cancelling creates nothing.
@@ -456,7 +456,8 @@ spec from it; the project conversation with the lead is retired.
   - Refusals: the folder on no branch (saying why), an empty brief or title; with Spec Kit missing the feature is created and its spec session says specify could not start; a second suggestion of the same discussion shows the feature already started (analyze C10).
   - An earlier project conversation is read-only, and its unstarted proposal opens the same dialog; a proposal already started shows "Started" with its link (FR-037; analyze C10).
   - "Ask about it" from a file puts the reference in the session open last, and a `proposed_pipeline` shows "Open in the designer" (FR-036; analyze C10).
-- [ ] T040 [US7] Suggestions and the handover, in `src/studio/solo.rs` and `src/studio/mod.rs` (R-15).
+  - Done with notes: Spec Kit cannot be missing from a spec session (Fallow puts its skills in the lead's copy before every turn), so the test checks specify still runs from a branch without them. The brief's first turn is a marker (`brief_pending.json`) removed once it started; a failure keeps it for the next start. That failure path has no test, as no test can make specify fail. Cancelling, "Ask about it" and "Open in the designer" are page behaviour, seen in the screenshots and not in `us12_feature.rs`.
+- [X] T040 [US7] Suggestions and the handover, in `src/studio/solo.rs` and `src/studio/mod.rs` (R-15).
   - `feature_suggested` comes from `proposed_feature`.
   - `/feature` in a session's `/` menu, in `src/studio/commands.rs`, together with `/close`.
   - `GET /api/sessions/<s>/feature-draft`.
@@ -466,7 +467,7 @@ spec from it; the project conversation with the lead is retired.
   - The first turn is `/speckit-specify` with the brief as `$ARGUMENTS`, or the constitution step first and specify after it.
   - `feature_started` is written, `Feature.origin` set, and the spec session's `conversation_created.origin` set.
   - `solo::reconcile` gains `feature_starting` (analyze F6).
-- [ ] T041 [US7] Retire the project conversation (FR-035 to FR-038).
+- [X] T041 [US7] Retire the project conversation (FR-035 to FR-038).
   - `POST /api/projects/<p>/conversation` answers 409, and `project_view` no longer has `conversation`.
   - Earlier conversations are listed through `…/sessions` and open read-only; `say` answers 409.
   - Their unstarted proposals offer "Make this a feature".
@@ -474,7 +475,7 @@ spec from it; the project conversation with the lead is retired.
   - The pipeline designer's "Ask the lead" becomes "Ask the assistant", in `pipelines.js`.
   - A `proposed_pipeline` card in a session shows "Open in the designer".
   - The tests from 009 that used the project conversation (`us1_conversation.rs`, `us9_commands.rs`, `us9_files.rs`, `us9_leads.rs`) move to sessions or to spec sessions, with each change noted.
-- [ ] T042 [US7] Build the page.
+- [X] T042 [US7] Build the page.
   - The confirmation dialog in the middle of the screen: title, brief and lead picker; refusals shown inline.
   - The session's links to its features, and the spec session's link back (`spec.js`).
   - "Earlier conversations with the lead…".

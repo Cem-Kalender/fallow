@@ -821,6 +821,21 @@ skipped.
 - Their unstarted proposals keep "Make this a feature", which opens the same confirmation with the
   proposal's summary as the brief.
 
+**As built** (Phase 8 and its reviews):
+- The brief and the spec session's first turn are a marker, `brief_pending.json`, in the spec
+  session's folder. It is written before they run and removed once the first turn has started,
+  so a restart finishes them. A failure keeps the marker, set aside until the next start.
+- A marker in a spec session that already has turns is dropped, never sent over work done. The
+  `brief_next` marker (specify after the constitution step) runs only at the specify step.
+- A restart after the feature exists but before `feature_started` finds the feature by its origin
+  (`solo:<id>`) and title, writes `feature_started`, and writes the marker when the first turn
+  was never reached.
+- Known limit: a handover from an earlier project conversation writes no intent of its own. A
+  restart in the short gap between making the feature and writing the marker leaves a spec
+  session without its brief; the engineer specifies there by hand.
+- Spec Kit cannot be missing from a spec session: Fallow puts its skills in the lead's copy
+  before every turn.
+
 ## R-16 The page
 
 **Decision**:

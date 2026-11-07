@@ -222,6 +222,10 @@ pub enum SoloEvent {
         title: String,
         conversation: String,
     },
+    /// 012 (R-15): a handover that made nothing (a title taken, no lead): the dialog is free.
+    FeatureDropped {
+        why: String,
+    },
     CloseStarted {
         choice: CloseChoice,
     },
@@ -411,6 +415,7 @@ impl Solo {
                 self.features
                     .push((feature.clone(), title.clone(), conversation.clone()))
             }
+            SoloEvent::FeatureDropped { .. } => self.starting = None,
             SoloEvent::CloseStarted { choice } => self.closing = Some(*choice),
             SoloEvent::SessionClosed {
                 how,

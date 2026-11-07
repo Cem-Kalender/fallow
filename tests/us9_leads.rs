@@ -218,14 +218,9 @@ fn forks_new_sessions_and_a_lead_that_is_gone() {
         r##"
 [[step]]
 kind = "lead_turn"
-when = "Hi project"
-output = { reply = "project", step = "none" }
-
-[[step]]
-kind = "lead_turn"
-forked = true
+forked = false
 when = "Same lead"
-output = { reply = "forked", step = "none" }
+output = { reply = "own", step = "none" }
 
 [[step]]
 kind = "lead_turn"
@@ -266,35 +261,13 @@ output = { reply = "changed", step = "none" }
     let e = start_studio(&root, &scenario, None);
     let tx = &e.tx;
     let project = add(tx, &repo);
-    let pc = sreq(
-        tx,
-        Req::ProjectConversation {
-            project: project.clone(),
-        },
-    )
-    .unwrap()["conversation"]
-        .as_str()
-        .unwrap()
-        .to_string();
-    say(tx, &pc, "Hi project").unwrap();
-    let parent = turn_ended(tx, &pc, 1)["session"]
-        .as_str()
-        .unwrap()
-        .to_string();
-
-    // The same lead: the spec session forks the project conversation's session.
+    // 012 (FR-035): a spec session forks no project conversation; it starts its own session.
     let a = feature(tx, &project, "Same");
     say(tx, &a, "Same lead").unwrap();
     let v = turn_ended(tx, &a, 1);
-    assert_eq!(v["turns"][0]["reply"], "forked", "{v}");
-    assert!(
-        v["session"]
-            .as_str()
-            .unwrap()
-            .starts_with(&format!("{parent}-fork")),
-        "{v}"
-    );
-    // The lead's model changes under the forked session: said, and a new session follows.
+    assert_eq!(v["turns"][0]["reply"], "own", "{v}");
+    assert!(!v["session"].as_str().unwrap().contains("-fork"), "{v}");
+    // The lead's model changes under the session: said, and a new session follows.
     let shipped = fallow::defs::DEFAULT_AGENTS
         .iter()
         .find(|(n, _)| *n == "lead")
@@ -326,7 +299,6 @@ output = { reply = "changed", step = "none" }
     let v = turn_ended(tx, &b, 1);
     assert_eq!(v["turns"][0]["reply"], "new", "{v}");
     let first = v["session"].as_str().unwrap().to_string();
-    assert!(!first.starts_with(&parent), "{v}");
     say(tx, &b, "Again").unwrap();
     let v = turn_ended(tx, &b, 2);
     assert_eq!(v["session"], first.as_str(), "resumed: {v}");

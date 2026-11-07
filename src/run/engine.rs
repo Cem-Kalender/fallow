@@ -3638,7 +3638,9 @@ impl Engine {
                 .filter(|a| a.source == crate::defs::Source::Project)
                 .count()
         );
-        v["conversation"] = self.studio.conv_view(&conv).unwrap_or(Value::Null);
+        // 012 (FR-035): the project conversation is retired; an earlier one is listed with the
+        // sessions and opens read-only.
+        let _ = conv;
         Ok(v)
     }
 
@@ -3929,6 +3931,19 @@ impl Engine {
             "minutes": tasks as u64 * p.budget_per_task.minutes,
         });
         v["steps"] = json!(crate::studio::STEPS);
+        // 012 (FR-034): where it was started from, the link back.
+        v["origin"] = match f.origin.as_deref() {
+            Some(o) => match o.split_once(':') {
+                Some(("solo", id)) => json!({
+                    "kind": "session",
+                    "id": id,
+                    "name": self.studio.convs.get(id).and_then(|c| c.state.solo.as_ref()).and_then(|s| s.name.clone()),
+                }),
+                Some(("conv", id)) => json!({ "kind": "conversation", "id": id }),
+                _ => Value::Null,
+            },
+            None => Value::Null,
+        };
         v["conversation"] = f
             .conversation
             .as_ref()
@@ -3986,7 +4001,10 @@ impl Engine {
             | Req::UndoPreview { session, .. }
             | Req::Undo { session, .. }
             | Req::SoloChanges { session }
-            | Req::SoloGates { session } => conv(session),
+            | Req::SoloGates { session }
+            | Req::FeatureDraft { session, .. }
+            | Req::FeatureFromSession { session, .. } => conv(session),
+            Req::FeatureFromConversation { conv: c, .. } => conv(c),
             _ => None,
         }
     }
@@ -4126,6 +4144,13 @@ impl Engine {
             } => self.studio.undo_turns(&session, turn, confirmed),
             Req::SoloChanges { session } => self.studio.solo_changes(&session),
             Req::GitChanges { project } => self.git_changes(&project),
+            Req::FeatureDraft { session, suggestion } => self.studio.feature_draft(&session, suggestion),
+            Req::FeatureFromSession { session, title, brief, lead } => {
+                self.studio.feature_from_session(&self.ctx, &session, &title, &brief, lead)
+            }
+            Req::FeatureFromConversation { conv, title, brief, lead } => {
+                self.studio.feature_from_conversation(&self.ctx, &conv, &title, &brief, lead)
+            }
             Req::SoloGates { session } => self.studio.run_solo_gates(&self.ctx, &session),
             Req::Commands { conv } => self.studio.commands(&conv),
             Req::SetMode { conv, mode } => self.studio.set_mode(&conv, mode),
@@ -4884,6 +4909,7 @@ impl Engine {
                         | Req::UndoPreview { .. }
                         | Req::SoloChanges { .. }
                         | Req::GitChanges { .. }
+                        | Req::FeatureDraft { .. }
                         | Req::GitScan { .. }
                         | Req::Move { confirmed: false, .. }
                         | Req::CheckRemote { .. }

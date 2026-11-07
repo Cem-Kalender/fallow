@@ -823,3 +823,11 @@ pub fn say_solo(tx: &Sender<Msg>, session: &str, text: &str) -> Value {
 pub fn wait_turn(tx: &Sender<Msg>, session: &str, n: usize) -> Value {
     turn_ended(tx, session, n)
 }
+
+/// Stops an engine and waits for its thread, as a restart does: dropping it alone leaves its
+/// thread ticking beside the next one on the same data.
+#[allow(dead_code)]
+pub fn stop(e: fallow::service::ToolEngine) {
+    let _ = e.tx.send(Msg::Shutdown);
+    let _ = e.handle.join();
+}

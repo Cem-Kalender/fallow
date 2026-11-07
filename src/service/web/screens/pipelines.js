@@ -418,7 +418,7 @@
       <div class="grow"></div>
       <span class="pair"><label for="pl-based" class="small muted">Based on</label>
       <select id="pl-based" data-change="based">${opt("", "—", "")}${s.pipelines.map((p) => opt(p.name, `${p.name}${p.verifying ? "" : " (not verified)"}`, ""))}</select></span>
-      <button class="btn btn2" data-act="ask-lead"${raw(s.project ? "" : " disabled title=\"Choose a project first\"")}>Ask the lead</button>
+      <button class="btn btn2" data-act="ask-lead"${raw(s.project ? "" : " disabled title=\"Choose a project first\"")}>Ask the assistant</button>
       ${saveFor("pl-scope", s.project, s.scope, "pipelines")}
       <button class="btn" data-act="save">Save</button>
     </div>

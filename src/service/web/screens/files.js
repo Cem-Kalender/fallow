@@ -215,7 +215,7 @@
       const views = canChanges ? h`<span class="seg-ctl" role="group" aria-label="Show"><button class="btn btn2 xs${st.view === "changes" ? " on" : ""}" data-act="f-view" data-view="changes" aria-pressed="${st.view === "changes" ? "true" : "false"}">Changes</button><button class="btn btn2 xs${st.view === "whole" ? " on" : ""}" data-act="f-view" data-view="whole" aria-pressed="${st.view === "whole" ? "true" : "false"}">Whole file</button></span>` : "";
       const editorLine = st.editor ? h`<span class="tiny muted">Editor: ${st.editor.program.split(/[\\/]/).pop()} · <button class="linkish" data-act="f-editor-change">change</button></span>` : "";
       const buttons = h`${views}
-        ${d.kind !== "secret" ? h`<button class="btn btn2 sm" data-act="f-ask">Ask the lead about it</button>` : ""}
+        ${d.kind !== "secret" ? h`<button class="btn btn2 sm" data-act="f-ask">${opts.askLabel || "Ask the lead about it"}</button>` : ""}
         ${v && v.kind !== "branch" ? h`<button class="btn btn2 sm" data-act="f-editor">Open in my editor</button>` : ""}
         ${opts.drawer ? h`<button class="btn btn2 sm" data-act="f-full">Open full</button>` : ""}
         ${back}`;

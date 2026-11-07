@@ -565,7 +565,18 @@ fn a_pipeline_the_lead_proposes_is_used_only_once_saved() {
         .as_str()
         .unwrap()
         .to_string();
-    let c = sreq(tx, Req::ProjectConversation { project: p.clone() }).unwrap()["conversation"]
+    // The feature to lock first, so that it is 001-calc.
+    let f = sreq(
+        tx,
+        Req::NewFeature {
+            project: p.clone(),
+            title: "Calc".into(),
+            lead: None,
+        },
+    )
+    .unwrap();
+    // 012 (FR-035): the project conversation is retired; the lead's turns run in a spec session.
+    let c = sreq(tx, Req::NewFeature { project: p.clone(), title: "Pipeline talk".into(), lead: None }).unwrap()["conversation"]
         .as_str()
         .unwrap()
         .to_string();
@@ -582,15 +593,6 @@ fn a_pipeline_the_lead_proposes_is_used_only_once_saved() {
     // Proposed, not saved: not in the library, and a lock cannot use it.
     assert!(pipeline(&pipelines(tx, Some(&p)), "careful").is_null());
     assert!(!repo.join(".fallow/pipelines/careful.toml").exists());
-    let f = sreq(
-        tx,
-        Req::NewFeature {
-            project: p.clone(),
-            title: "Calc".into(),
-            lead: None,
-        },
-    )
-    .unwrap();
     let conv = f["conversation"].as_str().unwrap().to_string();
     for (i, text) in ["Write it.", "Analyze."].iter().enumerate() {
         sreq(

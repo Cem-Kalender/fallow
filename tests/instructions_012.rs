@@ -48,7 +48,8 @@ output = { reply = "Ja.", step = "none" }
     let project = added["project"].as_str().unwrap().to_string();
     git(&repo, &["add", "."]);
     git(&repo, &["commit", "-q", "-m", "spec kit"]);
-    let pc = sreq(tx, Req::ProjectConversation { project: project.clone() }).unwrap();
+    // 012 (FR-035): a spec session, the project conversation being retired.
+    let pc = sreq(tx, Req::NewFeature { project: project.clone(), title: "Greeting".into(), lead: None }).unwrap();
     let pc = pc["conversation"].as_str().unwrap().to_string();
     let say = |text: &str| {
         sreq(tx, Req::Say { conv: pc.clone(), text: text.into() }).unwrap();
@@ -71,9 +72,11 @@ output = { reply = "Ja.", step = "none" }
     assert_eq!(v["turns"][1]["reply"], "Encore oui.", "{v}");
     assert!(v["turns"][1]["instructions"].as_array().is_none_or(|a| a.is_empty()), "{v}");
 
-    // Changed on the project's branch: handed again.
-    std::fs::write(repo.join("AGENTS.md"), "Always answer in German.\n").unwrap();
-    git(&repo, &["commit", "-q", "-am", "german"]);
+    // Changed on the session's branch (012: a spec session's copy is on its feature's branch):
+    // handed again.
+    let wd = std::path::PathBuf::from(v["workdir"].as_str().unwrap());
+    std::fs::write(wd.join("AGENTS.md"), "Always answer in German.\n").unwrap();
+    git(&wd, &["commit", "-q", "-am", "german"]);
     say("third question");
     let v = turn_ended(tx, &pc, 3);
     assert_eq!(v["turns"][2]["reply"], "Ja.", "the changed file was handed: {v}");

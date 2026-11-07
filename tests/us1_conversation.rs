@@ -49,7 +49,7 @@ output = { reply = "I saw your edit.", step = "clarify" }
     git(&repo, &["add", "."]);
     git(&repo, &["commit", "-q", "-m", "spec kit"]);
 
-    // The project conversation: a worktree of the project, its changes thrown away.
+    // 012 (FR-035): the project conversation is retired: an earlier one is read-only.
     let pc = sreq(
         tx,
         Req::ProjectConversation {
@@ -58,35 +58,18 @@ output = { reply = "I saw your edit.", step = "clarify" }
     )
     .unwrap();
     let pc = pc["conversation"].as_str().unwrap().to_string();
-    sreq(
+    let refused = sreq(
         tx,
         Req::Say {
             conv: pc.clone(),
             text: "How are prices handled?".into(),
         },
     )
-    .unwrap();
-    let v = turn_ended(tx, &pc, 1);
-    let t = &v["turns"][0];
-    assert_eq!(t["reply"], "Prices are whole cents.", "{v}");
-    assert_eq!(t["discarded"], serde_json::json!(["shop.py"]), "named: {t}");
-    assert!(t["commit"].is_null());
-    assert!(
-        !repo.join("shop.py").exists(),
-        "the engineer's folder is untouched"
-    );
-    assert!(
-        v["activity"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|a| a["kind"] == "write"),
-        "the turn's activity: {}",
-        v["activity"]
-    );
-    let parent_session = v["session"].as_str().unwrap().to_string();
+    .unwrap_err();
+    assert!(refused.contains("read-only"), "{refused}");
+    assert!(!repo.join("shop.py").exists(), "the engineer's folder is untouched");
 
-    // A feature: its branch and worktree, a spec session forked from the project conversation.
+    // A feature: its branch and worktree, and a spec session of its own (012: no fork).
     let f = sreq(
         tx,
         Req::NewFeature {
@@ -121,10 +104,7 @@ output = { reply = "I saw your edit.", step = "clarify" }
     let t = &v["turns"][0];
     assert_eq!(t["reply"], "I wrote the first spec.");
     let session = v["session"].as_str().unwrap();
-    assert!(
-        session.starts_with(&format!("{parent_session}-fork")),
-        "forked from the project conversation: {session} vs {parent_session}"
-    );
+    assert!(!session.contains("-fork"), "an agent session of its own (FR-035): {session}");
     assert_eq!(
         t["documents_changed"],
         serde_json::json!(["specs/001-cart/spec.md"]),

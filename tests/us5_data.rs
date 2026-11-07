@@ -6,6 +6,7 @@ mod common;
 
 use common::*;
 use fallow::run::engine::Request;
+use fallow::studio::Req;
 
 #[test]
 fn sizes_per_project_and_deleting_what_is_no_longer_needed() {
@@ -17,6 +18,10 @@ fn sizes_per_project_and_deleting_what_is_no_longer_needed() {
         v["busy"].as_str().is_some_and(|b| b.starts_with("step"))
     });
 
+    // 012 (FR-035): no project conversation is started any more; one from before 012 is
+    // still kept data, and can be deleted.
+    let pid = ask(tx, Request::Data).unwrap()["projects"][0]["id"].as_str().unwrap().to_string();
+    sreq(tx, Req::ProjectConversation { project: pid }).unwrap();
     let d = ask(tx, Request::Data).unwrap();
     let p = &d["projects"][0];
     assert_eq!(p["name"], "repo");
@@ -32,7 +37,7 @@ fn sizes_per_project_and_deleting_what_is_no_longer_needed() {
     assert_eq!(
         convs.len(),
         2,
-        "the project conversation and the spec session: {convs:?}"
+        "an earlier project conversation and the spec session: {convs:?}"
     );
     assert!(convs.iter().all(|c| c["bytes"].as_u64().unwrap() > 0));
     assert!(

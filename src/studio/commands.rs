@@ -33,6 +33,24 @@ pub const STEPS: &[&str] = &[
 pub enum Group {
     SpecKit,
     Project,
+    /// 012 (R-15): Fallow's own commands in a session (`/feature`, `/close`).
+    Fallow,
+}
+
+/// 012 (R-15): one of Fallow's own commands for a session's `/` menu.
+pub fn fallow(name: &str, description: &str, available: bool, reason: Option<&str>) -> Command {
+    Command {
+        name: name.into(),
+        group: Group::Fallow,
+        description: description.into(),
+        hint: None,
+        source: String::new(),
+        runtime: None,
+        available,
+        reason: reason.map(str::to_string),
+        file: PathBuf::new(),
+        format: Format::Markdown,
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

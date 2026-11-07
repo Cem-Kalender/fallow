@@ -6,6 +6,7 @@ pub mod commands;
 pub mod conv;
 pub mod defs;
 pub mod files;
+pub mod handover;
 pub mod judge;
 pub mod refwatch;
 pub mod repo;
@@ -188,6 +189,25 @@ pub enum Req {
     /// 012 (FR-017): the project's branch changes with their sources.
     GitChanges {
         project: String,
+    },
+    /// 012 (R-15): the feature dialog prefilled from a session's suggestion.
+    FeatureDraft {
+        session: String,
+        suggestion: Option<u32>,
+    },
+    /// 012 (R-15): a feature from a session's discussion.
+    FeatureFromSession {
+        session: String,
+        title: String,
+        brief: String,
+        lead: Option<String>,
+    },
+    /// 012 (FR-037): a feature from an earlier project conversation's proposal.
+    FeatureFromConversation {
+        conv: String,
+        title: String,
+        brief: String,
+        lead: Option<String>,
     },
     /// 012 (R-12): run the project's gates on the session's head.
     SoloGates {
@@ -926,7 +946,14 @@ impl Studio {
         {
             project::install::scaffold(workdir)?;
         }
-        let list = commands::catalogue(&p.root_dir(), &workdir.join(&p.spec_root), c.state.kind == Kind::Project);
+        let mut list = commands::catalogue(&p.root_dir(), &workdir.join(&p.spec_root), c.state.kind == Kind::Project);
+        // 012 (R-15): a session offers Fallow's own commands and the project's, not Spec Kit's
+        // steps (those are a spec session's).
+        if c.state.kind == Kind::Solo {
+            list.retain(|x| x.group == commands::Group::Project);
+            list.insert(0, commands::fallow("close", "Close this session: merge it, keep its branch, or discard it", false, Some("closing a session comes with US6")));
+            list.insert(0, commands::fallow("feature", "Ask the assistant to suggest a feature from this discussion", true, None));
+        }
         Ok(json!({ "commands": list }))
     }
 
@@ -955,6 +982,9 @@ impl Studio {
         // 012: a solo session's turn is its own (studio/solo.rs).
         if c.state.kind == Kind::Solo {
             return self.say_solo(ctx, conv, text, refs);
+        }
+        if c.state.kind == Kind::Project {
+            return Err("This conversation is read-only: the project conversation with the lead is retired. Start a session, or a feature".into());
         }
         if c.state.busy {
             return Err("the lead is still answering".into());
@@ -1054,6 +1084,8 @@ impl Studio {
                     source: cmd.source.clone(),
                     instructions: commands::instructions(cmd, &input)?,
                 },
+                // A session's own commands never reach a spec session's lead.
+                commands::Group::Fallow => return Err(format!("/{} is a session's command", cmd.name)),
             }),
             None => None,
         };
@@ -1562,6 +1594,19 @@ impl Studio {
         title: &str,
         lead: Option<String>,
     ) -> Result<Value, String> {
+        self.new_feature_with(project_id, title, lead, None)
+    }
+
+    /// `new_feature`, with where it was started from (012 FR-034: `solo:<s>` or `conv:<c>`).
+    /// Its spec session starts an agent session of its own: it forks from no project
+    /// conversation (FR-035).
+    pub fn new_feature_with(
+        &mut self,
+        project_id: &str,
+        title: &str,
+        lead: Option<String>,
+        origin: Option<String>,
+    ) -> Result<Value, String> {
         let title = title.trim();
         if title.is_empty() {
             return Err("name the feature".into());
@@ -1597,7 +1642,6 @@ impl Studio {
             }
             None => self.default_lead(self.project(project_id)?),
         };
-        let parent = self.project_conversation(project_id)?;
         let p = self.project(project_id)?.clone();
         let dir = p.next_dir(title);
         let name = dir.rsplit('/').next().unwrap_or(&dir).to_string();
@@ -1615,13 +1659,15 @@ impl Studio {
             (Some(base), Some(name.clone()), wd)
         };
         std::fs::create_dir_all(workdir.join(&dir)).map_err(|e| e.to_string())?;
-        let conv = self.new_conv(
+        let conv = self.new_conv_with(
             Kind::Spec,
             &p.id,
             Some(name.clone()),
-            Some(parent),
+            None,
             workdir,
             lead,
+            None,
+            origin.clone(),
         )?;
         // A project whose constitution is still the template starts with the constitution.
         let constitution = std::fs::read_to_string(p.root_dir().join(".specify/memory/constitution.md"))
@@ -1648,6 +1694,7 @@ impl Studio {
             analyzed: false,
             analyze_outdated: false,
             findings: Vec::new(),
+            origin,
         };
         self.project_mut(project_id)?.features.push(feature);
         self.store.save()?;

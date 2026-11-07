@@ -29,7 +29,7 @@ fn a_chat_turn_goes_first_and_the_loop_waits_for_a_slot() {
     let mut steps =
         calc_loop_ok().replacen("part = \"T001\"\n", "part = \"T001\"\nsleep_ms = 4000\n", 1);
     steps.push_str(
-        "[[step]]\nkind = \"lead_turn\"\nwhen = \"project conversation\"\nsleep_ms = 9000\noutput = { reply = \"Thought it over.\", step = \"none\" }\n\n",
+        "[[step]]\nkind = \"lead_turn\"\nwhen = \"How is it going?\"\nsleep_ms = 9000\noutput = { reply = \"Thought it over.\", step = \"none\" }\n\n",
     );
     let (e, _repo, id) = locked_calc(&root, &steps, None);
     let tx = &e.tx;
@@ -37,7 +37,8 @@ fn a_chat_turn_goes_first_and_the_loop_waits_for_a_slot() {
     let project = v["feature_loop"]["project"].as_str().unwrap().to_string();
 
     // The engineer asks the lead something while T001 holds the only slot: the turn starts.
-    let pc = sreq(tx, Req::ProjectConversation { project }).unwrap();
+    // 012 (FR-035): the project conversation is retired; the lead's turns run in a spec session.
+    let pc = sreq(tx, Req::NewFeature { project, title: "Question".into(), lead: None }).unwrap();
     let conv = pc["conversation"].as_str().unwrap().to_string();
     sreq(
         tx,

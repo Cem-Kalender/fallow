@@ -10,6 +10,14 @@
   // place of the lead's, and the command card drawn here, with the judge's reasons.
   function asConv(s) {
     const c = Object.assign({}, s || { turns: [] });
+    c.turns = ((s && s.turns) || []).map((t) => {
+      if (!t.result || !t.result.proposed_feature) return t;
+      const r = Object.assign({}, t.result);
+      t = Object.assign({}, t, { suggested: r.proposed_feature });
+      delete r.proposed_feature;
+      t.result = r;
+      return t;
+    });
     c.lead = { name: (s && s.session && s.session.agent) || "assistant" };
     c.avatar = "A";
     c.pending_approval = null;
@@ -19,7 +27,17 @@
     // 012 US4 (FR-017): what the turn's commands changed outside the session's branch.
     const seen = (s && s.session && s.session.observed) || [];
     const moved = (t) => seen.filter((o) => o.turn === t.n).map((o) => h`<div class="tiny git-line mt-4">${refLine(o)}</div>`);
-    c.turnExtra = (t) => h`${moved(t)}${quiet || t.reply === null || t.reply === undefined ? "" : h`<div class="row gap-8 mt-6"><button class="undo-link tiny" data-act="solo-undo" data-turn="${t.n}" aria-label="${`Undo turn ${t.n} and every turn after it`}">Undo back to before this turn</button></div>`}`;
+    const started = (s && s.session && s.session.features) || [];
+    const card = (t) => {
+      const pf = t.suggested;
+      if (!pf) return "";
+      const norm = (t) => String(t || "").trim().replace(/\s+/g, " ").toLowerCase();
+      const done = started.find((f) => norm(f.title) === norm(pf.title));
+      return h`<div class="card proposal mt-8"><span class="pill purple">suggested feature</span>
+        <div class="b mt-8">${pf.title}</div><div class="small body-ink mt-4 lh">${pf.brief}</div>
+        <div class="row wrap gap-8 mt-10">${done ? h`<a class="btn btn2 sm" href="#/p/${encodeURIComponent(s.project)}/f/${encodeURIComponent(done.feature)}">Started: ${done.feature}</a>` : ""}<button class="btn sm" data-act="solo-feature" data-n="${t.n}">Make this a feature</button></div></div>`;
+    };
+    c.turnExtra = (t) => h`${card(t)}${moved(t)}${quiet || t.reply === null || t.reply === undefined ? "" : h`<div class="row gap-8 mt-6"><button class="undo-link tiny" data-act="solo-undo" data-turn="${t.n}" aria-label="${`Undo turn ${t.n} and every turn after it`}">Undo back to before this turn</button></div>`}`;
     return c;
   }
 
@@ -56,7 +74,7 @@
       <button class="solo-item" role="menuitem" data-act="solo-new"><span class="tick" aria-hidden="true">+</span><span class="grow">New session</span></button>
       <div class="sep" role="separator"></div>
       <button class="solo-item muted" role="menuitem" disabled title="Closing sessions comes with US6">Closed sessions… (${closed.length})</button>
-      <button class="solo-item muted" role="menuitem" disabled title="Comes with US7">Earlier conversations with the lead… (${earlier.length})</button>
+      ${earlier.length ? earlier.map((e) => h`<button class="solo-item" role="menuitem" data-act="solo-earlier" data-id="${e.conversation}"><span class="tick" aria-hidden="true"></span><span class="grow">${e.title} <span class="tiny muted">· read-only</span></span></button>`) : h`<button class="solo-item muted" role="menuitem" disabled>Earlier conversations with the lead… (none)</button>`}
     </div>`;
   }
 
@@ -68,6 +86,7 @@
     if (x.mode_reset) out.push(h`<div class="notice">Fallow restarted: "Until I switch back" is off, and commands are asked again.</div>`);
     if (x.start.dirty) out.push(h`<div class="notice">Your project folder had uncommitted changes when this session started: they are not in the session's copy.</div>`);
     if (x.lfs) out.push(h`<div class="notice">This project uses Git LFS: the session's copy holds LFS pointers, not the files. Ask the assistant to run <span class="mono">git lfs pull</span> if it needs them.</div>`);
+    if ((x.features || []).length) out.push(h`<div class="small mt-4">Features started from this session: ${x.features.map((f, i) => h`${i ? ", " : ""}<a href="#/p/${encodeURIComponent(s.project)}/f/${encodeURIComponent(f.feature)}">${f.feature}</a>`)}</div>`);
     if (x.slot_wait) out.push(h`<div class="notice">Your next message waits: ${x.slot_wait}.</div>`);
     // A failed turn commit (R-4): its two ways on.
     if (x.pending_commit && !x.pending_commit.fold_next) out.push(h`<div class="notice" role="alert">Fallow could not commit turn ${x.pending_commit.n}${x.pending_commit.error ? `: ${x.pending_commit.error}` : ""}. Your next message, an undo or a gate run tries again first.
@@ -306,6 +325,59 @@
     try { await post(`/api/sessions/${encodeURIComponent(s.id)}/gates`, {}); } catch (e) { alertLine(e.message); }
   }
 
-  Fallow.solo = { asConv, head, menu, notices, list, composer, say, setMode, stopTurn, openEditor, rename, changesPanel, gatesPanel, undo, pending, runGates, branchesPanel };
+  // ---- 012 US7: the feature dialog (FR-032), in the middle of the screen --------------------
+  function featureDialog(draft) {
+    let d = document.getElementById("feature-dlg");
+    if (!d) {
+      d = document.createElement("dialog");
+      d.id = "feature-dlg";
+      d.className = "confirm wide";
+      d.setAttribute("aria-labelledby", "fd-title");
+      document.body.appendChild(d);
+    }
+    const leads = (draft.leads || []).map((l) => h`<option value="${l.name}"${raw(l.name === draft.lead ? " selected" : "")}${raw(l.available ? "" : " disabled")}>${l.name}${l.available ? "" : ` (${l.reason})`}</option>`);
+    d.innerHTML = h`<form method="dialog" class="col gap-8">
+      <h2 id="fd-title" class="th">Make this a feature</h2>
+      <p class="small body-ink lh">Its spec session starts from your folder's branch. The lead writes the spec from this brief, committed as <span class="mono">brief.md</span>.</p>
+      <label class="small b" for="fd-name">Title</label><input id="fd-name" type="text" value="${draft.title || ""}">
+      <label class="small b" for="fd-brief">Brief</label><textarea id="fd-brief" rows="7">${draft.brief || ""}</textarea>
+      <label class="small b" for="fd-lead">Lead</label><select id="fd-lead">${leads}</select>
+      ${(draft.started || []).length ? h`<div class="tiny muted">Already started from this discussion: ${draft.started.map((f) => f.feature).join(", ")}</div>` : ""}
+      <div id="fd-error" class="notice" role="alert" hidden></div>
+      <div class="row gap-8 mt-8"><span class="grow"></span><button class="btn btn2" value="cancel" type="submit">Cancel</button><button class="btn" id="fd-ok" type="button">Start the spec session</button></div>
+    </form>`.s;
+    d.showModal();
+    return new Promise((resolve) => {
+      const err = d.querySelector("#fd-error");
+      d.querySelector("#fd-ok").onclick = async () => {
+        const v = { title: d.querySelector("#fd-name").value.trim(), brief: d.querySelector("#fd-brief").value.trim(), lead: d.querySelector("#fd-lead").value };
+        if (!v.title || !v.brief) { err.hidden = false; err.textContent = !v.title ? "Name the feature." : "Write the brief the lead specifies from."; return; }
+        try { const out = await draft.submit(v); d.close(); resolve(out); } catch (e) { err.hidden = false; err.textContent = e.message; }
+      };
+      d.addEventListener("close", () => resolve(null), { once: true });
+    });
+  }
+
+  async function makeFeature(s, n) {
+    const id = encodeURIComponent(s.id);
+    let draft;
+    try { draft = await Fallow.get(`/api/sessions/${id}/feature-draft${n ? `?suggestion=${n}` : ""}`); } catch (e) { return alertLine(e.message); }
+    // A handover a restart left open: the dialog again with the same text (R-15).
+    if (draft.starting) Object.assign(draft, { title: draft.starting.title, brief: draft.starting.brief, lead: draft.starting.lead || draft.lead });
+    draft.submit = (v) => post(`/api/sessions/${id}/feature`, v);
+    const out = await featureDialog(draft);
+    if (out && out.warning) alertLine(out.warning);
+    if (out && out.feature) location.hash = `#/p/${encodeURIComponent(s.project)}/f/${encodeURIComponent(out.feature)}`;
+  }
+
+  async function makeFeatureFromEarlier(project, conv, title, brief, leads, lead) {
+    const ok = (n) => (leads || []).some((l) => l.name === n && l.available);
+    const draft = { title, brief, lead: ok(lead) ? lead : ((leads || []).find((l) => l.available) || {}).name || "lead", leads, submit: (v) => post(`/api/conversations/${encodeURIComponent(conv)}/feature`, v) };
+    const out = await featureDialog(draft);
+    if (out && out.warning) alertLine(out.warning);
+    if (out && out.feature) location.hash = `#/p/${encodeURIComponent(project)}/f/${encodeURIComponent(out.feature)}`;
+  }
+
+  Fallow.solo = { asConv, makeFeature, makeFeatureFromEarlier, head, menu, notices, list, composer, say, setMode, stopTurn, openEditor, rename, changesPanel, gatesPanel, undo, pending, runGates, branchesPanel };
   void esc;
 })();
