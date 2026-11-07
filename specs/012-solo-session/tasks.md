@@ -578,6 +578,7 @@ and web access.
   - a read of a file outside the copy and of `.env`: both asked, as reads (FR-043, R-21);
   - making a feature;
   - the wording of the dropdown, the approval cards and the close and feature dialogs.
+  - **Skipped by the engineer on 2026-11-07.** Not checked on the real `claude`, only on the fake: that its search follows git's ignore rules, and that its reads outside the copy and of `.env` reach Fallow as reads to ask (R-21). The wording can be changed later on request.
 
 ---
 
