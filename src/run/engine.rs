@@ -928,6 +928,7 @@ impl Engine {
                     // 012 (R-9, R-13): waiting messages of solo sessions.
                     self.refresh_slots();
                     self.studio.solo_tick(&self.ctx);
+                    self.send_waiting();
                     let ids: Vec<u64> = self.runs.keys().copied().collect();
                     for id in ids {
                         if let Some(r) = self.runs.get_mut(&id) {
@@ -3749,6 +3750,19 @@ impl Engine {
             .ok_or_else(|| crate::studio::files::GONE.to_string())
     }
 
+    /// 012 (R-9, T045): sends each session's oldest waiting message that may go now, its `@`
+    /// files read as it is sent; the turns started, by session.
+    fn send_waiting(&mut self) -> Vec<(String, u32)> {
+        let mut started = Vec::new();
+        for (conv, qid, text) in self.studio.waiting_ready() {
+            let refs = self.file_refs(&conv, &text);
+            if let Some(n) = self.studio.send_waiting(&self.ctx, &conv, &qid, &text, refs) {
+                started.push((conv, n));
+            }
+        }
+        started
+    }
+
     /// The files a message refers to with `@path`, optionally followed by `(on <feature>)`
     /// (009 T031): their text for the lead, within the file view's limits; a secret by its name
     /// only. In a spec session a file is the feature's; in the project conversation, the folder's.
@@ -4002,6 +4016,11 @@ impl Engine {
             | Req::Undo { session, .. }
             | Req::SoloChanges { session }
             | Req::SoloGates { session }
+            | Req::SoloAttach { session, .. }
+            | Req::SoloAttachment { session, .. }
+            | Req::SoloSay { session, .. }
+            | Req::SoloQueue { session, .. }
+            | Req::SoloWeb { session, .. }
             | Req::FeatureDraft { session, .. }
             | Req::FeatureFromSession { session, .. } => conv(session),
             Req::FeatureFromConversation { conv: c, .. } => conv(c),
@@ -4119,7 +4138,19 @@ impl Engine {
                 .map(|id| json!({ "conversation": id })),
             Req::Say { conv, text } => {
                 let refs = self.file_refs(&conv, &text);
-                self.studio.say(&self.ctx, &conv, &text, refs)
+                let out = self.studio.say(&self.ctx, &conv, &text, refs);
+                // 012 (R-9): the engineer's message is the go-ahead for those waiting.
+                let mut out = out;
+                for (c, n) in self.send_waiting() {
+                    if c == conv {
+                        if let Ok(v) = out.as_mut() {
+                            if v.get("turn").is_none() {
+                                v["turn"] = json!(n);
+                            }
+                        }
+                    }
+                }
+                out
             }
             Req::Cancel { conv } => self.studio.cancel(&conv),
             Req::NewSession {
@@ -4152,6 +4183,26 @@ impl Engine {
                 self.studio.feature_from_conversation(&self.ctx, &conv, &title, &brief, lead)
             }
             Req::SoloGates { session } => self.studio.run_solo_gates(&self.ctx, &session),
+            Req::SoloAttach { session, name, bytes } => self.studio.solo_attach(&self.ctx, &session, &name, &bytes),
+            Req::SoloAttachment { session, sha } => self.studio.solo_attachment(&session, &sha),
+            Req::SoloSay { session, text, attachments } => {
+                let refs = self.file_refs(&session, &text);
+                let mut out = self.studio.solo_say_with(&self.ctx, &session, &text, refs, &attachments);
+                for (c, n) in self.send_waiting() {
+                    if let (true, Ok(v)) = (c == session, out.as_mut()) {
+                        if v.get("turn").is_none() {
+                            v["turn"] = json!(n);
+                        }
+                    }
+                }
+                out
+            }
+            Req::SoloQueue { session, id, text, remove, send } => {
+                let out = self.studio.solo_queue(&session, &id, text, remove, send);
+                self.send_waiting();
+                out
+            }
+            Req::SoloWeb { session, on } => self.studio.solo_web(&self.ctx, &session, on),
             Req::Commands { conv } => self.studio.commands(&conv),
             Req::SetMode { conv, mode } => self.studio.set_mode(&conv, mode),
             Req::Approve {
@@ -4910,6 +4961,7 @@ impl Engine {
                         | Req::SoloChanges { .. }
                         | Req::GitChanges { .. }
                         | Req::FeatureDraft { .. }
+                        | Req::SoloAttachment { .. }
                         | Req::GitScan { .. }
                         | Req::Move { confirmed: false, .. }
                         | Req::CheckRemote { .. }

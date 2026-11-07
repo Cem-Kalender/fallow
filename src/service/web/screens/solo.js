@@ -37,6 +37,9 @@
         <div class="b mt-8">${pf.title}</div><div class="small body-ink mt-4 lh">${pf.brief}</div>
         <div class="row wrap gap-8 mt-10">${done ? h`<a class="btn btn2 sm" href="#/p/${encodeURIComponent(s.project)}/f/${encodeURIComponent(done.feature)}">Started: ${done.feature}</a>` : ""}<button class="btn sm" data-act="solo-feature" data-n="${t.n}">Make this a feature</button></div></div>`;
     };
+    const sid = s && s.id;
+    const shots = (t) => (t.attachments || []).length ? h`<div class="row wrap gap-8 you-shots">${t.attachments.map((a) => h`<a href="/api/sessions/${encodeURIComponent(sid)}/attachments/${a.sha}" target="_blank" rel="noopener"><img class="thumb" src="/api/sessions/${encodeURIComponent(sid)}/attachments/${a.sha}" alt="${a.name}"></a>`)}</div>` : "";
+    c.saidExtra = shots;
     c.turnExtra = (t) => h`${card(t)}${moved(t)}${quiet || t.reply === null || t.reply === undefined ? "" : h`<div class="row gap-8 mt-6"><button class="undo-link tiny" data-act="solo-undo" data-turn="${t.n}" aria-label="${`Undo turn ${t.n} and every turn after it`}">Undo back to before this turn</button></div>`}`;
     return c;
   }
@@ -53,7 +56,9 @@
     const start = x.start.branch ? `${x.start.branch} at ${x.start.commit.slice(0, 7)}` : `the commit ${x.start.commit.slice(0, 7)} (no branch)`;
     return h`<div class="chat-head"><div class="avatar" aria-hidden="true">A</div><div>
       ${menuBtn(x.name || "Session", open)} <button class="linkish tiny muted" data-act="solo-rename" title="Rename this session">rename</button>
-      <div class="small muted">branch <span class="mono">${x.branch}</span> · from ${start} · web ${x.web.on ? "on" : "off"}</div>
+      <div class="small muted">branch <span class="mono">${x.branch}</span> · from ${start} · ${x.web.can_switch
+        ? h`<button class="linkish tiny" data-act="solo-web" data-on="${x.web.on ? "false" : "true"}" aria-pressed="${x.web.on ? "true" : "false"}" title="${x.web.on ? "The assistant may look things up on the web. Click to switch it off." : "The assistant cannot use the web. Click to switch it on."}">web ${x.web.on ? "on" : "off"}</button>`
+        : h`<span title="This assistant's runtime cannot switch web access off">web on</span>`}</div>
     </div><span class="grow"></span>
     <button class="btn btn2 xs" data-act="solo-editor" title="Open the session's working copy in your editor">Open in my editor</button>
     <button class="btn btn2 xs" data-act="solo-close" disabled title="Closing a session comes with US6">Close session</button></div>`;
@@ -86,7 +91,8 @@
     if (x.mode_reset) out.push(h`<div class="notice">Fallow restarted: "Until I switch back" is off, and commands are asked again.</div>`);
     if (x.start.dirty) out.push(h`<div class="notice">Your project folder had uncommitted changes when this session started: they are not in the session's copy.</div>`);
     if (x.lfs) out.push(h`<div class="notice">This project uses Git LFS: the session's copy holds LFS pointers, not the files. Ask the assistant to run <span class="mono">git lfs pull</span> if it needs them.</div>`);
-    if ((x.features || []).length) out.push(h`<div class="small mt-4">Features started from this session: ${x.features.map((f, i) => h`${i ? ", " : ""}<a href="#/p/${encodeURIComponent(s.project)}/f/${encodeURIComponent(f.feature)}">${f.feature}</a>`)}</div>`);
+    if ((x.features || []).length) out.push(h`<div class="small solo-note">Features started from this session: ${x.features.map((f, i) => h`${i ? ", " : ""}<a href="#/p/${encodeURIComponent(s.project)}/f/${encodeURIComponent(f.feature)}">${f.feature}</a>`)}</div>`);
+    if ((x.instructions || []).length) out.push(h`<div class="tiny muted solo-note">Instructions handed to the assistant: ${x.instructions.map((i, k) => h`${k ? ", " : ""}<span class="mono">${i.path}</span>${i.skipped ? ` (${i.skipped})` : i.cut ? " (cut)" : ""}`)}</div>`);
     if (x.slot_wait) out.push(h`<div class="notice">Your next message waits: ${x.slot_wait}.</div>`);
     // A failed turn commit (R-4): its two ways on.
     if (x.pending_commit && !x.pending_commit.fold_next) out.push(h`<div class="notice" role="alert">Fallow could not commit turn ${x.pending_commit.n}${x.pending_commit.error ? `: ${x.pending_commit.error}` : ""}. Your next message, an undo or a gate run tries again first.
@@ -134,8 +140,51 @@
   function queue(s) {
     const q = (s && s.session && s.session.queue) || [];
     if (!q.length) return raw("");
-    return h`<div class="small muted mt-8">Waiting to be sent, in order:</div>${q.map((w) => h`<div class="you waiting" title="Sent when the turn ends">${w.text}</div>`)}`;
+    const idle = !s.busy;
+    return h`<div class="small muted mt-8">${idle ? "Waiting for you to send them, in order:" : "Waiting to be sent when the turn ends, in order:"}</div>${q.map((w, i) => h`<div class="you waiting">${w.text}${(w.attachments || []).length ? h` <span class="tiny">· ${w.attachments.length} image${w.attachments.length === 1 ? "" : "s"}</span>` : ""}
+      <div class="row gap-8 mt-4 tiny">${idle && i === 0 ? h`<button class="linkish" data-act="solo-q-send" data-id="${w.id}">Send now</button>` : ""}<button class="linkish" data-act="solo-q-edit" data-id="${w.id}">Edit</button><button class="linkish" data-act="solo-q-remove" data-id="${w.id}">Remove</button></div></div>`)}`;
   }
+
+  // ---- 012 US5: images for the next message (R-8), kept per session until sent -------------
+  const attached = new Map(); // session id -> [{id, name, media_type}]
+  const chips = (sid) => (attached.get(sid) || []).map((a, i) => h`<span class="pill">${a.name} <button type="button" class="linkish tiny" data-act="solo-unattach" data-i="${i}" aria-label="${`Remove ${a.name}`}">×</button></span>`);
+  function drawChips(sid) {
+    const el = document.getElementById("solo-attached");
+    if (el) el.innerHTML = h`${chips(sid)}`.s;
+  }
+  const inflight = new Map(); // session id -> uploads not answered yet
+  async function upload(sid, files) {
+    for (const f of files) {
+      const list = attached.get(sid) || [];
+      if (list.length + (inflight.get(sid) || 0) >= 4) { alertLine("A message can carry up to 4 images."); break; }
+      inflight.set(sid, (inflight.get(sid) || 0) + 1);
+      try {
+        const r = await fetch(`/api/sessions/${encodeURIComponent(sid)}/attachments?name=${encodeURIComponent(f.name || "pasted.png")}`, { method: "POST", headers: { "Content-Type": f.type || "application/octet-stream" }, body: f });
+        const v = await r.json().catch(() => null);
+        if (!r.ok || !v || v.ok === false) throw new Error((v && v.error) || "the image was refused");
+        const now = attached.get(sid) || [];
+        now.push({ id: v.value.id, name: v.value.name, media_type: v.value.media_type });
+        attached.set(sid, now);
+      } catch (e) { alertLine(e.message); } finally { inflight.set(sid, inflight.get(sid) - 1); }
+    }
+    drawChips(sid);
+  }
+  // A pasted screenshot, or files picked: only in a session whose runtime takes images.
+  document.addEventListener("paste", (e) => {
+    const box = e.target && e.target.id === "say" ? e.target : null;
+    const form = box && box.closest("form[data-session]");
+    if (!form || form.dataset.images !== "true") return;
+    const files = [...((e.clipboardData && e.clipboardData.files) || [])].filter((f) => f.type.startsWith("image/"));
+    if (!files.length) return;
+    e.preventDefault();
+    upload(form.dataset.session, files);
+  });
+  document.addEventListener("change", (e) => {
+    if (!e.target || e.target.id !== "solo-file") return;
+    const form = e.target.closest("form[data-session]");
+    if (form) upload(form.dataset.session, [...e.target.files]);
+    e.target.value = "";
+  });
 
   function list(s) {
     if (!s || !s.session) return h`<div class="empty small">Say what you want done: a fix, an experiment, a question about the code. The assistant works in a copy of its own; your folder stays as it is.</div>`;
@@ -154,12 +203,16 @@
   function composer(s) {
     const mode = (s && s.session && s.session.mode) || "ask";
     const busy = !!(s && s.busy);
-    return h`<form class="composer" data-submit="solo-say">
+    const x = s && s.session;
+    const images = !!(x && x.images);
+    return h`<form class="composer" data-submit="solo-say"${raw(x ? ` data-session="${esc(s.id)}" data-images="${images}"` : "")}>
       <div class="cbox">
+        ${images ? h`<div id="solo-attached" class="row wrap gap-8">${chips(s.id)}</div>` : ""}
         <label for="say" class="sr">Message the assistant</label>
         <textarea id="say" rows="2" placeholder="${s && s.session ? "Message the assistant…" : "What should the assistant do?"}"></textarea>
         <div class="cbar">
           ${s && s.session ? h`<button type="button" class="mode-chip" data-act="solo-mode" data-mode="${mode}" aria-label="${`Mode: ${MODES[mode]}. Click to switch.`}">${MODES[mode]}</button>` : ""}
+          ${images ? h`<label class="btn btn2 xs" title="Attach an image (png, jpeg, gif or webp, up to 5 MiB), or paste a screenshot into the message">Attach image<input id="solo-file" type="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden></label>` : ""}
           <span class="grow"></span>
           ${busy ? h`<button class="send-btn stop" type="button" data-act="solo-stop" aria-label="Stop the assistant" title="Stop the assistant"><svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><rect width="12" height="12" rx="2" fill="currentColor"/></svg></button>` : ""}
           <button class="send-btn" type="submit" aria-label="${busy ? "Send: it waits until the turn ends" : "Send"}" title="${busy ? "Send (waits until the turn ends)" : "Send (Enter)"}"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg></button>
@@ -171,7 +224,8 @@
   async function say(project, s) {
     const box = document.getElementById("say");
     const text = box ? box.value.trim() : "";
-    if (!text) return null;
+    const imgs = (s && s.session && attached.get(s.id)) || [];
+    if (!text && !imgs.length) return null;
     box.value = "";
     try {
       if (!s || !s.session) {
@@ -179,7 +233,9 @@
         if (v.error) { box.value = text; alertLine(v.error); }
         return v.session;
       }
-      await post(`/api/sessions/${encodeURIComponent(s.id)}/say`, { text });
+      await post(`/api/sessions/${encodeURIComponent(s.id)}/say`, imgs.length ? { text, attachments: imgs.map((a) => a.id) } : { text });
+      attached.delete(s.id);
+      drawChips(s.id);
       return s.id;
     } catch (e) {
       box.value = text;
@@ -378,6 +434,27 @@
     if (out && out.feature) location.hash = `#/p/${encodeURIComponent(project)}/f/${encodeURIComponent(out.feature)}`;
   }
 
-  Fallow.solo = { asConv, makeFeature, makeFeatureFromEarlier, head, menu, notices, list, composer, say, setMode, stopTurn, openEditor, rename, changesPanel, gatesPanel, undo, pending, runGates, branchesPanel };
+  async function web(s, on) {
+    try { await post(`/api/sessions/${encodeURIComponent(s.id)}/web`, { on }); } catch (e) { alertLine(e.message); }
+  }
+  async function queueAct(s, id, what) {
+    const path = `/api/sessions/${encodeURIComponent(s.id)}/queue/${encodeURIComponent(id)}`;
+    try {
+      if (what === "edit") {
+        const w = ((s.session && s.session.queue) || []).find((q) => q.id === id);
+        const text = await Fallow.confirm({ title: "Edit the waiting message", text: "It is sent as you leave it.", ok: "Save", input: { label: "Message", value: (w && w.text) || "" } });
+        if (text === false || !text.trim()) return;
+        await post(path, { text });
+      } else if (what === "remove") await post(path, { remove: true });
+      else await post(path, { send: true });
+    } catch (e) { alertLine(e.message); }
+  }
+  function unattach(s, i) {
+    const list = attached.get(s.id) || [];
+    list.splice(i, 1);
+    drawChips(s.id);
+  }
+
+  Fallow.solo = { asConv, web, queueAct, unattach, makeFeature, makeFeatureFromEarlier, head, menu, notices, list, composer, say, setMode, stopTurn, openEditor, rename, changesPanel, gatesPanel, undo, pending, runGates, branchesPanel };
   void esc;
 })();

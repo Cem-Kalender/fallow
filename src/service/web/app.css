@@ -708,6 +708,11 @@ fieldset.field.along legend { padding: 0; margin-bottom: 4px; }
 .solo-item .tick { width: 14px; text-align: center; }
 .solo-item .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent, #2f52c9); }
 .you.waiting { opacity: .65; border-style: dashed; }
+/* 012 US5: an image a message carried. */
+.you-shots { align-self: flex-end; justify-content: flex-end; }
+.you.waiting .linkish { color: inherit; text-decoration: underline; }
+.solo-note { padding: 6px 24px 0; }
+.thumb { max-width: 220px; max-height: 160px; border-radius: 8px; border: 1px solid var(--line); display: block; }
 
 /* 012: a project that is not a git repository yet (FR-039). */
 .gate { max-width: 760px; }

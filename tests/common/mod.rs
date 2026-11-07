@@ -831,3 +831,19 @@ pub fn stop(e: fallow::service::ToolEngine) {
     let _ = e.tx.send(Msg::Shutdown);
     let _ = e.handle.join();
 }
+
+/// 012: a studio on `settings` (as `studio_settings_caps` makes them).
+#[allow(dead_code)]
+pub fn start_studio_settings(root: &Path, settings: Settings) -> fallow::service::ToolEngine {
+    let config = root.join("config");
+    std::fs::create_dir_all(&config).unwrap();
+    fallow::service::engine_with_notify(
+        root.join("data"),
+        settings,
+        Some(config),
+        PathBuf::from(env!("CARGO_BIN_EXE_fallow")),
+        None,
+        std::sync::Arc::new(fallow::platform::notify::Off),
+    )
+    .unwrap()
+}

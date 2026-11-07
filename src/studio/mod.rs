@@ -6,6 +6,7 @@ pub mod commands;
 pub mod conv;
 pub mod defs;
 pub mod files;
+pub mod extras;
 pub mod handover;
 pub mod judge;
 pub mod refwatch;
@@ -212,6 +213,36 @@ pub enum Req {
     /// 012 (R-12): run the project's gates on the session's head.
     SoloGates {
         session: String,
+    },
+    /// 012 US5 (R-8): an image for the session's next message, checked by its magic bytes.
+    SoloAttach {
+        session: String,
+        name: String,
+        bytes: Vec<u8>,
+    },
+    /// 012 US5 (R-8): where an attached image is kept, and its type (to serve it).
+    SoloAttachment {
+        session: String,
+        sha: String,
+    },
+    /// 012 US5 (R-8): a session's message with attached images (their ids from `SoloAttach`).
+    SoloSay {
+        session: String,
+        text: String,
+        attachments: Vec<String>,
+    },
+    /// 012 US5 (R-9): a waiting message edited, removed, or sent now.
+    SoloQueue {
+        session: String,
+        id: String,
+        text: Option<String>,
+        remove: bool,
+        send: bool,
+    },
+    /// 012 US5 (FR-009): the session's web access on or off.
+    SoloWeb {
+        session: String,
+        on: bool,
     },
     /// Cancels the lead's running turn; the message is withdrawn (008 T047).
     Cancel {

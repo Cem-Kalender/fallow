@@ -186,6 +186,16 @@ fn respond_bytes(req: tiny_http::Request, content_type: &str, body: &'static [u8
     let _ = req.respond(r);
 }
 
+/// 012 (R-8): a kept image, sent as itself; `nosniff` (in the common headers) keeps it an image.
+fn respond_data(req: tiny_http::Request, content_type: &str, body: Vec<u8>) {
+    let mut r = Response::from_data(body).with_status_code(200);
+    for h in common_headers() {
+        r.add_header(h);
+    }
+    r.add_header(header("Content-Type", content_type));
+    let _ = req.respond(r);
+}
+
 fn json_reply(req: tiny_http::Request, reply: Reply) {
     match reply {
         Reply::Ok(v) => respond(
@@ -476,12 +486,33 @@ fn studio_route(
         ("POST", ["api", "sessions", c, "open"]) => r(Req::OpenSession {
             session: c.to_string(),
         }),
+        ("POST", ["api", "sessions", c, "say"]) if body.get("attachments").and_then(Value::as_array).is_some_and(|a| !a.is_empty()) => {
+            r(Req::SoloSay {
+                session: c.to_string(),
+                text: s("text").unwrap_or_default(),
+                attachments: body["attachments"]
+                    .as_array()
+                    .map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect())
+                    .unwrap_or_default(),
+            })
+        }
         ("POST", ["api", "sessions", c, "say"]) => match need("text") {
             Ok(t) => r(Req::Say {
                 conv: c.to_string(),
                 text: t,
             }),
             Err(e) => Some(Err(e)),
+        },
+        ("POST", ["api", "sessions", c, "queue", id]) => r(Req::SoloQueue {
+            session: c.to_string(),
+            id: id.to_string(),
+            text: s("text"),
+            remove: body.get("remove").and_then(Value::as_bool) == Some(true),
+            send: body.get("send").and_then(Value::as_bool) == Some(true),
+        }),
+        ("POST", ["api", "sessions", c, "web"]) => match body.get("on").and_then(Value::as_bool) {
+            Some(on) => r(Req::SoloWeb { session: c.to_string(), on }),
+            None => Some(Err("say whether web access is on".into())),
         },
         ("POST", ["api", "sessions", c, "cancel"]) => r(Req::Cancel {
             conv: c.to_string(),
@@ -729,6 +760,28 @@ fn handle(mut req: tiny_http::Request, tx: &Sender<Msg>, port: u16, secret: &str
         .filter(|s| !s.is_empty())
         .collect();
     let is_get = *req.method() == Method::Get;
+    // 012 (R-8): an image for a session's message: the raw bytes, up to 5 MiB.
+    if let ("POST", ["api", "sessions", s, "attachments"]) = (method.as_str(), parts.as_slice()) {
+        let session = percent_decode(s);
+        let mut b = Vec::new();
+        let max = crate::studio::extras::MAX_IMAGE;
+        let _ = req.as_reader().take(max as u64 + 1).read_to_end(&mut b);
+        if b.len() > max {
+            return json_reply(req, Reply::Err("an image can be up to 5 MiB".into()));
+        }
+        let name = query_arg(&url, "name").unwrap_or_else(|| "image".into());
+        return json_reply(req, ask(tx, Request::Studio(crate::studio::Req::SoloAttach { session, name, bytes: b })));
+    }
+    if let (true, ["api", "sessions", s, "attachments", sha]) = (is_get, parts.as_slice()) {
+        let r = ask(tx, Request::Studio(crate::studio::Req::SoloAttachment { session: percent_decode(s), sha: percent_decode(sha) }));
+        return match r {
+            Reply::Ok(v) => match std::fs::read(v["path"].as_str().unwrap_or_default()) {
+                Ok(bytes) => respond_data(req, v["media_type"].as_str().unwrap_or("application/octet-stream"), bytes),
+                Err(_) => respond(req, 404, "text/plain", "not found".into()),
+            },
+            Reply::Err(e) => respond(req, 404, "text/plain", e),
+        };
+    }
     let body: Value = if is_get {
         Value::Null
     } else {

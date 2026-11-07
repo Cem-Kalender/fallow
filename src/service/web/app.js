@@ -463,6 +463,8 @@ const Fallow = (() => {
       }
       const undone = (c.undone || []).includes(t.n);
       out.push(h`<div class="you${undone ? " undone" : ""}">${t.said}</div>`);
+      // 012 US5: what went with the engineer's message (its images), drawn by the screen.
+      if (c.saidExtra) out.push(c.saidExtra(t));
       if (undone) out.push(h`<div class="tiny muted">Undone: this turn's changes are gone from the working copy, kept under a ref until the session closes.</div>`);
       if ((t.edits || []).length) {
         out.push(h`<div class="tiny muted">Your edits went with it: ${t.edits.map((e) => e.path).join(", ")}</div>`);

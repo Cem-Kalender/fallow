@@ -806,6 +806,19 @@
           if (s) location.hash = `#/p/${encodeURIComponent(state.id)}/files?v=${encodeURIComponent(`solo:${s.id}`)}&f=${encodeURIComponent(el.dataset.path)}`;
           return;
         }
+        // 012 US5: the web switch, the waiting messages, and the images for the next message.
+        if (name === "solo-web") {
+          if (state.session) await Fallow.solo.web(state.session, el.dataset.on === "true");
+          return again();
+        }
+        if (name === "solo-q-send" || name === "solo-q-edit" || name === "solo-q-remove") {
+          if (state.session) await Fallow.solo.queueAct(state.session, el.dataset.id, name.slice(7));
+          return again();
+        }
+        if (name === "solo-unattach") {
+          if (state.session) Fallow.solo.unattach(state.session, Number(el.dataset.i));
+          return;
+        }
         if (name === "solo-stop") {
           if (state.session) await Fallow.solo.stopTurn(state.session);
           return again();

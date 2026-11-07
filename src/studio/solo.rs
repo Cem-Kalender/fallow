@@ -347,23 +347,24 @@ impl Studio {
         text: &str,
         refs: Vec<prompts::FileRef>,
     ) -> Result<Value, String> {
-        self.solo_turn(ctx, conv, text, refs, None)
+        self.solo_turn(ctx, conv, text, refs, None, Vec::new())
     }
 
     /// `say_solo`, or with `queued` (its id) a waiting message being sent: it is not queued
     /// again when it still has to wait (`{"waiting": …}`), and it leaves the queue as its turn
     /// starts (third review, low 1: never sent twice).
-    fn solo_turn(
+    pub(super) fn solo_turn(
         &mut self,
         ctx: &Ctx,
         conv: &str,
         text: &str,
         refs: Vec<prompts::FileRef>,
         queued: Option<&str>,
+        attachments: Vec<crate::conversation::solo::AttachmentRec>,
     ) -> Result<Value, String> {
         let from_queue = queued.is_some();
         let text = text.trim();
-        if text.is_empty() {
+        if text.is_empty() && attachments.is_empty() {
             return Err("say something to the assistant".into());
         }
         self.check_gone(conv);
@@ -393,39 +394,17 @@ impl Studio {
             c.append(CEvent::Solo(SoloEvent::MessageQueued {
                 id: id.clone(),
                 text: text.to_string(),
-                attachments: Vec::new(),
+                attachments: attachments.clone(),
             }))?;
             if !idle {
                 return Ok(json!({ "queued": id }));
             }
             // Idle: the engineer's message is their go-ahead for those waiting (second review):
-            // the oldest goes now, the rest after it.
+            // the oldest goes now (the engine sends it, reading its `@` files then, T045), the
+            // rest after it.
             c.queue_hold = false;
             c.queue_go = true;
-            let first = c
-                .state
-                .solo
-                .as_ref()
-                .and_then(|s| s.queue.first())
-                .map(|w| (w.id.clone(), w.text.clone()));
-            let mut v = json!({ "queued": id });
-            if let Some((qid, qtext)) = first {
-                match self.say_solo_queued(ctx, conv, &qid, &qtext) {
-                    Ok(Some(n)) => v["turn"] = json!(n),
-                    Ok(None) => {}
-                    // Said as the waiting messages' state, never as an error: the new message
-                    // is already queued (third review, medium).
-                    Err(e) => {
-                        let c = self.conv_mut(conv)?;
-                        c.queue_hold = true;
-                        c.slot_wait = Some(e.clone());
-                        c.tick();
-                        self.console.push(format!("session {conv}: {e}"));
-                        v["waiting"] = json!(e);
-                    }
-                }
-            }
-            return Ok(v);
+            return Ok(json!({ "queued": id }));
         }
         // An agent slot, as a loop step takes one (FR-027).
         if let Err(why) = ctx.slots.take() {
@@ -439,7 +418,7 @@ impl Studio {
             c.append(CEvent::Solo(SoloEvent::MessageQueued {
                 id: id.clone(),
                 text: text.to_string(),
-                attachments: Vec::new(),
+                attachments: attachments.clone(),
             }))?;
             c.slot_wait = Some(why.clone());
             return Ok(json!({ "queued": id, "waiting": why }));
@@ -569,7 +548,13 @@ impl Studio {
             system: Some(prompts::assistant_system(&def.body)),
             partial: true,
             group: Some(Arc::clone(&group)),
-            attachments: Vec::new(),
+            attachments: attachments
+                .iter()
+                .map(|a| agent::Attachment {
+                    path: super::extras::attachment_path(&c.dir, a),
+                    media_type: a.media_type.clone(),
+                })
+                .collect(),
             web: solo.web,
             user_settings: true,
         };
@@ -591,7 +576,7 @@ impl Studio {
             model: Some(def.model.clone()).filter(|m| !m.is_empty()),
             new_session: !matches!(session, Session::Resume(_)),
             instructions: instr_recs,
-            attachments: Vec::new(),
+            attachments,
             slot_waited_ms: None,
             head: git::head(&wt).ok(),
         })?;
@@ -1203,7 +1188,13 @@ impl Studio {
     pub fn solo_tick(&mut self, ctx: &Ctx) {
         // 012 (R-15): spec sessions whose constitution step is done run specify on the brief.
         self.brief_tick(ctx);
-        let ready: Vec<(String, String, String)> = self
+    }
+
+    /// 012 (R-9): the sessions whose oldest waiting message may go now: (session, id, text).
+    /// Not after a failure or a refused approval until the engineer says something, nor after a
+    /// restart (held), nor while a commit is pending.
+    pub fn waiting_ready(&self) -> Vec<(String, String, String)> {
+        self
             .convs
             .values()
             .filter(|c| !c.state.busy && !c.queue_hold)
@@ -1221,34 +1212,34 @@ impl Studio {
                 let w = s.queue.first()?;
                 Some((c.id().to_string(), w.id.clone(), w.text.clone()))
             })
-            .collect();
-        for (conv, qid, text) in ready {
-            match self.say_solo_queued(ctx, &conv, &qid, &text) {
-                Ok(_) => {}
-                Err(e) => {
-                    // Held until the engineer says something: not tried again every second.
-                    if let Some(c) = self.convs.get_mut(&conv) {
-                        c.queue_hold = true;
-                        c.slot_wait = Some(e.clone());
-                        c.tick();
-                    }
-                    self.console.push(format!("session {conv}: {e}"));
-                }
-            }
-        }
+            .collect()
     }
 
-    /// Sends a waiting message as the next turn: the turn's number, or `None` when it still
-    /// waits for a slot.
-    fn say_solo_queued(
-        &mut self,
-        ctx: &Ctx,
-        conv: &str,
-        qid: &str,
-        text: &str,
-    ) -> Result<Option<u32>, String> {
-        let v = self.solo_turn(ctx, conv, text, Vec::new(), Some(qid))?;
-        Ok(v["turn"].as_u64().map(|n| n as u32))
+    /// Sends a waiting message as the next turn, with its images and the files its text names
+    /// (`refs`, read now): the turn's number, or `None` when it still waits for a slot. A
+    /// failure holds the queue until the engineer says something: not tried every second.
+    pub fn send_waiting(&mut self, ctx: &Ctx, conv: &str, qid: &str, text: &str, refs: Vec<prompts::FileRef>) -> Option<u32> {
+        let attachments = self
+            .convs
+            .get(conv)
+            .and_then(|c| c.state.solo.as_ref())
+            .and_then(|s| s.queue.iter().find(|w| w.id == qid))
+            .map(|w| w.attachments.clone())
+            .unwrap_or_default();
+        // Checked again as they go: the kept bytes must still be the images attached (review).
+        let attachments = attachments.iter().map(|a| self.attachment_checked(conv, &a.sha)).collect::<Result<Vec<_>, _>>();
+        match attachments.and_then(|a| self.solo_turn(ctx, conv, text, refs, Some(qid), a)) {
+            Ok(v) => v["turn"].as_u64().map(|n| n as u32),
+            Err(e) => {
+                if let Some(c) = self.convs.get_mut(conv) {
+                    c.queue_hold = true;
+                    c.slot_wait = Some(e.clone());
+                    c.tick();
+                }
+                self.console.push(format!("session {conv}: {e}"));
+                None
+            }
+        }
     }
 
     /// The session's part of its view (contracts/web-api.md, "Session").
@@ -1284,15 +1275,28 @@ impl Studio {
                     json!("it could also allow commands Fallow asks about one by one");
             }
         }
+        // 012 US5: what the assistant's runtime can do, for the composer and the web switch; the
+        // instruction files the assistant was last handed (R-7), without reading any file here.
+        let caps = self.solo_caps(c);
+        let instructions: Vec<Value> = c
+            .state
+            .turns
+            .iter()
+            .rev()
+            .find(|t| !t.instructions.is_empty() && !t.withdrawn)
+            .map(|t| t.instructions.iter().map(|i| json!({ "path": i.path, "skipped": i.skipped, "cut": i.cut, "turn": t.n })).collect())
+            .unwrap_or_default();
         v["session"] = json!({
             "id": c.id(),
             "name": s.name,
+            "images": caps.images,
+            "instructions": instructions,
             "agent": c.state.agent.clone().unwrap_or_else(|| ASSISTANT.to_string()),
             "branch": s.branch,
             "start": { "branch": s.start_branch, "commit": s.start_commit, "dirty": s.dirty_at_start },
             "worktree": s.worktree,
             "lfs": s.lfs,
-            "web": { "on": s.web },
+            "web": { "on": s.web, "can_switch": caps.web_off },
             "mode": if c.allow_until_switch { "until_switch" } else { "ask" },
             "base": base,
             "head": head,

@@ -492,27 +492,28 @@ and web access.
 
 **Independent Test**: quickstart Q6.
 
-- [ ] T043 [US5] Write `tests/us12_extras.rs` (Q6). It fails first.
+- [X] T043 [US5] Write `tests/us12_extras.rs` (Q6). It fails first.
   - A png attached: `expect_images = 1` passes. With `images = false`, the attachment is refused before sending.
   - A wrong type, or a file over 5 MiB, is refused.
   - Two messages sent during a turn wait, can be edited and removed, and are sent in order. After a restart they wait, with "Send now".
   - `AGENTS.md` is handed on the first turn and again after a change, and the session lists it.
   - A `web` step shows "Fetched <url>".
   - Web access off: the call carries `web: false`. With `web_off = false`, switching it off is refused.
-- [ ] T044 [US5] Attachments (R-8).
+- [X] T044 [US5] Attachments (R-8).
   - `POST /api/sessions/<s>/attachments`: checked by magic bytes (png, jpeg, gif or webp), up to 5 MiB, at most 4 per message.
   - Stored at `conversations/<s>/attachments/<sha>.<ext>`, and served by `GET …/attachments/<sha>`.
   - `Call.attachments`.
   - Refused when the runtime lacks `images`.
-- [ ] T045 [US5] Waiting messages (R-9).
+- [X] T045 [US5] Waiting messages (R-9).
   - A waiting message keeps the files its text refers to with `@`: they are resolved again when it is sent (Phase 3 review, low).
   - `message_queued` while a turn works or no slot is free.
   - `POST /api/sessions/<s>/queue/<id>` edits, removes or sends a message.
   - T014's tick (sending the oldest waiting message when a turn ends normally and a slot is free) gains its exceptions: nothing is sent by itself after a failure, an approval refusal or a restart; each waiting message has "Send now".
-- [ ] T046 [US5] Web access and instruction files in the session.
+- [X] T046 [US5] Web access and instruction files in the session.
   - `POST /api/sessions/<s>/web` sets `web_set`, refused without `web_off`.
   - The instruction files are re-handed when a sha changed, and shown in the view as `instructions`.
-- [ ] T047 [US5] Build the page: paste or attach an image in the composer, waiting messages under the chat, the web switch in the header, and the list of instruction files. Screenshots `checks/solo-extras.png`.
+- [X] T047 [US5] Build the page: paste or attach an image in the composer, waiting messages under the chat, the web switch in the header, and the list of instruction files. Screenshots `checks/solo-extras.png`.
+  - Done with notes: images attach to a session's messages once the session exists; the first message of a draft goes without images (an upload needs the session's folder). Waiting messages are sent by the engine, which reads their `@` files as each is sent. Kept images are named by their sha-256 (`src/studio/extras.rs`, no new dependency). Screenshots `checks/solo-extras.png` and `checks/solo-extras-queue.png`.
 
 **Checkpoint**: Q6 passes.
 
