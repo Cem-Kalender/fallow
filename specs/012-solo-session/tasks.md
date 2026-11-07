@@ -556,18 +556,21 @@ and web access.
 - [X] T051 Sessions and 011's loops (quickstart Q10, R-10).
   - **Code**: in `src/run/update.rs`, `MovedCommit.from` becomes `From { Feature | Session{id, name} | Outside }`, a plain string reading as `Feature`. A commit in a session's `git_observed.commits` is from that session. The loop view gains `from_kind`, and `loop.js` shows "from solo session <name>".
   - **Test** in `tests/us12_with_loops.rs`: a session's squash into a ready loop's target is named as the session's on the loop page. 011's rules apply (Free updates by itself, Normal asks), and the session never joins the merge line.
-- [ ] T052 [P] Add three benches to `xtask/src/bench.rs`, run in CI (R-17):
+- [X] T052 [P] Add three benches to `xtask/src/bench.rs`, run in CI (R-17):
   - `solo_start`: from the first send to the turn's start under 5 s, on 10,000 files (SC-001);
   - `solo_four`: 4 scripted sessions at once, under 200 MB resident, with the activity shown within 2 s at p95 (SC-009);
   - `refwatch_latency`: a moved branch shown within 5 s (SC-004).
 
   Each bench fails the build when its budget is exceeded (constitution VIII; analyze C13).
+  - Done with notes: the three benches are in `cargo xtask bench` (with `--only <name>` to run some). They were built but not run on this machine, as the engineer's own Fallow service was running and a bench needs to be the user's only one; CI runs them.
 - [X] T053 [P] Audits and notes.
   - `tests/no_egress_no_push.rs` still finds no push, fetch or network in Fallow's own code for sessions (FR-018).
   - `specs/005-adaptive-delegation/contracts/task-set.md` gets the note that `setup/settings.local.json` no longer reaches run agents.
   - `specs/009-chat-commands-leads/spec.md` gets a note that the project conversation is retired by 012.
   - Done with notes: T051 names as a session's only its turns' commits, its squashes, and a single commit its own command made; a fast-forward or pull a session ran claims none (they may be the engineer's). The close question carries a digest of what it shows; a choice is done only while the session still holds exactly that.
-- [ ] T054 Run the whole suite, file by file, and `cargo clippy --all-targets -- -D warnings`. Mark the tasks done, and record any test changed by the retirements (plain folders, the project conversation, settings).
+- [X] T054 Run the whole suite, file by file, and `cargo clippy --all-targets -- -D warnings`. Mark the tasks done, and record any test changed by the retirements (plain folders, the project conversation, settings).
+  - Done 2026-11-07: every test file passes, run one at a time; clippy is clean.
+  - Tests changed by the retirement of the project conversation (Phase 8): `instructions_012`, `us1_conversation` (its part became the read-only refusal), `us1_modes`, `us2_slots`, `us5_data` (an earlier conversation made on purpose), `us6_defs`, `us8_cancel`, `us9_commands` (`/specify` there is refused), `us9_files`, `us9_leads` (no fork). The retirement of plain folders and the settings changes were recorded in their phases (5 and 2).
 - [ ] T055 Quickstart Q11 by hand with the engineer, on the real `claude`:
   - a session from the start to a squash into the branch;
   - a pasted screenshot;

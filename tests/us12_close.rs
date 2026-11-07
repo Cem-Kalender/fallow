@@ -113,7 +113,7 @@ fn undone_turns_are_named_once_and_their_refs_go() {
     assert_eq!(ask["undone"][0]["turn"], 2, "{r}");
     assert!(ask["undone"][0]["commit"].is_string(), "{r}");
     assert!(ask["commits"].as_array().unwrap().is_empty() && ask["files"].as_array().unwrap().is_empty(), "{r}");
-    assert!(git(&repo, &["for-each-ref", &keep]).trim().len() > 0, "nothing removed before the answer");
+    assert!(!git(&repo, &["for-each-ref", &keep]).trim().is_empty(), "nothing removed before the answer");
     let r = close(tx, &s, None, true).unwrap();
     assert_eq!(r["closed"], "merged", "{r}");
     assert!(git(&repo, &["for-each-ref", &keep]).trim().is_empty(), "the undone refs are gone");

@@ -8,6 +8,15 @@
 //!   fake agent), under 200 MB. (The four steps come from four loops, each with one checker, so
 //!   the measure holds whatever a pipeline marks `parallel_with`.)
 //!
+//!
+//! 012 (T052; research R-17) adds three for solo sessions:
+//! - `solo_start`: from the first message to the turn's start, on a project of 10,000 files,
+//!   under 5 s (SC-001);
+//! - `solo_four`: four scripted sessions at once, Fallow under 200 MB, and each session's first
+//!   activity line shown within 2 s of its message at p95 (SC-009);
+//! - `refwatch_latency`: a commit made in the project folder from a terminal shown among the
+//!   project's git changes within 5 s (SC-004).
+//!
 //! Each run uses its own config and data folders, so the engineer's are never touched; it needs
 //! no other Fallow service running for the same user (there is one per user). Memory is the
 //! working set on Windows (`tasklist`) and VmRSS on Linux. A failing budget is measured once
@@ -26,10 +35,19 @@ const RUNS: usize = 30;
 const READY_MS: f64 = 500.0;
 const IDLE_MB: f64 = 60.0;
 const RUNNING_MB: f64 = 200.0;
+const SOLO_START_MS: f64 = 5000.0;
+const SOLO_FOUR_MB: f64 = 200.0;
+const SOLO_ACTIVITY_MS: f64 = 2000.0;
+const REFWATCH_MS: f64 = 5000.0;
+
+/// One measure against its budget: (name, value, budget, unit).
+type Measure = (&'static str, f64, f64, &'static str);
 
 struct Args {
     bin: PathBuf,
     fake: PathBuf,
+    /// `--only <name>`: the benchmarks whose name starts with it (all when unset).
+    only: Option<String>,
 }
 
 fn target_dir() -> PathBuf {
@@ -41,12 +59,14 @@ fn parse(args: &[String]) -> Result<Args, String> {
     let mut a = Args {
         bin: exe("fallow"),
         fake: exe("fallow-fake-agent"),
+        only: None,
     };
     let mut it = args.iter();
     while let Some(x) = it.next() {
         match x.as_str() {
             "--bin" => a.bin = it.next().ok_or("--bin needs a path")?.into(),
             "--fake" => a.fake = it.next().ok_or("--fake needs a path")?.into(),
+            "--only" => a.only = Some(it.next().ok_or("--only needs a name")?.clone()),
             other => return Err(format!("unknown argument {other:?}")),
         }
     }
@@ -64,33 +84,46 @@ fn parse(args: &[String]) -> Result<Args, String> {
 pub fn run(args: &[String]) -> Result<(), String> {
     let args = parse(args).map_err(|e| {
         format!(
-            "bench: {e}\nusage: cargo xtask bench [--bin <fallow>] [--fake <fallow-fake-agent>]"
+            "bench: {e}\nusage: cargo xtask bench [--bin <fallow>] [--fake <fallow-fake-agent>] [--only <name>]"
         )
     })?;
     let mut failed = Vec::new();
-    for (name, f) in [
-        (
-            "page ready",
-            ready as fn(&Args) -> Result<(f64, f64), String>,
-        ),
-        ("idle memory", idle),
-        ("running memory", running),
-    ] {
-        let (v, budget) = f(&args)?;
-        let unit = if name == "page ready" { "ms" } else { "MB" };
-        if v < budget {
-            println!("bench: {name}: {v:.1} {unit} (budget {budget} {unit}): ok");
+    let one = |name: &'static str, unit: &'static str, f: fn(&Args) -> Result<(f64, f64), String>| {
+        move |a: &Args| f(a).map(|(v, b)| vec![(name, v, b, unit)])
+    };
+    type Bench = Box<dyn Fn(&Args) -> Result<Vec<Measure>, String>>;
+    let benches: Vec<(&str, Bench)> = vec![
+        ("page ready", Box::new(one("page ready", "ms", ready))),
+        ("idle memory", Box::new(one("idle memory", "MB", idle))),
+        ("running memory", Box::new(one("running memory", "MB", running))),
+        ("solo_start", Box::new(solo_start)),
+        ("solo_four", Box::new(solo_four)),
+        ("refwatch_latency", Box::new(refwatch_latency)),
+    ];
+    let chosen: Vec<&(&str, Bench)> = benches.iter().filter(|(n, _)| args.only.as_deref().is_none_or(|o| n.starts_with(o))).collect();
+    if chosen.is_empty() {
+        let names: Vec<&str> = benches.iter().map(|(n, _)| *n).collect();
+        return Err(format!("bench: no benchmark is named like {:?}: {}", args.only.unwrap_or_default(), names.join(", ")));
+    }
+    for (_, f) in chosen {
+        let first = f(&args)?;
+        if first.iter().all(|(_, v, b, _)| v < b) {
+            for (name, v, b, unit) in &first {
+                println!("bench: {name}: {v:.1} {unit} (budget {b} {unit}): ok");
+            }
             continue;
         }
         // Once more; the second result is final.
-        let (v2, _) = f(&args)?;
-        let ok = v2 < budget;
-        println!(
-            "bench: {name}: {v:.1} {unit}, then {v2:.1} {unit} (budget {budget} {unit}): {}",
-            if ok { "ok" } else { "OVER" }
-        );
-        if !ok {
-            failed.push(name);
+        let second = f(&args)?;
+        for ((name, v, b, unit), (_, v2, _, _)) in first.iter().zip(&second) {
+            let ok = v2 < b;
+            println!(
+                "bench: {name}: {v:.1} {unit}, then {v2:.1} {unit} (budget {b} {unit}): {}",
+                if ok { "ok" } else { "OVER" }
+            );
+            if !ok {
+                failed.push(*name);
+            }
         }
     }
     if failed.is_empty() {
@@ -360,6 +393,158 @@ fn secret_url() -> Result<String, String> {
     #[cfg(not(windows))]
     {
         Err("the running-memory benchmark reads the service's address on Windows only".into())
+    }
+}
+
+/// The page's cookie, from the service's secret address.
+fn cookie_of(svc: &Service) -> Result<String, String> {
+    let url = secret_url()?;
+    let path_q = url
+        .split_once(&format!(":{}", svc.port))
+        .map(|x| x.1.to_string())
+        .unwrap_or_default();
+    let (_, head, _) = http(svc.port, "GET", &path_q, "", None)?;
+    head.lines()
+        .find_map(|l| l.strip_prefix("Set-Cookie: ").or_else(|| l.strip_prefix("set-cookie: ")))
+        .and_then(|c| c.split(';').next())
+        .map(str::to_string)
+        .ok_or_else(|| "no cookie".to_string())
+}
+
+/// One JSON request to the service, its `value`.
+fn call(svc: &Service, cookie: &str, method: &str, path: &str, body: Value) -> Result<Value, String> {
+    let (_, _, b) = http(svc.port, method, path, cookie, Some(&body))?;
+    let v: Value = serde_json::from_str(&b).map_err(|e| format!("{path}: {e}: {b}"))?;
+    if v["ok"] == false {
+        return Err(format!("{method} {path}: {}", v["error"]));
+    }
+    Ok(v["value"].clone())
+}
+
+/// A service whose `claude` plays `scenario`, with up to four agents at once, and a project
+/// for `repo`: the service, its cookie and the project's id.
+fn solo_service(args: &Args, dir: &Path, scenario: &str, repo: &Path) -> Result<(Service, String, String), String> {
+    let sc = dir.join("scenario.toml");
+    std::fs::write(&sc, scenario).map_err(|e| e.to_string())?;
+    std::fs::write(
+        dir.join("config/settings.toml"),
+        format!(
+            "[defaults]\nmax_parallel = 4\n\n[agents.claude]\ncommand = {:?}\nargs = [\"--scenario\", {:?}]\n",
+            args.fake.display().to_string(),
+            sc.display().to_string()
+        ),
+    )
+    .map_err(|e| e.to_string())?;
+    let (svc, _) = start(args, dir)?;
+    let cookie = cookie_of(&svc)?;
+    let p = call(&svc, &cookie, "POST", "/api/projects", json!({ "path": repo }))?["project"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string();
+    git(repo, &["add", "."])?;
+    git(repo, &["commit", "-q", "-m", "spec kit"])?;
+    Ok((svc, cookie, p))
+}
+
+/// Waits until `pred` holds for the session's view; the time it took.
+fn until(svc: &Service, cookie: &str, s: &str, t0: Instant, pred: impl Fn(&Value) -> bool) -> Result<f64, String> {
+    let end = t0 + Duration::from_secs(60);
+    loop {
+        let v = call(svc, cookie, "GET", &format!("/api/sessions/{s}"), json!({}))?;
+        if pred(&v) {
+            return Ok(t0.elapsed().as_secs_f64() * 1000.0);
+        }
+        if Instant::now() > end {
+            return Err(format!("session {s} never got there: {}", v["session"]));
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+/// 012 SC-001: the first message of a session on a project of 10,000 files, to its turn's start
+/// (the working copy and branch made, the agent started).
+fn solo_start(args: &Args) -> Result<Vec<Measure>, String> {
+    let dir = scratch("solo-start");
+    let r = repo(&dir, "big")?;
+    for i in 0..10_000 {
+        let d = r.join(format!("src/m{:03}", i / 100));
+        if i % 100 == 0 {
+            std::fs::create_dir_all(&d).map_err(|e| e.to_string())?;
+        }
+        std::fs::write(d.join(format!("f{i}.txt")), format!("file {i}\n")).map_err(|e| e.to_string())?;
+    }
+    git(&r, &["add", "."])?;
+    git(&r, &["commit", "-q", "-m", "ten thousand files"])?;
+    let scenario = "[[step]]\nkind = \"assistant_turn\"\nsleep_ms = 20000\noutput = { reply = \"done\" }\n";
+    let (svc, cookie, p) = solo_service(args, &dir, scenario, &r)?;
+    let t0 = Instant::now();
+    let v = call(&svc, &cookie, "POST", &format!("/api/projects/{p}/sessions"), json!({ "text": "Fix the week" }))?;
+    let s = v["session"].as_str().ok_or_else(|| format!("no session: {v}"))?.to_string();
+    let ms = until(&svc, &cookie, &s, t0, |v| v["busy"] == true || v["turns"].as_array().is_some_and(|t| !t.is_empty()))?;
+    Ok(vec![("solo_start", ms, SOLO_START_MS, "ms")])
+}
+
+/// 012 SC-009: four sessions at once: Fallow's memory, and how soon each first activity line
+/// shows (p95 of the four, read every 20 ms).
+fn solo_four(args: &Args) -> Result<Vec<Measure>, String> {
+    let dir = scratch("solo-four");
+    let r = repo(&dir, "four")?;
+    let step = "[[step]]\nkind = \"assistant_turn\"\nweb = [\"https://example.com/docs\"]\nsleep_ms = 30000\noutput = { reply = \"done\" }\n\n";
+    let (svc, cookie, p) = solo_service(args, &dir, &step.repeat(4), &r)?;
+    let mut sessions = Vec::new();
+    for i in 0..4 {
+        let t0 = Instant::now();
+        let v = call(&svc, &cookie, "POST", &format!("/api/projects/{p}/sessions"), json!({ "text": format!("Look up the docs {i}") }))?;
+        let s = v["session"].as_str().ok_or_else(|| format!("no session: {v}"))?.to_string();
+        sessions.push((s, t0));
+    }
+    let mut seen = Vec::new();
+    for (s, t0) in &sessions {
+        seen.push(until(&svc, &cookie, s, *t0, |v| v["activity"].as_array().is_some_and(|a| !a.is_empty()))?);
+    }
+    seen.sort_by(|a, b| a.total_cmp(b));
+    let p95 = seen[((seen.len() as f64 * 0.95).ceil() as usize).saturating_sub(1).min(seen.len() - 1)];
+    let mut peak: f64 = 0.0;
+    for _ in 0..10 {
+        peak = peak.max(rss_mb(svc.child.id())?);
+        std::thread::sleep(Duration::from_millis(500));
+    }
+    Ok(vec![("solo_four memory", peak, SOLO_FOUR_MB, "MB"), ("solo_four activity", p95, SOLO_ACTIVITY_MS, "ms")])
+}
+
+/// 012 SC-004: a commit made in the project folder from a terminal, shown among the project's
+/// git changes.
+fn refwatch_latency(args: &Args) -> Result<Vec<Measure>, String> {
+    let dir = scratch("refwatch");
+    let r = repo(&dir, "watched")?;
+    let (svc, cookie, p) = solo_service(args, &dir, "", &r)?;
+    // The watch has read the project once.
+    std::thread::sleep(Duration::from_millis(3000));
+    std::fs::write(r.join("t.txt"), "terminal\n").map_err(|e| e.to_string())?;
+    git(&r, &["add", "t.txt"])?;
+    let t0 = Instant::now();
+    git(&r, &["commit", "-q", "-m", "from a terminal"])?;
+    // That very commit, not an earlier change of `main` (the project's own setup commit).
+    let head = Command::new("git")
+        .current_dir(&r)
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .map_err(|e| e.to_string())?;
+    if head.len() != 40 {
+        return Err(format!("cannot read the terminal commit: {head:?}"));
+    }
+    let end = t0 + Duration::from_secs(60);
+    loop {
+        let v = call(&svc, &cookie, "GET", &format!("/api/projects/{p}/git-changes"), json!({}))?;
+        if v["changes"].as_array().is_some_and(|c| c.iter().any(|c| c["refname"] == "refs/heads/main" && c["after"] == head.as_str())) {
+            let ms = t0.elapsed().as_secs_f64() * 1000.0;
+            return Ok(vec![("refwatch_latency", ms, REFWATCH_MS, "ms")]);
+        }
+        if Instant::now() > end {
+            return Err(format!("the terminal commit never showed: {v}"));
+        }
+        std::thread::sleep(Duration::from_millis(50));
     }
 }
 

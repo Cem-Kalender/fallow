@@ -275,6 +275,18 @@ pub fn sha256_hex(data: &[u8]) -> String {
     h.iter().map(|x| format!("{x:08x}")).collect()
 }
 
+impl Studio {
+    /// What the session's assistant runtime can do, for its view (defaults when unknown).
+    pub(super) fn solo_caps(&self, c: &super::Conv) -> agent::Capabilities {
+        let name = c.state.agent.clone().unwrap_or_else(|| ASSISTANT.to_string());
+        self.project(&c.state.project)
+            .ok()
+            .and_then(|p| self.library(Some(&p.path)).agent(&name).map(|d| d.runtime.clone()))
+            .map(|r| agent::registry::capabilities(&r, &self.settings))
+            .unwrap_or_default()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -297,17 +309,5 @@ mod tests {
         assert_eq!(image_type(b"RIFF\0\0\0\0WEBPVP8 ").unwrap().0, "image/webp");
         assert!(image_type(b"<svg xmlns=").is_none(), "no svg: it is a script carrier");
         assert!(image_type(b"RIFF\0\0\0\0WAVE").is_none());
-    }
-}
-
-impl Studio {
-    /// What the session's assistant runtime can do, for its view (defaults when unknown).
-    pub(super) fn solo_caps(&self, c: &super::Conv) -> agent::Capabilities {
-        let name = c.state.agent.clone().unwrap_or_else(|| ASSISTANT.to_string());
-        self.project(&c.state.project)
-            .ok()
-            .and_then(|p| self.library(Some(&p.path)).agent(&name).map(|d| d.runtime.clone()))
-            .map(|r| agent::registry::capabilities(&r, &self.settings))
-            .unwrap_or_default()
     }
 }
