@@ -215,6 +215,35 @@ pub fn trim_to(s: &str, max: usize) -> String {
     format!("{}\n… ({} more bytes)", &s[..end], s.len() - end)
 }
 
+/// Whether an agent's failure says it is not signed in to its provider (2026-11-09: a loop
+/// spent all its repair rounds on "Failed to authenticate: OAuth session expired and could not
+/// be refreshed"). No repair can fix that; the engineer signs in again.
+///
+/// Only the agent program's own failure counts (review): a project's error about its own
+/// logins, in a test's output, is a failure to repair.
+pub fn login_failure(why: &str) -> bool {
+    let Some(w) = why.strip_prefix(ENDED_WITH_ERROR) else {
+        return false;
+    };
+    let w = w.to_lowercase();
+    [
+        "failed to authenticate",
+        "oauth session expired",
+        "oauth token has expired",
+        "invalid api key",
+        "please run /login",
+        "authentication_error",
+    ]
+    .iter()
+    .any(|p| w.contains(p))
+}
+
+/// How a runtime's failure starts when the agent itself ended with an error.
+pub const ENDED_WITH_ERROR: &str = "the agent ended with an error: ";
+
+/// What the engineer is told to do when [`login_failure`] holds.
+pub const SIGN_IN_AGAIN: &str = "sign in again (run the agent's command, such as `claude`, in a terminal and use /login there), then press Retry";
+
 /// One line of text, at most `n` characters.
 pub fn clip(s: &str, n: usize) -> String {
     let one = s.replace(['\r', '\n'], " ");
@@ -488,5 +517,20 @@ pub mod registry {
             });
         }
         list
+    }
+}
+
+#[cfg(test)]
+mod login_tests {
+    use super::login_failure;
+
+    #[test]
+    fn a_login_failure_is_told_apart() {
+        assert!(login_failure("the agent ended with an error: Failed to authenticate: OAuth session expired and could not be refreshed"));
+        assert!(login_failure("the agent ended with an error: Invalid API key · Please run /login"));
+        assert!(!login_failure("the agent ended without a result: test_login: invalid api key"), "the project's own error");
+        assert!(!login_failure("the agent ended with an error: the user is not logged in"));
+        assert!(!login_failure("the agent ended with an error: tests failed"));
+        assert!(!login_failure("the agent gave no structured result"));
     }
 }

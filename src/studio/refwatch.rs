@@ -125,10 +125,111 @@ struct GitCmd {
     args: Vec<String>,
 }
 
+/// PowerShell's `if (…) {`, `} else {` and `}` read as separators, for a command line the
+/// judge's splitter refuses (T055: the real `claude` on Windows wrote
+/// `$p = "<folder>"; git -C $p merge --squash x; if ($?) { git -C $p commit -m s }`). Only
+/// for telling which refs a command moves, never for judging it.
+fn unblock(command: &str) -> String {
+    let c: Vec<char> = command.chars().collect();
+    let mut out = String::new();
+    let mut quote: Option<char> = None;
+    let mut i = 0;
+    let starts = |i: usize, w: &str| c[i..].iter().take(w.len()).copied().eq(w.chars());
+    while i < c.len() {
+        let ch = c[i];
+        if let Some(q) = quote {
+            out.push(ch);
+            if ch == q {
+                quote = None;
+            }
+            i += 1;
+            continue;
+        }
+        let word_start = i == 0 || c[i - 1].is_whitespace() || matches!(c[i - 1], ';' | '{' | '}');
+        if ch == '\'' || ch == '"' {
+            quote = Some(ch);
+            out.push(ch);
+            i += 1;
+        } else if ch == '{' || ch == '}' {
+            out.push_str(" ; ");
+            i += 1;
+        } else if word_start && (starts(i, "if") || starts(i, "elseif")) {
+            // `if (<condition>)` or `elseif (<condition>)`: dropped up to its closing
+            // parenthesis (the first one: a nested condition is not read).
+            let mut j = i + if starts(i, "elseif") { 6 } else { 2 };
+            while j < c.len() && c[j].is_whitespace() {
+                j += 1;
+            }
+            match (c.get(j), c[j.min(c.len())..].iter().position(|x| *x == ')')) {
+                (Some('('), Some(close)) => {
+                    out.push_str(" ; ");
+                    i = j + close + 1;
+                }
+                _ => {
+                    out.push(ch);
+                    i += 1;
+                }
+            }
+        } else if word_start && starts(i, "else") && c.get(i + 4).is_none_or(|x| x.is_whitespace() || *x == '{') {
+            out.push_str(" ; ");
+            i += 4;
+        } else {
+            out.push(ch);
+            i += 1;
+        }
+    }
+    out
+}
+
+/// `$name` in `word`, from the line's own assignments. Names match whatever their case, as in
+/// PowerShell (a Bash line with both `$P` and `$p` is read as PowerShell would).
+fn expand(word: &str, vars: &[(String, String)]) -> String {
+    let mut w = word.to_string();
+    // Longest names first, so `$pp` is not read as `$p` and a `p`.
+    let mut vs: Vec<&(String, String)> = vars.iter().collect();
+    vs.sort_by_key(|(n, _)| std::cmp::Reverse(n.len()));
+    for (n, v) in vs {
+        // ASCII lowercase keeps every byte offset, so positions found in it hold in `w`.
+        let pat = format!("${}", n.to_ascii_lowercase());
+        let low = w.to_ascii_lowercase();
+        let mut out = String::new();
+        let mut at = 0;
+        while let Some(k) = low[at..].find(&pat) {
+            let start = at + k;
+            let end = start + pat.len();
+            out.push_str(&w[at..start]);
+            if w[end..].chars().next().is_some_and(|c| c.is_ascii_alphanumeric() || c == '_') {
+                out.push_str(&w[start..end]);
+            } else {
+                out.push_str(v);
+            }
+            at = end;
+        }
+        out.push_str(&w[at..]);
+        w = out;
+    }
+    w
+}
+
+/// An assignment of the line: PowerShell's `$p = "x"` (or `$p="x"`), or sh's `p=x` alone.
+fn assignment(w: &[String]) -> Option<(String, String)> {
+    let ident = |s: &str| !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+    match w {
+        [n, eq, v] if eq == "=" => n.strip_prefix('$').filter(|n| ident(n)).map(|n| (n.to_string(), v.clone())),
+        [one] => {
+            let (n, v) = one.split_once('=')?;
+            let n = n.strip_prefix('$').unwrap_or(n);
+            ident(n).then(|| (n.to_string(), v.to_string()))
+        }
+        _ => None,
+    }
+}
+
 /// Reads each git command of `command`, following `cd` and `-C` (relative to `cwd`, the
-/// command's working directory), `--git-dir`/`--work-tree`, an `env` prefix and `git.exe`.
+/// command's working directory), `--git-dir`/`--work-tree`, an `env` prefix, `git.exe`, the
+/// line's own variables, and PowerShell's `if` blocks.
 fn git_cmds(command: &str, folder: &Path, cwd: &Path) -> Vec<GitCmd> {
-    let Ok(parts) = super::judge::split(command) else {
+    let Ok(parts) = super::judge::split(command).or_else(|_| super::judge::split(&unblock(command))) else {
         return Vec::new();
     };
     let canon = |p: &Path| p.canonicalize().ok();
@@ -136,8 +237,14 @@ fn git_cmds(command: &str, folder: &Path, cwd: &Path) -> Vec<GitCmd> {
     let same = |p: &Path| folder_c.is_some() && canon(p) == folder_c;
     let mut here = cwd.to_path_buf();
     let mut out = Vec::new();
+    let mut vars: Vec<(String, String)> = Vec::new();
     for part in parts {
-        let mut w: Vec<String> = part.words.clone();
+        if let Some(a) = assignment(&part.words) {
+            vars.retain(|(n, _)| !n.eq_ignore_ascii_case(&a.0));
+            vars.push(a);
+            continue;
+        }
+        let mut w: Vec<String> = part.words.iter().map(|x| expand(x, &vars)).collect();
         // `env A=b git …`
         if w.first().is_some_and(|x| x == "env") {
             w.remove(0);
@@ -525,7 +632,31 @@ mod tests {
         assert_eq!(t(&format!("cd {f} && git reset --hard HEAD~1")), ["refs/heads/main"]);
         assert_eq!(t(&format!("env GIT_X=1 git.exe -C {f} merge x")), ["refs/heads/main"]);
         assert!(in_folder(&format!("cd {f} && git status"), &d, &std::env::temp_dir()));
+        // T055, on the real `claude` (PowerShell): the folder in a variable, the commit in an
+        // `if` block.
+        let ps = format!("$p = \"{f}\"; git -C $p status --short; git -C $p merge --squash fallow/solo/x; if ($?) {{ git -C $p commit -m \"s\" }}; git -C $p log --oneline -3");
+        assert_eq!(t(&ps), ["refs/heads/main", "refs/heads/main"]);
+        assert_eq!(t(&format!("p={f}; git -C \"$p\" merge x")), ["refs/heads/main"]);
+        assert_eq!(t(&format!("$p=\"{f}\"; git -C $p reset --hard HEAD~1")), ["refs/heads/main"]);
+        // A variable not set on the line stays as written: not the folder.
+        assert!(t("git -C $q merge x").is_empty());
+        // PowerShell names match whatever their case.
+        assert_eq!(t(&format!("$P = \"{f}\"; git -C $p merge x")), ["refs/heads/main"]);
+        // `$pp` is not `$p` followed by `p`.
+        assert!(t(&format!("$p = \"{f}\"; git -C $pp merge x")).is_empty());
         let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn powershell_blocks_read_as_separators() {
+        let words = |s: &str| s.split([' ', ';']).filter(|w| !w.is_empty()).collect::<Vec<_>>().join(" ");
+        assert_eq!(words(&unblock("a; if ($?) { b }")), "a b");
+        assert_eq!(words(&unblock("if (x) { a } else { b }")), "a b");
+        assert_eq!(words(&unblock("if (x) { a } elseif (y) { b } else { c }")), "a b c");
+        assert_eq!(unblock("git diff --stat"), "git diff --stat");
+        // Quoted text and words that only start with `if` or `else` are kept.
+        assert_eq!(unblock("git commit -m 'fix if (x) {y}'"), "git commit -m 'fix if (x) {y}'");
+        assert_eq!(unblock("elsewhere iffy"), "elsewhere iffy");
     }
 
     #[test]

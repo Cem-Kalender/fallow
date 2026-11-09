@@ -571,14 +571,19 @@ and web access.
 - [X] T054 Run the whole suite, file by file, and `cargo clippy --all-targets -- -D warnings`. Mark the tasks done, and record any test changed by the retirements (plain folders, the project conversation, settings).
   - Done 2026-11-07: every test file passes, run one at a time; clippy is clean.
   - Tests changed by the retirement of the project conversation (Phase 8): `instructions_012`, `us1_conversation` (its part became the read-only refusal), `us1_modes`, `us2_slots`, `us5_data` (an earlier conversation made on purpose), `us6_defs`, `us8_cancel`, `us9_commands` (`/specify` there is refused), `us9_files`, `us9_leads` (no fork). The retirement of plain folders and the settings changes were recorded in their phases (5 and 2).
-- [ ] T055 Quickstart Q11 by hand with the engineer, on the real `claude`:
+- [X] T055 Quickstart Q11 by hand with the engineer, on the real `claude`:
   - a session from the start to a squash into the branch;
   - a pasted screenshot;
   - a web lookup;
   - a read of a file outside the copy and of `.env`: both asked, as reads (FR-043, R-21);
   - making a feature;
   - the wording of the dropdown, the approval cards and the close and feature dialogs.
-  - **Skipped by the engineer on 2026-11-07.** Not checked on the real `claude`, only on the fake: that its search follows git's ignore rules, and that its reads outside the copy and of `.env` reach Fallow as reads to ask (R-21). The wording can be changed later on request.
+  - First skipped by the engineer, then run on 2026-11-07 by Claude Code on the engineer's machine with their go-ahead: [checks/q11.md](checks/q11.md). Everything passed but the squash: a squash written in PowerShell (`$p = …; git -C $p …; if ($?) { … }`) was put down to "outside Fallow". That is fixed in `refwatch.rs`, and a second squash was recognised. Also fixed: `git worktree list` was asked as a change, a refused read was shown as read, and the dashboard pointed to the retired project conversation. Not checked: that the real `claude`'s search follows git's ignore rules.
+- [X] T056 Asked by the engineer on 2026-11-09, after a loop spent all four repair rounds on "Failed to authenticate: OAuth session expired": an agent that is not signed in did no work that counts.
+  - `agent::login_failure` recognises the message.
+  - The step is recorded as not started, marked "signed out", so it uses no repair round.
+  - The engineer is asked at once to sign in again (`claude`, then `/login`), with Retry and Stop; Retry runs the same step with its own instruction.
+  - Test: `tests/us2_repairs.rs` (the fake's new `result` field plays the error).
 
 ---
 

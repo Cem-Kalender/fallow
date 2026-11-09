@@ -1120,7 +1120,8 @@ fn git_reasons(args: &[&str], ctx: &Ctx, base: &Path, r: &mut Vec<String>) {
         "remote" if positional.first().is_some_and(|s| !matches!(*s, "show" | "get-url" | "-v")) => {
             r.push("changes git's configuration, shared with your project folder (git remote)".into())
         }
-        "worktree" => r.push("adds, moves or removes worktrees".into()),
+        // `git worktree list` only reads (T055: the real `claude` asked to list them).
+        "worktree" if positional.first() != Some(&"list") => r.push("adds, moves or removes worktrees".into()),
         "filter-branch" | "filter-repo" => r.push(format!("rewrites history (git {sub})")),
         "config" => {
             let reading = ["--get", "--get-all", "--get-regexp", "--list", "-l", "--show-origin", "--show-scope"]
@@ -1466,6 +1467,8 @@ mod tests {
             "echo hi > notes.txt",
             "python -m unittest 2>&1",
             "git branch --list",
+            "git worktree list",
+            "git worktree list --porcelain; git log --oneline -3",
             "git log --oneline | head -5",
             "cd src && npm test",
             // Ordinary commands asked needlessly before (third review, 7).

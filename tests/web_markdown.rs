@@ -61,3 +61,29 @@ fn the_leads_markdown_is_rendered_and_its_html_is_not() {
     assert!(html.contains("<ul><li>one</li><li>two</li></ul>"), "{html}");
     assert!(!html.contains("<script>"), "{html}");
 }
+
+/// 012 T055 (found on the real `claude`): a read the engineer refused is not listed as read.
+#[test]
+fn a_refused_read_is_not_listed_as_read() {
+    let harness = r#"
+const fs = require("fs");
+global.document = { addEventListener() {} };
+global.window = { addEventListener() {} };
+const Fallow = new Function(fs.readFileSync(process.argv[1], "utf8") + "\nreturn Fallow;")();
+process.stdout.write(JSON.stringify(Fallow.filesRead([
+  { id: "a", kind: "read", text: ".env" },
+  { id: "b", kind: "read", text: "notes.txt" },
+  { id: "a", kind: "refused", text: "The engineer refused this read." },
+  { kind: "read", text: "no-id.txt" },
+  { kind: "refused", text: "a refusal without an id hides nothing (review)" },
+  { id: "b", kind: "result", text: "1\tA note" },
+])));
+"#;
+    let app = concat!(env!("CARGO_MANIFEST_DIR"), "/src/service/web/app.js");
+    let Ok(out) = Command::new("node").args(["-e", harness, app]).output() else {
+        eprintln!("node is not installed: the read list is not checked");
+        return;
+    };
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8(out.stdout).unwrap(), r#"["notes.txt","no-id.txt"]"#);
+}

@@ -27,6 +27,9 @@ pub const SESSION_LOST: &str = "session lost: ";
 /// A step whose agent could not be started: it never saw its instruction, so it is no attempt
 /// at the work, and the same step goes again (for example while the runtime updates itself).
 pub const NOT_STARTED: &str = "not started: ";
+/// After [`NOT_STARTED`]: the agent was not signed in to its provider. No attempt at the work
+/// either, but trying again cannot help until the engineer signs in, so they are asked at once.
+pub const SIGNED_OUT: &str = "signed out: ";
 
 /// 011: a merge refused because the target moved right before it (FR-003).
 pub const MOVED: &str = "target moved: ";

@@ -920,6 +920,15 @@ fn requeue_one(run: &mut Run, last: &Step) -> Result<bool, String> {
             "again: the agent could not be started",
             machine::own_instruction(run, last),
         )?;
+        // An agent that was not signed in: the engineer signs in first (retry starts the step
+        // queued here).
+        if let Some(why) = reason.trim_start_matches(NOT_STARTED).strip_prefix(machine::SIGNED_OUT) {
+            return Err(format!(
+                "{def} is not signed in ({}): {}",
+                why.trim_start_matches(crate::agent::ENDED_WITH_ERROR),
+                crate::agent::SIGN_IN_AGAIN
+            ));
+        }
         // Starts that fail one after the other are not tried for ever: every third, the
         // engineer is asked (retry starts the step queued here).
         let same = |x: &&Step| x.kind == last.kind && x.part == last.part && x.def == last.def;
@@ -928,7 +937,11 @@ fn requeue_one(run: &mut Run, last: &Step) -> Result<bool, String> {
         let failed = tries
             .iter()
             .filter(|x| x.end.is_some())
-            .take_while(|x| machine::first_reason(x).is_some_and(|r| r.starts_with(NOT_STARTED)))
+            .take_while(|x| {
+                machine::first_reason(x).is_some_and(|r| {
+                    r.strip_prefix(NOT_STARTED).is_some_and(|w| !w.starts_with(machine::SIGNED_OUT))
+                })
+            })
             .count();
         if failed % START_TRIES == 0 {
             return Err(format!(
@@ -2652,6 +2665,16 @@ pub fn process(run: &mut Run, ctx: &Ctx, n: u32) -> Result<(), String> {
                 run,
                 false,
                 vec![format!("{INTERRUPTED}resumed after Fallow started again")],
+                None,
+            );
+        }
+        // An agent that was not signed in to its provider did no work that counts: no repair
+        // round is spent on it, and the engineer is asked to sign in (2026-11-09).
+        if crate::agent::login_failure(why) {
+            return verified(
+                run,
+                false,
+                vec![format!("{NOT_STARTED}{}{why}", machine::SIGNED_OUT)],
                 None,
             );
         }

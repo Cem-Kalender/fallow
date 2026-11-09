@@ -173,7 +173,7 @@
           ${features.length ? h`<div class="card table-box"><table class="list">
             <thead><tr><th class="th">Feature</th><th class="th">Project</th><th class="th">Stage</th><th class="th">Spec Kit step</th><th class="th"><span class="sr-only">Open</span></th></tr></thead>
             <tbody>${features.map(featureRow)}</tbody></table></div>`
-            : h`<div class="card empty">${projects.length ? "No features yet: open a project and talk with the lead." : "Add a project folder to begin."}</div>`}
+            : h`<div class="card empty">${projects.length ? "No features yet: open a project, and start one with + New feature or from a session with the assistant." : "Add a project folder to begin."}</div>`}
           ${projects.length ? h`<div class="mt-12"><button class="btn" type="button" data-act="new-feature">+ New feature</button></div>` : ""}
         </section>
       </div></div></div>`.s;

@@ -25,6 +25,7 @@
 //! exit = 3                       # crash with this exit code instead of a result
 //! denied = ["git push"]          # reported as permission denials
 //! is_error = false
+//! result = "text"                # the result's text (default "done"), e.g. an error message
 //! say = "a reply"                # an assistant message, streamed as deltas with
 //!                                # --include-partial-messages
 //! ask = "a question"             # calls Fallow's MCP `ask` tool; its answer replaces $ANSWER
@@ -101,6 +102,7 @@ struct Step {
     denied: Vec<String>,
     #[serde(default)]
     is_error: bool,
+    result: Option<String>,
     say: Option<String>,
     ask: Option<String>,
     also_ask: Option<String>,
@@ -779,7 +781,7 @@ fn main() -> ExitCode {
     denials.extend(prompt_denials);
     let mut result = json!({"type": "result", "subtype": "success", "is_error": step.is_error,
         "session_id": session, "total_cost_usd": step.cost, "num_turns": 1,
-        "result": "done", "permission_denials": denials});
+        "result": step.result.as_deref().unwrap_or("done"), "permission_denials": denials});
     if let Some(o) = output {
         result["structured_output"] = o;
     }

@@ -314,3 +314,31 @@ fn an_agent_that_could_not_be_started_uses_no_repair_and_goes_again_as_the_same_
     drop(e);
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// 2026-11-09: a loop spent its four repair rounds on "Failed to authenticate: OAuth session
+/// expired" (the engineer's `claude` login had run out). An agent that is not signed in did no
+/// work that counts: no repair round, the engineer is asked at once to sign in, and "retry"
+/// runs the same step with its own instruction.
+#[test]
+fn an_agent_that_is_not_signed_in_uses_no_repair_and_the_engineer_is_asked_to_sign_in() {
+    use fallow::run::engine::Request;
+    let root = scratch("signed-out");
+    let signed_out = "[[step]]\nkind = \"build\"\npart = \"T001\"\nis_error = true\nresult = \"Failed to authenticate: OAuth session expired and could not be refreshed\"\n\n";
+    let (e, _repo, id) = locked_calc(&root, &format!("{signed_out}{}", calc_loop_ok()), None);
+    let tx = &e.tx;
+    let v = wait_for(tx, id, "the engineer asked", |v| !v["needs"].is_null());
+    let why = v["needs"]["why"].as_str().unwrap();
+    assert!(why.contains("is not signed in") && why.contains("OAuth session expired") && why.contains("/login"), "{why}");
+    assert!(!why.contains("repair"), "{why}");
+    assert!(steps_of(&v, "repair", "T001").is_empty(), "no repair round");
+    assert_eq!(v["feature_loop"]["tasks"]["T001"]["repairs"], 0);
+    let b = steps_of(&v, "build", "T001");
+    assert_eq!(b.len(), 2, "the failed start and the one queued for the retry: {b:?}");
+    // Signed in again: the retry runs the queued step, and the task is accepted unrepaired.
+    ask(tx, Request::Retry { id }).unwrap();
+    let v = wait_for(tx, id, "T001 accepted", |v| v["feature_loop"]["tasks"]["T001"]["state"] == "accepted");
+    assert_eq!(v["feature_loop"]["tasks"]["T001"]["repairs"], 0);
+    assert!(steps_of(&v, "repair", "T001").is_empty(), "no repair round");
+    stop(e);
+    let _ = std::fs::remove_dir_all(&root);
+}

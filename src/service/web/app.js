@@ -425,7 +425,11 @@ const Fallow = (() => {
   const nextMode = (m) => MODES[(MODES.indexOf(m) + 1) % MODES.length];
 
   // The files the lead read in a turn's activity.
-  const filesRead = (activity) => [...new Set((activity || []).filter((a) => a.kind === "read").map((a) => a.text))];
+  // A read the engineer refused is not a read (012 T055: "Read .env" was shown after a deny).
+  const filesRead = (activity) => {
+    const refused = new Set((activity || []).filter((a) => a.kind === "refused" && a.id).map((a) => a.id));
+    return [...new Set((activity || []).filter((a) => a.kind === "read" && !refused.has(a.id)).map((a) => a.text))];
+  };
 
   function leadMsg(meta, body, extra, letter = "L") {
     return h`<div class="lead"><div class="avatar" aria-hidden="true">${letter}</div><div class="lead-body">${meta ? h`<div class="lead-meta">${meta}</div>` : ""}${body}${extra || ""}</div></div>`;
