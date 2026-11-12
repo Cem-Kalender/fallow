@@ -45,22 +45,22 @@ theme (SC-003), so tests are included.
 
 **Independent Test**: quickstart Q1.
 
-- [ ] T004 [US1] In `src/service/web/app.css`, add the dark values of every name (research R-2):
+- [X] T004 [US1] In `src/service/web/app.css`, add the dark values of every name (research R-2):
   - the palette of `specs/013-dark-mode/mockup/dark.css`, with `--on-ink: #161614` and `--solid-hover: #FFFFFF`;
   - the mockup's dark values for the colours named in T002 (`--dot-grey: #55544D`, `--arrow: #6E6D66`, `--backdrop: rgba(0, 0, 0, .6)`, `--marker: #3A2F18`, `--minus: #F2A098`, `--bar-rest: #2A3358`, `--phase-bg: #1B2036`, `--grid-dot: #2E2D29`, `--edge: #6E6D66`, darker shadows);
   - and `color-scheme: dark`;
   - written twice, identically: in `@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { … } }` and in `:root[data-theme="dark"] { … }`.
   - Also add `:root[data-theme="light"] { color-scheme: light; }`.
   - No transition on colours (R-5).
-- [ ] T005 [P] [US1] In `tests/web_theme.rs`:
+- [X] T005 [P] [US1] In `tests/web_theme.rs`:
   - the two dark blocks are identical;
   - every name on `:root` has a dark value (FR-004).
-- [ ] T006 [US1] In `tests/web_theme.rs`, contrast (research R-6, FR-012, SC-002):
+- [X] T006 [US1] In `tests/web_theme.rs`, contrast (research R-6, FR-012, SC-002):
   - **The pairs**: list every text-on-background pair the stylesheet uses. Among them: `--ink`, `--ink-2`, `--body`, `--muted` and `--faint` on `--ground`, `--panel`, `--panel-2`, `--hover` and `--chip`; `--on-ink` on `--ink`; `--accent` on `--accent-bg`; each status colour on its `-bg`; `--diff-add-ink` on `--diff-add`; `--diff-del-ink` on `--diff-del`; `--term-ink` on `--term`.
   - **The thresholds**: at least 4.5:1, in both themes. Control borders (`--line-3`), the focus outline (`--accent`) and graph lines (`--edge`) need at least 3:1 against `--panel` and `--ground`.
   - **A guard**: a rule pairing `color: var(--x)` with `background: var(--y)` that the list lacks fails the test.
   - **Fixes**: where a mockup colour fails, adjust it within its hue in `src/service/web/app.css` (both blocks), and note each change in research R-6.
-- [ ] T007 [US1] Visual check (quickstart Q1):
+- [X] T007 [US1] Visual check (quickstart Q1):
   - run `shots.js system` with the emulated setting dark, and save to `specs/013-dark-mode/checks/dark/`;
   - check each screen for any area, text or line left light (SC-001), against the mockup's look;
   - on the project page, switch the emulated setting with a half-written message, a side panel and the "/" menu open, and check that nothing is lost (SC-004);
@@ -79,7 +79,7 @@ theme (SC-003), so tests are included.
 
 **Independent Test**: quickstart Q3.
 
-- [ ] T008 [US3] Run `shots.js light --compare <the stylesheet at d9a7685>` after Phases 2 and 3, into `specs/013-dark-mode/checks/light/`. Compare against the old stylesheet with the light contrast fixes of research R-6 applied (`--fixes specs/013-dark-mode/checks/light-fixes.json`). Expect every screen the same (SC-003; the control does not exist yet). Fix any difference in `src/service/web/app.css`.
+- [X] T008 [US3] Run `shots.js light --compare <the stylesheet at d9a7685>` after Phases 2 and 3, into `specs/013-dark-mode/checks/light/`. Compare against the old stylesheet with the light contrast fixes of research R-6 applied (`--fixes specs/013-dark-mode/checks/light-fixes.json`). Expect every screen the same (SC-003; the control does not exist yet). Fix any difference in `src/service/web/app.css`.
 
 **Checkpoint**: Q3 passes with zero differing pixels.
 
@@ -91,23 +91,23 @@ theme (SC-003), so tests are included.
 
 **Independent Test**: quickstart Q2.
 
-- [ ] T009 [P] [US2] In `src/studio/files.rs`, add `theme: Option<String>` to `Prefs` (data model: `"system"`, `"light"` or `"dark"`; missing, another value or an unreadable file mean `system`), with `theme(data) -> &'static str` and `set_theme(data, t) -> Result<&'static str, String>`. `set_theme` refuses anything else with "the theme is system, light or dark" and keeps the other fields of `prefs.json` (written through a temporary file and a rename, as `write_prefs` does).
-- [ ] T010 [US2] Route the choice:
+- [X] T009 [P] [US2] In `src/studio/files.rs`, add `theme: Option<String>` to `Prefs` (data model: `"system"`, `"light"` or `"dark"`; missing, another value or an unreadable file mean `system`), with `theme(data) -> &'static str` and `set_theme(data, t) -> Result<&'static str, String>`. `set_theme` refuses anything else with "the theme is system, light or dark" and keeps the other fields of `prefs.json` (written through a temporary file and a rename, as `write_prefs` does).
+- [X] T010 [US2] Route the choice:
   - `Req::GetTheme` and `Req::SetTheme { theme }` in `src/studio/mod.rs`, answered from `files::theme` and `files::set_theme` with the studio's data directory, and handled in `src/run/engine.rs` where the other `Req`s are;
   - in `src/service/http.rs`:
     - `POST /api/theme` `{theme}` answers `{theme}`, or 409;
     - `GET /` asks `GetTheme` and serves `index.html` with `<html lang="en" data-theme="light">` or `data-theme="dark"`, unchanged for System (contracts/web-api.md);
     - if the ask fails, it serves as System.
-- [ ] T011 [US2] The control (contracts/web-api.md, research R-4):
+- [X] T011 [US2] The control (contracts/web-api.md, research R-4):
   - in `src/service/web/index.html`: `<fieldset class="theme-pick">` with `<legend class="sr">Theme</legend>` and three radio inputs `name="theme"` (values `system`, `light`, `dark`), labelled with an icon, a visually hidden name ("System", "Light", "Dark") and a `title`, after `#header-status`;
   - in `src/service/web/app.js`: on start, check the input matching `document.documentElement.dataset.theme` (none means `system`). On `change`, set or remove `data-theme` on `<html>` at once, then `POST /api/theme`. On an error, keep the choice and show the error line (`alertLine`);
   - in `src/service/web/app.css`: style it as three small segments with the active one marked and a visible focus outline, all from named colours.
-- [ ] T012 [P] [US2] In `tests/web_theme.rs`, through the engine (as `tests/common` starts it):
+- [X] T012 [P] [US2] In `tests/web_theme.rs`, through the engine (as `tests/common` starts it):
   - the choice is kept in `prefs.json`, survives a new engine on the same data, and keeps the editor field;
   - `POST /api/theme` refuses `"blue"`;
   - `GET /` holds `data-theme="dark"` after choosing dark, and no `data-theme` for System.
   - Also extend `tests/web_markdown.rs`'s check that `index.html` has no inline script, if the control adds markup there.
-- [ ] T013 [US2] Visual and keyboard check (quickstart Q2):
+- [X] T013 [US2] Visual and keyboard check (quickstart Q2):
   - choosing each option from two screens;
   - Dark kept over 3 restarts (SC-006), with the first frame dark;
   - Light staying light when the emulated setting turns dark;
@@ -116,6 +116,16 @@ theme (SC-003), so tests are included.
   - the accessibility tree names the group "Theme" and the checked option.
   - Then run `shots.js light --compare` again: the only differing area is the control (SC-003).
   - Save the control's screenshots in `specs/013-dark-mode/checks/`.
+  - Done 2026-11-12 with `shots.js --pick` (16 checks), `--switch` and `--reloads`. Screenshots are in `checks/dark/`, plus `checks/light-dashboard.png` and `checks/theme-pick-focus.png`.
+    - **Restarts:** a restart of Fallow keeping the choice is checked by `tests/web_theme.rs`, through a new engine on the same data. The first frame is checked by 10 reloads in Dark with the system light.
+    - **Light comparison:** it hides the control in both shots, since the old stylesheet has none, and is otherwise pixel-identical.
+    - **Found and fixed:** the side panel and the session dropdown closed when the control was clicked or took the focus. Both now stay open (FR-011). The "/" menu, a typing popup, closes when the message box loses focus, as analyze E1 expected.
+    - **Review fixes:**
+      - a theme of the wrong type in `prefs.json` no longer loses the editor;
+      - `GET /` no longer waits on the engine: the page server keeps the theme, asking the engine once and updating it on each `POST /api/theme`. A first try that limited the wait to 200 ms served System on a busy engine, and 9 of 10 reloads in Dark showed a light frame; with the kept theme, none did;
+      - browsers' radio restore is off;
+      - choices are saved in order;
+      - a choice clicked before the script runs is taken.
 
 **Checkpoint**: Q2 passes.
 
@@ -123,8 +133,10 @@ theme (SC-003), so tests are included.
 
 ## Phase 6: Polish
 
-- [ ] T014 [P] Add a line on themes to the page section of `README.md`.
-- [ ] T015 Run the whole suite one file at a time, and `cargo clippy --all-targets -- -D warnings`.
+- [X] T014 [P] Add a line on themes to the page section of `README.md`.
+- [X] T015 Run the whole suite one file at a time, and `cargo clippy --all-targets -- -D warnings`.
+  - Done 2026-11-12: all 66 test files pass and the 159 unit tests; clippy is clean.
+  - `us11_update` was run test by test: as one file it takes over ten minutes, and in the background it was stopped for low memory.
 - [ ] T016 Quickstart Q5 by hand with the engineer (optional): the system switched while a loop page is open.
 
 ---

@@ -524,7 +524,8 @@
     const m = document.getElementById("solo-menu");
     const to = ev.relatedTarget;
     if (!m || !m.contains(ev.target) || !to || m.contains(to)) return;
-    if (to.closest && to.closest("[data-act=solo-menu]")) return;
+    // 013 FR-011: the focus moving to the theme control keeps the menu open.
+    if (to.closest && (to.closest("[data-act=solo-menu]") || to.closest("#theme-pick"))) return;
     closeMenu(false);
   });
   function closeMenu(focusButton) {
@@ -550,7 +551,8 @@
     const m = document.getElementById("solo-menu");
     const t = ev.target;
     if (!m || !t || !t.isConnected || !t.closest) return;
-    if (m.contains(t) || t.closest("[data-act=solo-menu]")) return;
+    // 013 FR-011: choosing a theme keeps the menu open.
+    if (m.contains(t) || t.closest("[data-act=solo-menu]") || t.closest("#theme-pick")) return;
     closeMenu(false);
   });
   document.addEventListener("keydown", (ev) => {
@@ -565,7 +567,8 @@
     if (!side) return;
     const t = ev.target;
     if (!t.isConnected || !t.closest) return;
-    if (t.closest("#side-panel") || t.closest("#rail")) return;
+    // 013 FR-011: choosing a theme keeps the panel open.
+    if (t.closest("#side-panel") || t.closest("#rail") || t.closest("#theme-pick")) return;
     closeSide(false);
   });
   window.addEventListener("resize", placeSide);

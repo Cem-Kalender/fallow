@@ -76,6 +76,139 @@
   --mono: "JetBrains Mono", ui-monospace, monospace;
 }
 
+/* 013: the dark theme (research R-2), the approved mockup's palette (mockup/dark.css), with the
+   colours raised to WCAG AA (R-6). Written twice, identically: for System when the system is
+   dark, and for the engineer's Dark. tests/web_theme.rs checks that the two stay the same. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ground: #161614;
+    --panel: #1E1E1B;
+    --panel-2: #23231F;
+    --line: #34332E;
+    --line-2: #2A2925;
+    --line-3: #45443E;
+    --ink: #ECEBE5;
+    --ink-2: #DDDCD5;
+    --body: #C4C3BB;
+    --muted: #A9A8A0;
+    --faint: #95948C;
+    --hover: #2A2925;
+    --chip: #2A2925;
+    --accent: #8AA4F2;
+    --accent-hover: #AFC1F7;
+    --accent-bg: #1F2640;
+    --accent-bg-2: #1B2036;
+    --accent-line: #3A4A80;
+    --needs: #F0A070;
+    --needs-ink: #F4B48C;
+    --needs-bg: #3A2416;
+    --needs-line: #7A4A2A;
+    --needs-panel: #241D18;
+    --ok: #7FCB9A;
+    --ok-dot: #4FAE74;
+    --ok-bg: #18301F;
+    --ok-panel: #1A241D;
+    --ok-line: #2F5A3E;
+    --spec: #B9A2F0;
+    --spec-bg: #2A2140;
+    --spec-line: #4A3A78;
+    --bad: #F2A098;
+    --bad-bg: #3A1C19;
+    --bad-line: #7A3530;
+    --warn: #E8C46A;
+    --warn-bg: #352A12;
+    --teal: #7CC6D4;
+    --teal-bg: #16303A;
+    --diff-del: #3A1C19;
+    --diff-del-ink: #F2A098;
+    --diff-add: #18301F;
+    --diff-add-ink: #8FD3A8;
+    --term: #0F0F0E;
+    --term-ink: #E8E7E1;
+    --on-ink: #161614;
+    --solid-hover: #FFFFFF;
+    --control-line: #787772;
+    --bad-control: #A85E58;
+    --dot-grey: #787772;
+    --arrow: #787772;
+    --backdrop: rgba(0, 0, 0, .6);
+    --marker: #3A2F18;
+    --minus: #F2A098;
+    --bar-rest: #2A3358;
+    --phase-bg: #1B2036;
+    --grid-dot: #2E2D29;
+    --edge: #787772;
+    --shadow-menu: 0 8px 24px rgba(0, 0, 0, .5);
+    --shadow-panel: 0 10px 28px rgba(0, 0, 0, .55);
+    color-scheme: dark;
+  }
+}
+
+:root[data-theme="dark"] {
+  --ground: #161614;
+  --panel: #1E1E1B;
+  --panel-2: #23231F;
+  --line: #34332E;
+  --line-2: #2A2925;
+  --line-3: #45443E;
+  --ink: #ECEBE5;
+  --ink-2: #DDDCD5;
+  --body: #C4C3BB;
+  --muted: #A9A8A0;
+  --faint: #95948C;
+  --hover: #2A2925;
+  --chip: #2A2925;
+  --accent: #8AA4F2;
+  --accent-hover: #AFC1F7;
+  --accent-bg: #1F2640;
+  --accent-bg-2: #1B2036;
+  --accent-line: #3A4A80;
+  --needs: #F0A070;
+  --needs-ink: #F4B48C;
+  --needs-bg: #3A2416;
+  --needs-line: #7A4A2A;
+  --needs-panel: #241D18;
+  --ok: #7FCB9A;
+  --ok-dot: #4FAE74;
+  --ok-bg: #18301F;
+  --ok-panel: #1A241D;
+  --ok-line: #2F5A3E;
+  --spec: #B9A2F0;
+  --spec-bg: #2A2140;
+  --spec-line: #4A3A78;
+  --bad: #F2A098;
+  --bad-bg: #3A1C19;
+  --bad-line: #7A3530;
+  --warn: #E8C46A;
+  --warn-bg: #352A12;
+  --teal: #7CC6D4;
+  --teal-bg: #16303A;
+  --diff-del: #3A1C19;
+  --diff-del-ink: #F2A098;
+  --diff-add: #18301F;
+  --diff-add-ink: #8FD3A8;
+  --term: #0F0F0E;
+  --term-ink: #E8E7E1;
+  --on-ink: #161614;
+  --solid-hover: #FFFFFF;
+  --control-line: #787772;
+  --bad-control: #A85E58;
+  --dot-grey: #787772;
+  --arrow: #787772;
+  --backdrop: rgba(0, 0, 0, .6);
+  --marker: #3A2F18;
+  --minus: #F2A098;
+  --bar-rest: #2A3358;
+  --phase-bg: #1B2036;
+  --grid-dot: #2E2D29;
+  --edge: #787772;
+  --shadow-menu: 0 8px 24px rgba(0, 0, 0, .5);
+  --shadow-panel: 0 10px 28px rgba(0, 0, 0, .55);
+  color-scheme: dark;
+}
+
+:root[data-theme="light"] { color-scheme: light; }
+
 * { box-sizing: border-box; }
 html, body { margin: 0; background: var(--ground); }
 body { font-family: var(--sans); color: var(--ink); font-size: 14px; }
@@ -117,6 +250,15 @@ button { font-family: inherit; }
 
 /* The header */
 .top-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; padding: 12px 24px; border-bottom: 1px solid var(--line); background: var(--panel); }
+/* 013: the theme control (contracts/web-api.md "The control"): three small segments, the chosen
+   one solid; the radio inputs stay in the page for the keyboard and screen readers. */
+.theme-pick { display: inline-flex; gap: 2px; margin: 0; padding: 2px; border: 1px solid var(--control-line); border-radius: 8px; min-inline-size: 0; }
+.theme-pick label { position: relative; display: grid; place-items: center; width: 28px; height: 24px; border-radius: 6px; color: var(--muted); cursor: pointer; }
+.theme-pick label:hover { background: var(--hover); color: var(--ink); }
+.theme-pick input { position: absolute; inset: 0; margin: 0; opacity: 0; cursor: pointer; }
+.theme-pick label:has(input:checked) { background: var(--ink); color: var(--on-ink); }
+.theme-pick label:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 1px; }
+.theme-pick svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .logo { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 17px; margin-right: 12px; color: var(--ink); text-decoration: none; }
 .logo:hover { color: var(--ink); }
 .logo svg { stroke: var(--accent); }

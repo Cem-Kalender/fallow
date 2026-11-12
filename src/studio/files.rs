@@ -574,6 +574,11 @@ pub struct Editor {
 struct Prefs {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     editor: Option<Editor>,
+    /// 013: the engineer's theme, `system`, `light` or `dark` (data-model.md). Read as any JSON
+    /// value, so a value of the wrong type edited by hand means System and loses nothing else
+    /// in the file (Phase 5 review).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    theme: Option<Value>,
 }
 
 fn prefs_file(data: &Path) -> PathBuf {
@@ -597,6 +602,31 @@ fn write_prefs(data: &Path, p: &Prefs) -> Result<(), String> {
 
 pub fn editor(data: &Path) -> Option<Editor> {
     read_prefs(data).editor
+}
+
+// ---- 013: the theme (data-model.md "Theme choice") ---------------------------------------------
+
+const THEMES: [&str; 3] = ["system", "light", "dark"];
+
+/// The engineer's theme: `system` when none was chosen, the value is unknown, or the file
+/// cannot be read.
+pub fn theme(data: &Path) -> &'static str {
+    let t = read_prefs(data).theme;
+    let t = t.as_ref().and_then(Value::as_str);
+    THEMES.iter().copied().find(|x| Some(*x) == t).unwrap_or("system")
+}
+
+/// Keeps the engineer's theme beside the other preferences.
+pub fn set_theme(data: &Path, theme: &str) -> Result<&'static str, String> {
+    let t = THEMES
+        .iter()
+        .copied()
+        .find(|x| *x == theme)
+        .ok_or("the theme is system, light or dark")?;
+    let mut p = read_prefs(data);
+    p.theme = Some(Value::from(t));
+    write_prefs(data, &p)?;
+    Ok(t)
 }
 
 /// Splits a typed command into the program and its fixed arguments: on spaces, double quotes

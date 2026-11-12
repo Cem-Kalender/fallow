@@ -14,6 +14,18 @@
 // --fixes <fixes.json>: [from, to] pairs applied to <old.css> first, each of which must be found:
 // the light colours raised for contrast (013 research R-6), so only those may differ.
 //
+// --switch: on the project page, with a half-written message, the Changes panel and the "/" menu
+// open, the emulated system setting goes dark → light → dark; each time the page's ground must
+// follow within a second and the message, panel and menu stay (013 SC-004).
+// --reloads <n>: <n> reloads with the setting dark, each shot as soon as the page shows anything;
+// no shot may show a light ground (013 SC-005).
+//
+// --pick: the theme control (013 US2, quickstart Q2): each choice from two screens, by mouse;
+// Light staying light and Dark staying dark against the system's setting; the keyboard alone
+// (Tab, then the arrows) with a visible focus outline; what a screen reader is told; a choice
+// keeping the typed text, the open panel and the scroll position; and Dark from the first
+// frame of reloads with the system light. The choice is left on System at the end.
+//
 // Needs Node 22 or later (WebSocket, fetch) and Chrome. No dependency.
 const { spawn } = require("child_process");
 const fs = require("fs");
@@ -58,7 +70,7 @@ const SHOTS = [
   ["panel-knows", P(ids.week), click("[data-act=side][data-panel=knows]")],
   ["feature-dialog", P(ids.week), clickText("button", "Make this a feature")],
   ["close-dialog", P(ids.week), click("[data-act=solo-close]")],
-  ["project-files", P(ids.week), click("[data-act=ptab][data-tab=files]") + ` await sleep(1200); const f = document.querySelector("[data-act=f-open]"); if (f) f.click(); await sleep(1200); return "ok";`],
+  ["project-files", P(ids.week), `for (let i = 0; i < 20 && !document.querySelector("[data-act=f-open]"); i++) { document.querySelector("[data-act=ptab][data-tab=files]")?.click(); await sleep(600); } const f = document.querySelector("[data-act=f-open]"); if (!f) return "missing the file tree"; f.click(); await sleep(1500); return "ok";`],
   ["project-shop", P("shop"), ""],
   ["spec", `${P("shop")}/f/001-calc`, ""],
   ["spec-files", `${P("shop")}/f/001-calc`, click("[data-act=files-toggle]")],
@@ -66,7 +78,7 @@ const SHOTS = [
   ["loop-asks", `${P("lab")}/f/001-calc/loop`, ""],
   ["loop-files", `${P("shop")}/f/001-calc/loop`, click("[data-act=files-toggle]")],
   ["pipelines", "#/pipelines", ""],
-  ["pipeline", "#/pipelines/standard", ""],
+  ["pipeline", "#/pipelines/_/standard", ""],
   ["agents", "#/agents", ""],
   ["agent", "#/agents/_/builder", ""],
   ["confirm", "#/", `Fallow.confirm({ title: "Delete the pipeline ask-me?", text: "Its file is deleted.", items: ["ask-me.toml"], ok: "Delete" }); await sleep(700); return "ok";`],
@@ -169,6 +181,9 @@ async function target() {
     const { result } = await send("Page.getFrameTree");
     const s = await send("CSS.createStyleSheet", { frameId: result.frameTree.frame.id });
     await send("CSS.addRule", { styleSheetId: s.result.styleSheetId, ruleText: "*, *::before, *::after { caret-color: transparent !important; animation: none !important; transition: none !important; }", location: { startLine: 0, startColumn: 0, endLine: 0, endColumn: 0 } });
+    // Comparing with the stylesheet from before 013, the new theme control is left out of both
+    // shots: the old one has no style for it (013 SC-003 allows the control to differ).
+    if (compareCss) await send("CSS.addRule", { styleSheetId: s.result.styleSheetId, ruleText: "#theme-pick { display: none !important; }", location: { startLine: 0, startColumn: 0, endLine: 0, endColumn: 0 } });
   };
   let oldCss = compareCss ? fs.readFileSync(compareCss, "utf8").replace(/\r/g, "") : null;
 if (oldCss && opt("--fixes")) {
@@ -178,11 +193,187 @@ if (oldCss && opt("--fixes")) {
   }
 }
   let failed = 0;
+  const go = (hash) => send("Page.navigate", { url: `${base}?k=${url.split("?k=")[1]}${hash}` });
+  const ground = () => ev(`return getComputedStyle(document.body).backgroundColor;`);
+  const dark = (rgb) => { const m = String(rgb).match(/\d+/g) || [255]; return Number(m[0]) < 100; };
+  // The emulated setting, keeping reduced motion on (review: setting one feature drops the rest).
+  const media = (scheme) => send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-color-scheme", value: scheme }, { name: "prefers-reduced-motion", value: "reduce" }] });
+  if (args.includes("--switch")) {
+    // Dark first, so the first switch (to light) is a real one.
+    await media("dark");
+    await go(P(ids.week));
+    for (let i = 0; i < 40 && !(await ev(`return !!document.getElementById("say");`)); i++) await sleep(500);
+    await sleep(1000);
+    // The panel first: opening it moves the focus into it. Then "/" typed in the message box
+    // opens the menu over what is written.
+    await ev(click("[data-act=side][data-panel=changes]"));
+    await ev(`const t = document.getElementById("say"); t.focus(); t.value = "/"; t.dispatchEvent(new Event("input", { bubbles: true })); await sleep(900); return 1;`);
+    const shown = (sel) => `!!(document.querySelector("${sel}") && document.querySelector("${sel}").offsetParent)`;
+    const state = () => ev(`return JSON.stringify({ say: document.getElementById("say")?.value, panel: ${shown(".side-panel")}, menu: ${shown(".cmd-menu")}, focus: document.activeElement?.id });`);
+    for (let i = 0; i < 30 && !(await ev(`return ${shown(".cmd-menu")};`)); i++) await sleep(200);
+    await sleep(500);
+    const before = await state();
+    console.log(`open before the switches: ${before}; ${await ev(`return location.href.slice(-40) + " app=" + (document.getElementById("app")||{innerHTML:""}).innerHTML.length;`)}`);
+    if (!/"say":"\/","panel":true,"menu":true/.test(before)) { console.log("SETUP FAILED: the message, the panel and the menu are not all open"); failed++; }
+    for (const to of ["light", "dark", "light"]) {
+      const t0 = Date.now();
+      await media(to);
+      let ok = false;
+      while (Date.now() - t0 < 1000) { if (dark(await ground()) === (to === "dark")) { ok = true; break; } await sleep(50); }
+      const after = await state();
+      const kept = after === before;
+      console.log(`switch to ${to}: ${ok ? `followed in ${Date.now() - t0} ms` : "NOT followed within 1 s"}; ${kept ? "kept" : `CHANGED ${before} -> ${after}`}`);
+      if (!ok || !kept) failed++;
+      await sleep(300);
+    }
+    ws.close();
+    process.exitCode = failed ? 2 : 0;
+    return;
+  }
+  if (args.includes("--pick")) {
+    const theme = () => ev(`return (document.documentElement.dataset.theme || "system") + "/" + (document.querySelector("#theme-pick input:checked") || {}).value;`);
+    const pickBy = (v) => ev(`document.querySelector('#theme-pick input[value="${v}"]').click(); await sleep(400); return 1;`);
+    const isDark = async () => dark(await ground());
+    const check = (what, ok) => { console.log(`${ok ? "ok" : "FAILED"}: ${what}`); if (!ok) failed++; };
+    for (const [scheme, screen] of [["dark", "#/"], ["light", P(ids.week)]]) {
+      await media(scheme);
+      await go(screen);
+      // The control is in the HTML before the page's script runs: wait until the page is loaded.
+      for (let i = 0; i < 30 && !(await ev(`return document.readyState === "complete" && !!document.getElementById("theme-pick");`)); i++) await sleep(300);
+      await sleep(800);
+      for (const v of ["light", "dark", "system"]) {
+        await pickBy(v);
+        const want = v === "system" ? scheme === "dark" : v === "dark";
+        check(`${screen}, system ${scheme}: ${v} → ${await theme()}, page ${(await isDark()) ? "dark" : "light"}`, (await isDark()) === want && (await theme()).endsWith(`/${v}`));
+      }
+    }
+    // The choice holds against the system's setting, both ways.
+    await pickBy("light"); await media("dark"); await sleep(300);
+    check("Light stays light with the system dark", !(await isDark()));
+    await pickBy("dark"); await media("light"); await sleep(300);
+    check("Dark stays dark with the system light", await isDark());
+    // Kept by Fallow: a reload is served with it.
+    await go(P(ids.week)); await sleep(2500);
+    check(`after a reload: ${await theme()}`, (await theme()) === "dark/dark");
+    // Dark from the first frame, the system light.
+    let lightFrames = 0;
+    for (let i = 0; i < 10; i++) {
+      await send("Page.navigate", { url: "about:blank" });
+      await sleep(300);
+      await go(P(ids.week));
+      let buf = null;
+      for (let k = 0; k < 100 && !buf; k++) {
+        const r = await send("Page.captureScreenshot", { format: "png" });
+        if (r.result) buf = Buffer.from(r.result.data, "base64"); else await sleep(20);
+      }
+      const png = decodePng(buf);
+      const at = (x, y) => png.px[(y * png.w + x) * png.bpp];
+      if ([at(10, 400), at(700, 20), at(10, 890)].some((v) => v > 100)) lightFrames++;
+    }
+    check(`10 reloads in Dark with the system light: ${lightFrames} light first frames`, lightFrames === 0);
+    // A choice keeps what is typed, the open panel and the scroll position.
+    for (let i = 0; i < 40 && !(await ev(`return !!document.getElementById("say");`)); i++) await sleep(300);
+    await sleep(800);
+    await ev(click("[data-act=side][data-panel=changes]"));
+    await ev(`const t = document.getElementById("say"); t.value = "half a message"; t.dispatchEvent(new Event("input", { bubbles: true })); const l = document.getElementById("chat"); if (l) l.scrollTop = 40; return 1;`);
+    const keep = () => ev(`const l = document.getElementById("chat"); return JSON.stringify({ say: document.getElementById("say").value, panel: !!(document.querySelector(".side-panel") && document.querySelector(".side-panel").offsetParent), scroll: l ? l.scrollTop : null });`);
+    const before = await keep();
+    await pickBy("light");
+    const after = await keep();
+    check(`a choice keeps the page: ${before} → ${after}`, before === after && before.includes("half a message") && before.includes('"panel":true'));
+    // The session menu stays open too (it closes on a click or a focus outside it).
+    await ev(click("[data-act=solo-menu]"));
+    const menuOpen = () => ev(`return !!(document.getElementById("solo-menu") && document.getElementById("solo-menu").offsetParent);`);
+    const wasOpen = await menuOpen();
+    const r = await ev(`return JSON.stringify(document.querySelector('#theme-pick input[value="dark"]').getBoundingClientRect());`);
+    const box = JSON.parse(r);
+    for (const type of ["mousePressed", "mouseReleased"]) {
+      await send("Input.dispatchMouseEvent", { type, x: box.x + box.width / 2, y: box.y + box.height / 2, button: "left", clickCount: 1 });
+    }
+    await sleep(500);
+    check(`the session menu stays open on a real click of the control (open before: ${wasOpen})`, wasOpen && (await menuOpen()) && (await theme()) === "dark/dark");
+    await ev(`document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); await sleep(300); return 1;`);
+    // The "/" menu: open over the message box, then a real click of the control.
+    await ev(`const t = document.getElementById("say"); t.focus(); t.value = "/"; t.dispatchEvent(new Event("input", { bubbles: true })); await sleep(900); return 1;`);
+    const slashOpen = () => ev(`return !!(document.querySelector(".cmd-menu") && document.querySelector(".cmd-menu").offsetParent);`);
+    const slashBefore = await slashOpen();
+    const r2 = JSON.parse(await ev(`return JSON.stringify(document.querySelector('#theme-pick input[value="light"]').getBoundingClientRect());`));
+    for (const type of ["mousePressed", "mouseReleased"]) {
+      await send("Input.dispatchMouseEvent", { type, x: r2.x + r2.width / 2, y: r2.y + r2.height / 2, button: "left", clickCount: 1 });
+    }
+    await sleep(500);
+    console.log(`note: the "/" menu after a real click of the control: open before ${slashBefore}, after ${await slashOpen()}`);
+    await ev(`const t = document.getElementById("say"); t.value = ""; t.dispatchEvent(new Event("input", { bubbles: true })); return 1;`);
+    // The keyboard alone: Tab until the control has the focus, then the arrows.
+    await pickBy("system");
+    await ev(`document.activeElement && document.activeElement.blur(); window.scrollTo(0, 0); return 1;`);
+    let reached = false;
+    for (let i = 0; i < 40 && !reached; i++) {
+      await send("Input.dispatchKeyEvent", { type: "keyDown", key: "Tab", code: "Tab", windowsVirtualKeyCode: 9 });
+      await send("Input.dispatchKeyEvent", { type: "keyUp", key: "Tab", code: "Tab", windowsVirtualKeyCode: 9 });
+      reached = await ev(`return !!(document.activeElement && document.activeElement.closest && document.activeElement.closest("#theme-pick"));`);
+    }
+    check("Tab reaches the control", reached);
+    for (const want of ["light", "dark"]) {
+      await send("Input.dispatchKeyEvent", { type: "keyDown", key: "ArrowRight", code: "ArrowRight", windowsVirtualKeyCode: 39 });
+      await send("Input.dispatchKeyEvent", { type: "keyUp", key: "ArrowRight", code: "ArrowRight", windowsVirtualKeyCode: 39 });
+      await sleep(400);
+      check(`the arrow key chooses ${want}: ${await theme()}`, (await theme()) === `${want}/${want}`);
+    }
+    const outline = await ev(`const l = document.activeElement.closest("label"); const cs = getComputedStyle(l); return cs.outlineStyle + " " + cs.outlineWidth;`);
+    check(`the focus outline shows: ${outline}`, outline.startsWith("solid") && !outline.endsWith(" 0px"));
+    fs.writeFileSync(path.join(out, "theme-pick-focus.png"), await shot());
+    // What a screen reader is told.
+    const { result } = await send("Accessibility.getFullAXTree");
+    const nodes = (result && result.nodes) || [];
+    const group = nodes.find((n) => n.name && n.name.value === "Theme");
+    const radios = nodes.filter((n) => n.role && n.role.value === "radio" && ["System", "Light", "Dark"].includes(n.name && n.name.value));
+    const checked = radios.find((n) => (n.properties || []).some((p) => p.name === "checked" && p.value.value === "true"));
+    check(`a screen reader hears "Theme" (${group ? group.role.value : "none"}) and ${radios.length} radios, ${checked ? checked.name.value : "none"} checked`, !!group && radios.length === 3 && checked && checked.name.value === "Dark");
+    await pickBy("system");
+    ws.close();
+    console.log(failed ? `${failed} check(s) failed` : "done");
+    process.exitCode = failed ? 2 : 0;
+    return;
+  }
+  if (opt("--reloads")) {
+    await media("dark");
+    for (let i = 0; i < Number(opt("--reloads")); i++) {
+      // A blank page between, so each round is a real load (review: a navigation that changes
+      // only the part after # does not reload). The shot is taken as soon as the new document
+      // has a frame.
+      await send("Page.navigate", { url: "about:blank" });
+      await sleep(300);
+      await go(`${P(ids.week)}`);
+      // The first frame the page has: a shot fails while there is none.
+      let buf = null;
+      for (let k = 0; k < 100 && !buf; k++) {
+        const r = await send("Page.captureScreenshot", { format: "png" });
+        if (r.result) buf = Buffer.from(r.result.data, "base64"); else await sleep(20);
+      }
+      const png = decodePng(buf);
+      // The ground at the middle of the page's left column and of its top bar.
+      const at = (x, y) => png.px[(y * png.w + x) * png.bpp];
+      const light = [at(10, 400), at(700, 20), at(10, 890)].filter((v) => v > 100);
+      if (light.length) { failed++; console.log(`reload ${i + 1}: LIGHT FRAME`); }
+    }
+    console.log(`${opt("--reloads")} reloads: ${failed ? `${failed} light` : "no light frame"}`);
+    ws.close();
+    process.exitCode = failed ? 2 : 0;
+    return;
+  }
   for (const [name, hash, act] of SHOTS) {
     if (only && name !== only) continue;
     sheets.clear();
     await send("Page.navigate", { url: `${base}?k=${url.split("?k=")[1]}${hash}` });
-    await sleep(2500);
+    // Until the screen has drawn and stopped changing (up to 15 s).
+    let last = -1;
+    for (let i = 0; i < 30; i++) {
+      await sleep(500);
+      const n = await ev(`return (document.getElementById("app") || { innerHTML: "" }).innerHTML.length;`);
+      if (n > 200 && n === last) break;
+      last = n;
+    }
     await steady();
     if (newCss) {
       const sid = [...sheets.entries()].find(([u]) => u.endsWith("/app.css"));

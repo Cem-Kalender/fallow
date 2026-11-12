@@ -58,6 +58,10 @@ SC-006).
   security policy forbids.
 - **Choosing**: the page calls `POST /api/theme` and sets the attribute on `<html>` at once
   (FR-008). Another open page takes the choice at its next reload (edge case).
+- **Served without waiting**: the page server keeps the choice itself. It asks the engine once,
+  for the first page, and updates it on every `POST /api/theme`. A page is then never held up
+  behind a slow request on the engine's single thread (Phase 5 review). A time limit on asking
+  was tried first, and served System, with a light frame, when the engine was busy.
 - **A write that fails**: when the choice cannot be written, the page keeps the choice until it
   is reloaded and shows the error line it shows for any failed request (edge case: nothing
   alarming).
@@ -111,10 +115,10 @@ are on `--line` (the file search field, the gate's note box) move to `--control-
 
 | What | Before | After (light) | Dark |
 |---|---|---|---|
-| Borders of controls (secondary buttons, text fields, selects, the message box, the title field, graph nodes): a new `--control-line`, so decorative lines (`--line-3` on a quote's bar) keep their grey | `#D4D3CC` (`--line-3`) | `#878680` | `#767570` |
-| Graph edges, arrowheads, the "+" circles (`--edge`) | `#9C9B94` | `#878680` | `#767570` |
-| The grey status dot and the phase links (`--dot-grey`) | `#C9C8C1` | `#878680` | `#767570` |
-| The arrow between steps (`--arrow`) | `#A3A29B` | `#878680` | `#767570` |
+| Borders of controls (secondary buttons, text fields, selects, the message box, the title field, graph nodes): a new `--control-line`, so decorative lines (`--line-3` on a quote's bar) keep their grey | `#D4D3CC` (`--line-3`) | `#878680` | `#787772` |
+| Graph edges, arrowheads, the "+" circles (`--edge`) | `#9C9B94` | `#878680` | `#787772` |
+| The grey status dot and the phase links (`--dot-grey`) | `#C9C8C1` | `#878680` | `#787772` |
+| The arrow between steps (`--arrow`) | `#A3A29B` | `#878680` | `#787772` |
 | The "danger" button's border (`--bad-control`, was `--bad-line` at 1.56:1) | `#F2C4BF` | `#C1726B` | `#A85E58` |
 | Faint text (`--faint`), 4.35:1 on a hovered row | `#6E6D67` | `#6A6963` | `#95948C` |
 

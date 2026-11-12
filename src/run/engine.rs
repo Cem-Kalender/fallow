@@ -4269,6 +4269,10 @@ impl Engine {
             Req::GetEditor => {
                 Ok(json!({ "editor": crate::studio::files::editor(&self.studio.data) }))
             }
+            Req::GetTheme => Ok(json!({ "theme": crate::studio::files::theme(&self.studio.data) })),
+            Req::SetTheme { theme } => {
+                crate::studio::files::set_theme(&self.studio.data, &theme).map(|t| json!({ "theme": t }))
+            }
             Req::SetEditor {
                 editor,
                 command,
@@ -4985,6 +4989,8 @@ impl Engine {
                         | Req::Files { .. }
                         | Req::File { .. }
                         | Req::GetEditor
+                        | Req::GetTheme
+                        | Req::SetTheme { .. }
                         | Req::ToolOpen { .. }
                 );
                 // What changes a project's kind forgets the one kept for the gate, once done.

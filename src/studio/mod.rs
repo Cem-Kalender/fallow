@@ -315,6 +315,11 @@ pub enum Req {
         command: Option<String>,
     },
     GetEditor,
+    /// 013: the engineer's theme (contracts/web-api.md).
+    GetTheme,
+    SetTheme {
+        theme: String,
+    },
     SetEditor {
         editor: Option<files::Editor>,
         command: Option<String>,

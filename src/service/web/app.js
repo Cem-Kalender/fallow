@@ -304,7 +304,36 @@ const Fallow = (() => {
     }
   });
 
+  // 013 (contracts/web-api.md "The control"): Light, Dark or System. The page applies the
+  // choice at once and Fallow keeps it for the next start; the page as served already carries
+  // it (no attribute: System).
+  function themePick() {
+    const pick = document.getElementById("theme-pick");
+    if (!pick) return;
+    // Each choice is saved after the one before it, so the last one made is the one kept.
+    let saving = Promise.resolve();
+    const choose = (theme) => {
+      if (theme === "system") delete document.documentElement.dataset.theme;
+      else document.documentElement.dataset.theme = theme;
+      saving = saving.then(() => post("/api/theme", { theme })).catch((err) => {
+        alertLine(`Fallow could not keep the theme for the next start: ${err.message}`);
+      });
+    };
+    const now = document.documentElement.dataset.theme || "system";
+    // A choice clicked before this script ran (the control is in the HTML) is taken, not lost.
+    const early = pick.querySelector("input:checked");
+    if (early && early.value !== now) choose(early.value);
+    else {
+      const input = pick.querySelector(`input[value="${now}"]`);
+      if (input) input.checked = true;
+    }
+    pick.addEventListener("change", (e) => {
+      if (e.target && e.target.value) choose(e.target.value);
+    });
+  }
+
   function start() {
+    themePick();
     delegate("click");
     delegate("change");
     delegate("input");

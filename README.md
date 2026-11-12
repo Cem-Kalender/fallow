@@ -45,6 +45,9 @@ the project's principles are in [`.specify/memory/constitution.md`](.specify/mem
   project only. The Pipelines tab draws a pipeline as a graph of Fallow's fixed steps, where you
   add, change and remove steps; Standard, Test first and Solo ship with Fallow, and the lead can
   propose one, which is used only once you save it.
+- **Light and dark.** The page follows your system's light or dark setting, switching with it
+  without a reload. The control at the right of the top bar picks Light, Dark or System; Fallow
+  remembers the choice across restarts. Text and controls meet WCAG AA contrast in both themes.
 - **Runtimes.** Every agent step goes through one runtime interface. Claude Code (`claude -p`) is
   the first; a scripted `fake` runtime drives the tests.
 

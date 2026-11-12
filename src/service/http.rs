@@ -151,6 +151,30 @@ pub fn check(
     Gate::Pass
 }
 
+/// 013: the theme this server serves the page with (research R-3). `value` is held only to read or
+/// write it, so a page is never served behind the engine. `saving` is held while the engine saves
+/// a choice, so two choices from two pages are kept in the order they were saved (review).
+#[derive(Default)]
+struct KeptTheme {
+    value: std::sync::Mutex<Option<String>>,
+    saving: std::sync::Mutex<()>,
+}
+
+/// 013: `index.html` with the engineer's theme: `data-theme` on `<html>` and the matching
+/// `color-scheme` hint for the browser's own canvas, for Light and Dark; as written for System.
+pub fn page_with_theme(theme: &str) -> String {
+    match theme {
+        "light" | "dark" => INDEX
+            .replacen("<html lang=\"en\">", &format!("<html lang=\"en\" data-theme=\"{theme}\">"), 1)
+            .replacen(
+                "<meta name=\"color-scheme\" content=\"light dark\">",
+                &format!("<meta name=\"color-scheme\" content=\"{theme}\">"),
+                1,
+            ),
+        _ => INDEX.to_string(),
+    }
+}
+
 fn header(name: &str, value: &str) -> Header {
     Header::from_bytes(name.as_bytes(), value.as_bytes()).expect("valid header")
 }
@@ -227,12 +251,16 @@ impl Web {
         std::thread::Builder::new()
             .name("http-accept".into())
             .spawn(move || {
+                // 013: the engineer's theme, kept by this server so the page is served with it
+                // without waiting on the engine (research R-3).
+                let theme: Arc<KeptTheme> = Arc::default();
                 for req in s2.incoming_requests() {
                     let tx = tx.clone();
                     let secret = secret.clone();
+                    let theme = Arc::clone(&theme);
                     let _ = std::thread::Builder::new()
                         .name("http-req".into())
-                        .spawn(move || handle(req, &tx, port, &secret));
+                        .spawn(move || handle(req, &tx, port, &secret, &theme));
                 }
             })
             .map_err(|e| format!("cannot start the page's server: {e}"))?;
@@ -574,6 +602,10 @@ fn studio_route(
             (Err(e), _) | (_, Err(e)) => Some(Err(e)),
         },
         ("GET", ["api", "files", "editor"]) => r(Req::GetEditor),
+        ("POST", ["api", "theme"]) => match need("theme") {
+            Ok(theme) => r(Req::SetTheme { theme }),
+            Err(e) => Some(Err(e)),
+        },
         ("POST", ["api", "files", "editor"]) => r(Req::SetEditor {
             editor: serde_json::from_value(body.clone())
                 .ok()
@@ -733,7 +765,13 @@ fn header_value<'a>(req: &'a tiny_http::Request, name: &str) -> Option<&'a str> 
         .map(|h| h.value.as_str())
 }
 
-fn handle(mut req: tiny_http::Request, tx: &Sender<Msg>, port: u16, secret: &str) {
+fn handle(
+    mut req: tiny_http::Request,
+    tx: &Sender<Msg>,
+    port: u16,
+    secret: &str,
+    theme: &KeptTheme,
+) {
     let method = req.method().as_str().to_string();
     let url = req.url().to_string();
     let gate = check(
@@ -829,12 +867,45 @@ fn handle(mut req: tiny_http::Request, tx: &Sender<Msg>, port: u16, secret: &str
         return json_reply(req, reply);
     }
     match studio_route(&method, &dparts, &body, &url) {
+        // 013: a theme Fallow kept is the one this server serves from now on (`KeptTheme`).
+        Some(Ok(r @ Request::Studio(crate::studio::Req::SetTheme { .. }))) => {
+            let order = theme.saving.lock();
+            let reply = ask(tx, r);
+            if let (Reply::Ok(v), Ok(mut k)) = (&reply, theme.value.lock()) {
+                if let Some(t) = v["theme"].as_str() {
+                    *k = Some(t.to_string());
+                }
+            }
+            drop(order);
+            return json_reply(req, reply);
+        }
         Some(Ok(r)) => return json_reply(req, ask(tx, r)),
         Some(Err(e)) => return json_reply(req, Reply::Err(e)),
         None => {}
     }
     match (is_get, parts.as_slice()) {
-        (true, []) => respond(req, 200, "text/html; charset=utf-8", INDEX.into()),
+        (true, []) => {
+            // 013 (research R-3): the engineer's theme on the page as served, so its first frame
+            // is right. This server keeps it: the engine is asked once, for the first page, and
+            // told of every choice through POST /api/theme, so a page never waits behind a slow
+            // request (the review's 200 ms limit served System, and a light frame, on a busy
+            // engine). System when it cannot be read.
+            let kept = theme.value.lock().ok().and_then(|k| k.clone());
+            let t = match kept {
+                Some(t) => t,
+                None => {
+                    let t = match ask(tx, Request::Studio(crate::studio::Req::GetTheme)) {
+                        Reply::Ok(v) => v["theme"].as_str().unwrap_or("system").to_string(),
+                        Reply::Err(_) => "system".to_string(),
+                    };
+                    if let Ok(mut k) = theme.value.lock() {
+                        k.get_or_insert(t.clone());
+                    }
+                    t
+                }
+            };
+            respond(req, 200, "text/html; charset=utf-8", page_with_theme(&t))
+        }
         (true, ["app.js"]) => respond(req, 200, "text/javascript; charset=utf-8", APP_JS.into()),
         (true, ["screens", name]) => match SCREENS.iter().find(|(n, _)| n == name) {
             Some((_, js)) => respond(req, 200, "text/javascript; charset=utf-8", (*js).into()),
