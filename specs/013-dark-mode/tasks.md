@@ -137,7 +137,7 @@ theme (SC-003), so tests are included.
 - [X] T015 Run the whole suite one file at a time, and `cargo clippy --all-targets -- -D warnings`.
   - Done 2026-11-12: all 66 test files pass and the 159 unit tests; clippy is clean.
   - `us11_update` was run test by test: as one file it takes over ten minutes, and in the background it was stopped for low memory.
-- [ ] T016 Quickstart Q5 by hand with the engineer (optional): the system switched while a loop page is open.
+- [X] T016 Quickstart Q5 by hand with the engineer (optional): the system switched while a loop page is open. Done by the engineer on 2026-11-12: it looked right.
 
 ---
 
