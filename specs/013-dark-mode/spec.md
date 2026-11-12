@@ -4,7 +4,7 @@
 
 **Created**: 2026-11-02
 
-**Status**: Draft
+**Status**: Draft; reference set updated on 2026-11-12 for 012 (solo sessions)
 
 **Input**: User description: "Dark mode for Fallow Studio (013; first numbered 010, then 012), agreed with the engineer on 2026-11-02 after the mockup (`mockup/dark.html`, 'looks absolutely perfect'). Small feature, built on 009 as it is. A dark theme with the look of the mockup; by default Fallow follows the system's light or dark setting and switches with it without a reload; the engineer can choose Light, Dark or System, remembered on that machine across restarts; every screen and state is covered; text and controls meet WCAG AA contrast in both themes; no flash of the light theme on opening or reloading; the light theme does not change. Out of scope: more themes or custom colours, the standalone app (014), changing the layout."
 
@@ -99,7 +99,7 @@ An engineer who uses Fallow in light mode sees no change at all.
 
 - **FR-005**: The dark theme MUST cover every screen and state of the page. The reference set, checked in both themes, is at least:
   - the dashboard (with and without a running loop and something that needs the engineer), and the data page;
-  - a project page with its conversation, the "/" menu, both side panels (proposals, what the lead knows), the Files tab with a file and its diff, and a proposal card started and not started;
+  - a project page with its solo session (012): the session dropdown with "+ New session" and the closed sessions, the conversation with a turn's activity, an attached image and waiting messages, an approval card (a command, a read) with the folder's facts, the "/" menu, the side panels (Changes, Gates, Branches, proposals, what the assistant knows), a suggested feature card started and not started, the "Make this a feature" and close dialogs, a closed session's read-only view, and the Files tab with a file and its diff;
   - a spec session with its documents, the step bar, the lock area and the Files drawer;
   - a loop page with its graph in each step state, the activity, the tasks, the gates and the commits;
   - Pipelines (list, graph, selected step, TOML editor) and Agents (list, form, instructions);
