@@ -25,6 +25,12 @@ Fallow will be its own app window later (014), which will follow the system's th
 
 **What does not change**: the layout, the light theme (it looks exactly as today), the content of any screen, and how Fallow works.
 
+## Clarifications
+
+### Session 2026-11-12
+
+- Q: Today's light theme misses WCAG AA in a few places: control borders (1.5:1), graph lines and step arrows (about 2.6:1), the grey status dot (1.7:1), and faint text on a hovered row (4.35:1). FR-006 (the light theme unchanged) and FR-012 (AA in both themes) cannot both hold. Which wins? → A: Full AA in both themes. The light theme changes only where it misses FR-012: the borders of controls, graph lines, arrows and grey dots get a darker grey of the same warm hue, and faint text a shade darker. Nothing else in it changes.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Fallow follows the system's dark setting (Priority: P1)
@@ -71,7 +77,7 @@ An engineer who uses Fallow in light mode sees no change at all.
 
 **Acceptance Scenarios**:
 
-1. **Given** the light theme, **When** each screen of the reference set is shown, **Then** it is identical to the same screen before this feature, except for the new theme control.
+1. **Given** the light theme, **When** each screen of the reference set is shown, **Then** it is identical to the same screen before this feature, except for the new theme control and the colours raised to meet FR-012.
 
 ### Edge Cases
 
@@ -105,7 +111,7 @@ An engineer who uses Fallow in light mode sees no change at all.
   - Pipelines (list, graph, selected step, TOML editor) and Agents (list, form, instructions);
   - the dialogs ("Leave your changes?", confirmations), alerts and error lines, empty states, and the error shown when a screen cannot be loaded;
   - form fields (text, select, checkbox), focus outlines, the working indicator, badges, pills, stage labels and tooltips.
-- **FR-006**: The light theme MUST stay exactly as it is today: every screen of the reference set looks the same as before this feature, except for the new theme control.
+- **FR-006**: The light theme MUST stay exactly as it is today: every screen of the reference set looks the same as before this feature, except for the new theme control and the colours raised to meet FR-012 (Clarifications, 2026-11-12).
 
 **Choosing the theme**
 
@@ -133,7 +139,7 @@ An engineer who uses Fallow in light mode sees no change at all.
 
 - **SC-001**: In the dark theme, 100% of the screens and states of the reference set (FR-005) show no area, text or line left in a light-theme colour, checked on screenshots of each.
 - **SC-002**: 100% of the text and control colour pairs used by the page pass the contrast thresholds of FR-012 in both themes, checked automatically for every pair.
-- **SC-003**: In the light theme, the screenshots of the reference set before and after the feature differ only in the new theme control.
+- **SC-003**: In the light theme, the screenshots of the reference set before and after the feature differ only in the new theme control and in the colours raised to meet FR-012.
 - **SC-004**: When the system setting changes, the page shows the other theme within 1 second, with nothing typed or open lost, on every screen of the reference set.
 - **SC-005**: Over 20 reloads in the dark theme, no captured frame shows the light ground.
 - **SC-006**: The engineer's theme choice survives 3 restarts of Fallow in a row.

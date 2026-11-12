@@ -102,10 +102,34 @@ fails below 4.5:1 for text and 3:1 for borders of controls, focus outlines and g
 Where a mockup colour fails, it is adjusted within its hue and the mockup's look (Assumptions in
 the spec).
 
+**The light theme too** (Clarifications 2026-11-12, the engineer: full AA in both themes). Today's
+light theme misses FR-012 in five places. Each gets the smallest step toward black, in its own
+hue, that passes on every background it sits on: `--ground`, `--panel` and `--panel-2`; the tinted ones a
+control or a dot sits on (`--needs-bg` in a notice, `--hover`, `--chip`, `--accent-bg`, `--diff-add`,
+the panels' tints; second review); and `--hover`/`--chip` for text. The control borders that
+are on `--line` (the file search field, the gate's note box) move to `--control-line` too.
+
+| What | Before | After (light) | Dark |
+|---|---|---|---|
+| Borders of controls (secondary buttons, text fields, selects, the message box, the title field, graph nodes): a new `--control-line`, so decorative lines (`--line-3` on a quote's bar) keep their grey | `#D4D3CC` (`--line-3`) | `#878680` | `#767570` |
+| Graph edges, arrowheads, the "+" circles (`--edge`) | `#9C9B94` | `#878680` | `#767570` |
+| The grey status dot and the phase links (`--dot-grey`) | `#C9C8C1` | `#878680` | `#767570` |
+| The arrow between steps (`--arrow`) | `#A3A29B` | `#878680` | `#767570` |
+| The "danger" button's border (`--bad-control`, was `--bad-line` at 1.56:1) | `#F2C4BF` | `#C1726B` | `#A85E58` |
+| Faint text (`--faint`), 4.35:1 on a hovered row | `#6E6D67` | `#6A6963` | `#95948C` |
+
+Controls whose border stays `--line`, such as the segmented tabs, option rows, agent buttons and
+pills, are identified by their text. WCAG 1.4.11 asks no 3:1 boundary of them. An icon-only
+button needs its icon at 3:1, not its border (third review).
+
+The light comparison (R-7) compares against the old stylesheet with exactly these changes applied
+(`checks/light-fixes.json`), so anything else that changed still shows.
+
 ## R-7 Checking the light theme is unchanged
 
 **Decision**:
-- **Values**: a test checks that each light value equals the literal it replaced. A table of the
+- **Values**: a test checks that each light value equals the literal it replaced, or its value
+  from the table in R-6 for the five colours raised for contrast. A table of the
   old literals sits in the test, from R-1.
 - **Screenshots**: the reference set is taken before and after, in headless Chrome over its
   debugging port as in 012's visual checks, at 1440 × 900. The light ones are compared pixel by

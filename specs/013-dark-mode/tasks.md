@@ -17,10 +17,11 @@ theme (SC-003), so tests are included.
 
 ## Phase 1: Setup
 
-- [ ] T001 Write the visual check script `specs/013-dark-mode/checks/shots.js` (Node, headless Chrome over its debugging port, as in 012's checks).
-  - **What it runs**: a scratch Fallow on scratch config and data folders, with the fake agent and a scripted project: a running loop, a question for the engineer, a spec session, a solo session with a turn, an approval card and a suggested feature.
-  - **What it shoots**: every screen and state of the reference set (spec FR-005), at 1440 × 900, in a chosen theme (`light`, `dark`, or `system` with an emulated `prefers-color-scheme`), named `<screen>-<theme>.png`.
-  - **Then**: run it once in light **before any other change** and keep the images in `specs/013-dark-mode/checks/before/` (the baseline for US3).
+- [X] T001 Write the visual check: `tests/visual_013.rs` and `specs/013-dark-mode/checks/shots.js`.
+  - **The demo** (`tests/visual_013.rs`, an ignored test): on the fake runtime, it serves a page at a fixed address. It holds a loop ready to merge, a loop asking the engineer, and a solo session with two turns, a suggested feature and a command waiting for approval.
+  - **The shots** (`shots.js`, Node, headless Chrome over its debugging port, as in 012's checks): every screen and state of the reference set (spec FR-005), at 1440 × 900, in a chosen theme (`light`, `dark`, or `system-dark`/`system-light` with an emulated `prefers-color-scheme`).
+  - **The light comparison** (`--compare <old.css>`): each screen is shot twice on the same page, once with app.css as served and once with the stylesheet from before this feature (`git show d9a7685:src/service/web/app.css`) put in its place through DevTools. The two are compared pixel by pixel. The same page at the same moment makes the comparison exact; two separate runs would differ in times and ids.
+  - **Then**: run it once in light before any change to the page, to check that the script itself works.
 
 ---
 
@@ -28,8 +29,8 @@ theme (SC-003), so tests are included.
 
 **Purpose**: every colour comes from a name, with today's values; nothing on screen changes.
 
-- [ ] T002 In `src/service/web/app.css`, replace every literal colour outside `:root` with a new named colour defined on `:root` with exactly that literal's value (research R-1). Examples: `--on-ink: #FFFFFF`, `--solid-hover: #000000`, `--dot-grey: #C9C8C1` (also `.link`), `--arrow: #A3A29B`, `--backdrop: rgba(28, 28, 26, .35)`, `--marker: #FDF1DC`, `--minus: #B42318`, `--bar-rest: #DCE3F8`, `--phase-bg: #F8FAFF`, `--grid-dot: #E9E8E2`, `--edge: #9C9B94`, and `--shadow-menu`, `--shadow-panel`. Drop the `var(--x, #fallback)` fallbacks (every name is defined). Add `color-scheme: light` to `:root`.
-- [ ] T003 [P] New test file `tests/web_theme.rs`, first tests (reading `src/service/web/app.css`):
+- [X] T002 In `src/service/web/app.css`, replace every literal colour outside `:root` with a new named colour defined on `:root` with exactly that literal's value (research R-1). Examples: `--on-ink: #FFFFFF`, `--solid-hover: #000000`, `--dot-grey: #C9C8C1` (also `.link`), `--arrow: #A3A29B`, `--backdrop: rgba(28, 28, 26, .35)`, `--marker: #FDF1DC`, `--minus: #B42318`, `--bar-rest: #DCE3F8`, `--phase-bg: #F8FAFF`, `--grid-dot: #E9E8E2`, `--edge: #9C9B94`, and `--shadow-menu`, `--shadow-panel`. Drop the `var(--x, #fallback)` fallbacks (every name is defined). Add `color-scheme: light` to `:root`.
+- [X] T003 [P] New test file `tests/web_theme.rs`, first tests (reading `src/service/web/app.css`):
   - outside the `:root` and dark blocks, no rule holds a hex colour or `rgb()`/`rgba()`;
   - every `var(--x)` used is defined on `:root`;
   - each light value named in T002 equals the literal it replaced (a table of the old literals in the test).
@@ -78,7 +79,7 @@ theme (SC-003), so tests are included.
 
 **Independent Test**: quickstart Q3.
 
-- [ ] T008 [US3] Run `shots.js light` after Phases 2 and 3, into `specs/013-dark-mode/checks/after/`. Compare each image pixel by pixel with `checks/before/`, with a small Node comparison in `shots.js` (`--compare`), PNG decoded with Node's `zlib`. Expect no difference (SC-003; the control does not exist yet). Fix any difference in `src/service/web/app.css`.
+- [ ] T008 [US3] Run `shots.js light --compare <the stylesheet at d9a7685>` after Phases 2 and 3, into `specs/013-dark-mode/checks/light/`. Compare against the old stylesheet with the light contrast fixes of research R-6 applied (`--fixes specs/013-dark-mode/checks/light-fixes.json`). Expect every screen the same (SC-003; the control does not exist yet). Fix any difference in `src/service/web/app.css`.
 
 **Checkpoint**: Q3 passes with zero differing pixels.
 
