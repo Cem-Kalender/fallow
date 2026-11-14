@@ -1,33 +1,62 @@
 <!--
 Sync Impact Report
 ==================
-Version change: 6.5.0 → 6.5.1
-Bump rationale: PATCH. A clarification of V: publishing a run may also fetch the target branch's
-latest commit, to bring the run up to date or to check it before a push (feature 011, a published
-loop whose pull request fell behind or conflicts). Still only the engineer's own tools, only to
-publish a run; nothing added, removed or loosened. Approved by the project owner on 2026-11-03
-(finding D1 of /speckit-analyze for feature 011).
+Version change: 6.5.1 → 7.0.0
+Bump rationale: MAJOR. Fallow becomes a standalone desktop application: the Studio is shown only
+in Fallow's own window, and the browser page is retired (V redefined). The memory budget now counts
+the window's web view and is raised, and the page-ready budget becomes window-ready and is raised
+(budgets loosened). Decided by the project owner on 2026-11-14: own desktop window only (no editor
+or terminal for the engineer, no extensions), one combined memory budget, window only.
+
+Proposal and impact:
+  - Change: Fallow ships as an installable app per platform that opens the Studio in its own
+    window, using the operating system's web view (WebView2, WKWebView, WebKitGTK). Opening the
+    Studio in a browser is no longer supported.
+  - Rationale: a downloadable, standalone tool like other IDEs, started from the dock, start menu
+    or launcher, without a browser tab or a per-launch address.
+  - Existing features: 007/008/009/012/013 Studio pages keep their behaviour inside the window.
+    013's note that the browser keeps nothing per address no longer applies. 006 FR-034 (terminal
+    app retired) is unaffected. The loopback/secret/origin checks stay valid when the window
+    reaches Fallow through a loopback connection, and get extended by the window rules.
+  - Benchmarks: idle and running memory now sum Fallow's process and its web view processes;
+    page ready becomes window ready (launch to the Studio drawn in the window). The CI benchmark
+    harness must start the window (Linux CI needs a virtual display).
+  - Budget values (250 MB, 400 MB, 1 s) are the owner-approved ceilings for 7.0.0; feature 014's
+    plan measures them on all three platforms, and lowering them later is a MINOR amendment.
 
 Modified principles:
-  - V. Local and Private by Construction: the second item of the traffic of a run clarified
+  - Preamble: "a local page" → "its own window"
+  - V. Local and Private by Construction: the run page rules replaced by the window rules; the web
+    view's own network features disabled
+  - VI. Least Privilege: a per-user install without elevated privileges
+  - VII. Runs Survive: a run never depends on the window being open
+  - VIII. Small and Measured: combined memory budgets, window ready
+  - IX. Runtime-Agnostic: "the page" → "the window"
+
+Changed sections: Budgets & Measurement (table); Development Workflow & Quality Gates (window
+checks in CI, release rules).
 
 Added sections: none. Removed sections: none.
 
-Templates requiring updates: none.
+Templates requiring updates: none (plan, spec and tasks templates read the constitution at
+runtime).
 
-Follow-up TODOs: none.
+Follow-up TODOs: none in this file. Outside it (feature 014): deny.toml bans wry, tao, winit, gtk
+and webkit2gtk under the retired terminal-only rule; 014's plan must choose and justify the window
+and web view crates and lift only those bans.
 
-Previous amendments: 6.5.0 (MINOR) every project is a git repository (III, VI); 6.4.0 (MINOR) VI names
-the assistant; 6.3.1 (PATCH) V clarified for showing a project's remote; 6.3.0 (MINOR) solo sessions
-in II and V; 6.2.0 (MINOR) IX. Runtime-Agnostic; 6.1.0 (MINOR) feature 007; 6.0.0 (MAJOR) the
-constitution replaced for the headless orchestrator.
+Previous amendments: 6.5.1 (PATCH) V clarified for fetching the target branch; 6.5.0 (MINOR) every
+project is a git repository (III, VI); 6.4.0 (MINOR) VI names the assistant; 6.3.1 (PATCH) V
+clarified for showing a project's remote; 6.3.0 (MINOR) solo sessions in II and V; 6.2.0 (MINOR)
+IX. Runtime-Agnostic; 6.1.0 (MINOR) feature 007; 6.0.0 (MAJOR) the constitution replaced for the
+headless orchestrator.
 -->
 
 # Fallow Constitution
 
 Fallow takes a coding task from a plan the engineer approved to a result it has verified itself,
 running AI coding agents as non-interactive steps. It involves the engineer only where the
-decision is theirs, shows everything the agents did on a local page, and runs on the engineer's
+decision is theirs, shows everything the agents did in its own window, and runs on the engineer's
 own machine with the engineer's own rights.
 
 ## Core Principles
@@ -108,11 +137,16 @@ the work divides cleanly and measurement says it pays.
 
 - Fallow runs on the engineer's machine, for the engineer only. It sends no telemetry, crash
   reports, update checks or remote logs.
-- The run page MUST be served only on the loopback interface, to the engineer only:
-  - a secret per launch, required on every request;
-  - requests from other origins and other host names rejected.
-
-  The page MUST load nothing from outside Fallow.
+- The Studio is shown only in Fallow's own window, using the operating system's web view. It is
+  not offered to browsers or other programs:
+  - whatever carries the Studio to the window MUST be reachable from that window only. A local
+    connection is on the loopback interface, needs a secret per launch that is never shown,
+    logged or written to disk, and rejects requests from other origins and host names;
+  - the window MUST load nothing from outside Fallow, and MUST NOT navigate away from the Studio.
+    A link to anywhere else opens in the engineer's browser, only when they click it.
+- The web view's own network features (safe-browsing lookups, spell-check services, telemetry,
+  update checks) MUST be switched off wherever the platform allows. What a platform does not let
+  Fallow switch off MUST be stated in the release notes and the plan, never implied to be off.
 - Fallow's notifications are shown by Fallow's own process on the engineer's machine. They name
   the project, the feature and what is needed, and never include code or command output.
 - Fallow itself MUST NOT make network requests. The traffic of a run is:
@@ -139,7 +173,8 @@ already has.
 ### VI. Least Privilege
 
 - Fallow MUST NOT require elevated privileges, and runs every agent with the engineer's rights or
-  fewer.
+  fewer. On every platform there MUST be a way to install Fallow for the current user only,
+  without elevated privileges.
 - Each agent's rights are fixed by Fallow from its kind, whatever its definition says. A maker
   edits only its own working copy, and never the locked documents. A checker runs commands without
   editing. The lead writes only spec documents (`specs/`, the constitution, `.fallow/`). The
@@ -166,28 +201,30 @@ step needs.
 - A run's state MUST be kept on disk after every change.
 - A stopped or crashed Fallow resumes every run where it was, without repeating a completed step
   and without losing history.
-- A run never depends on the page being open.
+- A run never depends on the window being open. Closing the window MUST NOT stop a run without
+  the engineer's confirmation (II).
 
 Rationale: autonomous runs take long; anything that loses them on a restart forces the engineer
 back into watching.
 
 ### VIII. Small and Measured
 
-- Fallow's own process (not its agents) MUST stay under **60 MB** resident memory when idle, and
-  under **200 MB** with a run of 4 concurrent agent steps.
-- The page MUST be reachable within **500 ms** of Fallow starting, and an agent's activity MUST
-  appear on it within **2 s**.
+- Fallow, counting its own process and the web view processes of its window (not its agents),
+  MUST stay under **250 MB** resident memory when idle, and under **400 MB** with a run of 4
+  concurrent agent steps.
+- The Studio MUST be drawn in the window within **1 s** of Fallow starting, and an agent's
+  activity MUST appear in it within **2 s**.
 - Every performance claim MUST be backed by an automated benchmark that runs in CI and fails the
   build when its budget is exceeded.
 - Every claim about effectiveness ("solo beats plain", "a split pays") MUST come from recorded runs
   on a task set with hidden tests, naming the task set and the number of runs.
 
-Rationale: Fallow runs next to memory-hungry agents and must stay cheap, and claims about agent
+Rationale: Fallow runs next to memory-hungry agents and must stay cheap, window included, and claims about agent
 orchestration are easy to make and hard to earn.
 
 ### IX. Runtime-Agnostic
 
-- Fallow's rules (the loop, the studio, the page) MUST hold for every runtime that implements the
+- Fallow's rules (the loop, the studio, the window) MUST hold for every runtime that implements the
   runtime contract. They are decided from what Fallow observes itself (its own records of what it
   started and received, git, the gates), never from how one runtime or model is known to behave.
 - What is particular to one runtime (its command line, output format, how it is installed) lives
@@ -204,11 +241,12 @@ breaks silently on the next, and ties the engineer to one supplier.
 
 | Metric | Budget | Measured as |
 |---|---|---|
-| Idle memory | < 60 MB RSS | Fallow's process, settled, with no run active |
-| Running memory | < 200 MB RSS | Fallow's process during the reference run with 4 concurrent steps (agents excluded) |
-| Page ready | < 500 ms | Process launch to the page answering; p95 of 30 launches after 3 warm-ups |
-| Activity latency | < 2 s | An agent's output event to its appearance on the page; p95 over the reference run |
+| Idle memory | < 250 MB RSS | Fallow's process plus its window's web view processes, summed, settled with the window open and no run active |
+| Running memory | < 400 MB RSS | The same sum during the reference run with 4 concurrent steps (agents excluded) |
+| Window ready | < 1 s | Process launch to the Studio drawn in the window; p95 of 30 launches after 3 warm-ups |
+| Activity latency | < 2 s | An agent's output event to its appearance in the window; p95 over the reference run |
 
+- Budgets are measured on the installed app, on each of the three platforms.
 - The reference run is a pinned, versioned fixture with scripted agents. Changing it changes the
   budgets and requires an amendment.
 - A failing benchmark job on a shared CI runner is re-run once automatically; the second result
@@ -224,11 +262,16 @@ breaks silently on the next, and ties the engineer to one supplier.
   - injected false claims are never accepted (I): a missing commit, unchanged files, failing gates
     and an incomplete verdict;
   - no code path pushes to a target branch, force-pushes or approves a pull request (II);
-  - the page listens on loopback only, rejects requests without the secret or from another origin
-    or host name, and loads no external resources (V);
+  - the Studio is reachable from Fallow's window only: a local connection listens on loopback
+    only and rejects requests without the secret or from another origin or host name; the window
+    loads no external resources and does not navigate away from the Studio (V);
   - Fallow's own process opens no outbound connection (V);
   - a run interrupted at each stage resumes without repeating a completed step (VII);
-  - a run record holds only the fields V allows, using marker text that must not appear (V).
+  - a run record holds only the fields V allows, using marker text that must not appear (V);
+  - the per-user install runs without elevated privileges (VI).
+- A release is built by CI from a tagged commit on the main branch, for each platform, with a
+  published checksum for every download. Fallow does not update itself: the engineer downloads and
+  installs a new version (V).
 
 ## Governance
 
@@ -243,4 +286,4 @@ breaks silently on the next, and ties the engineer to one supplier.
   section; unjustified violations block merge.
 - Compliance is reviewed at every pull request and at every release.
 
-**Version**: 6.5.1 | **Ratified**: 2026-10-13 | **Last Amended**: 2026-11-03
+**Version**: 7.0.0 | **Ratified**: 2026-10-13 | **Last Amended**: 2026-11-14
