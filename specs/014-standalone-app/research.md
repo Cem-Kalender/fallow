@@ -7,7 +7,7 @@ spike (R-20) or a check in the tasks, never assumed.
 
 ## R-1 The window: `wry` on Fallow's own window
 
-**Decision**: `wry` 0.57 (MSRV 1.85, Fallow's own), built with `build_as_child` into a window
+**Decision**: `wry` 0.57 (MSRV 1.85; Fallow's own minimum became 1.88 when `time`, which `wry` brings through `cookie`, needed 0.3.47 for RUSTSEC-2026-0009), built with `build_as_child` into a window
 Fallow creates itself with `windows-sys`. No `tao` and no `winit`: the window lives on Fallow's own
 UI thread (R-2). The default MSVC target links the WebView2 loader statically, so no
 `WebView2Loader.dll` ships. Fallow creates the WebView2 environment itself (through `webview2-com`,
