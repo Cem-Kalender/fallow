@@ -304,8 +304,8 @@ runs as today.
   - SC-005: an automated check on the `automation` build opens the window, starts a loop with the
     fake agent, closes the window, and checks the loop completes.
 - **Memory**: Fallow's process plus every `msedgewebview2.exe` whose parent chain leads to it
-  (Toolhelp snapshot), working sets summed (constitution VIII, Budgets: RSS). Shared pages are
-  counted in each process, so the sum overstates; the private working set is recorded beside it.
+  (Toolhelp snapshot), private working sets summed (constitution 8.0.0, decided after the spike);
+  the working sets summed are recorded beside it, not budgeted.
 
 **The benchmark lines after 014** (constitution VIII):
 
@@ -379,14 +379,17 @@ budget is the engineer's decision before tasks.
 
 **Results (2026-11-14, the engineer's laptop; `spikes/014-window/RESULTS.md`)**:
 - **Memory, window open**: working sets summed 310 MB (275 MB with `MemoryUsageTargetLevel=Low`
-  and `--disable-gpu`), over the 250 MB budget as VIII counts it (RSS summed); private bytes
-  134 MB (101 MB); private working sets 88 MB (61 MB). The sum counts WebView2's shared browser
-  libraries once per process (6 processes). **The engineer decides** how VIII counts it, or the
-  budget, before tasks.
+  and `--disable-gpu`); private bytes 134 MB (101 MB); private working sets 88 MB (61 MB). The
+  working-set sum counts WebView2's shared browser libraries once per process (6 processes).
+  **Decided** (the engineer, 2026-11-14): memory is counted as private working sets summed,
+  constitution 8.0.0; the limits stay. The default settings are used (88 MB); the levers stay in
+  reserve.
 - **Memory, window closed**: every WebView2 process gone; Fallow back to 20 MB (FR-011 holds).
 - **Window ready**: first open ever 1.66 s; then median 0.91 s, p95 1.02 s over 33 opens (0.47 s
   WebView2 starting, the rest the dashboard's page and 5 engine requests), over the 1 s budget by a
-  little. **The engineer decides** before tasks.
+  little. **Decided** (the engineer, 2026-11-14): the budget stays 1 s; the engine's first answers
+  to the dashboard are made faster (its per-project git checks first), and the window-ready
+  benchmark shows whether that is enough; if not, back to the engineer.
 - **Upload**: a 5 MiB `File` body arrives complete; the `arrayBuffer` change of R-3 is not needed.
 - **`with_environment`** exists in `wry` 0.57.2.
 - **Build**: 5 min from nothing (release, one job), 437 MB target folder.

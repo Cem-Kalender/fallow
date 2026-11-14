@@ -59,7 +59,8 @@ standard user, closing the window during a loop (SC-005), and the budgets (R-15,
 **Performance Goals**: window ready < 1 s (p95 of 30 launches after 3 warm-ups); activity latency
 < 2 s.
 
-**Constraints**: idle < 250 MB and running < 400 MB, Fallow plus its web view processes; no network
+**Constraints**: idle < 250 MB and running < 400 MB, private working sets of Fallow plus its web
+view processes (constitution 8.0.0); window ready < 1 s; no network
 request of Fallow's own; no listener in a release build; per-user install without elevation; no
 browser fallback.
 
@@ -82,7 +83,7 @@ server code (about 1,300 lines in `http.rs`) split into `answer` and two transpo
 | V. Local and Private | Pass: no listener and no secret (R-3), WebView2's environment variables cleared so none can add a debugging port (R-6); the window loads only `fallow.localhost` and opens only `http(s)` addresses, in the browser, on a click (R-4); the web view's network features off where WebView2 allows, the rest listed (R-6) and traced in CI; notifications unchanged (008). |
 | VI. Least Privilege | Pass: the per-user install needs no elevation, checked as a standard user (R-11, R-16); the web view's data is in Fallow's data folder; 014 adds no write place (no login item: FR-010 dropped). |
 | VII. Runs Survive | Pass: the window is a view; closing it, or the web view crashing, leaves the engine and its runs untouched; Quit and the end of the Windows session stop as `fallow stop` does (runs resume, R-9); no console window that could be closed (R-18). |
-| VIII. Small and Measured | Pass, to be shown by CI: the four budgets measured with the window counted, each benchmark line listed (R-15); idle after closing the window measured too (FR-011). WebView2's memory and cold start are the main risks, measured by the spike before tasks (R-20). Running memory and activity latency are measured on the `automation` build (Complexity Tracking). |
+| VIII. Small and Measured | Pass, to be shown by CI: the four budgets measured with the window counted, each benchmark line listed (R-15); idle after closing the window measured too (FR-011). The spike (R-20) measured 88 MB idle (private working sets, constitution 8.0.0) and window ready p95 1.02 s; the engine's first answers to the dashboard are made faster to bring it under 1 s. Running memory and activity latency are measured on the `automation` build (Complexity Tracking). |
 | IX. Runtime-Agnostic | Not affected. |
 | Dependencies (Workflow) | `wry` justified against V, VI, VIII (R-1); `deny.toml` lifts only `wry`. |
 | CI gates (Workflow) | Updated (R-16): "loopback only" becomes "no listener", for Fallow and its web view; "the window loads nothing external and stays on the Studio" is the unit-tested navigation decision and the release CSP; the outbound-connection gate is a trace covering the window; the per-user install gate runs as a standard user. |

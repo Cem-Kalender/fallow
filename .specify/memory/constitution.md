@@ -1,14 +1,18 @@
 <!--
 Sync Impact Report
 ==================
-Version change: 7.0.0 → 7.0.1
-Bump rationale: PATCH. A clarification of Budgets & Measurement: budgets are measured on each
-platform Fallow supports, not on "each of the three platforms". 7.0.0 wrongly assumed three; since
-006 (clarified 2026-10-29) the first version supports Windows only, and Linux and macOS come later,
-each in its own feature. Nothing added, removed or loosened. Decided by the project owner on
-2026-11-14 ("Let's do windows first"), during /speckit-clarify for feature 014.
+Version change: 7.0.1 → 8.0.0
+Bump rationale: MAJOR. Memory is now counted as each process's own memory (its private working
+set, what Task Manager shows as "Memory"), summed over Fallow and its window's web view processes,
+instead of their resident sets (RSS) summed. The limits stay 250 MB and 400 MB, but the new count
+is lower for the same program, so it loosens the budgets: MAJOR under Governance. Why: feature
+014's spike (2026-11-14) measured the window at 310 MB summed RSS against 88 MB private working
+set; the six web view processes share the same browser libraries, which a sum of RSS counts once
+per process, so it measured how many processes share them rather than what Fallow uses. Decided by
+the project owner on 2026-11-14, during /speckit-plan for feature 014.
 
-Modified sections: Budgets & Measurement (where budgets are measured).
+Modified sections: VIII. Small and Measured (the memory rule's wording); Budgets & Measurement
+(idle and running memory: the unit and how they are measured).
 
 Added sections: none. Removed sections: none.
 
@@ -16,7 +20,8 @@ Templates requiring updates: none.
 
 Follow-up TODOs: none.
 
-Previous amendments: 7.0.0 (MAJOR, 2026-11-14) Fallow as a standalone desktop app: the Studio
+Previous amendments: 7.0.1 (PATCH, 2026-11-14) budgets measured on each platform Fallow supports;
+7.0.0 (MAJOR, 2026-11-14) Fallow as a standalone desktop app: the Studio
 only in Fallow's own window through the system's web view, the browser page retired, combined
 memory budgets (< 250 MB idle, < 400 MB running) and window ready < 1 s, a per-user install
 without elevated privileges, releases built by CI from a tagged commit with checksums and no
@@ -185,8 +190,8 @@ back into watching.
 ### VIII. Small and Measured
 
 - Fallow, counting its own process and the web view processes of its window (not its agents),
-  MUST stay under **250 MB** resident memory when idle, and under **400 MB** with a run of 4
-  concurrent agent steps.
+  MUST stay under **250 MB** of its own memory (private working set) when idle, and under
+  **400 MB** with a run of 4 concurrent agent steps.
 - The Studio MUST be drawn in the window within **1 s** of Fallow starting, and an agent's
   activity MUST appear in it within **2 s**.
 - Every performance claim MUST be backed by an automated benchmark that runs in CI and fails the
@@ -216,8 +221,8 @@ breaks silently on the next, and ties the engineer to one supplier.
 
 | Metric | Budget | Measured as |
 |---|---|---|
-| Idle memory | < 250 MB RSS | Fallow's process plus its window's web view processes, summed, settled with the window open and no run active |
-| Running memory | < 400 MB RSS | The same sum during the reference run with 4 concurrent steps (agents excluded) |
+| Idle memory | < 250 MB private working set | Fallow's process plus its window's web view processes, each one's private working set (its own memory, without what it shares with other processes; Task Manager's "Memory" on Windows), summed, settled with the window open and no run active |
+| Running memory | < 400 MB private working set | The same sum during the reference run with 4 concurrent steps (agents excluded) |
 | Window ready | < 1 s | Process launch to the Studio drawn in the window; p95 of 30 launches after 3 warm-ups |
 | Activity latency | < 2 s | An agent's output event to its appearance in the window; p95 over the reference run |
 
@@ -261,4 +266,4 @@ breaks silently on the next, and ties the engineer to one supplier.
   section; unjustified violations block merge.
 - Compliance is reviewed at every pull request and at every release.
 
-**Version**: 7.0.1 | **Ratified**: 2026-10-13 | **Last Amended**: 2026-11-14
+**Version**: 8.0.0 | **Ratified**: 2026-10-13 | **Last Amended**: 2026-11-14

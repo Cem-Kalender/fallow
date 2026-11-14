@@ -29,6 +29,8 @@ Constitution 7.0.0 (2026-11-14) makes Fallow a standalone app: the Studio is sho
 - Q (during /speckit-plan): What does an old browser address of the Studio show? → A: Nothing of Fallow's: Fallow is not released yet, so no one has an old address, and the window gets its pages from Fallow without any web server. An old address gets the browser's own "can't connect" page. The notice of FR-018 and US5 AS2 is dropped.
 - Q (during /speckit-plan): Does Fallow start at login (FR-010)? → A: No. Dropped by the engineer: whoever wants to work in Fallow opens it from its icon, and runs resume then. No login item, no setting for it, and `fallow autostart` goes too.
 - Q (during /speckit-plan): How are running memory and activity latency measured when the installed app accepts no scripted requests? → A: On a test build with a cargo feature `automation` (never in a release) that adds the test-only HTTP path, enabled by an environment variable; idle memory and window ready are measured on the release build itself.
+- Q (after the spike, 2026-11-14): How is memory counted (the window measured 310 MB with every process's resident set summed, 88 MB as each process's own memory)? → A: As each process's own memory (private working set, Task Manager's "Memory"), summed; the limits stay 250 MB and 400 MB. Constitution 8.0.0.
+- Q (after the spike, 2026-11-14): Window ready measured 0.91 s median, 1.02 s p95 against 1 s. → A: The budget stays 1 s; the dashboard's first requests are made faster in the engine; if it still misses, back to the engineer.
 - Q: Which platforms does 014 deliver? → A: Windows only, as 006 decided for the first version ("Windows only; Linux and macOS later"); the answers above about Linux and macOS packages apply when those platforms become supported, in their own feature. On 2026-11-14 the test suite on Linux failed 22 of the 226 tests that ran before it was stopped, and macOS was never tested after 005.
 
 ## User Scenarios & Testing *(mandatory)*
@@ -182,7 +184,7 @@ Typing `fallow` now opens the window, and nothing of the Studio is served to a b
 
 **Budgets (constitution VIII)**
 
-- **FR-025**: Fallow MUST meet the 7.0.0 budgets on the installed app on Windows, measured by CI benchmarks that fail the build: idle memory < 250 MB and running memory < 400 MB (Fallow's process plus its window's web view processes, window open), window ready < 1 s (launch to the Studio drawn in the window, p95 of 30 launches after 3 warm-ups), and activity latency < 2 s.
+- **FR-025**: Fallow MUST meet the constitution's budgets (8.0.0) on the installed app on Windows, measured by CI benchmarks that fail the build: idle memory < 250 MB and running memory < 400 MB (private working sets of Fallow's process plus its window's web view processes, summed, window open), window ready < 1 s (launch to the Studio drawn in the window, p95 of 30 launches after 3 warm-ups), and activity latency < 2 s.
 
 ### Key Entities
 
@@ -196,7 +198,7 @@ Typing `fallow` now opens the window, and nothing of the Studio is served to a b
 
 - **SC-001**: On Windows, a standard user installs Fallow and has its window open on the dashboard within 2 minutes of starting the installer, without an administrator prompt.
 - **SC-002**: Fallow's window shows the Studio within 1 s of launch (p95 of 30 launches after 3 warm-ups) on Windows.
-- **SC-003**: Fallow, counting its window, stays under 250 MB when idle and 400 MB during the reference run, on Windows.
+- **SC-003**: Fallow, counting its window, stays under 250 MB when idle and 400 MB during the reference run (private working sets summed), on Windows.
 - **SC-004**: 100% of the screens and states listed in 013 FR-005 pass their existing acceptance checks inside the window.
 - **SC-005**: A loop started before the window is closed completes with the window closed, in 100% of runs of the CT check.
 - **SC-006**: No request from outside Fallow's window (browser, script, another user, with or without an old key) receives any Studio page or data, in 100% of the CI checks.
