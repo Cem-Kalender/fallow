@@ -302,10 +302,11 @@ const Fallow = (() => {
   // The window waits 3 s for an answer (a page that does not answer is closed anyway), so
   // `asking` tells it a question is open, then `close` or `kept` follows.
   async function closeAsked() {
-    // A question of the page's own is open: it is answered first; the window stays (review).
+    // A question is already up (this one, or one of the page's own): still deciding; the window
+    // waits for its answer (review).
     const open = document.getElementById("confirm");
     if (open && open.open) {
-      toWindow("kept");
+      toWindow("asking");
       return;
     }
     if (current && current.dirty && current.dirty()) {

@@ -150,13 +150,17 @@ fn main() -> ExitCode {
         #[cfg(windows)]
         "quit" => {
             let installer = args.get(1).and_then(|a| a.to_str()) == Some("--installer");
+            // Exit 1: the engineer cancelled; 2: an error (the installer tells them apart).
             match service::quit(installer) {
                 Ok(true) => ExitCode::SUCCESS,
                 Ok(false) => {
                     eprintln!("fallow: Quit was cancelled; Fallow keeps running");
                     ExitCode::from(1)
                 }
-                Err(e) => fail(e),
+                Err(e) => {
+                    eprintln!("fallow: {e}");
+                    ExitCode::from(2)
+                }
             }
         }
         "stop" => match answer(service::request(json!({ "cmd": "stop" }))) {

@@ -39,9 +39,12 @@ pub fn text(names: &[String]) -> String {
 }
 
 /// Asks the engineer whether to quit with `names` running (a task dialog, research R-17's
-/// manifest gives it). `true` on Quit; `false` on Cancel or when the dialog cannot be shown.
+/// manifest gives it), owned by Fallow's window when it is open (`owner`, its handle, or 0): the window
+/// waits for it. `true` on Quit; `false` on Cancel. Without the task dialog, a plain message box
+/// asks the same.
 #[cfg(windows)]
-pub fn confirm(names: &[String]) -> bool {
+pub fn confirm(owner: isize, names: &[String]) -> bool {
+    let owner = owner as windows_sys::Win32::Foundation::HWND;
     use windows_sys::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryW};
     use windows_sys::Win32::UI::Controls::{
         TASKDIALOG_BUTTON, TASKDIALOGCONFIG, TD_WARNING_ICON, TDCBF_CANCEL_BUTTON,
@@ -65,15 +68,30 @@ pub fn confirm(names: &[String]) -> bool {
     unsafe {
         let lib = wide("comctl32.dll");
         let module = LoadLibraryW(lib.as_ptr());
-        if module.is_null() {
-            return false;
-        }
-        let Some(f) = GetProcAddress(module, c"TaskDialogIndirect".as_ptr().cast()) else {
-            return false;
+        let found = if module.is_null() {
+            None
+        } else {
+            GetProcAddress(module, c"TaskDialogIndirect".as_ptr().cast())
+        };
+        let Some(f) = found else {
+            use windows_sys::Win32::UI::WindowsAndMessaging::{
+                IDYES, MB_DEFBUTTON2, MB_ICONWARNING, MB_YESNO, MessageBoxW,
+            };
+            let all = wide(&format!(
+                "Quit Fallow? This work is running:\n\n{}",
+                text(names)
+            ));
+            return MessageBoxW(
+                owner,
+                all.as_ptr(),
+                title.as_ptr(),
+                MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2,
+            ) == IDYES;
         };
         let f: TaskDialogIndirect = std::mem::transmute(f);
         let mut cfg = TASKDIALOGCONFIG {
             cbSize: std::mem::size_of::<TASKDIALOGCONFIG>() as u32,
+            hwndParent: owner,
             dwFlags: TDF_ALLOW_DIALOG_CANCELLATION,
             dwCommonButtons: TDCBF_CANCEL_BUTTON,
             pszWindowTitle: title.as_ptr(),

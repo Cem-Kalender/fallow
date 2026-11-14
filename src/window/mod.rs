@@ -66,6 +66,9 @@ mod host {
         static CLOSING: Cell<bool> = const { Cell::new(false) };
         /// Quit is under way (research R-9); who asked waits for the outcome.
         static QUITTING: Cell<bool> = const { Cell::new(false) };
+        /// Quit has passed the page: its dialog is up (or the service is stopping); a close now
+        /// only closes (review).
+        static QUIT_PAST_PAGE: Cell<bool> = const { Cell::new(false) };
         static QUIT_REPLY: RefCell<Vec<std::sync::mpsc::Sender<bool>>> = const { RefCell::new(Vec::new()) };
     }
 
@@ -199,6 +202,7 @@ mod host {
         let env = match view::environment(&cfg.data) {
             Ok(e) => e,
             Err(e) => {
+                CLOSE_AFTER_OPEN.with(Cell::take);
                 // SAFETY: this thread's window.
                 unsafe { DestroyWindow(hwnd) };
                 return Err(if view::quitting(&e) {
@@ -285,14 +289,10 @@ mod host {
     fn page_said(hwnd: HWND, m: &str) {
         match m {
             "ready" => {
-                // A page drawn again (a reload) is not left asking about its changes (review).
+                // A page drawn (again) while it was asked about its changes has none: the close
+                // or Quit goes on (review).
                 if CLOSING.with(Cell::get) {
-                    CLOSING.with(|c| c.set(false));
-                    // SAFETY: this thread's window and its timer.
-                    unsafe { KillTimer(hwnd, CLOSE_TIMER) };
-                    if QUITTING.with(Cell::get) {
-                        quit_done(false);
-                    }
+                    page_let_go(hwnd);
                 }
                 let asked = ASKED.with(Cell::take);
                 let launched = LAUNCHED.with(Cell::take);
@@ -306,13 +306,7 @@ mod host {
                 }
             }
             // The page's answer about unsaved changes (research R-9, contracts/window.md §4).
-            "close" if CLOSING.with(Cell::get) && QUITTING.with(Cell::get) => {
-                CLOSING.with(|c| c.set(false));
-                // SAFETY: this thread's window and its timer.
-                unsafe { KillTimer(hwnd, CLOSE_TIMER) };
-                after_page();
-            }
-            "close" if CLOSING.with(Cell::get) => close_now(hwnd),
+            "close" if CLOSING.with(Cell::get) => page_let_go(hwnd),
             "asking" => {
                 // SAFETY: this thread's window and its timer.
                 unsafe { KillTimer(hwnd, CLOSE_TIMER) };
@@ -340,6 +334,19 @@ mod host {
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |d| d.as_millis())
+    }
+
+    /// The page let go (it answered `close`, or did not answer within 3 s, or was drawn again):
+    /// Quit goes on past the page, or the window closes.
+    fn page_let_go(hwnd: HWND) {
+        CLOSING.with(|c| c.set(false));
+        // SAFETY: this thread's window and its timer.
+        unsafe { KillTimer(hwnd, CLOSE_TIMER) };
+        if QUITTING.with(Cell::get) && !QUIT_PAST_PAGE.with(Cell::get) {
+            after_page();
+        } else {
+            close_now(hwnd);
+        }
     }
 
     /// 1. The window got the focus: the page gets it (review: `build_as_child` leaves it to us).
@@ -386,6 +393,10 @@ mod host {
             CLOSE_AFTER_OPEN.with(|c| c.set(true));
             return;
         }
+        // Quit's dialog is up: the window waits for it (it owns the dialog).
+        if QUIT_PAST_PAGE.with(Cell::get) {
+            return;
+        }
         let asked = LIVE.with(|l| {
             l.borrow().as_ref().and_then(|l| l.view.as_ref()).map(|v| {
                 v.evaluate_script("Fallow.closeAsked && Fallow.closeAsked();")
@@ -404,15 +415,11 @@ mod host {
     /// No answer from the page within 3 s: it is hung or gone; the window closes, or Quit goes
     /// on.
     pub(super) fn close_timer(hwnd: HWND) {
-        // SAFETY: this thread's window and its timer.
-        unsafe { KillTimer(hwnd, CLOSE_TIMER) };
         if CLOSING.with(Cell::get) {
-            if QUITTING.with(Cell::get) {
-                CLOSING.with(|c| c.set(false));
-                after_page();
-            } else {
-                close_now(hwnd);
-            }
+            page_let_go(hwnd);
+        } else {
+            // SAFETY: this thread's window and its timer.
+            unsafe { KillTimer(hwnd, CLOSE_TIMER) };
         }
     }
 
@@ -424,7 +431,11 @@ mod host {
             QUIT_REPLY.with(|q| q.borrow_mut().push(r));
         }
         if QUITTING.with(Cell::get) {
-            return;
+            // Asked again while the page was asked: ask it again, which recovers a page that
+            // died meanwhile (no answer: the 3 s timer); past the page, nothing to do.
+            if QUIT_PAST_PAGE.with(Cell::get) {
+                return;
+            }
         }
         QUITTING.with(|q| q.set(true));
         let asked = LIVE.with(|l| {
@@ -456,24 +467,24 @@ mod host {
             quit_done(false);
             return;
         };
-        if let Some(h) = hwnd() {
-            if let Some(p) = frame::placement(h) {
-                let _ = state::save(&cfg.data, &p);
-            }
+        QUIT_PAST_PAGE.with(|q| q.set(true));
+        let owner = hwnd();
+        if let Some(p) = owner.and_then(frame::placement) {
+            let _ = state::save(&cfg.data, &p);
         }
+        let owner = owner.map_or(0, |h| h as isize);
         let tx = cfg.service.tx.clone();
         let spawned = std::thread::Builder::new()
             .name("quit".into())
             .spawn(move || {
-                let running = match crate::service::ask(&tx, crate::run::engine::Request::Running) {
-                    crate::run::engine::Reply::Ok(v) => v,
-                    crate::run::engine::Reply::Err(_) => serde_json::Value::Null,
+                // An error is not "nothing runs": then the dialog asks without the list (review).
+                let names = match crate::service::ask(&tx, crate::run::engine::Request::Running) {
+                    crate::run::engine::Reply::Ok(v) => super::quit::names(&v),
+                    crate::run::engine::Reply::Err(_) => {
+                        vec!["(Fallow could not tell what is running)".to_string()]
+                    }
                 };
-                let names = super::quit::names(&running);
-                let go = names.is_empty() || super::quit::confirm(&names);
-                if go {
-                    let _ = tx.send(crate::run::engine::Msg::Shutdown);
-                }
+                let go = names.is_empty() || super::quit::confirm(owner, &names);
                 crate::platform::notify::on_ui(Box::new(move || quit_done(go)));
             });
         if spawned.is_err() {
@@ -481,10 +492,17 @@ mod host {
         }
     }
 
+    /// Quit's outcome: told to who asked; when Fallow quits and nobody asked over the pipe, the
+    /// service stops now (a pipe that asked stops it once its answer is written).
     fn quit_done(quits: bool) {
         QUITTING.with(|q| q.set(false));
-        for r in QUIT_REPLY.with(|q| std::mem::take(&mut *q.borrow_mut())) {
-            let _ = r.send(quits);
+        QUIT_PAST_PAGE.with(|q| q.set(false));
+        let replies = QUIT_REPLY.with(|q| std::mem::take(&mut *q.borrow_mut()));
+        let told = replies.iter().filter(|r| r.send(quits).is_ok()).count();
+        if quits && told == 0 {
+            if let Some(cfg) = CONFIG.get() {
+                let _ = cfg.service.tx.send(crate::run::engine::Msg::Shutdown);
+            }
         }
     }
 

@@ -292,8 +292,17 @@ fn pipe_conn(conn: pipe::Conn, tx: &Sender<Msg>, port: u16, secret: &str) {
         return;
     }
     let req = &hello["request"];
-    let answer = cli_request(req, tx, port, secret);
+    let mut answer = cli_request(req, tx, port, secret);
+    // 014 (review): Quit stops the service only once its answer is written, so `fallow quit`
+    // always hears it.
+    let stop_after = answer
+        .as_object_mut()
+        .and_then(|o| o.remove("stop_after"))
+        .is_some_and(|v| v == true);
     let _ = pipe::write_line(&mut *writer, &answer.to_string());
+    if stop_after {
+        let _ = tx.send(Msg::Shutdown);
+    }
 }
 
 /// How long a tool call may wait for its answer (an approval waits up to 10 minutes).
@@ -402,10 +411,19 @@ fn cli_request(req: &Value, tx: &Sender<Msg>, port: u16, secret: &str) -> Value 
         Some("quit") if req["ask"] == true => {
             let (qtx, qrx) = std::sync::mpsc::channel();
             if !crate::platform::notify::on_ui(Box::new(move || crate::window::quit(Some(qtx)))) {
-                return json!({ "ok": false, "error": "Fallow has no window thread to ask on" });
+                return json!({
+                    "ok": false,
+                    "error": "Fallow runs without a desktop, so it cannot ask: use `fallow stop`"
+                });
             }
             match qrx.recv_timeout(std::time::Duration::from_secs(1800)) {
-                Ok(quits) => json!({ "ok": true, "quit": quits, "pid": std::process::id() }),
+                // The service stops after this answer is written (`stop_after`).
+                Ok(quits) => json!({
+                    "ok": true,
+                    "quit": quits,
+                    "pid": std::process::id(),
+                    "stop_after": quits,
+                }),
                 Err(_) => json!({ "ok": false, "error": "no answer" }),
             }
         }
@@ -499,6 +517,11 @@ pub fn quit(wait: bool) -> Result<bool, String> {
     if request(json!({ "cmd": "status" })).is_err() {
         return Ok(true);
     }
+    if let Some(pid) = service_pid() {
+        // Its dialog may come to the front (review).
+        // SAFETY: a plain call; a failure only leaves the dialog behind others.
+        unsafe { windows_sys::Win32::UI::WindowsAndMessaging::AllowSetForegroundWindow(pid) };
+    }
     let v = request(json!({ "cmd": "quit", "ask": true }))?;
     if v["ok"] != true {
         return Err(v["error"].as_str().unwrap_or("Quit failed").to_string());
@@ -508,13 +531,16 @@ pub fn quit(wait: bool) -> Result<bool, String> {
     }
     if wait {
         if let Some(pid) = v["pid"].as_u64() {
-            crate::platform::job::wait_exit(pid as u32, std::time::Duration::from_secs(60));
+            if !crate::platform::job::wait_exit(pid as u32, std::time::Duration::from_secs(60)) {
+                return Err("Fallow did not exit within 60 s".into());
+            }
         }
         let me = std::process::id();
         let end = std::time::Instant::now() + std::time::Duration::from_secs(60);
-        while crate::platform::job::others_named("fallow.exe", me) > 0
-            && std::time::Instant::now() < end
-        {
+        while crate::platform::job::others_named("fallow.exe", me) > 0 {
+            if std::time::Instant::now() > end {
+                return Err("Fallow's agent bridges did not exit within 60 s".into());
+            }
             std::thread::sleep(std::time::Duration::from_millis(200));
         }
     }

@@ -147,8 +147,17 @@ pub fn wait_exit(pid: u32, limit: std::time::Duration) -> bool {
     }
 }
 
-/// 014: how many processes named `name` run besides `me` (the agents' `fallow.exe mcp-bridge`).
+/// 014: how many processes named `name` run besides `me` in this Windows session (the agents'
+/// `fallow.exe mcp-bridge`; never another user's).
 pub fn others_named(name: &str, me: u32) -> usize {
+    use windows_sys::Win32::System::RemoteDesktop::ProcessIdToSessionId;
+    let session = |pid: u32| {
+        let mut s = u32::MAX;
+        // SAFETY: a plain query into a live u32.
+        unsafe { ProcessIdToSessionId(pid, &mut s) };
+        s
+    };
+    let mine = session(me);
     use windows_sys::Win32::System::Diagnostics::ToolHelp::{
         CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW,
         TH32CS_SNAPPROCESS,
@@ -166,7 +175,10 @@ pub fn others_named(name: &str, me: u32) -> usize {
             loop {
                 let len = e.szExeFile.iter().position(|c| *c == 0).unwrap_or(0);
                 let exe = String::from_utf16_lossy(&e.szExeFile[..len]);
-                if e.th32ProcessID != me && exe.eq_ignore_ascii_case(name) {
+                if e.th32ProcessID != me
+                    && exe.eq_ignore_ascii_case(name)
+                    && session(e.th32ProcessID) == mine
+                {
                     n += 1;
                 }
                 if Process32NextW(snap, &mut e) == 0 {

@@ -267,6 +267,8 @@ pub fn create(s: &WindowState, dark: bool) -> Result<HWND, String> {
             right: s.x + s.width,
             bottom: s.y + s.height,
         };
+        // Twice: the first move to a screen of another DPI scales the window (review).
+        SetWindowPlacement(hwnd, &p);
         SetWindowPlacement(hwnd, &p);
         front(hwnd);
         Ok(hwnd)
@@ -311,10 +313,13 @@ unsafe extern "system" fn proc_(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> L
             0
         }
         WM_ACTIVATE => {
+            // The default first (it restores the focus), then the page (review).
+            // SAFETY: the default handling.
+            let r = unsafe { DefWindowProcW(hwnd, msg, w, l) };
             if (w & 0xFFFF) != 0 {
                 super::host::focused();
             }
-            0
+            r
         }
         WM_MOVE | WM_MOVING => {
             super::host::moved();

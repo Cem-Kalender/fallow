@@ -520,6 +520,9 @@ mod tray {
                     if let Ok(f) = s.choose.lock() {
                         f(Choice::EndSession);
                     }
+                    // Windows may end the process once this returns: a moment for the engine to
+                    // stop (the process exits sooner when it has).
+                    std::thread::sleep(std::time::Duration::from_secs(5));
                 }
                 0
             }
