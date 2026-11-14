@@ -129,3 +129,52 @@ impl Drop for Group {
 pub fn kill_recorded(path: &std::path::Path) {
     let _ = std::fs::remove_file(path);
 }
+
+/// 014 (`fallow quit --installer`): waits up to `limit` for process `pid` to exit; returns
+/// whether it did (or was gone already).
+pub fn wait_exit(pid: u32, limit: std::time::Duration) -> bool {
+    use windows_sys::Win32::Foundation::WAIT_OBJECT_0;
+    use windows_sys::Win32::System::Threading::{PROCESS_SYNCHRONIZE, WaitForSingleObject};
+    // SAFETY: a handle opened for waiting only, closed after the wait.
+    unsafe {
+        let h = OpenProcess(PROCESS_SYNCHRONIZE, 0, pid);
+        if h.is_null() {
+            return true;
+        }
+        let r = WaitForSingleObject(h, limit.as_millis().min(u32::MAX as u128) as u32);
+        CloseHandle(h);
+        r == WAIT_OBJECT_0
+    }
+}
+
+/// 014: how many processes named `name` run besides `me` (the agents' `fallow.exe mcp-bridge`).
+pub fn others_named(name: &str, me: u32) -> usize {
+    use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW,
+        TH32CS_SNAPPROCESS,
+    };
+    let mut n = 0;
+    // SAFETY: a process snapshot read into a live, sized entry, then closed.
+    unsafe {
+        let snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+        if snap.is_null() || snap as isize == -1 {
+            return 0;
+        }
+        let mut e: PROCESSENTRY32W = std::mem::zeroed();
+        e.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
+        if Process32FirstW(snap, &mut e) != 0 {
+            loop {
+                let len = e.szExeFile.iter().position(|c| *c == 0).unwrap_or(0);
+                let exe = String::from_utf16_lossy(&e.szExeFile[..len]);
+                if e.th32ProcessID != me && exe.eq_ignore_ascii_case(name) {
+                    n += 1;
+                }
+                if Process32NextW(snap, &mut e) == 0 {
+                    break;
+                }
+            }
+        }
+        CloseHandle(snap);
+    }
+    n
+}

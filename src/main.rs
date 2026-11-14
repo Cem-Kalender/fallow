@@ -145,6 +145,20 @@ fn main() -> ExitCode {
                 ExitCode::SUCCESS
             }
         },
+        // 014 (contracts/cli.md): Quit as the icon does it; `--installer` waits until Fallow
+        // has exited, and says a cancel with exit 1.
+        #[cfg(windows)]
+        "quit" => {
+            let installer = args.get(1).and_then(|a| a.to_str()) == Some("--installer");
+            match service::quit(installer) {
+                Ok(true) => ExitCode::SUCCESS,
+                Ok(false) => {
+                    eprintln!("fallow: Quit was cancelled; Fallow keeps running");
+                    ExitCode::from(1)
+                }
+                Err(e) => fail(e),
+            }
+        }
         "stop" => match answer(service::request(json!({ "cmd": "stop" }))) {
             Ok(_) => {
                 println!("The Fallow service is stopping; runs resume at its next start.");

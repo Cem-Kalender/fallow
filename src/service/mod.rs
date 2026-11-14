@@ -124,7 +124,17 @@ pub fn serve(
         opener,
         Arc::clone(&notify_on),
         Box::new(move |c| match c {
+            // 014 (FR-009): Quit asks the page and names the running work (on this, the UI
+            // thread); elsewhere it stops as before.
+            #[cfg(windows)]
+            crate::platform::notify::Choice::Stop => crate::window::quit(None),
+            #[cfg(not(windows))]
             crate::platform::notify::Choice::Stop => {
+                if let Ok(t) = tx_tray.lock() {
+                    let _ = t.send(Msg::Shutdown);
+                }
+            }
+            crate::platform::notify::Choice::EndSession => {
                 if let Ok(t) = tx_tray.lock() {
                     let _ = t.send(Msg::Shutdown);
                 }
@@ -327,6 +337,19 @@ fn cli_request(req: &Value, tx: &Sender<Msg>, port: u16, secret: &str) -> Value 
         },
         // 014 (FR-009): what Quit would pause; with `confirmed`, stop as `stop` does and say
         // which process to wait for.
+        // 014 (`fallow quit`): Quit as the icon does it, in the service's own window and dialog;
+        // the answer says whether Fallow quits, and its process to wait for.
+        #[cfg(windows)]
+        Some("quit") if req["ask"] == true => {
+            let (qtx, qrx) = std::sync::mpsc::channel();
+            if !crate::platform::notify::on_ui(Box::new(move || crate::window::quit(Some(qtx)))) {
+                return json!({ "ok": false, "error": "Fallow has no window thread to ask on" });
+            }
+            match qrx.recv_timeout(std::time::Duration::from_secs(1800)) {
+                Ok(quits) => json!({ "ok": true, "quit": quits, "pid": std::process::id() }),
+                Err(_) => json!({ "ok": false, "error": "no answer" }),
+            }
+        }
         Some("quit") if req["confirmed"] == true => {
             let _ = tx.send(Msg::Shutdown);
             json!({ "ok": true, "pid": std::process::id() })
@@ -403,6 +426,36 @@ pub fn open_window(route: Option<&str>) -> Result<(), String> {
             .unwrap_or("the service did not open its window")
             .to_string())
     }
+}
+
+/// 014 (`fallow quit`): Quit as the icon does it. `Ok(false)` when the engineer cancelled;
+/// `Ok(true)` when Fallow quit, or was not running. With `wait`, returns once its process and
+/// every other `fallow` process of this user (the agents' bridges) have exited, up to 60 s each.
+#[cfg(windows)]
+pub fn quit(wait: bool) -> Result<bool, String> {
+    if request(json!({ "cmd": "status" })).is_err() {
+        return Ok(true);
+    }
+    let v = request(json!({ "cmd": "quit", "ask": true }))?;
+    if v["ok"] != true {
+        return Err(v["error"].as_str().unwrap_or("Quit failed").to_string());
+    }
+    if v["quit"] != true {
+        return Ok(false);
+    }
+    if wait {
+        if let Some(pid) = v["pid"].as_u64() {
+            crate::platform::job::wait_exit(pid as u32, std::time::Duration::from_secs(60));
+        }
+        let me = std::process::id();
+        let end = std::time::Instant::now() + std::time::Duration::from_secs(60);
+        while crate::platform::job::others_named("fallow.exe", me) > 0
+            && std::time::Instant::now() < end
+        {
+            std::thread::sleep(std::time::Duration::from_millis(200));
+        }
+    }
+    Ok(true)
 }
 
 /// Starts the service in the background unless it is running (`fallow`, `fallow run`).

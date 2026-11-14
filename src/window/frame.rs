@@ -26,6 +26,9 @@ static BACKGROUND: AtomicU32 = AtomicU32::new(LIGHT);
 
 const CLASS: &str = "FallowWindow";
 
+/// The system menu's "Quit Fallow" (research R-7; below 0xF000, a multiple of 16).
+const QUIT_CMD: usize = 0x0150;
+
 fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(Some(0)).collect()
 }
@@ -200,6 +203,13 @@ pub fn create(s: &WindowState, dark: bool) -> Result<HWND, String> {
             return Err("Fallow's window could not be made".into());
         }
         set_dark(hwnd, dark);
+        // Close and Quit in the system menu: no menu bar, which cannot follow dark mode.
+        let menu = GetSystemMenu(hwnd, 0);
+        if !menu.is_null() {
+            let quit = wide("Quit Fallow");
+            AppendMenuW(menu, MF_SEPARATOR, 0, std::ptr::null());
+            AppendMenuW(menu, MF_STRING, QUIT_CMD, quit.as_ptr());
+        }
         ShowWindow(
             hwnd,
             if s.maximized {
@@ -274,6 +284,16 @@ unsafe extern "system" fn proc_(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> L
         }
         WM_CLOSE => {
             super::host::close_asked(hwnd);
+            0
+        }
+        WM_SYSCOMMAND if (w & 0xFFF0) == QUIT_CMD => {
+            super::host::quit(None);
+            0
+        }
+        WM_ENDSESSION => {
+            if w != 0 {
+                super::host::session_ends(hwnd);
+            }
             0
         }
         WM_TIMER if w == super::host::CLOSE_TIMER => {

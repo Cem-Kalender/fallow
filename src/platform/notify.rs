@@ -44,11 +44,14 @@ pub enum Choice {
     Open,
     /// Notifications on (true) or off (false).
     Notifications(bool),
+    /// Quit (014: with the confirmation of FR-009).
     Stop,
+    /// 014 (research R-9): Windows ends the session (sign-out, shutdown): stop, ask nothing.
+    EndSession,
 }
 
 #[cfg(windows)]
-pub use tray::{Tray, request_open};
+pub use tray::{Tray, on_ui, request_open};
 
 /// What to open, from the icon, a notification or another thread: `None` for the dashboard,
 /// otherwise a notification's address or a route (`#/…`). Runs on the UI thread (014), with no
@@ -140,6 +143,12 @@ impl Tray {
 #[cfg(not(windows))]
 pub fn request_open(_route: Option<String>) {}
 
+/// No UI thread on this platform: `false`, `f` is dropped.
+#[cfg(not(windows))]
+pub fn on_ui(_f: Box<dyn FnOnce() + Send>) -> bool {
+    false
+}
+
 #[cfg(not(windows))]
 impl Notify for Tray {
     fn show(&self, _: &Notice) {}
@@ -167,6 +176,8 @@ mod tray {
     const OPEN: u32 = WM_APP + 4;
     /// 014: the timer that adds the icon again while Explorer had none for it (review).
     const RETRY_ICON: usize = 1;
+    /// 014: calls to run on this thread (`Shared::calls`, `on_ui`).
+    const CALL: u32 = WM_APP + 5;
     const NIN_SELECT: u32 = 0x400;
     const NIN_KEYSELECT: u32 = 0x401;
     const ID_OPEN: usize = 1;
@@ -179,6 +190,8 @@ mod tray {
         open: Mutex<Open>,
         /// 014: what other threads asked to open, in order (`request_open`).
         opens: Mutex<VecDeque<Option<String>>>,
+        /// 014: what other threads asked to run on this thread (`on_ui`).
+        calls: Mutex<VecDeque<Box<dyn FnOnce() + Send>>>,
         on: Arc<AtomicBool>,
         choose: Mutex<Box<dyn Fn(Choice) + Send>>,
         queue: Mutex<VecDeque<Notice>>,
@@ -299,6 +312,21 @@ mod tray {
         unsafe { PostMessageW(h as HWND, OPEN, 0, 0) };
     }
 
+    /// 014: runs `f` on the UI thread, from any thread; `false` when there is none.
+    pub fn on_ui(f: Box<dyn FnOnce() + Send>) -> bool {
+        let (Some(s), h) = (SHARED.get(), HWND_.load(Ordering::Acquire)) else {
+            return false;
+        };
+        if h == 0 {
+            return false;
+        }
+        if let Ok(mut q) = s.calls.lock() {
+            q.push_back(f);
+        }
+        // SAFETY: posting to a window handle; a stale one only fails.
+        unsafe { PostMessageW(h as HWND, CALL, 0, 0) != 0 }
+    }
+
     impl Tray {
         /// Starts the UI thread and adds the icon. `open` opens the dashboard or an item;
         /// `on` is the notifications switch the menu turns; `choose` gets the menu's choices.
@@ -313,6 +341,7 @@ mod tray {
                 .set(Shared {
                     open: Mutex::new(open),
                     opens: Mutex::default(),
+                    calls: Mutex::default(),
                     on,
                     choose: Mutex::new(choose),
                     queue: Mutex::default(),
@@ -470,6 +499,27 @@ mod tray {
                 });
                 if let Some(what) = next {
                     open(s, what);
+                }
+                0
+            }
+            CALL => {
+                // Each call taken out of the queue before it runs (it may pump messages).
+                loop {
+                    let next = s.calls.lock().ok().and_then(|mut q| q.pop_front());
+                    match next {
+                        Some(f) => f(),
+                        None => break,
+                    }
+                }
+                0
+            }
+            // 014 (research R-9): sign-out or shutdown: stop cleanly, ask nothing.
+            WM_QUERYENDSESSION => 1,
+            WM_ENDSESSION => {
+                if w != 0 {
+                    if let Ok(f) = s.choose.lock() {
+                        f(Choice::EndSession);
+                    }
                 }
                 0
             }

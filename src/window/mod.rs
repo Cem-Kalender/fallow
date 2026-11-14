@@ -2,6 +2,7 @@
 //! decisions it is made of (`nav`, `state`) are plain and tested everywhere.
 
 pub mod nav;
+pub mod quit;
 pub mod state;
 
 #[cfg(windows)]
@@ -10,7 +11,7 @@ mod frame;
 pub mod view;
 
 #[cfg(windows)]
-pub use host::{configure, open};
+pub use host::{configure, open, quit};
 
 /// The window on the UI thread (`platform::notify`'s thread): at most one, made when asked for,
 /// dropped with its web view when closed (research R-2, R-9).
@@ -59,6 +60,9 @@ mod host {
         static ASKED: Cell<Option<Instant>> = const { Cell::new(None) };
         /// The page was asked about unsaved changes before closing (research R-9).
         static CLOSING: Cell<bool> = const { Cell::new(false) };
+        /// Quit is under way (research R-9); who asked waits for the outcome.
+        static QUITTING: Cell<bool> = const { Cell::new(false) };
+        static QUIT_REPLY: RefCell<Vec<std::sync::mpsc::Sender<bool>>> = const { RefCell::new(Vec::new()) };
     }
 
     /// The timer that closes a window whose page did not answer within 3 s (research R-9).
@@ -218,12 +222,23 @@ mod host {
                 }
             }
             // The page's answer about unsaved changes (research R-9, contracts/window.md §4).
+            "close" if CLOSING.with(Cell::get) && QUITTING.with(Cell::get) => {
+                CLOSING.with(|c| c.set(false));
+                // SAFETY: this thread's window and its timer.
+                unsafe { KillTimer(hwnd, CLOSE_TIMER) };
+                after_page();
+            }
             "close" if CLOSING.with(Cell::get) => close_now(hwnd),
             "asking" => {
                 // SAFETY: this thread's window and its timer.
                 unsafe { KillTimer(hwnd, CLOSE_TIMER) };
             }
-            "kept" => CLOSING.with(|c| c.set(false)),
+            "kept" => {
+                CLOSING.with(|c| c.set(false));
+                if QUITTING.with(Cell::get) {
+                    quit_done(false);
+                }
+            }
             "theme:light" | "theme:dark" | "theme:system" => {
                 frame::set_dark(hwnd, frame::is_dark(&m["theme:".len()..]));
             }
@@ -278,12 +293,98 @@ mod host {
         }
     }
 
-    /// No answer from the page within 3 s: it is hung or gone; the window closes.
+    /// No answer from the page within 3 s: it is hung or gone; the window closes, or Quit goes
+    /// on.
     pub(super) fn close_timer(hwnd: HWND) {
         // SAFETY: this thread's window and its timer.
         unsafe { KillTimer(hwnd, CLOSE_TIMER) };
         if CLOSING.with(Cell::get) {
-            close_now(hwnd);
+            if QUITTING.with(Cell::get) {
+                CLOSING.with(|c| c.set(false));
+                after_page();
+            } else {
+                close_now(hwnd);
+            }
+        }
+    }
+
+    /// 014 (FR-009, research R-9): Quit, from the icon, the system menu or `fallow quit`
+    /// (`reply` hears whether Fallow quits). The page's unsaved changes first, then the running
+    /// work named (asked on a worker thread, the dialog there too), then the service stops.
+    pub fn quit(reply: Option<std::sync::mpsc::Sender<bool>>) {
+        if let Some(r) = reply {
+            QUIT_REPLY.with(|q| q.borrow_mut().push(r));
+        }
+        if QUITTING.with(Cell::get) {
+            return;
+        }
+        QUITTING.with(|q| q.set(true));
+        let asked = LIVE.with(|l| {
+            l.borrow().as_ref().and_then(|l| {
+                l.view.as_ref().map(|v| {
+                    (
+                        l.hwnd,
+                        v.evaluate_script("Fallow.closeAsked && Fallow.closeAsked();")
+                            .is_ok(),
+                    )
+                })
+            })
+        });
+        match asked {
+            Some((hwnd, true)) => {
+                CLOSING.with(|c| c.set(true));
+                // SAFETY: this thread's window and its timer.
+                unsafe { SetTimer(hwnd, CLOSE_TIMER, 3000, None) };
+            }
+            _ => after_page(),
+        }
+    }
+
+    /// Quit, once the page let go: the window's place kept, the running work asked for and named
+    /// on a worker thread (the UI thread never waits on the engine), and the service stopped on
+    /// the engineer's word.
+    fn after_page() {
+        let Some(cfg) = CONFIG.get() else {
+            quit_done(false);
+            return;
+        };
+        if let Some(h) = hwnd() {
+            if let Some(p) = frame::placement(h) {
+                let _ = state::save(&cfg.data, &p);
+            }
+        }
+        let tx = cfg.service.tx.clone();
+        let spawned = std::thread::Builder::new()
+            .name("quit".into())
+            .spawn(move || {
+                let running = match crate::service::ask(&tx, crate::run::engine::Request::Running) {
+                    crate::run::engine::Reply::Ok(v) => v,
+                    crate::run::engine::Reply::Err(_) => serde_json::Value::Null,
+                };
+                let names = super::quit::names(&running);
+                let go = names.is_empty() || super::quit::confirm(&names);
+                if go {
+                    let _ = tx.send(crate::run::engine::Msg::Shutdown);
+                }
+                crate::platform::notify::on_ui(Box::new(move || quit_done(go)));
+            });
+        if spawned.is_err() {
+            quit_done(false);
+        }
+    }
+
+    fn quit_done(quits: bool) {
+        QUITTING.with(|q| q.set(false));
+        for r in QUIT_REPLY.with(|q| std::mem::take(&mut *q.borrow_mut())) {
+            let _ = r.send(quits);
+        }
+    }
+
+    /// Windows ends the session: the window's place kept; the service stops through the icon's
+    /// thread, asking nothing (research R-9).
+    pub(super) fn session_ends(hwnd: HWND) {
+        if let (Some(cfg), Some(p)) = (CONFIG.get(), frame::placement(hwnd)) {
+            let _ = state::save(&cfg.data, &p);
         }
     }
 
