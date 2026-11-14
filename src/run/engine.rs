@@ -202,6 +202,9 @@ pub struct LockExtra {
 #[derive(Debug)]
 pub enum Request {
     List,
+    /// 014 (FR-009): the work Quit would pause: the loops with a step or an operation running,
+    /// and the sessions and conversations with a turn running.
+    Running,
     Get {
         id: u64,
     },
@@ -5024,6 +5027,7 @@ impl Engine {
             Request::List => Ok(Value::Array(
                 self.runs.values().rev().map(summary).collect(),
             )),
+            Request::Running => Ok(self.running_work()),
             Request::Get { id } => run_mut(self, id).map(|r| view(r)),
             Request::Activity { id, n } => run_mut(self, id).map(|r| {
                 let text = std::fs::read_to_string(r.steps_dir().join(format!("{n}.jsonl")))
@@ -5404,6 +5408,51 @@ pub fn summary(r: &Run) -> Value {
         "seq": s.seq,
         "waiting": r.waiting,
     })
+}
+
+impl Engine {
+    /// 014 (FR-009, contracts/window.md `quit`): the loops with a step or an operation running,
+    /// and the sessions and conversations with a turn running, as Quit names them.
+    fn running_work(&self) -> Value {
+        let project_name = |id: &str| {
+            self.studio
+                .store
+                .get(id)
+                .map(|p| p.name.clone())
+                .unwrap_or_else(|| id.to_string())
+        };
+        let mut out: Vec<Value> = self
+            .runs
+            .values()
+            .filter(|r| r.is_busy())
+            .map(|r| {
+                let l = r.state.feature_loop.as_ref();
+                json!({
+                    "kind": "loop",
+                    "id": r.state.id,
+                    "project": l.map(|l| project_name(&l.project)),
+                    "name": l.map_or_else(|| r.state.task.clone(), |l| l.feature.clone()),
+                })
+            })
+            .collect();
+        for c in self.studio.convs.values().filter(|c| c.state.busy) {
+            let name = match &c.state.solo {
+                Some(s) => s.name.clone().unwrap_or_else(|| c.id().to_string()),
+                None => c
+                    .state
+                    .feature
+                    .clone()
+                    .unwrap_or_else(|| c.id().to_string()),
+            };
+            out.push(json!({
+                "kind": if c.state.solo.is_some() { "session" } else { "conversation" },
+                "id": c.id(),
+                "project": project_name(&c.state.project),
+                "name": name,
+            }));
+        }
+        Value::Array(out)
+    }
 }
 
 /// What needs the engineer now, if anything.

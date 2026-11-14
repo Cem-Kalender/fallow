@@ -48,7 +48,11 @@ pub enum Choice {
 }
 
 #[cfg(windows)]
-pub use tray::Tray;
+pub use tray::{Tray, request_open};
+
+/// What to open, from the icon, a notification or another thread: `None` for the dashboard,
+/// otherwise a notification's address (its route after `#`). Runs on the UI thread (014).
+pub type Open = Box<dyn Fn(Option<String>) + Send>;
 
 /// Fallow's app identity for its notifications (008, the engineer's choice of 2026-11-01).
 /// Windows shows a notification under the identity of the process that raised it; without one,
@@ -123,13 +127,17 @@ pub struct Tray;
 #[cfg(not(windows))]
 impl Tray {
     pub fn start(
-        _home: String,
+        _open: Open,
         _on: std::sync::Arc<std::sync::atomic::AtomicBool>,
         _choose: Box<dyn Fn(Choice) + Send>,
     ) -> Result<Tray, String> {
         Err("notifications are not available on this platform yet".into())
     }
 }
+
+/// Nothing to open on this platform from another thread: the command line opens the page.
+#[cfg(not(windows))]
+pub fn request_open(_route: Option<String>) {}
 
 #[cfg(not(windows))]
 impl Notify for Tray {
@@ -138,7 +146,7 @@ impl Notify for Tray {
 
 #[cfg(windows)]
 mod tray {
-    use super::{Choice, Notice, Notify};
+    use super::{Choice, Notice, Notify, Open};
     use std::collections::VecDeque;
     use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
     use std::sync::{Arc, Mutex, OnceLock};
@@ -154,6 +162,8 @@ mod tray {
     const CALLBACK: u32 = WM_APP + 1;
     const SHOW: u32 = WM_APP + 2;
     const QUIT: u32 = WM_APP + 3;
+    /// 014: something to open (`Shared::opens`), handled on this thread.
+    const OPEN: u32 = WM_APP + 4;
     const NIN_SELECT: u32 = 0x400;
     const NIN_KEYSELECT: u32 = 0x401;
     const ID_OPEN: usize = 1;
@@ -162,7 +172,10 @@ mod tray {
 
     /// What the icon's window shares with the rest of Fallow; one icon per process.
     struct Shared {
-        home: String,
+        /// 014: opens the dashboard (`None`) or a notification's item, on this thread.
+        open: Mutex<Open>,
+        /// 014: what other threads asked to open, in order (`request_open`).
+        opens: Mutex<VecDeque<Option<String>>>,
         on: Arc<AtomicBool>,
         choose: Mutex<Box<dyn Fn(Choice) + Send>>,
         queue: Mutex<VecDeque<Notice>>,
@@ -235,7 +248,8 @@ mod tray {
         true
     }
 
-    /// The notification icon, on a thread of its own with its message loop.
+    /// 014 (research R-2): the UI thread, with its message loop: the notification icon, and what
+    /// opens from it, from a notification and from other threads (`request_open`).
     pub struct Tray;
 
     fn wide(s: &str) -> Vec<u16> {
@@ -257,21 +271,42 @@ mod tray {
         }
     }
 
-    fn open(url: &str) {
-        let _ = crate::platform::open_browser(url);
+    /// Opens on this thread what the icon, a notification or another thread asked for.
+    fn open(s: &Shared, what: Option<String>) {
+        if let Ok(f) = s.open.lock() {
+            f(what);
+        }
+    }
+
+    /// 014: asks the UI thread, from any thread, to open the dashboard (`None`) or an item.
+    pub fn request_open(what: Option<String>) {
+        let (Some(s), h) = (SHARED.get(), HWND_.load(Ordering::Acquire)) else {
+            return;
+        };
+        if h == 0 {
+            return;
+        }
+        if let Ok(mut q) = s.opens.lock() {
+            q.push_back(what);
+        }
+        // SAFETY: posting to a window handle; a stale one only fails.
+        unsafe { PostMessageW(h as HWND, OPEN, 0, 0) };
     }
 
     impl Tray {
-        /// Adds the icon. `home` is the page "Open Fallow" opens; `on` is the notifications
-        /// switch the menu turns; `choose` gets the menu's choices.
+        /// Starts the UI thread and adds the icon. `open` opens the dashboard or an item;
+        /// `on` is the notifications switch the menu turns; `choose` gets the menu's choices.
+        /// The thread lives on when the icon cannot be added yet (the taskbar not ready): the
+        /// icon is added when Explorer says the taskbar is there (`TaskbarCreated`).
         pub fn start(
-            home: String,
+            open: Open,
             on: Arc<AtomicBool>,
             choose: Box<dyn Fn(Choice) + Send>,
         ) -> Result<Tray, String> {
             if SHARED
                 .set(Shared {
-                    home,
+                    open: Mutex::new(open),
+                    opens: Mutex::default(),
                     on,
                     choose: Mutex::new(choose),
                     queue: Mutex::default(),
@@ -283,7 +318,7 @@ mod tray {
             }
             let (tx, rx) = std::sync::mpsc::channel::<Result<(), String>>();
             std::thread::Builder::new()
-                .name("notify".into())
+                .name("ui".into())
                 .spawn(move || run(tx))
                 .map_err(|e| format!("cannot start the notification icon: {e}"))?;
             rx.recv()
@@ -323,6 +358,9 @@ mod tray {
         // SAFETY: plain Win32 calls with valid, live arguments; the window and the icon belong
         // to this thread, which runs their message loop.
         unsafe {
+            // 014 (research R-2): a single-threaded apartment, with OLE's drag and drop, for the
+            // web view the window is made with on this thread.
+            windows_sys::Win32::System::Ole::OleInitialize(std::ptr::null_mut());
             let wc = WNDCLASSEXW {
                 cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
                 lpfnWndProc: Some(proc_),
@@ -354,10 +392,10 @@ mod tray {
             }
             let tc = wide("TaskbarCreated");
             TASKBAR_CREATED.store(RegisterWindowMessageW(tc.as_ptr()), Ordering::Relaxed);
+            // 014: without the icon yet (Explorer's taskbar not ready), the thread lives on and
+            // adds it on `TaskbarCreated`.
             if !add_icon(hwnd) {
-                DestroyWindow(hwnd);
-                let _ = started.send(Err("cannot add the notification icon".into()));
-                return;
+                eprintln!("fallow: the notification icon waits for the taskbar");
             }
             HWND_.store(hwnd as isize, Ordering::Release);
             let _ = started.send(Ok(()));
@@ -404,12 +442,19 @@ mod tray {
                             l.1 = 0;
                             l.0.clone().filter(|_| one)
                         });
-                        open(url.as_deref().unwrap_or(&s.home));
+                        open(s, url);
                     }
                     // Version 4 sends these besides the plain mouse messages: one each per click.
-                    NIN_SELECT | NIN_KEYSELECT => open(&s.home),
+                    NIN_SELECT | NIN_KEYSELECT => open(s, None),
                     WM_CONTEXTMENU => menu(hwnd, s),
                     _ => {}
+                }
+                0
+            }
+            OPEN => {
+                let next = s.opens.lock().ok().and_then(|mut q| q.pop_front());
+                if let Some(what) = next {
+                    open(s, what);
                 }
                 0
             }
@@ -437,7 +482,7 @@ mod tray {
         let on = s.on.load(Ordering::Relaxed);
         let open_ = wide("Open Fallow");
         let notify = wide("Notifications");
-        let stop = wide("Stop Fallow");
+        let stop = wide("Quit Fallow");
         // SAFETY: a popup menu owned by this call, shown for this thread's window.
         let chosen = unsafe {
             let m = CreatePopupMenu();
@@ -481,7 +526,7 @@ mod tray {
             _ => return,
         };
         if choice == Choice::Open {
-            open(&s.home);
+            open(s, None);
         }
         if let Ok(f) = s.choose.lock() {
             f(choice);

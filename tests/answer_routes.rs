@@ -47,7 +47,11 @@ fn the_studio_answers_without_a_transport() {
         .find(|(k, _)| *k == "Content-Security-Policy")
         .unwrap()
         .1;
-    for part in ["default-src 'self'", "script-src 'self'", "connect-src 'self'"] {
+    for part in [
+        "default-src 'self'",
+        "script-src 'self'",
+        "connect-src 'self'",
+    ] {
         assert!(csp.contains(part), "{csp}");
     }
 

@@ -87,8 +87,13 @@ pub fn serve(
     if let Err(e) = crate::platform::notify::register_identity(&data) {
         eprintln!("fallow: {e}");
     }
+    // 014: until the window (T013), what the icon and a notification open is the page.
+    let home_open = home.clone();
     let tray = crate::platform::notify::Tray::start(
-        home.clone(),
+        Box::new(move |what: Option<String>| {
+            let url = what.unwrap_or_else(|| home_open.clone());
+            let _ = crate::platform::open_browser(&url);
+        }),
         Arc::clone(&notify_on),
         Box::new(move |c| match c {
             crate::platform::notify::Choice::Stop => {
@@ -281,6 +286,22 @@ fn cli_request(req: &Value, tx: &Sender<Msg>, port: u16, secret: &str) -> Value 
             let _ = tx.send(Msg::Shutdown);
             json!({ "ok": true })
         }
+        // 014 (contracts/window.md): show the window, or bring it to the front (the page until
+        // the window exists, T013), on an item's route when given.
+        Some("window") => {
+            crate::platform::notify::request_open(req["route"].as_str().map(str::to_string));
+            json!({ "ok": true })
+        }
+        // 014 (FR-009): what Quit would pause; with `confirmed`, stop as `stop` does and say
+        // which process to wait for.
+        Some("quit") if req["confirmed"] == true => {
+            let _ = tx.send(Msg::Shutdown);
+            json!({ "ok": true, "pid": std::process::id() })
+        }
+        Some("quit") => match ask(tx, Request::Running) {
+            Reply::Ok(v) => json!({ "ok": true, "running": v }),
+            Reply::Err(e) => json!({ "ok": false, "error": e }),
+        },
         _ => json!({ "ok": false, "error": "unknown request" }),
     }
 }
