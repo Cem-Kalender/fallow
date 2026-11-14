@@ -26,6 +26,9 @@ Constitution 7.0.0 (2026-11-14) makes Fallow a standalone app: the Studio is sho
 - Q: Which feature produces the install packages? → A: 014 builds an unsigned install package per platform in CI and is done when those install, uninstall and upgrade correctly; 015 publishes them. The engineer will not pay for an Apple Developer ID, so macOS packages stay unsigned by Apple (015 decides how users get past the system's warning and documents it).
 - Q: Which install format(s) does Fallow ship for Linux? → A (deferred with Linux support, see the next-but-one answer): Two: a per-user archive whose install script puts Fallow in the user's own folders (no administrator rights) and adds it to the app list, and a `.deb` for those who prefer the system package manager (needs administrator rights, declares the web view libraries as dependencies).
 - Q: Which processor types do the packages cover? → A: Windows x64, macOS on Apple Silicon, Linux x64 once each is supported. No Intel Mac, Windows on ARM or ARM Linux packages.
+- Q (during /speckit-plan): What does an old browser address of the Studio show? → A: Nothing of Fallow's: Fallow is not released yet, so no one has an old address, and the window gets its pages from Fallow without any web server. An old address gets the browser's own "can't connect" page. The notice of FR-018 and US5 AS2 is dropped.
+- Q (during /speckit-plan): Does Fallow start at login (FR-010)? → A: No. Dropped by the engineer: whoever wants to work in Fallow opens it from its icon, and runs resume then. No login item, no setting for it, and `fallow autostart` goes too.
+- Q (during /speckit-plan): How are running memory and activity latency measured when the installed app accepts no scripted requests? → A: On a test build with a cargo feature `automation` (never in a release) that adds the test-only HTTP path, enabled by an environment variable; idle memory and window ready are measured on the release build itself.
 - Q: Which platforms does 014 deliver? → A: Windows only, as 006 decided for the first version ("Windows only; Linux and macOS later"); the answers above about Linux and macOS packages apply when those platforms become supported, in their own feature. On 2026-11-14 the test suite on Linux failed 22 of the 226 tests that ran before it was stopped, and macOS was never tested after 005.
 
 ## User Scenarios & Testing *(mandatory)*
@@ -42,7 +45,7 @@ The engineer starts Fallow like any other app: from the Start menu, or by typing
 
 1. **Given** Fallow is installed and not running, **When** the engineer starts it from the system's app list, **Then** the service starts and Fallow's window shows the dashboard within 1 s, titled "Fallow" with Fallow's icon in the taskbar and the app switcher.
 2. **Given** Fallow's window is open, **When** the engineer starts Fallow again (app list or `fallow`), **Then** no second window opens and the existing one comes to the front.
-3. **Given** the service is already running with no window (started at login, or the window was closed), **When** the engineer starts Fallow, **Then** the window opens on the running service, and every run continues untouched.
+3. **Given** the service is already running with no window (started with `fallow serve`, or the window was closed), **When** the engineer starts Fallow, **Then** the window opens on the running service, and every run continues untouched.
 4. **Given** the window is open, **When** the engineer resizes, moves or maximises it and later restarts Fallow, **Then** the window reopens with the same size and position on the same screen, or centred on the main screen if that screen is gone.
 5. **Given** the system is set to dark, **When** Fallow's window opens, **Then** both the page and the window's own frame and title bar follow 013's theme from the first frame.
 
@@ -90,29 +93,29 @@ The engineer installs Fallow from its Windows install package, without an admini
 
 **Why this priority**: a standalone app has to be installable to be standalone; the public download page that hands out these packages is 015.
 
-**Independent Test**: as a standard (non-administrator) Windows user, install the package, start Fallow from the Start menu, uninstall it, and check the app list entry, shortcuts and login item are gone while the project folders and (unless chosen) Fallow's data folder remain.
+**Independent Test**: as a standard (non-administrator) Windows user, install the package, start Fallow from the Start menu, uninstall it, and check the app list entry and shortcuts are gone while the project folders and (unless chosen) Fallow's data folder remain.
 
 **Acceptance Scenarios**:
 
 1. **Given** a standard user without administrator rights, **When** they install Fallow's Windows package, **Then** the install completes without an elevation prompt and Fallow appears in the system's app list with its name and icon.
-2. **Given** Fallow is installed, **When** the engineer turns on "Start Fallow at login" in Fallow's settings, **Then** at the next login the service starts in the background without opening the window; turning it off removes the login item.
-3. **Given** Fallow is installed, **When** the engineer uninstalls it, **Then** the app, its app list entry and its login item are removed; project folders are untouched; Fallow's data folder is kept unless the engineer chose to remove it, and the uninstaller names the folder.
+2. *(Dropped during planning: Fallow does not start at login.)*
+3. **Given** Fallow is installed, **When** the engineer uninstalls it, **Then** the app and its app list entry are removed; project folders are untouched; Fallow's data folder is kept unless the engineer chose to remove it, and the uninstaller names the folder.
 4. **Given** an older Fallow is installed and running, **When** the engineer installs a newer version, **Then** the installer asks to quit Fallow first (with the same confirmation as Quit), and after the install the runs resume in the new version.
 
 ---
 
 ### User Story 5 - The browser page is retired safely (Priority: P3)
 
-An engineer who used Fallow in the browser upgrades. Typing `fallow` now opens the window, an old bookmark or open tab shows a short page saying the Studio now lives in Fallow's window, and nothing of the Studio is served to a browser any more. The terminal commands keep working.
+Typing `fallow` now opens the window, and nothing of the Studio is served to a browser any more. The terminal commands keep working. (Fallow is not released yet, so no one has an old address to show a notice on: clarified during planning.)
 
 **Why this priority**: few engineers use Fallow today, but constitution V forbids serving the Studio to a browser, so the old path must be closed rather than left half open.
 
-**Independent Test**: with the new version running, request the Studio's address and its interface from a browser and from a script, with and without the old key; check that nothing but the short notice is returned; run `fallow status`, `fallow stop` and `fallow serve` and check they work as before.
+**Independent Test**: with the new version running, check that Fallow listens on no network port, and that a browser or a script can reach nothing of the Studio, with or without an old key; run `fallow status`, `fallow stop` and `fallow serve` and check they work as before.
 
 **Acceptance Scenarios**:
 
 1. **Given** the new version, **When** the engineer types `fallow` in a terminal, **Then** the window opens (or comes to the front) and no browser tab opens.
-2. **Given** an old browser tab or bookmark of the Studio, **When** it is loaded, **Then** it shows only a notice that the Studio is now in Fallow's window, with no project, run or setting data, and no working interface behind it.
+2. *(Dropped during planning: Fallow is not released, so there is no old tab or bookmark; an old address reaches nothing.)*
 3. **Given** the new version, **When** another program on the machine requests the Studio's address with or without a key, **Then** it gets no Studio page and no data.
 4. **Given** a machine without a display (a server, or a session over SSH), **When** the engineer runs `fallow serve`, **Then** the service runs and its loops continue; `fallow` without a command explains that the Studio needs Fallow's window and a display.
 
@@ -129,7 +132,7 @@ An engineer who used Fallow in the browser upgrades. Typing `fallow` now opens t
 - **The engineer presses the reload shortcut or the page navigates in error**: the Studio reloads in place and keeps what 013 and earlier features keep across reloads; it never shows another site.
 - **A link opens a new window** (a `target=_blank` link, a script): it opens in the default browser, never as a second Fallow window.
 - **Developer tools**: not available in a released build; available in a development build only.
-- **Fallow is started at login and the engineer never opens the window**: memory stays within the idle budget of the service alone, and the window's web view is started only when the window opens.
+- **The service runs and the engineer never opens the window** (`fallow serve`, or after closing it): memory stays within the idle budget of the service alone, and the window's web view is started only when the window opens.
 
 ## Requirements *(mandatory)*
 
@@ -149,7 +152,7 @@ An engineer who used Fallow in the browser upgrades. Typing `fallow` now opens t
 
 - **FR-008**: Closing the window MUST NOT stop the service or any run, whether or not a run is active; only Quit (FR-009) stops Fallow. While the service runs without a window, Fallow MUST show an icon in the notification area with Open Fallow, Notifications on/off and Quit.
 - **FR-009**: Quit MUST stop the service only after a confirmation that names every running loop and session, when any is running (constitution II, VII); without running work Quit MUST NOT ask. Runs paused by Quit MUST resume at the next start, as `fallow stop` does today.
-- **FR-010**: Starting Fallow at login MUST be a setting in Fallow, off by default. When on, it starts the service in the background without opening the window. It MUST use only the current user's login items, and turning it off MUST remove what it added.
+- **FR-010**: *(Dropped during planning, 2026-11-14: Fallow does not start at login; the engineer opens it when they want to work in it.)*
 - **FR-011**: The window's web view MUST run only while the window is open. With the window closed, Fallow's memory MUST return to within the idle budget measured for the service alone.
 
 **Native integration**
@@ -163,17 +166,17 @@ An engineer who used Fallow in the browser upgrades. Typing `fallow` now opens t
 - **FR-015**: The Studio MUST be reachable only from Fallow's own window. Whatever carries it to the window MUST reject every other client: other programs, browsers and other users on the machine, with or without a key from an earlier version.
 - **FR-016**: Fallow MUST NOT pass, show, log or write to disk any secret the window uses to reach the service.
 - **FR-017**: The window MUST load nothing from outside Fallow. The web view's own network features (safe-browsing lookups, spell-check services, telemetry, update checks) MUST be switched off where the platform allows; what a platform does not allow switching off MUST be listed per platform in the plan and in the release notes.
-- **FR-018**: An old Studio address loaded in a browser MUST show only a static notice that the Studio is now in Fallow's window, with no data and no working interface.
+- **FR-018**: *(Dropped during planning, 2026-11-14: Fallow is not released, so no one has an old address; with no web server, an old address reaches nothing of Fallow's.)*
 
 **Install and uninstall**
 
 - **FR-019**: Fallow MUST be packaged for Windows x64 as an install that a standard user can complete without elevated privileges, and that adds Fallow to the Start menu with its name and icon.
-- **FR-020**: Uninstalling MUST remove the app, its app list entry, its notification identity and its login item, MUST NOT touch project folders, and MUST keep Fallow's data folder unless the engineer chooses to remove it; it MUST name that folder.
+- **FR-020**: Uninstalling MUST remove the app, its app list entry, and its notification identity, MUST NOT touch project folders, and MUST keep Fallow's data folder unless the engineer chooses to remove it; it MUST name that folder.
 - **FR-021**: Installing a newer version over a running one MUST ask to quit Fallow first, with the Quit confirmation of FR-009; runs MUST resume in the new version.
 
 **Compatibility**
 
-- **FR-022**: `fallow` with no command MUST open or focus the window and MUST NOT open a browser. `fallow status`, `fallow stop`, `fallow serve`, `fallow --version` and the agents' bridge MUST keep working as today. `fallow autostart` MUST point to the FR-010 setting.
+- **FR-022**: `fallow` with no command MUST open or focus the window and MUST NOT open a browser. `fallow status`, `fallow stop`, `fallow serve`, `fallow --version` and the agents' bridge MUST keep working as today. `fallow autostart` is removed (FR-010 dropped).
 - **FR-023**: Without a display, `fallow serve` MUST run the service as today, and `fallow` with no command MUST explain that the Studio needs Fallow's window and a display, and exit with an error.
 - **FR-024**: When the system's web view is missing or unusable, Fallow MUST show a native message naming what to install, and MUST NOT fall back to a browser.
 
@@ -185,7 +188,6 @@ An engineer who used Fallow in the browser upgrades. Typing `fallow` now opens t
 
 - **App window**: Fallow's one window per user. Holds its size, position, screen and maximised state, kept in Fallow's own settings on the machine.
 - **Background icon**: the notification-area or menu-bar presence while the service runs; offers Open Fallow, Notifications on/off and Quit.
-- **Login item**: the current user's start-at-login entry Fallow adds or removes on the engineer's setting.
 - **Install package**: the Windows x64 package; installs for the current user, registers Fallow's name and icon, and is removed by the uninstaller.
 
 ## Success Criteria *(mandatory)*
@@ -205,7 +207,7 @@ An engineer who used Fallow in the browser upgrades. Typing `fallow` now opens t
 
 - The window uses Windows' built-in web view (WebView2), present on current Windows 10 and 11, so the app does not ship a browser engine.
 - The background service and the window are both part of the installed Fallow; the window is a client of the service and is the only client the Studio accepts.
-- Window state, the login setting and the theme are kept with Fallow's other settings on the machine (as 013 keeps the theme).
+- Window state and the theme are kept with Fallow's other settings on the machine (as 013 keeps the theme).
 - Supported platform: Windows 10 and 11 on x64. Linux and macOS follow in their own features (Clarifications).
 - The Windows package is produced, unsigned, by CI in 014; publishing it for download is 015, which also decides whether it gets signed. No Apple Developer ID will be bought, which matters once macOS is supported.
 - The project's dependency policy still bans window and web view libraries under the retired terminal-only rule; the plan lifts only what the window needs, justified against constitution V, VI and VIII.
