@@ -38,5 +38,9 @@ fn quit_names_the_sessions_whose_turn_runs() {
     assert_eq!(list[0]["kind"], "session");
     assert_eq!(list[0]["id"], s.as_str());
     assert_eq!(list[0]["name"], "slow change");
-    assert!(list[0]["project"].as_str().is_some_and(|p| !p.is_empty()), "{running}");
+    assert!(
+        list[0]["project"].as_str().is_some_and(|p| !p.is_empty()),
+        "{running}"
+    );
+    stop(e);
 }

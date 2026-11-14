@@ -51,8 +51,9 @@ pub enum Choice {
 pub use tray::{Tray, request_open};
 
 /// What to open, from the icon, a notification or another thread: `None` for the dashboard,
-/// otherwise a notification's address (its route after `#`). Runs on the UI thread (014).
-pub type Open = Box<dyn Fn(Option<String>) + Send>;
+/// otherwise a notification's address or a route (`#/…`). Runs on the UI thread (014), with no
+/// lock held: what it does may pump messages and be asked again meanwhile (review).
+pub type Open = std::sync::Arc<dyn Fn(Option<String>) + Send + Sync>;
 
 /// Fallow's app identity for its notifications (008, the engineer's choice of 2026-11-01).
 /// Windows shows a notification under the identity of the process that raised it; without one,
@@ -164,6 +165,8 @@ mod tray {
     const QUIT: u32 = WM_APP + 3;
     /// 014: something to open (`Shared::opens`), handled on this thread.
     const OPEN: u32 = WM_APP + 4;
+    /// 014: the timer that adds the icon again while Explorer had none for it (review).
+    const RETRY_ICON: usize = 1;
     const NIN_SELECT: u32 = 0x400;
     const NIN_KEYSELECT: u32 = 0x401;
     const ID_OPEN: usize = 1;
@@ -271,9 +274,12 @@ mod tray {
         }
     }
 
-    /// Opens on this thread what the icon, a notification or another thread asked for.
+    /// Opens on this thread what the icon, a notification or another thread asked for. The lock
+    /// is held only to take the callback, never while it runs (review: it may pump messages,
+    /// which can bring another open here).
     fn open(s: &Shared, what: Option<String>) {
-        if let Ok(f) = s.open.lock() {
+        let f = s.open.lock().ok().map(|f| Arc::clone(&f));
+        if let Some(f) = f {
             f(what);
         }
     }
@@ -396,6 +402,7 @@ mod tray {
             // adds it on `TaskbarCreated`.
             if !add_icon(hwnd) {
                 eprintln!("fallow: the notification icon waits for the taskbar");
+                SetTimer(hwnd, RETRY_ICON, 10_000, None);
             }
             HWND_.store(hwnd as isize, Ordering::Release);
             let _ = started.send(Ok(()));
@@ -425,11 +432,14 @@ mod tray {
                     d.hBalloonIcon = unsafe { icon(true) };
                     copy_into(&mut d.szInfoTitle, &n.title);
                     copy_into(&mut d.szInfo, &n.body);
-                    if let Ok(mut last) = s.last.lock() {
-                        *last = (Some(n.url.clone()), last.1 + 1);
-                    }
                     // SAFETY: `d` lives for the call.
-                    unsafe { Shell_NotifyIconW(NIM_MODIFY, &d) };
+                    let shown = unsafe { Shell_NotifyIconW(NIM_MODIFY, &d) } != 0;
+                    // Counted only when shown: a click can then only be for one shown (review).
+                    if shown {
+                        if let Ok(mut last) = s.last.lock() {
+                            *last = (Some(n.url.clone()), last.1 + 1);
+                        }
+                    }
                 }
                 0
             }
@@ -452,9 +462,23 @@ mod tray {
                 0
             }
             OPEN => {
-                let next = s.opens.lock().ok().and_then(|mut q| q.pop_front());
+                // Only the latest: earlier ones are behind it anyway (review).
+                let next = s.opens.lock().ok().and_then(|mut q| {
+                    let last = q.pop_back();
+                    q.clear();
+                    last
+                });
                 if let Some(what) = next {
                     open(s, what);
+                }
+                0
+            }
+            WM_TIMER if w == RETRY_ICON => {
+                // SAFETY: this thread's window and its timer.
+                unsafe {
+                    if add_icon(hwnd) {
+                        KillTimer(hwnd, RETRY_ICON);
+                    }
                 }
                 0
             }
@@ -470,7 +494,11 @@ mod tray {
             }
             m if m != 0 && m == TASKBAR_CREATED.load(Ordering::Relaxed) => {
                 // SAFETY: this thread's window.
-                unsafe { add_icon(hwnd) };
+                unsafe {
+                    if add_icon(hwnd) {
+                        KillTimer(hwnd, RETRY_ICON);
+                    }
+                }
                 0
             }
             // SAFETY: as above.

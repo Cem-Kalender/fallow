@@ -650,7 +650,7 @@ fn the_choice_is_kept_served_and_refused_when_unknown() {
 
 #[test]
 fn light_and_dark_are_written_on_the_page_as_served() {
-    use fallow::service::http::page_with_theme;
+    use fallow::service::answer::page_with_theme;
     let light = page_with_theme("light");
     assert!(light.contains("<html lang=\"en\" data-theme=\"light\">"));
     assert!(light.contains("<meta name=\"color-scheme\" content=\"light\">"));

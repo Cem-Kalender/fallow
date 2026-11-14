@@ -202,15 +202,14 @@ fn handle(
         }
         Gate::Pass => {}
     }
+    // Up to one byte more than the largest request: `answer` refuses what is too large, an
+    // image with its own message (review).
     let mut body = Vec::new();
     if method != "GET" && method != "HEAD" {
         let _ = req
             .as_reader()
             .take(MAX_READ as u64 + 1)
             .read_to_end(&mut body);
-        if body.len() > MAX_READ {
-            return respond(req, 413, "text/plain", b"too large".to_vec());
-        }
     }
     let a = answer(PageRequest { method, url, body }, tx, theme);
     respond(req, a.status, &a.content_type, a.body)

@@ -87,11 +87,16 @@ pub fn serve(
     if let Err(e) = crate::platform::notify::register_identity(&data) {
         eprintln!("fallow: {e}");
     }
-    // 014: until the window (T013), what the icon and a notification open is the page.
+    // 014: until the window (T013), what the icon and a notification open is the page: a
+    // notification's address as it is, a route joined to the page's address (review).
     let home_open = home.clone();
     let tray = crate::platform::notify::Tray::start(
-        Box::new(move |what: Option<String>| {
-            let url = what.unwrap_or_else(|| home_open.clone());
+        Arc::new(move |what: Option<String>| {
+            let url = match what {
+                Some(r) if r.starts_with("#/") => format!("{home_open}{r}"),
+                Some(u) if u.starts_with(&home_open) => u,
+                _ => home_open.clone(),
+            };
             let _ = crate::platform::open_browser(&url);
         }),
         Arc::clone(&notify_on),
@@ -288,10 +293,15 @@ fn cli_request(req: &Value, tx: &Sender<Msg>, port: u16, secret: &str) -> Value 
         }
         // 014 (contracts/window.md): show the window, or bring it to the front (the page until
         // the window exists, T013), on an item's route when given.
-        Some("window") => {
-            crate::platform::notify::request_open(req["route"].as_str().map(str::to_string));
-            json!({ "ok": true })
-        }
+        Some("window") => match req["route"].as_str() {
+            Some(r) if !r.starts_with("#/") => {
+                json!({ "ok": false, "error": "a route starts with #/" })
+            }
+            r => {
+                crate::platform::notify::request_open(r.map(str::to_string));
+                json!({ "ok": true })
+            }
+        },
         // 014 (FR-009): what Quit would pause; with `confirmed`, stop as `stop` does and say
         // which process to wait for.
         Some("quit") if req["confirmed"] == true => {

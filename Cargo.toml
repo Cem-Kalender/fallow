@@ -28,6 +28,10 @@ libc = "0.2"
 # 014: Fallow's own window through WebView2 (research R-1), on a window Fallow makes itself.
 wry = "=0.57.2"
 raw-window-handle = "0.6"
+# 014: the WebView2 environment with Fallow's own options, and the events `wry` does not expose
+# (research R-1, R-4, R-6). Both are already in the graph through `wry`, at these versions.
+webview2-com = "=0.39.1"
+windows-core = "0.62"
 windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_Security",

@@ -5424,7 +5424,8 @@ impl Engine {
         let mut out: Vec<Value> = self
             .runs
             .values()
-            .filter(|r| r.is_busy())
+            // A step or an operation running, or the loop waiting for an agent slot (review).
+            .filter(|r| !r.state.stage.is_final() && (r.is_busy() || r.waiting.is_some()))
             .map(|r| {
                 let l = r.state.feature_loop.as_ref();
                 json!({

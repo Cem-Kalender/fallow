@@ -19,3 +19,4 @@ pub mod service;
 pub mod speckit;
 pub mod studio;
 pub mod verify;
+pub mod window;

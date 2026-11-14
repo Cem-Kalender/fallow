@@ -10,7 +10,7 @@ The pipe is the one 006 made: per user, refused to other users. New commands:
 |---|---|---|
 | `{"cmd":"window","launched":<unix ms>}` | `{"ok":true}`, or `{"ok":false,"error":…}` | Shows the window, or brings it to the front. Answers once the window exists (not when it is drawn). `launched` is the launcher's start, for `window ready` (R-14). Error when the service has no desktop (R-13) or there is no WebView2 runtime (R-12; the native message is shown too). The launcher calls `AllowSetForegroundWindow(<service pid>)` first. |
 | `{"cmd":"window","route":"#/…"}` | as above | Also sends the page to that route (a notification's item). |
-| `{"cmd":"quit"}` | `{"ok":true,"running":[…]}` | **Asks nothing**; lists the loops and sessions that would pause (each `{"kind":"loop"\|"session","project":…,"name":…}`), for the caller's confirmation. |
+| `{"cmd":"quit"}` | `{"ok":true,"running":[…]}` | **Asks nothing**; lists the work that would pause (each `{"kind":"loop"\|"session"\|"conversation","id":…,"project":…,"name":…}`: loops with a step or operation running or waiting for an agent slot, sessions and lead conversations with a turn running), for the caller's confirmation. | |
 | `{"cmd":"quit","confirmed":true}` | `{"ok":true,"pid":<service pid>}` | Asks the page about unsaved edits when the window is open (`{"ok":false,"error":"kept"}` when the engineer keeps them), then stops the service as `stop` does. The caller waits for `pid` to exit when it must (`fallow quit --installer`). |
 | `{"cmd":"url"}` | `{"ok":true,"url":…}` | **`automation` builds only**, with `FALLOW_AUTOMATION=1`: the test transport's address with its secret. Absent from release builds. |
 

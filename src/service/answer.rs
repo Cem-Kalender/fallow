@@ -54,7 +54,8 @@ const FONTS: &[(&str, &[u8])] = &[
     ),
 ];
 
-/// The largest request body accepted (an image for a session: `extras::MAX_IMAGE`).
+/// The largest JSON request body accepted (an image for a session has its own limit,
+/// `extras::MAX_IMAGE`).
 pub const MAX_BODY: usize = 1024 * 1024;
 
 /// One request of the page: its method, its URL (path and query, as sent) and its body.
@@ -84,7 +85,8 @@ pub const HEADERS: &[(&str, &str)] = &[
     ("Referrer-Policy", "no-referrer"),
 ];
 
-/// The largest body a transport reads: a session's image, the largest request there is.
+/// The largest body a transport needs to read: a session's image, the largest request there
+/// is. A transport reads one byte more, so `answer` sees what is too large.
 pub const MAX_READ: usize = crate::studio::extras::MAX_IMAGE;
 
 fn text(code: u16, content_type: &str, body: String) -> PageResponse {
