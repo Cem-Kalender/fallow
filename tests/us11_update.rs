@@ -679,6 +679,8 @@ fn lock_again_reconciles_and_the_same_change_is_not_flagged_again() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+// 014 (T005): the HTTP transport is in the `automation` build only on Windows.
+#[cfg(any(not(windows), feature = "automation"))]
 /// T019's page check: not a test. `FALLOW_VISUAL_ROOT=<empty folder> cargo test --test
 /// us11_update serve_the_011_demo -- --ignored --nocapture` serves a project whose `002-calc2`
 /// loop is ready while `001-calc`, merged first, conflicts with it (text in calc/__init__.py, a

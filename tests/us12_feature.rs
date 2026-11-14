@@ -419,6 +419,8 @@ fn a_restart_before_feature_started_was_written_links_the_feature_again() {
     let _ = project;
 }
 
+// 014 (T005): the HTTP transport is in the `automation` build only on Windows.
+#[cfg(any(not(windows), feature = "automation"))]
 /// 012 T042: the page for `checks/solo-feature.png`: a session whose assistant suggests a feature,
 /// served for a headless browser (`FALLOW_VISUAL_ROOT`, `FALLOW_VISUAL_SECS`).
 #[test]

@@ -361,6 +361,8 @@ fn a_plain_folder_project_from_before_gets_the_question_and_keeps_its_documents(
     assert_eq!(fv["branch"], "001-plots", "{fv}");
 }
 
+// 014 (T005): the HTTP transport is in the `automation` build only on Windows.
+#[cfg(any(not(windows), feature = "automation"))]
 /// 012 T027: the pages' demo. Not a test: run it by hand with `FALLOW_VISUAL_ROOT=<empty folder>
 /// cargo test --test us12_repo serve_the_012_repo_demo -- --ignored --nocapture`; it writes the
 /// page's address to `<root>/url.txt` and the projects to `<root>/projects.txt` (a folder that

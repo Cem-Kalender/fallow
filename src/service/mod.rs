@@ -2,6 +2,7 @@
 //! serves the run page. The command line reaches it over the user-only pipe; the page over
 //! loopback HTTP with a per-launch secret (`http`).
 
+pub mod answer;
 pub mod bus;
 pub mod http;
 pub mod notify;

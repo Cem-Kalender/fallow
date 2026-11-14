@@ -350,6 +350,8 @@ fn web_lookups_show_and_web_access_can_be_switched_off() {
     assert!(raw.contains("No such tool available: WebFetch"), "{raw}");
 }
 
+// 014 (T005): the HTTP transport is in the `automation` build only on Windows.
+#[cfg(any(not(windows), feature = "automation"))]
 /// 012 T047: the page for `checks/solo-extras.png`: a turn that carried a screenshot, the web
 /// switch, the instruction files, and a message waiting while a turn works; served for a
 /// headless browser (`FALLOW_VISUAL_ROOT`, `FALLOW_VISUAL_SECS`, the image `FALLOW_VISUAL_PNG`).

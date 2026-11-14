@@ -5,7 +5,10 @@
 #[cfg(all(windows, target_env = "msvc"))]
 #[test]
 fn both_executables_carry_the_application_manifest() {
-    for exe in [env!("CARGO_BIN_EXE_fallow"), env!("CARGO_BIN_EXE_fallow-app")] {
+    for exe in [
+        env!("CARGO_BIN_EXE_fallow"),
+        env!("CARGO_BIN_EXE_fallow-app"),
+    ] {
         let bytes = std::fs::read(exe).unwrap();
         let has = |s: &str| bytes.windows(s.len()).any(|w| w == s.as_bytes());
         for part in [

@@ -308,6 +308,8 @@ output = {{ reply = "Drafted.", step = "specify" }}
     assert_eq!(q["source"]["kind"], "spec", "{q}");
 }
 
+// 014 (T005): the HTTP transport is in the `automation` build only on Windows.
+#[cfg(any(not(windows), feature = "automation"))]
 /// 012 T038: the page's demo. Not a test: run it by hand with `FALLOW_VISUAL_ROOT=<empty folder>
 /// cargo test --test us12_gitwatch serve_the_012_git_demo -- --ignored --nocapture`; it writes the
 /// page's address to `<root>/url.txt` and `<project>` to `<root>/projects.txt`, and serves for

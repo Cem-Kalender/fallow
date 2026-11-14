@@ -284,6 +284,8 @@ fn running_loops_that_overlap_say_so_and_may_wait() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+// 014 (T005): the HTTP transport is in the `automation` build only on Windows.
+#[cfg(any(not(windows), feature = "automation"))]
 /// T034's page check: not a test. `FALLOW_VISUAL_ROOT=<empty folder> cargo test --test
 /// us11_overlap serve_the_011_overlap_demo -- --ignored --nocapture` serves a project where
 /// 001-calc runs (slowly) having changed calc/__init__.py, and 002-calc2, whose tasks name that

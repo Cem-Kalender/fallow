@@ -56,6 +56,12 @@ windows-sys = { version = "0.61", features = [
     "Win32_System_ProcessStatus",
 ] }
 
+[features]
+# 014 (research R-15): the test build. Adds the loopback page (`service::http`) on Windows, where a
+# release build has none, for the benchmarks and the tests that drive the Studio over HTTP. Never
+# in a release.
+automation = []
+
 [dev-dependencies]
 proptest = { version = "1", default-features = false, features = ["std"] }
 
@@ -64,3 +70,20 @@ lto = "thin"
 codegen-units = 1
 panic = "abort"
 strip = "symbols"
+
+# 014 (T005): tests of the loopback page itself, which a Windows release build does not have.
+[[test]]
+name = "service_http"
+required-features = ["automation"]
+
+[[test]]
+name = "visual_009"
+required-features = ["automation"]
+
+[[test]]
+name = "visual_010"
+required-features = ["automation"]
+
+[[test]]
+name = "visual_013"
+required-features = ["automation"]

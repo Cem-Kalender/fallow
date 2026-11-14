@@ -491,6 +491,8 @@ fn a_restart_in_the_middle_of_a_close_finishes_it() {
     assert!(!wt.exists() && !has_branch(&repo, &branch));
 }
 
+// 014 (T005): the HTTP transport is in the `automation` build only on Windows.
+#[cfg(any(not(windows), feature = "automation"))]
 /// 012 T050: the page for `checks/solo-close.png`: a session not merged, with an uncommitted
 /// change, an ignored `.env` and a dependency folder, and a closed one in the list; served for a
 /// headless browser (`FALLOW_VISUAL_ROOT`, `FALLOW_VISUAL_SECS`).

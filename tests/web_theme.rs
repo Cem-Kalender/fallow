@@ -495,6 +495,7 @@ fn every_pair_in_one_rule_is_checked() {
 
 // ---- 013 US2: the engineer's choice, kept by Fallow and served on the page ------------------
 
+#[cfg(any(not(windows), feature = "automation"))]
 /// One HTTP request to the page server; the status line, the headers and the body.
 fn http(port: u16, method: &str, path: &str, cookie: &str, body: &str) -> (String, String) {
     use std::io::{Read, Write};
@@ -529,6 +530,8 @@ fn http(port: u16, method: &str, path: &str, cookie: &str, body: &str) -> (Strin
     (head, String::from_utf8_lossy(&body).to_string())
 }
 
+// 014 (T005): the HTTP transport is in the `automation` build only on Windows.
+#[cfg(any(not(windows), feature = "automation"))]
 #[test]
 fn the_choice_is_kept_served_and_refused_when_unknown() {
     use fallow::studio::Req;

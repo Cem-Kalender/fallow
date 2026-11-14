@@ -272,6 +272,8 @@ output = { reply = "done" }
     );
 }
 
+// 014 (T005): the HTTP transport is in the `automation` build only on Windows.
+#[cfg(any(not(windows), feature = "automation"))]
 /// 012 T018: the page check's demo. Not a test: run it by hand with `FALLOW_VISUAL_ROOT=<empty
 /// folder> cargo test --test us12_session serve_the_012_demo -- --ignored --nocapture`; it writes
 /// the page's address to `<root>/url.txt` and the projects to `<root>/projects.txt`, and serves

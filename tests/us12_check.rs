@@ -566,6 +566,8 @@ output = { reply = "3" }
     assert_eq!(v["session"]["editor_during_turn"], false);
 }
 
+// 014 (T005): the HTTP transport is in the `automation` build only on Windows.
+#[cfg(any(not(windows), feature = "automation"))]
 /// 012 T033: the pages' demo. Not a test: run it by hand with `FALLOW_VISUAL_ROOT=<empty folder>
 /// cargo test --test us12_check serve_the_012_check_demo -- --ignored --nocapture`; it writes the
 /// page's address to `<root>/url.txt`, then `<project>\n<feature>` to `<root>/projects.txt`, and
