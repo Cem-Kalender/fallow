@@ -53,6 +53,9 @@ const MENU_REMOVED: &[&str] = &[
     "webCapture",
     "createQrCode",
     "openImageInNewWindow",
+    "saveMediaAs",
+    "saveFrameAs",
+    "copyLinkToHighlight",
 ];
 
 /// Developer tools: in debug and `automation` builds only (research R-4).
@@ -152,8 +155,28 @@ pub fn build(
     Ok(view)
 }
 
-/// One request of the page, answered by the Studio.
+/// Whether an error says this thread's message loop is ending (WM_QUIT came during a pump):
+/// it is posted again for the loop, and nothing is told to the engineer (review).
+pub fn quitting(e: &str) -> bool {
+    if e.contains("TaskCanceled") {
+        // SAFETY: re-posting the quit the pump took from this thread's queue.
+        unsafe { windows_sys::Win32::UI::WindowsAndMessaging::PostQuitMessage(0) };
+        return true;
+    }
+    false
+}
+
+/// One request of the page, answered by the Studio; nothing for another host (review).
 fn respond(s: &Service, req: Request<Vec<u8>>) -> Response<Vec<u8>> {
+    // `wry` hands the request back as `fallow://localhost/…` (its form of the scheme); the web view
+    // itself loads `http://fallow.localhost/…`.
+    let ours = req.uri().scheme_str() == Some("fallow") && req.uri().host() == Some("localhost");
+    if !ours {
+        return Response::builder()
+            .status(404)
+            .body(Vec::new())
+            .unwrap_or_else(|_| Response::new(Vec::new()));
+    }
     let url = req
         .uri()
         .path_and_query()

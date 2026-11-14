@@ -52,18 +52,21 @@ pub fn save(data: &Path, s: &WindowState) -> Result<(), String> {
 }
 
 /// Where the window opens: `saved` when a screen still shows it (`on_screen`), otherwise the
-/// default size fitted to the main screen's work area `main`, centred, not maximised.
+/// default size, times `scale` (the screen's DPI over 96), fitted to the main screen's work area
+/// `main`, centred, not maximised.
 pub fn initial(
     saved: Option<WindowState>,
     on_screen: impl Fn(&WindowState) -> bool,
     main: Area,
+    scale: f64,
 ) -> WindowState {
     if let Some(s) = saved.filter(|s| on_screen(s)) {
         return s;
     }
     let (aw, ah) = (main.right - main.left, main.bottom - main.top);
-    let width = DEFAULT.0.min(aw).max(MIN.0.min(aw));
-    let height = DEFAULT.1.min(ah).max(MIN.1.min(ah));
+    let px = |v: i32| (f64::from(v) * scale.max(1.0)).round() as i32;
+    let width = px(DEFAULT.0).min(aw).max(px(MIN.0).min(aw));
+    let height = px(DEFAULT.1).min(ah).max(px(MIN.1).min(ah));
     WindowState {
         x: main.left + (aw - width) / 2,
         y: main.top + (ah - height) / 2,
@@ -93,8 +96,8 @@ mod tests {
             height: 700,
             maximized: true,
         };
-        assert_eq!(initial(Some(kept), |_| true, MAIN), kept);
-        let centred = initial(Some(kept), |_| false, MAIN);
+        assert_eq!(initial(Some(kept), |_| true, MAIN, 1.0), kept);
+        let centred = initial(Some(kept), |_| false, MAIN, 1.0);
         assert_eq!(
             centred,
             WindowState {
@@ -105,7 +108,10 @@ mod tests {
                 maximized: false
             }
         );
-        assert_eq!(initial(None, |_| true, MAIN), centred);
+        assert_eq!(initial(None, |_| true, MAIN, 1.0), centred);
+        // At 150 % the window is 1.5 times larger, still fitted.
+        let big = initial(None, |_| true, MAIN, 1.5);
+        assert_eq!((big.width, big.height), (1920, 1040));
     }
 
     #[test]
@@ -116,7 +122,7 @@ mod tests {
             right: 1024,
             bottom: 728,
         };
-        let s = initial(None, |_| true, small);
+        let s = initial(None, |_| true, small, 1.0);
         assert_eq!((s.width, s.height), (1024, 728));
         assert_eq!((s.x, s.y), (0, 0));
     }

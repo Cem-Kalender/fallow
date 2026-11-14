@@ -11,7 +11,7 @@ mod frame;
 pub mod view;
 
 #[cfg(windows)]
-pub use host::{configure, open, quit};
+pub use host::{configure, open, open_for, quit};
 
 /// The window on the UI thread (`platform::notify`'s thread): at most one, made when asked for,
 /// dropped with its web view when closed (research R-2, R-9).
@@ -56,8 +56,12 @@ mod host {
         /// brings the window forward, its route kept for when it is made (research R-2).
         static OPENING: Cell<bool> = const { Cell::new(false) };
         static PENDING_ROUTE: RefCell<Option<String>> = const { RefCell::new(None) };
-        /// When the last opening was asked for, for `window ready` (research R-14).
+        /// When the last opening was asked for, for `window ready` (research R-14): the
+        /// launcher's start (Unix ms) when it said, else when the UI thread was asked.
         static ASKED: Cell<Option<Instant>> = const { Cell::new(None) };
+        static LAUNCHED: Cell<Option<u128>> = const { Cell::new(None) };
+        /// The window was closed while it was being made: closed once made (review).
+        static CLOSE_AFTER_OPEN: Cell<bool> = const { Cell::new(false) };
         /// The page was asked about unsaved changes before closing (research R-9).
         static CLOSING: Cell<bool> = const { Cell::new(false) };
         /// Quit is under way (research R-9); who asked waits for the outcome.
@@ -94,8 +98,24 @@ mod host {
         };
     }
 
-    /// Shows the window on `what`'s route, making it when there is none (UI thread only).
+    /// What the error of a window that could not open says when Fallow is quitting meanwhile:
+    /// nothing to tell the engineer.
+    const QUITTING_MEANWHILE: &str = "Fallow is quitting";
+
+    /// The icon's, a notification's or the pipe's request without an answer: shows the window
+    /// on `what`'s route; an error is shown as a message (UI thread only).
     pub fn open(what: Option<String>) {
+        if let Err(e) = open_for(what, None) {
+            // The missing runtime said so already, with its download page.
+            if e != QUITTING_MEANWHILE && !e.contains("WebView2 Runtime") {
+                message(&e);
+            }
+        }
+    }
+
+    /// Shows the window on `what`'s route, making it when there is none; answers once it exists
+    /// (contracts/window.md §1). `launched`: the launcher's start, in Unix ms (research R-14).
+    pub fn open_for(what: Option<String>, launched: Option<u128>) -> Result<(), String> {
         let route = route_of(what);
         // Being made: forward only, the route kept for when the page is there (this comes
         // first: the window exists before its web view).
@@ -106,45 +126,87 @@ mod host {
             if let Some(h) = hwnd() {
                 frame::front(h);
             }
-            return;
+            return Ok(());
         }
         if let Some(h) = hwnd() {
             if let Some(r) = &route {
                 go_to(r);
             }
             frame::front(h);
-            return;
+            return Ok(());
+        }
+        if !crate::platform::display::interactive() {
+            return Err(
+                "Fallow was started without a desktop: stop it (`fallow stop`) and start it again from the desktop"
+                    .into(),
+            );
         }
         let Some(cfg) = CONFIG.get() else {
-            return;
+            return Err("Fallow's window is not set up".into());
         };
         ASKED.with(|a| a.set(Some(Instant::now())));
+        LAUNCHED.with(|l| l.set(launched));
         OPENING.with(|o| o.set(true));
         let made = make(cfg, route);
         OPENING.with(|o| o.set(false));
-        if let Err(e) = made {
-            message(&e);
-            return;
-        }
+        made?;
         if let Some(r) = PENDING_ROUTE.with(|p| p.borrow_mut().take()) {
             go_to(&r);
         }
+        // Closed while it was being made: closed now that it is (review).
+        if CLOSE_AFTER_OPEN.with(Cell::take) {
+            if let Some(h) = hwnd() {
+                close_asked(h);
+            }
+        }
+        Ok(())
     }
 
     fn make(cfg: &Config, route: Option<String>) -> Result<(), String> {
-        // No runtime: say what to install; never a browser instead (research R-12).
+        // No runtime: say what to install, offer Microsoft's page; never a browser instead of
+        // the window (research R-12).
         if view::runtime().is_err() {
+            let text: Vec<u16> = "Fallow's window needs the Microsoft Edge WebView2 Runtime, which is not installed.\n\nOpen Microsoft's download page in your browser?"
+                .encode_utf16()
+                .chain(Some(0))
+                .collect();
+            let title: Vec<u16> = "Fallow".encode_utf16().chain(Some(0)).collect();
+            // SAFETY: a modal message box with live wide strings.
+            let yes = unsafe {
+                MessageBoxW(
+                    std::ptr::null_mut(),
+                    text.as_ptr(),
+                    title.as_ptr(),
+                    windows_sys::Win32::UI::WindowsAndMessaging::MB_YESNO
+                        | windows_sys::Win32::UI::WindowsAndMessaging::MB_ICONWARNING,
+                )
+            } == windows_sys::Win32::UI::WindowsAndMessaging::IDYES;
+            if yes {
+                let _ = crate::platform::open_browser(
+                    "https://developer.microsoft.com/microsoft-edge/webview2/",
+                );
+            }
             return Err(
-                "Fallow's window needs the Microsoft Edge WebView2 Runtime, which is not installed. \
-                 Install it from Microsoft (search for \"WebView2 Runtime\"), then open Fallow again."
+                "Fallow's window needs the Microsoft Edge WebView2 Runtime, which is not installed"
                     .into(),
             );
         }
         let dark = frame::is_dark(crate::studio::files::theme(&cfg.data));
-        let place = state::initial(state::load(&cfg.data), frame::on_screen, frame::main_area());
+        let place = frame::opening_place(state::load(&cfg.data));
         let hwnd = frame::create(&place, dark)?;
         LIVE.with(|l| *l.borrow_mut() = Some(Live { hwnd, view: None }));
-        let env = view::environment(&cfg.data)?;
+        let env = match view::environment(&cfg.data) {
+            Ok(e) => e,
+            Err(e) => {
+                // SAFETY: this thread's window.
+                unsafe { DestroyWindow(hwnd) };
+                return Err(if view::quitting(&e) {
+                    QUITTING_MEANWHILE.to_string()
+                } else {
+                    e
+                });
+            }
+        };
         let url = format!("{}{}", nav::HOME, route.unwrap_or_default());
         let parent = Parent(hwnd);
         let built = view::build(
@@ -166,9 +228,16 @@ mod host {
                 Ok(())
             }
             Err(e) => {
-                // SAFETY: this thread's window.
-                unsafe { DestroyWindow(hwnd) };
-                Err(e)
+                // The window may be gone already (closed while being made).
+                if self::hwnd() == Some(hwnd) {
+                    // SAFETY: this thread's window.
+                    unsafe { DestroyWindow(hwnd) };
+                }
+                Err(if view::quitting(&e) || CLOSE_AFTER_OPEN.with(Cell::take) {
+                    QUITTING_MEANWHILE.to_string()
+                } else {
+                    e
+                })
             }
         }
     }
@@ -215,10 +284,24 @@ mod host {
     fn page_said(hwnd: HWND, m: &str) {
         match m {
             "ready" => {
-                if std::env::var_os("FALLOW_BENCH").is_some() {
-                    if let Some(t) = ASKED.with(Cell::take) {
-                        eprintln!("window ready {} ms", t.elapsed().as_millis());
+                // A page drawn again (a reload) is not left asking about its changes (review).
+                if CLOSING.with(Cell::get) {
+                    CLOSING.with(|c| c.set(false));
+                    // SAFETY: this thread's window and its timer.
+                    unsafe { KillTimer(hwnd, CLOSE_TIMER) };
+                    if QUITTING.with(Cell::get) {
+                        quit_done(false);
                     }
+                }
+                let asked = ASKED.with(Cell::take);
+                let launched = LAUNCHED.with(Cell::take);
+                if std::env::var_os("FALLOW_BENCH").is_some() {
+                    let ms = match (launched, asked) {
+                        (Some(l), _) => unix_ms().saturating_sub(l),
+                        (None, Some(t)) => t.elapsed().as_millis(),
+                        _ => return,
+                    };
+                    eprintln!("window ready {ms} ms");
                 }
             }
             // The page's answer about unsaved changes (research R-9, contracts/window.md §4).
@@ -245,14 +328,37 @@ mod host {
             _ => {
                 if let Some(s) = m.strip_prefix("activity:") {
                     if std::env::var_os("FALLOW_BENCH").is_some() {
-                        let ms = std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .map_or(0, |d| d.as_millis());
-                        eprintln!("activity {s} {ms}");
+                        eprintln!("activity {s} {}", unix_ms());
                     }
                 }
             }
         }
+    }
+
+    fn unix_ms() -> u128 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_millis())
+    }
+
+    /// 1. The window got the focus: the page gets it (review: `build_as_child` leaves it to us).
+    pub(super) fn focused() {
+        LIVE.with(|l| {
+            if let Some(v) = l.borrow().as_ref().and_then(|l| l.view.as_ref()) {
+                let _ = v.focus();
+            }
+        });
+    }
+
+    /// 1. The window moved: WebView2 is told, for its popups and accessibility (review).
+    pub(super) fn moved() {
+        LIVE.with(|l| {
+            if let Some(v) = l.borrow().as_ref().and_then(|l| l.view.as_ref()) {
+                use wry::WebViewExtWindows;
+                // SAFETY: a WebView2 call on the thread that made it.
+                let _ = unsafe { v.controller().NotifyParentWindowPositionChanged() };
+            }
+        });
     }
 
     pub(super) fn resized(hwnd: HWND) {
@@ -275,7 +381,8 @@ mod host {
     /// then `close` or `kept`; without an answer within 3 s the window closes anyway
     /// (research R-9).
     pub(super) fn close_asked(hwnd: HWND) {
-        if CLOSING.with(Cell::get) {
+        if OPENING.with(Cell::get) {
+            CLOSE_AFTER_OPEN.with(|c| c.set(true));
             return;
         }
         let asked = LIVE.with(|l| {

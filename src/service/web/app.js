@@ -302,6 +302,12 @@ const Fallow = (() => {
   // The window waits 3 s for an answer (a page that does not answer is closed anyway), so
   // `asking` tells it a question is open, then `close` or `kept` follows.
   async function closeAsked() {
+    // A question of the page's own is open: it is answered first; the window stays (review).
+    const open = document.getElementById("confirm");
+    if (open && open.open) {
+      toWindow("kept");
+      return;
+    }
     if (current && current.dirty && current.dirty()) {
       toWindow("asking");
       const ok = await confirm({ title: "Leave your changes?", text: "What you changed here is not saved. Closing drops it.", ok: "Leave them" });
@@ -607,9 +613,11 @@ const Fallow = (() => {
   function doing(c) {
     if (c && c.pending_approval) return h`Waiting for you to allow a command`;
     const id = c && (c.id || (c.session && c.session.id));
+    // Per turn: a turn's activity starts again at nothing (review).
+    const key = `${id}:${((c && c.turns) || []).length}`;
     const count = ((c && c.activity) || []).length;
-    if (id && count > (shownActivity.get(id) || 0)) {
-      shownActivity.set(id, count);
+    if (id && count > (shownActivity.get(key) || 0)) {
+      shownActivity.set(key, count);
       toWindow(`activity:${id}`);
     }
     const last = ((c && c.activity) || []).filter((a) => a.kind !== "say" && a.kind !== "progress").slice(-1)[0];

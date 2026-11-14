@@ -95,8 +95,9 @@ pub fn serve(
         // Inherited from a shell, these could give the web view a debugging port or another
         // runtime (research R-6).
         for v in crate::window::view::WEBVIEW2_VARIABLES {
-            // SAFETY: no other thread of this process reads or writes these variables, and the
-            // web view's environment is made later, on the UI thread.
+            // SAFETY: on Windows the process environment is guarded by the C runtime, so this
+            // is sound with other threads running; nothing of Fallow's reads these variables but
+            // the web view's environment, made later on the UI thread (review).
             unsafe { std::env::remove_var(v) };
         }
         crate::window::configure(
@@ -210,6 +211,31 @@ pub fn serve(
     drop(web);
     let _ = std::fs::remove_file(data.join(SERVICE_FILE));
     Ok(())
+}
+
+/// 014 (contracts/window.md §1): the window shown or made on the UI thread; the answer once it
+/// exists, or why it cannot be.
+#[cfg(windows)]
+fn open_on_ui(route: Option<String>, launched: Option<u64>) -> Value {
+    let (otx, orx) = mpsc::channel();
+    let asked = crate::platform::notify::on_ui(Box::new(move || {
+        let _ = otx.send(crate::window::open_for(route, launched.map(u128::from)));
+    }));
+    if !asked {
+        return json!({ "ok": false, "error": "Fallow has no window thread (no desktop?)" });
+    }
+    match orx.recv_timeout(std::time::Duration::from_secs(60)) {
+        Ok(Ok(())) => json!({ "ok": true }),
+        Ok(Err(e)) => json!({ "ok": false, "error": e }),
+        Err(_) => json!({ "ok": false, "error": "the window did not open" }),
+    }
+}
+
+/// Other platforms: the page opens from the command line (`url`).
+#[cfg(not(windows))]
+fn open_on_ui(route: Option<String>, _launched: Option<u64>) -> Value {
+    crate::platform::notify::request_open(route);
+    json!({ "ok": true })
 }
 
 /// One connection on the pipe: the command line asks one thing and gets one answer; an agent's
@@ -330,10 +356,7 @@ fn cli_request(req: &Value, tx: &Sender<Msg>, port: u16, secret: &str) -> Value 
             Some(r) if !r.starts_with("#/") => {
                 json!({ "ok": false, "error": "a route starts with #/" })
             }
-            r => {
-                crate::platform::notify::request_open(r.map(str::to_string));
-                json!({ "ok": true })
-            }
+            r => open_on_ui(r.map(str::to_string), req["launched"].as_u64()),
         },
         // 014 (FR-009): what Quit would pause; with `confirmed`, stop as `stop` does and say
         // which process to wait for.
@@ -395,6 +418,7 @@ fn service_exe() -> Result<PathBuf, String> {
 }
 
 /// The running service's process id, from its service file.
+#[cfg(windows)]
 fn service_pid() -> Option<u32> {
     let data = data_dir().ok()?;
     std::fs::read_to_string(data.join(SERVICE_FILE))
@@ -408,12 +432,15 @@ fn service_pid() -> Option<u32> {
 /// window (on `route`, `#/…`), allowing it to come to the front.
 #[cfg(windows)]
 pub fn open_window(route: Option<&str>) -> Result<(), String> {
+    let launched = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis() as u64);
     ensure_running()?;
     if let Some(pid) = service_pid() {
         // SAFETY: a plain call; a failure only leaves the window behind others.
         unsafe { windows_sys::Win32::UI::WindowsAndMessaging::AllowSetForegroundWindow(pid) };
     }
-    let mut req = json!({ "cmd": "window" });
+    let mut req = json!({ "cmd": "window", "launched": launched });
     if let Some(r) = route {
         req["route"] = json!(r);
     }

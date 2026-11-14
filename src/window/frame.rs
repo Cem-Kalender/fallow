@@ -69,26 +69,67 @@ pub fn set_dark(hwnd: HWND, dark: bool) {
     let on: i32 = i32::from(dark);
     // SAFETY: setting one documented attribute of this thread's window, and repainting it.
     unsafe {
-        DwmSetWindowAttribute(
-            hwnd,
-            DWMWA_USE_IMMERSIVE_DARK_MODE as u32,
-            (&raw const on).cast(),
-            std::mem::size_of::<i32>() as u32,
-        );
+        let set = |attr: u32| {
+            DwmSetWindowAttribute(
+                hwnd,
+                attr,
+                (&raw const on).cast(),
+                std::mem::size_of::<i32>() as u32,
+            )
+        };
+        // 20 since Windows 10 20H1; 19 before it (review).
+        if set(DWMWA_USE_IMMERSIVE_DARK_MODE as u32) != 0 {
+            set(19);
+        }
         InvalidateRect(hwnd, std::ptr::null(), 1);
     }
 }
 
-/// Whether a screen shows (part of) the rectangle.
-pub fn on_screen(s: &WindowState) -> bool {
+/// The main screen's work area offset from the screen itself: `GetWindowPlacement` gives
+/// rectangles in these "workspace" coordinates, which move with a taskbar on the top or the left
+/// (review).
+fn workspace_offset() -> (i32, i32) {
+    // SAFETY: plain queries into a live, sized structure.
+    unsafe {
+        let m = MonitorFromPoint(POINT { x: 0, y: 0 }, MONITOR_DEFAULTTOPRIMARY);
+        let mut info: MONITORINFO = std::mem::zeroed();
+        info.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+        GetMonitorInfoW(m, &mut info);
+        (
+            info.rcWork.left - info.rcMonitor.left,
+            info.rcWork.top - info.rcMonitor.top,
+        )
+    }
+}
+
+/// Whether a screen shows (part of) the rectangle, given in workspace coordinates.
+fn on_screen(s: &WindowState) -> bool {
+    let (dx, dy) = workspace_offset();
     let r = RECT {
-        left: s.x,
-        top: s.y,
-        right: s.x + s.width,
-        bottom: s.y + s.height,
+        left: s.x + dx,
+        top: s.y + dy,
+        right: s.x + dx + s.width,
+        bottom: s.y + dy + s.height,
     };
     // SAFETY: a plain query.
     !unsafe { MonitorFromRect(&r, MONITOR_DEFAULTTONULL) }.is_null()
+}
+
+/// Where the window opens, in workspace coordinates: the kept place when a screen still shows
+/// it, otherwise the default size, scaled for the main screen's DPI, centred on it.
+pub fn opening_place(saved: Option<WindowState>) -> WindowState {
+    if let Some(s) = saved.filter(on_screen) {
+        return s;
+    }
+    // SAFETY: a plain query.
+    let scale = f64::from(unsafe { windows_sys::Win32::UI::HiDpi::GetDpiForSystem() }) / 96.0;
+    let s = super::state::initial(None, |_| false, main_area(), scale);
+    let (dx, dy) = workspace_offset();
+    WindowState {
+        x: s.x - dx,
+        y: s.y - dy,
+        ..s
+    }
 }
 
 /// The main screen's work area.
@@ -124,7 +165,9 @@ pub fn placement(hwnd: HWND) -> Option<WindowState> {
             y: r.top,
             width: r.right - r.left,
             height: r.bottom - r.top,
-            maximized: p.showCmd == SW_SHOWMAXIMIZED as u32,
+            // Maximised, or minimised from maximised (review).
+            maximized: p.showCmd == SW_SHOWMAXIMIZED as u32
+                || (p.showCmd == SW_SHOWMINIMIZED as u32 && p.flags & WPF_RESTORETOMAXIMIZED != 0),
         })
     }
 }
@@ -155,7 +198,7 @@ fn icon(size: i32) -> HICON {
             IMAGE_ICON,
             size,
             size,
-            LR_DEFAULTCOLOR,
+            LR_DEFAULTCOLOR | LR_SHARED,
         );
         if h.is_null() {
             LoadIconW(std::ptr::null_mut(), IDI_APPLICATION)
@@ -190,8 +233,8 @@ pub fn create(s: &WindowState, dark: bool) -> Result<HWND, String> {
             class.as_ptr(),
             title.as_ptr(),
             WS_OVERLAPPEDWINDOW,
-            s.x,
-            s.y,
+            CW_USEDEFAULT,
+            CW_USEDEFAULT,
             s.width,
             s.height,
             std::ptr::null_mut(),
@@ -210,14 +253,21 @@ pub fn create(s: &WindowState, dark: bool) -> Result<HWND, String> {
             AppendMenuW(menu, MF_SEPARATOR, 0, std::ptr::null());
             AppendMenuW(menu, MF_STRING, QUIT_CMD, quit.as_ptr());
         }
-        ShowWindow(
-            hwnd,
-            if s.maximized {
-                SW_SHOWMAXIMIZED
-            } else {
-                SW_SHOWNORMAL
-            },
-        );
+        // The place in the coordinates it was kept in (review).
+        let mut p: WINDOWPLACEMENT = std::mem::zeroed();
+        p.length = std::mem::size_of::<WINDOWPLACEMENT>() as u32;
+        p.showCmd = if s.maximized {
+            SW_SHOWMAXIMIZED as u32
+        } else {
+            SW_SHOWNORMAL as u32
+        };
+        p.rcNormalPosition = RECT {
+            left: s.x,
+            top: s.y,
+            right: s.x + s.width,
+            bottom: s.y + s.height,
+        };
+        SetWindowPlacement(hwnd, &p);
         front(hwnd);
         Ok(hwnd)
     }
@@ -255,6 +305,21 @@ unsafe extern "system" fn proc_(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> L
         WM_SIZE => {
             super::host::resized(hwnd);
             0
+        }
+        WM_SETFOCUS => {
+            super::host::focused();
+            0
+        }
+        WM_ACTIVATE => {
+            if (w & 0xFFFF) != 0 {
+                super::host::focused();
+            }
+            0
+        }
+        WM_MOVE | WM_MOVING => {
+            super::host::moved();
+            // SAFETY: the default handling.
+            unsafe { DefWindowProcW(hwnd, msg, w, l) }
         }
         WM_DPICHANGED => {
             // The suggested rectangle for the new screen's scale (research R-8).
