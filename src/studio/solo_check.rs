@@ -591,7 +591,7 @@ impl Studio {
         let p = self.project(&project)?.clone();
         let head = git::head(&solo.worktree)?;
         let base = solo.base().gates;
-        let squad = super::solo::squad_at_head(&p.root_dir());
+        let squad = self.squad_of(&p);
         if squad.gates.is_empty() {
             self.conv_mut(conv)?
                 .append(CEvent::Solo(SoloEvent::GatesRun {

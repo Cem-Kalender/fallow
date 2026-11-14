@@ -407,6 +407,9 @@ pub struct Studio {
     pub console: Vec<String>,
     /// The settings in force: which runtimes a lead can run on (009).
     pub settings: crate::config::Settings,
+    /// Squad files as committed, per folder, with the commit read (issue #3: a session's view
+    /// reads it from git again only when the project's `HEAD` moved).
+    pub squads: std::cell::RefCell<BTreeMap<PathBuf, (String, crate::config::Squad)>>,
 }
 
 /// Whether a session's lead now runs on another runtime or model than the session began on
@@ -560,6 +563,7 @@ impl Studio {
             approval_wait: APPROVAL_WAIT,
             console: Vec::new(),
             settings,
+            squads: std::cell::RefCell::default(),
         };
         // 012 (R-2, R-3): the empty folder Fallow's own git commands on a session use as their
         // hooks path, so no hook runs.

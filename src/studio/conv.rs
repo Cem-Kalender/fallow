@@ -94,6 +94,29 @@ pub struct Conv {
     pub start_before: Option<String>,
     /// 012 (R-10): the session's git command Fallow allowed, until its result.
     pub open_call: Option<super::refwatch::OpenCall>,
+    /// The session was made within this very request: its working copy is its start commit,
+    /// untouched, on its branch, so its first turn skips the git checks of an older session
+    /// (issue #2: each git process costs about 0.1 s on Windows).
+    pub fresh: Option<Fresh>,
+    /// What a session's view would read from git, as its creation knew it (issue #2): its squad
+    /// file and that nothing in its copy changed yet; for its first view only, while nothing
+    /// happened in the session since and for a second at most.
+    pub primed: Option<Primed>,
+}
+
+/// What session start read anyway, for the session's first turn (issue #2).
+pub struct Fresh {
+    /// The squad file at the project's `HEAD`.
+    pub squad: crate::config::Squad,
+}
+
+/// A session view's git values as its creation knew them (issue #2).
+pub struct Primed {
+    /// The session's log sequence it is valid for.
+    pub seq: u64,
+    pub at: std::time::Instant,
+    /// The squad file declares gates.
+    pub declared: bool,
 }
 
 impl Conv {
@@ -115,6 +138,8 @@ impl Conv {
             queue_hold: false,
             queue_go: false,
             slot_wait: None,
+            fresh: None,
+            primed: None,
             gone: None,
             mode_reset: false,
             turn_ended: Arc::new(AtomicBool::new(false)),

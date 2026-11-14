@@ -13,7 +13,12 @@
 //! - `solo_start`: from the first message to the turn's start, on a project of 10,000 files,
 //!   under 5 s (SC-001);
 //! - `solo_four`: four scripted sessions at once, Fallow under 200 MB, and each session's first
-//!   activity line shown within 2 s of its message at p95 (SC-009);
+//!   activity line shown within 2 s of the agent's output at p95 (SC-009; the constitution's
+//!   activity latency: an agent's output event to its appearance). The four agents output once
+//!   all four are working (5 s after each starts), so making a session is not counted; each
+//!   session is watched as the page watches it (its change events, then its view), all four at
+//!   once, and the fake agent writes the time it emits the output (issue #3, the engineer's
+//!   choice on 2026-11-14);
 //! - `refwatch_latency`: a commit made in the project folder from a terminal shown among the
 //!   project's git changes within 5 s (SC-004).
 //!
@@ -565,30 +570,59 @@ fn solo_start(args: &Args) -> Result<Vec<Measure>, String> {
 fn solo_four(args: &Args) -> Result<Vec<Measure>, String> {
     let dir = scratch("solo-four");
     let r = repo(&dir, "four")?;
-    let step = "[[step]]\nkind = \"assistant_turn\"\nweb = [\"https://example.com/docs\"]\nsleep_ms = 30000\noutput = { reply = \"done\" }\n\n";
-    let (svc, cookie, p) = solo_service(args, &dir, &step.repeat(4), &r)?;
-    let mut sessions = Vec::new();
-    for i in 0..4 {
-        let t0 = Instant::now();
-        let v = call(
-            &svc,
-            &cookie,
-            "POST",
-            &format!("/api/projects/{p}/sessions"),
-            json!({ "text": format!("Look up the docs {i}") }),
-        )?;
-        let s = v["session"]
-            .as_str()
-            .ok_or_else(|| format!("no session: {v}"))?
-            .to_string();
-        sessions.push((s, t0));
+    let stamps = dir.join("stamps");
+    std::fs::create_dir_all(&stamps).map_err(|e| e.to_string())?;
+    let scenario: String = (0..4)
+        .map(|i| {
+            format!(
+                "[[step]]\nkind = \"assistant_turn\"\nweb = [\"https://example.com/docs/{i}\"]\nstamp_dir = {:?}\nbefore_ms = 5000\nsleep_ms = 30000\noutput = {{ reply = \"done\" }}\n\n",
+                stamps.display().to_string()
+            )
+        })
+        .collect();
+    let (svc, cookie, p) = solo_service(args, &dir, &scenario, &r)?;
+    let mut all_made = 0.0;
+    let seen: Vec<Result<(f64, f64), String>> = std::thread::scope(|sc| {
+        let mut watching = Vec::new();
+        for i in 0..4 {
+            let v = call(
+                &svc,
+                &cookie,
+                "POST",
+                &format!("/api/projects/{p}/sessions"),
+                json!({ "text": format!("Look up the docs {i}") }),
+            );
+            let s = match v.and_then(|v| {
+                v["session"]
+                    .as_str()
+                    .map(str::to_string)
+                    .ok_or_else(|| format!("no session: {v}"))
+            }) {
+                Ok(s) => s,
+                Err(e) => {
+                    watching.push(sc.spawn(move || Err(e)));
+                    continue;
+                }
+            };
+            let (svc, cookie, stamps) = (&svc, &cookie, &stamps);
+            watching.push(sc.spawn(move || first_activity(svc, cookie, &s, stamps)));
+        }
+        all_made = unix_ms();
+        watching
+            .into_iter()
+            .map(|w| w.join().unwrap_or_else(|_| Err("a watch failed".into())))
+            .collect()
+    });
+    let seen = seen
+        .into_iter()
+        .collect::<Result<Vec<(f64, f64)>, String>>()?;
+    // The constitution's case: four sessions working when the agents output (review).
+    if seen.iter().any(|(_, at)| *at < all_made) {
+        return Err(
+            "solo_four: an agent output before all four sessions were made: raise before_ms".into(),
+        );
     }
-    let mut seen = Vec::new();
-    for (s, t0) in &sessions {
-        seen.push(until(&svc, &cookie, s, *t0, |v| {
-            v["activity"].as_array().is_some_and(|a| !a.is_empty())
-        })?);
-    }
+    let mut seen: Vec<f64> = seen.into_iter().map(|(ms, _)| ms).collect();
     println!(
         "bench: solo_four first activity per session (ms): {}",
         seen.iter()
@@ -609,6 +643,65 @@ fn solo_four(args: &Args) -> Result<Vec<Measure>, String> {
         ("solo_four memory", peak, SOLO_FOUR_MB, "MB"),
         ("solo_four activity", p95, SOLO_ACTIVITY_MS, "ms"),
     ])
+}
+
+/// Milliseconds since the Unix epoch.
+fn unix_ms() -> f64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0.0, |d| d.as_secs_f64() * 1000.0)
+}
+
+/// Session `s` watched as the page watches it (its change events, then its view): the time from
+/// the fake agent's output, as it stamped it in `stamps`, to its first activity line in the
+/// view (issue #3); and that output's time.
+fn first_activity(
+    svc: &Service,
+    cookie: &str,
+    s: &str,
+    stamps: &Path,
+) -> Result<(f64, f64), String> {
+    let end = Instant::now() + Duration::from_secs(60);
+    let mut after = 0u64;
+    loop {
+        let v = call(svc, cookie, "GET", &format!("/api/sessions/{s}"), json!({}))?;
+        let seen = unix_ms();
+        let activity = v["activity"].to_string();
+        if let Some(rest) = activity.split("https://example.com/docs/").nth(1) {
+            let url = format!(
+                "https://example.com/docs/{}",
+                rest.chars()
+                    .take_while(char::is_ascii_digit)
+                    .collect::<String>()
+            );
+            let name: String = url
+                .chars()
+                .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+                .collect();
+            let stamp = std::fs::read_to_string(stamps.join(format!("{name}.ms")))
+                .map_err(|e| format!("no time stamp for {url}: {e}"))?;
+            let at: f64 = stamp
+                .trim()
+                .parse()
+                .map_err(|e| format!("time stamp {stamp:?}: {e}"))?;
+            return Ok((seen - at, at));
+        }
+        if Instant::now() > end {
+            return Err(format!(
+                "session {s} never showed its activity: {}",
+                v["session"]
+            ));
+        }
+        // The next change of the session, as the page waits for it.
+        let e = call(
+            svc,
+            cookie,
+            "GET",
+            &format!("/api/events?scope=conv:{s}&after={after}"),
+            json!({}),
+        )?;
+        after = e["seq"].as_u64().unwrap_or(after);
+    }
 }
 
 /// 012 SC-004: a commit made in the project folder from a terminal, shown among the project's

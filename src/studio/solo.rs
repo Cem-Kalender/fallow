@@ -17,7 +17,7 @@ use crate::agent::{self, Call, Session, prompts};
 use crate::conversation::events::{Event as CEvent, InstructionRec};
 use crate::conversation::solo::SoloEvent;
 use crate::platform::job::Group;
-use crate::project::{self, Project};
+use crate::project::Project;
 use crate::run::engine::{Ctx, Reply};
 use crate::studio::conv::Pending;
 use crate::studio::judge;
@@ -53,7 +53,13 @@ fn name_of(text: &str) -> String {
 /// The project's squad file as committed at the project folder's `HEAD` (R-6: the gates the
 /// assistant is held to are never its own copy's).
 pub fn squad_at_head(project: &Path) -> crate::config::Squad {
-    let text = crate::platform::command("git")
+    squad_read(project).0
+}
+
+/// `squad_at_head`, and whether git really answered: the file read, or not in the commit
+/// (issue #3 review: a failed read is never kept as "no squad file").
+fn squad_read(project: &Path) -> (crate::config::Squad, bool) {
+    let out = crate::platform::command("git")
         .current_dir(project)
         .args([
             "--no-optional-locks",
@@ -62,12 +68,20 @@ pub fn squad_at_head(project: &Path) -> crate::config::Squad {
             &format!("HEAD:./{}", crate::config::squad::SQUAD_FILE),
         ])
         .output()
-        .ok()
-        .filter(|o| o.status.success())
-        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
-        .unwrap_or_default();
+        .ok();
+    let (text, known) = match &out {
+        Some(o) if o.status.success() => (String::from_utf8_lossy(&o.stdout).into_owned(), true),
+        Some(o) => {
+            let err = String::from_utf8_lossy(&o.stderr);
+            let absent =
+                err.contains("does not exist") || err.contains("exists on disk, but not in");
+            (String::new(), absent)
+        }
+        None => (String::new(), false),
+    };
     let mut notices = Vec::new();
-    crate::config::Squad::parse(crate::config::squad::SQUAD_FILE, &text, &mut notices)
+    let squad = crate::config::Squad::parse(crate::config::squad::SQUAD_FILE, &text, &mut notices);
+    (squad, known)
 }
 
 /// 012 (FR-026): a session's turn that Fallow's stop or crash cut off: what it changed is
@@ -139,9 +153,37 @@ pub(super) struct JudgeCx {
     pub(super) folder: PathBuf,
     pub(super) protect: Vec<String>,
     pub(super) gates: Vec<String>,
+    /// The squad file's `[instructions] extra`, from the same read as `gates` (issue #2).
+    pub(super) extra: Vec<String>,
 }
 
 impl Studio {
+    /// `squad_at_head` of a project, read from git again only when its `HEAD` moved (issue #3).
+    pub(super) fn squad_of(&self, p: &Project) -> crate::config::Squad {
+        let root = p.root_dir();
+        // The repository the squad file is read from: the spec root's own, when it is one
+        // (issue #3 review).
+        let top = if root.join(".git").exists() {
+            root.clone()
+        } else {
+            p.path.clone()
+        };
+        let Some(head) = git::head_from_files(&top) else {
+            return squad_at_head(&root);
+        };
+        if let Some((h, s)) = self.squads.borrow().get(&root) {
+            if *h == head {
+                return s.clone();
+            }
+        }
+        let (squad, known) = squad_read(&root);
+        // Kept only when git answered and `HEAD` did not move while it was read.
+        if known && git::head_from_files(&top).as_deref() == Some(head.as_str()) {
+            self.squads.borrow_mut().insert(root, (head, squad.clone()));
+        }
+        squad
+    }
+
     /// The assistant a project's new sessions start with.
     fn default_assistant(&self, p: &Project) -> String {
         p.assistant.clone().unwrap_or_else(|| ASSISTANT.to_string())
@@ -175,18 +217,18 @@ impl Studio {
         if text.is_empty() {
             return Err("say something to the assistant".into());
         }
+        // The engine refused a project that is not a git repository before this (its
+        // `project_refusal`, which keeps the project's kind a few seconds: issue #2).
         let p = self.project(project)?.clone();
-        if p.kind() != project::Kind::Git {
-            return Err("this project is not a git repository yet".into());
+        if !p.path.is_dir() {
+            return Err("the project's folder is gone".into());
         }
         let assistant = agent_name.unwrap_or_else(|| self.default_assistant(&p));
         if let Some(why) = self.assistant_problem(&p.path, &assistant) {
             return Err(why);
         }
-        let start_commit =
-            git::head(&p.path).map_err(|_| "the repository has no commit yet".to_string())?;
-        let start_branch = git::branch(&p.path);
-        let dirty = !git::folder_status(&p.path).unwrap_or_default().is_empty();
+        let (start_commit, start_branch) = git::head_and_branch(&p.path)
+            .map_err(|_| "the repository has no commit yet".to_string())?;
         let placeholder = self.worktrees(&p.id).join("_solo");
         let id = self.new_conv_with(
             Kind::Solo,
@@ -207,23 +249,40 @@ impl Studio {
                 start_commit: start_commit.clone(),
             }))?;
         }
-        let made = std::fs::create_dir_all(&placeholder)
-            .map_err(|e| e.to_string())
-            .and_then(|()| git::worktree_add_new(&p.path, &wt, &first, &start_commit));
-        if let Err(e) = made {
-            self.forget_half_made(&id, &p.path, &wt, &first);
-            return Err(format!("the session's working copy could not be made: {e}"));
-        }
+        // What only reads the project runs while its files are written into the working copy
+        // (issue #2: that checkout is most of a session's start on a big project).
+        let repo = p.path.clone();
+        let root = p.root_dir();
+        let base = format!("fallow/solo/{}", slug(text));
+        let (made, side) = std::thread::scope(|sc| {
+            let side = sc.spawn(|| {
+                let dirty = !git::folder_status(&repo).unwrap_or_default().is_empty();
+                let squad = squad_at_head(&root);
+                // The branch after the first message, never overwriting one (FR-015), nor the
+                // one being made beside this.
+                let mut branch = base.clone();
+                let mut k = 2;
+                while branch == first || git::rev_exists(&repo, &format!("refs/heads/{branch}")) {
+                    branch = format!("{base}-{k}");
+                    k += 1;
+                }
+                (dirty, squad, branch)
+            });
+            let made = std::fs::create_dir_all(&placeholder)
+                .map_err(|e| e.to_string())
+                .and_then(|()| git::worktree_add_new(&repo, &wt, &first, &start_commit));
+            (made, side.join())
+        });
+        let side = side.map_err(|_| "the session's start failed".to_string());
+        let (dirty, squad, branch) = match (made, side) {
+            (Ok(()), Ok(s)) => s,
+            (Err(e), _) | (_, Err(e)) => {
+                self.forget_half_made(&id, &p.path, &wt, &first);
+                return Err(format!("the session's working copy could not be made: {e}"));
+            }
+        };
         let lfs = std::fs::read_to_string(wt.join(".gitattributes"))
             .is_ok_and(|a| a.contains("filter=lfs"));
-        // The branch after the first message, never overwriting one (FR-015).
-        let base = format!("fallow/solo/{}", slug(text));
-        let mut branch = base.clone();
-        let mut k = 2;
-        while git::rev_exists(&p.path, &format!("refs/heads/{branch}")) {
-            branch = format!("{base}-{k}");
-            k += 1;
-        }
         if let Err(e) = git::rename_branch_nohooks(&wt, &first, &branch) {
             self.forget_half_made(&id, &p.path, &wt, &first);
             return Err(format!("the session's branch could not be named: {e}"));
@@ -249,16 +308,28 @@ impl Studio {
             name: name_of(text),
             by: Some("first_message".into()),
         }))?;
+        let declared = !squad.gates.is_empty();
         let pm = self.project_mut(&p.id)?;
         pm.sessions.push(id.clone());
         pm.last_session = Some(id.clone());
         self.store.save()?;
+        // For the first turn only, which takes it (issue #2 review: never left on a session).
+        self.conv_mut(&id)?.fresh = Some(super::conv::Fresh { squad });
         // The session exists now: a first turn that cannot start is said with it, never hidden
         // behind an error (review 8: the draft would make a second session).
         let mut v = match self.say_solo(ctx, &id, text, refs) {
             Ok(v) => v,
             Err(e) => json!({ "error": e }),
         };
+        if let Some(c) = self.convs.get_mut(&id) {
+            c.fresh = None;
+            // Its first view with less git (issue #2): nothing changed in its copy yet.
+            c.primed = Some(super::conv::Primed {
+                seq: c.state.seq,
+                at: std::time::Instant::now(),
+                declared,
+            });
+        }
         v["session"] = json!(id);
         Ok(v)
     }
@@ -307,6 +378,16 @@ impl Studio {
 
     /// What the judge needs for `conv`'s session.
     pub(super) fn judge_cx(&self, conv: &str, runtime: &str) -> Result<JudgeCx, String> {
+        self.judge_cx_with(conv, runtime, None)
+    }
+
+    /// `judge_cx`, with the squad file when it was read already (issue #2).
+    fn judge_cx_with(
+        &self,
+        conv: &str,
+        runtime: &str,
+        squad: Option<crate::config::Squad>,
+    ) -> Result<JudgeCx, String> {
         let c = self.convs.get(conv).ok_or("the session is gone")?;
         let solo = c.state.solo.as_ref().ok_or("not a session")?;
         let p = self.project(&c.state.project)?;
@@ -323,17 +404,15 @@ impl Studio {
         // The copy's link to its repository: rewritten, it would point Fallow's own git at a
         // config the assistant wrote (fourth review, security).
         protect.extend([".git".to_string(), ".git/**".to_string()]);
-        let gates = squad_at_head(&p.root_dir())
-            .gates
-            .iter()
-            .map(|g| g.command.clone())
-            .collect();
+        let squad = squad.unwrap_or_else(|| self.squad_of(p));
+        let gates = squad.gates.iter().map(|g| g.command.clone()).collect();
         Ok(JudgeCx {
             wt: solo.worktree.clone(),
             branch: solo.branch.clone(),
             folder: p.path.clone(),
             protect,
             gates,
+            extra: squad.instructions_extra,
         })
     }
 
@@ -372,7 +451,16 @@ impl Studio {
         if text.is_empty() && attachments.is_empty() {
             return Err("say something to the assistant".into());
         }
-        self.check_gone(conv);
+        // A session made in this request: taken by its first turn, whatever happens to it.
+        let fresh_squad = self
+            .convs
+            .get_mut(conv)
+            .and_then(|c| c.fresh.take())
+            .map(|f| f.squad);
+        let fresh = fresh_squad.is_some();
+        if !fresh {
+            self.check_gone(conv);
+        }
         let c = self.convs.get(conv).ok_or("there is no session")?;
         let solo = c.state.solo.clone().ok_or("not a session")?;
         if solo.closed.is_some() {
@@ -441,7 +529,12 @@ impl Studio {
         }
         // The engineer's edits since the last turn are committed as theirs first (R-4).
         let _ = n;
-        let engineer_edits = self.settle(conv)?;
+        // A session made in this request has no edits of the engineer's yet.
+        let engineer_edits = if fresh {
+            Vec::new()
+        } else {
+            self.settle(conv)?
+        };
         let lib = self.library(Some(&p.path));
         let def = lib
             .agent(&assistant)
@@ -449,7 +542,7 @@ impl Studio {
             .ok_or_else(|| format!("there is no agent {assistant}"))?;
         let runtime = agent::registry::runtime(&def.runtime, &ctx.settings)
             .map_err(|e| format!("the assistant cannot start: {e}"))?;
-        let jc = self.judge_cx(conv, &def.runtime)?;
+        let jc = self.judge_cx_with(conv, &def.runtime, fresh_squad)?;
         // Without asking: the gates, and the approved prefixes the judge finds safe (R-6).
         let ctxj = judge::Ctx {
             wt: &jc.wt,
@@ -466,8 +559,7 @@ impl Studio {
         );
         // The project's instruction files: with a new agent session, and when they changed.
         let c = self.convs.get(conv).ok_or("there is no session")?;
-        let instr =
-            agent::instructions::read(&wt, &agent::instructions::extra_at_head(&p.root_dir()));
+        let instr = agent::instructions::read(&wt, &jc.extra);
         let now: Vec<(String, String)> = instr
             .iter()
             .map(|i| (i.path.clone(), i.sha.clone()))
@@ -565,6 +657,13 @@ impl Studio {
             user_settings: true,
         };
         let group_for_record = group;
+        // A fresh session's working copy is its start commit (issue #2: one git process less).
+        let head = if fresh {
+            Some(solo.start_commit.clone())
+        } else {
+            git::head(&wt).ok()
+        };
+        let c = self.conv_mut(conv)?;
         c.slot_wait = None;
         if let Some(qid) = queued {
             c.append(CEvent::Solo(SoloEvent::QueueSent {
@@ -584,10 +683,12 @@ impl Studio {
             instructions: instr_recs,
             attachments,
             slot_waited_ms: None,
-            head: git::head(&wt).ok(),
+            head: head.clone(),
         })?;
         c.live.clear();
-        c.head_before = git::head(&wt).ok();
+        c.head_before = head;
+        // Read now, never assumed: the engineer may commit on it while the copy is made (issue
+        // #2 review).
         c.start_before = solo
             .start_branch
             .as_ref()
@@ -988,7 +1089,8 @@ impl Studio {
             let changes = if s.closed.is_some() || c.gone.is_some() {
                 0
             } else {
-                changed_count(s)
+                // HEAD unknown here: its commits are read (issue #3).
+                changed_count(s, "")
             };
             let item = json!({
                 "id": id,
@@ -1321,12 +1423,35 @@ impl Studio {
         let Some(s) = c.state.solo.as_ref() else {
             return;
         };
-        let head = git::head(&s.worktree).unwrap_or_default();
-        let declared = self
-            .project(&c.state.project)
-            .map(|p| !squad_at_head(&p.root_dir()).gates.is_empty())
-            .unwrap_or(false);
+        // A session just made, nothing happened in it since: what its creation knew (issue #2).
+        let primed = c
+            .primed
+            .as_ref()
+            .filter(|p| p.seq == c.state.seq && p.at.elapsed() < std::time::Duration::from_secs(1));
         let base = s.base();
+        let start_ref = s.start_branch.as_ref().map(|b| format!("refs/heads/{b}"));
+        // The copy's HEAD and the starting branch's tip in one git process (issue #3), read
+        // even for a session just made: the engineer may commit while its copy is made.
+        let (head, start_tip) = {
+            let mut names = vec!["HEAD"];
+            names.extend(start_ref.as_deref());
+            match git::revs(&s.worktree, &names) {
+                Some(r) => (r[0].clone(), r.get(1).cloned()),
+                None => (
+                    git::head(&s.worktree).unwrap_or_default(),
+                    start_ref
+                        .as_ref()
+                        .and_then(|r| git::rev(&s.worktree, r).ok()),
+                ),
+            }
+        };
+        let declared = match primed {
+            Some(p) => p.declared,
+            None => self
+                .project(&c.state.project)
+                .map(|p| !self.squad_of(p).gates.is_empty())
+                .unwrap_or(false),
+        };
         // "Always in this project" only for a prefix the server would accept (review 6).
         if let Some(p) = c.pending.as_ref() {
             let always = crate::project::commands::always_prefix(&p.command).ok();
@@ -1394,11 +1519,12 @@ impl Studio {
             "engineer_edits": s.engineer_edits.iter().map(|(b, c, f)| json!({"before": b, "commit": c, "files": f})).collect::<Vec<_>>(),
             "editor_during_turn": c.editor_during_turn,
             // The starting branch's commits past the base (R-5; the ref watcher, T035, refreshes).
-            "start_moved": s.start_branch.as_ref().and_then(|b| {
-                git::count_between(&s.worktree, &base.gates, &format!("refs/heads/{b}"))
+            // Counted only when the tip moved from the base (issue #3).
+            "start_moved": start_tip.as_ref().filter(|t| **t != base.gates).zip(start_ref.as_ref()).and_then(|(_, r)| {
+                git::count_between(&s.worktree, &base.gates, r)
             }).filter(|n| *n > 0).map(|n| json!({ "commits": n })),
             "changes_notice": super::solo_check::ONLY_THE_COPY,
-            "changes_count": changed_count(s),
+            "changes_count": if primed.is_some() { 0 } else { changed_count(s, &head) },
             // 012 (R-10, R-11): what the session's commands changed elsewhere, its squashes, and
             // the engineer's folder after a command that touched it.
             "observed": s.observed,
@@ -1412,18 +1538,22 @@ impl Studio {
     }
 }
 
-/// The files a session changed since its base, its uncommitted ones included (FR-002).
-fn changed_count(s: &crate::conversation::solo::Solo) -> usize {
+/// The files a session changed since its base, its uncommitted ones included (FR-002). `head`
+/// is the copy's: no commits to read when it is the base still (issue #3).
+fn changed_count(s: &crate::conversation::solo::Solo, head: &str) -> usize {
     // Without its link git would read a repository around the folder (fifth review, 4).
     if !s.worktree.join(".git").is_file() {
         return 0;
     }
     let base = s.base().mark;
-    let mut files: std::collections::BTreeSet<String> =
+    let mut files: std::collections::BTreeSet<String> = if head == base {
+        std::collections::BTreeSet::new()
+    } else {
         git::files_between_z(&s.worktree, &base, "HEAD")
             .unwrap_or_default()
             .into_iter()
-            .collect();
+            .collect()
+    };
     for f in git::session_changes(&s.worktree).unwrap_or_default() {
         files.insert(f);
     }

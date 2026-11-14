@@ -4190,9 +4190,19 @@ impl Engine {
                 project,
                 agent,
                 text,
-            } => self
-                .studio
-                .new_session(&self.ctx, &project, agent, &text, Vec::new()),
+            } => {
+                let made = self
+                    .studio
+                    .new_session(&self.ctx, &project, agent, &text, Vec::new());
+                // A session was made from it: it is a git repository now, kept so (issue #2:
+                // its working copy can take longer than the kept kind lasts).
+                if made.is_ok() {
+                    self.kinds
+                        .borrow_mut()
+                        .insert(project.clone(), (Instant::now(), crate::project::Kind::Git));
+                }
+                made
+            }
             Req::SessionMode { session, mode } => self.studio.set_solo_mode(&session, &mode),
             Req::Sessions { project } => self.studio.list_sessions(&project),
             Req::RenameSession { session, name } => self.studio.rename_session(&session, &name),

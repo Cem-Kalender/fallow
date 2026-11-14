@@ -47,6 +47,10 @@
 //!                                # many image blocks
 //! web = ["https://example.com"]  # 012: WebFetch tool calls; refused when --disallowedTools or
 //!                                # --tools leaves WebFetch out
+//! before_ms = 0                 # 012 (issue #3): waits before its `web` calls
+//! stamp_dir = "/tmp/x"           # 012 (issue #3): before each `web` call is emitted, the time
+//!                                # (Unix ms) written to `<stamp_dir>/<url as a file name>.ms`,
+//!                                # so a benchmark times that output to its appearance
 //! lock_index = true              # 012: leaves git's index.lock in the working copy's git
 //!                                # folder, so Fallow's commit after the turn fails
 //! read = ["notes.txt"]           # 012: Read tool calls through the same rules as `exec`: a
@@ -115,6 +119,9 @@ struct Step {
     expect_images: Option<usize>,
     #[serde(default)]
     web: Vec<String>,
+    stamp_dir: Option<String>,
+    #[serde(default)]
+    before_ms: u64,
     #[serde(default)]
     read: Vec<String>,
     #[serde(default)]
@@ -604,8 +611,24 @@ fn main() -> ExitCode {
         }
     }
     let tool_on = |t: &str| tools.as_ref().is_none_or(|l| l.iter().any(|x| x == t));
+    if step.before_ms > 0 && !step.web.is_empty() {
+        std::thread::sleep(std::time::Duration::from_millis(step.before_ms));
+    }
     for url in &step.web {
         let id = tool_id();
+        if let Some(dir) = &step.stamp_dir {
+            let name: String = url
+                .chars()
+                .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+                .collect();
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_millis());
+            let _ = std::fs::write(
+                std::path::Path::new(dir).join(format!("{name}.ms")),
+                now.to_string(),
+            );
+        }
         emit(json!({"type": "assistant", "message": {"content": [
             {"type": "tool_use", "id": id, "name": "WebFetch", "input": {"url": url, "prompt": "read it"}}]}}));
         let off = !tool_on("WebFetch") || disallowed.iter().any(|d| d == "WebFetch");

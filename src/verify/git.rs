@@ -24,6 +24,73 @@ pub fn head(dir: &Path) -> Result<String, String> {
     git(dir, &["rev-parse", "HEAD"]).map(|s| s.trim().to_string())
 }
 
+/// The commits `revs` name, in one git process (issue #3); `None` when one of them is not there.
+pub fn revs(dir: &Path, revs: &[&str]) -> Option<Vec<String>> {
+    let mut args = vec!["rev-parse"];
+    args.extend(revs.iter().copied());
+    let out = git(dir, &args).ok()?;
+    let got: Vec<String> = out.lines().map(|l| l.trim().to_string()).collect();
+    (got.len() == revs.len() && got.iter().all(|c| c.len() >= 40)).then_some(got)
+}
+
+/// The commit `HEAD` of the repository whose top folder is `top` is at, read from git's own
+/// files, without a process (issue #3); `None` whenever that is not plain (git is asked then).
+pub fn head_from_files(top: &Path) -> Option<String> {
+    let dotgit = top.join(".git");
+    let gitdir = if dotgit.is_dir() {
+        dotgit
+    } else {
+        let t = std::fs::read_to_string(&dotgit).ok()?;
+        let g = PathBuf::from(t.trim().strip_prefix("gitdir:")?.trim());
+        if g.is_absolute() { g } else { top.join(g) }
+    };
+    let common = match std::fs::read_to_string(gitdir.join("commondir")) {
+        Ok(c) => {
+            let c = PathBuf::from(c.trim());
+            if c.is_absolute() { c } else { gitdir.join(c) }
+        }
+        Err(_) => gitdir.clone(),
+    };
+    let is_id =
+        |s: &str| (s.len() == 40 || s.len() == 64) && s.bytes().all(|b| b.is_ascii_hexdigit());
+    let head = std::fs::read_to_string(gitdir.join("HEAD")).ok()?;
+    let head = head.trim();
+    if is_id(head) {
+        return Some(head.to_string());
+    }
+    let r = head.strip_prefix("ref:")?.trim();
+    if !r.starts_with("refs/heads/") {
+        return None;
+    }
+    if let Ok(v) = std::fs::read_to_string(common.join(r)) {
+        let v = v.trim();
+        return is_id(v).then(|| v.to_string());
+    }
+    let packed = std::fs::read_to_string(common.join("packed-refs")).ok()?;
+    packed.lines().find_map(|l| {
+        let (id, name) = l.split_once(' ')?;
+        (name.trim() == r && is_id(id)).then(|| id.to_string())
+    })
+}
+
+/// `HEAD`'s commit and the branch it is on (`None` when detached), read together so they
+/// agree (issue #2 review: one git process, no switch between two).
+pub fn head_and_branch(dir: &Path) -> Result<(String, Option<String>), String> {
+    let out = git(dir, &["rev-parse", "HEAD", "--symbolic-full-name", "HEAD"])?;
+    let mut lines = out.lines().map(str::trim);
+    let head = lines
+        .next()
+        .filter(|h| h.len() >= 40)
+        .ok_or_else(|| format!("no commit in {out:?}"))?
+        .to_string();
+    let branch = lines
+        .next()
+        .and_then(|b| b.strip_prefix("refs/heads/"))
+        .filter(|b| !b.is_empty())
+        .map(str::to_string);
+    Ok((head, branch))
+}
+
 /// The branch checked out, or `None` when `HEAD` is detached.
 pub fn branch(dir: &Path) -> Option<String> {
     git(dir, &["symbolic-ref", "--short", "-q", "HEAD"])
@@ -1422,6 +1489,58 @@ mod update_tests {
         run(d, &["add", "-A"]);
         run(d, &["commit", "-q", "-m", msg]);
         head(d).unwrap()
+    }
+
+    #[test]
+    fn head_from_files_reads_what_git_reads_or_nothing() {
+        let d = repo("headfiles");
+        assert_eq!(head_from_files(&d), None, "no commit yet");
+        let c = commit(&d, &[("a.txt", Some("a\n"))], "one");
+        assert_eq!(head_from_files(&d).as_deref(), Some(c.as_str()));
+        // Packed, then a linked worktree, then detached.
+        run(&d, &["pack-refs", "--all"]);
+        assert_eq!(head_from_files(&d).as_deref(), Some(c.as_str()));
+        let w = d.with_file_name(format!("{}-wt", d.file_name().unwrap().to_string_lossy()));
+        let _ = std::fs::remove_dir_all(&w);
+        run(
+            &d,
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                "side",
+                &w.display().to_string(),
+            ],
+        );
+        let c2 = commit(&w, &[("b.txt", Some("b\n"))], "two");
+        assert_eq!(head_from_files(&w).as_deref(), Some(c2.as_str()));
+        assert_eq!(head_from_files(&d).as_deref(), Some(c.as_str()));
+        run(&d, &["checkout", "-q", "--detach"]);
+        assert_eq!(head_from_files(&d).as_deref(), Some(c.as_str()));
+        assert_eq!(
+            revs(&w, &["HEAD", "refs/heads/main"]),
+            Some(vec![c2.clone(), c.clone()])
+        );
+        assert_eq!(revs(&w, &["HEAD", "refs/heads/gone"]), None);
+        let _ = std::fs::remove_dir_all(&w);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn head_and_branch_agree_and_a_detached_head_has_no_branch() {
+        let d = repo("headbranch");
+        assert!(head_and_branch(&d).is_err(), "no commit yet");
+        let c = commit(&d, &[("a.txt", Some("a\n"))], "one");
+        assert_eq!(
+            head_and_branch(&d).unwrap(),
+            (c.clone(), Some("main".into()))
+        );
+        run(&d, &["checkout", "-q", "-b", "feature/x"]);
+        assert_eq!(head_and_branch(&d).unwrap().1.as_deref(), Some("feature/x"));
+        run(&d, &["checkout", "-q", "--detach"]);
+        assert_eq!(head_and_branch(&d).unwrap(), (c, None));
+        let _ = std::fs::remove_dir_all(&d);
     }
 
     /// A base with `a.txt` and `doc.md`; branch `loop` and `main` diverge from it.
