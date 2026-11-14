@@ -401,9 +401,35 @@ fn secret_url() -> Result<String, String> {
             .map(str::to_string)
             .ok_or_else(|| format!("no url: {line}"))
     }
-    #[cfg(not(windows))]
+    // The service's socket in the user's cache folder (`config::data_dir`), wherever
+    // `--data-dir` points: there is one service per user.
+    #[cfg(unix)]
     {
-        Err("the running-memory benchmark reads the service's address on Windows only".into())
+        let var = |k: &str| {
+            std::env::var_os(k)
+                .filter(|v| !v.is_empty())
+                .map(PathBuf::from)
+        };
+        let home = var("HOME").ok_or("no HOME")?;
+        let cache = if cfg!(target_os = "macos") {
+            home.join("Library/Caches")
+        } else {
+            var("XDG_CACHE_HOME").unwrap_or_else(|| home.join(".cache"))
+        };
+        let path = cache.join("fallow/service.sock");
+        let mut s = std::os::unix::net::UnixStream::connect(&path)
+            .map_err(|e| format!("{}: {e}", path.display()))?;
+        s.write_all(b"{\"kind\":\"cli\",\"request\":{\"cmd\":\"url\",\"path\":\"/\"}}\n")
+            .map_err(|e| e.to_string())?;
+        let mut line = String::new();
+        BufReader::new(s)
+            .read_line(&mut line)
+            .map_err(|e| e.to_string())?;
+        let v: Value = serde_json::from_str(&line).map_err(|e| format!("{e}: {line}"))?;
+        v["url"]
+            .as_str()
+            .map(str::to_string)
+            .ok_or_else(|| format!("no url: {line}"))
     }
 }
 
@@ -563,6 +589,13 @@ fn solo_four(args: &Args) -> Result<Vec<Measure>, String> {
             v["activity"].as_array().is_some_and(|a| !a.is_empty())
         })?);
     }
+    println!(
+        "bench: solo_four first activity per session (ms): {}",
+        seen.iter()
+            .map(|v| format!("{v:.0}"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
     seen.sort_by(|a, b| a.total_cmp(b));
     let p95 = seen[((seen.len() as f64 * 0.95).ceil() as usize)
         .saturating_sub(1)

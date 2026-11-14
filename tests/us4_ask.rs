@@ -172,14 +172,19 @@ fn the_lead_answers_what_the_spec_settles_and_relays_the_rest() {
     assert_eq!(t003.len(), 1, "nothing more of T003 runs while it waits");
     // The second ask while q2 waited was refused (one open question per step).
     assert!(v["feature_loop"]["questions"].get("q3").is_none());
-    let result = ask(
-        tx,
-        Request::Activity {
-            id,
-            n: t003[0]["n"].as_u64().unwrap() as u32,
-        },
-    )
-    .unwrap();
+    // The agent asks again only once its first ask has its reply, so the refusal can come after
+    // q2 is relayed (issue #4): read the step's activity until it shows, within a minute.
+    let n = t003[0]["n"].as_u64().unwrap() as u32;
+    let end = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    let result = loop {
+        let result = ask(tx, Request::Activity { id, n }).unwrap();
+        if result.to_string().contains("already have a question open")
+            || std::time::Instant::now() > end
+        {
+            break result;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    };
     assert!(
         result.to_string().contains("already have a question open"),
         "the second ask is refused: {result}"
