@@ -103,6 +103,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
     type Bench = Box<dyn Fn(&Args) -> Result<Vec<Measure>, String>>;
     let benches: Vec<(&str, Bench)> = vec![
         ("window", Box::new(window)),
+        ("close_keeps_work", Box::new(close_keeps_work)),
         (
             "running memory",
             Box::new(one("running memory", "MB", running)),
@@ -420,6 +421,48 @@ fn window(args: &Args) -> Result<Vec<Measure>, String> {
 /// Other platforms have no window yet (006: Windows first).
 #[cfg(not(windows))]
 fn window(_args: &Args) -> Result<Vec<Measure>, String> {
+    Ok(Vec::new())
+}
+
+/// 014 (SC-005, T031): work goes on with the window closed. A session's turn is started on the
+/// scripted agent with the window open; the window is closed at once; the turn must finish
+/// (within 30 s, the "budget"). A session rather than a loop: both run in the engine, which
+/// never depends on the window (constitution VII).
+#[cfg(windows)]
+fn close_keeps_work(args: &Args) -> Result<Vec<Measure>, String> {
+    let dir = scratch("close-keeps-work");
+    let r = repo(&dir, "work")?;
+    let scenario = "[[step]]
+kind = \"assistant_turn\"
+sleep_ms = 4000
+output = { reply = \"done\" }
+";
+    let (svc, cookie, p) = solo_service(args, &dir, scenario, &r)?;
+    open_window(args)?;
+    let t0 = Instant::now();
+    let v = call(
+        &svc,
+        &cookie,
+        "POST",
+        &format!("/api/projects/{p}/sessions"),
+        json!({ "text": "keep working" }),
+    )?;
+    let s = v["session"]
+        .as_str()
+        .ok_or_else(|| format!("no session: {v}"))?
+        .to_string();
+    close_window(svc.child.id())?;
+    let s_done = until(&svc, &cookie, &s, t0, |v| {
+        v["busy"] == false
+            && v["turns"]
+                .as_array()
+                .is_some_and(|t| t.iter().any(|t| t["reply"] == "done"))
+    })?;
+    Ok(vec![("close keeps work", s_done / 1000.0, 30.0, "s")])
+}
+
+#[cfg(not(windows))]
+fn close_keeps_work(_args: &Args) -> Result<Vec<Measure>, String> {
     Ok(Vec::new())
 }
 

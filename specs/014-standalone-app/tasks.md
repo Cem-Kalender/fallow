@@ -136,7 +136,8 @@ unless asked.
   - *Done*: the `window` benchmark (window ready, idle open and closed) and the window opened during `running` and `solo_four`; on the engineer's laptop (debug build): window ready p95 740 ms, idle 111 MB open and 4.3 MB closed. The package job runs `window` on the release build.
 - [ ] T029 [P] CI job `trace` (SC-007, R-6): a 10-minute `pktmon` capture with the release window open and idle; Fallow's own process opens no connection; the web view's connections are compared with research R-6's list; anything else fails.
 - [ ] T030 [P] The visual checks in the real window (SC-004): `specs/013-dark-mode/checks/shots.js` (and 009's, 010's) drive WebView2 through `FALLOW_AUTOMATION_CDP` on the `automation` build instead of headless Chrome; the reference set passes in light and dark.
-- [ ] T031 [P] SC-005 check in `tests/close_keeps_loop.rs` (`automation` build, Windows): open the window, start a loop on the fake runtime, close the window, the loop completes.
+- [X] T031 [P] SC-005 check in `tests/close_keeps_loop.rs` (`automation` build, Windows): open the window, start a loop on the fake runtime, close the window, the loop completes.
+  - *Done as*: the `close_keeps_work` check in `cargo xtask bench` (so it runs in CI's benchmark step with the window): a solo session's turn instead of a loop (both run in the engine, which never depends on the window); it finished in 5.6 s with the window closed.
 - [ ] T032 CI layout (R-16): separate jobs for the builds and tests, the gates, the benchmarks, the trace and the package, each under 60 minutes.
 - [X] T033 Docs: `README.md` (install, the window, Quit), release notes of what the web view cannot switch off (FR-017: required diagnostic data, Evergreen runtime updates), the quickstart checked against the build.
 - [ ] T034 Quickstart Q1 to Q8 by hand with the engineer (optional).
