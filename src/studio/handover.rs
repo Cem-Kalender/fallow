@@ -49,7 +49,9 @@ impl Studio {
             Some(n) => solo.suggestions.iter().rev().find(|(k, _, _)| *k == n),
             None => solo.suggestions.last(),
         };
-        let (title, brief) = s.map(|(_, t, b)| (t.clone(), b.clone())).unwrap_or_default();
+        let (title, brief) = s
+            .map(|(_, t, b)| (t.clone(), b.clone()))
+            .unwrap_or_default();
         let p = self.project(&c.state.project)?;
         let lead = self.default_lead(p).unwrap_or_else(|| "lead".into());
         let started: Vec<Value> = solo
@@ -89,28 +91,43 @@ impl Studio {
         let name = solo.name.clone().unwrap_or_else(|| "session".into());
         self.handover_checks(&project, &title)?;
         // The intent first (VII): a restart finishes it.
-        self.conv_mut(conv)?.append(CEvent::Solo(SoloEvent::FeatureStarting {
-            title: title.clone(),
-            brief: brief.clone(),
-            lead: lead.clone(),
-        }))?;
+        self.conv_mut(conv)?
+            .append(CEvent::Solo(SoloEvent::FeatureStarting {
+                title: title.clone(),
+                brief: brief.clone(),
+                lead: lead.clone(),
+            }))?;
         let made = self.new_feature_with(&project, &title, lead, Some(format!("solo:{conv}")));
         let made = match made {
             Ok(v) => v,
             Err(e) => {
                 // Nothing was made: the session is as before.
-                let _ = self.conv_mut(conv)?.append(CEvent::Solo(SoloEvent::FeatureDropped { why: e.clone() }));
+                let _ = self
+                    .conv_mut(conv)?
+                    .append(CEvent::Solo(SoloEvent::FeatureDropped { why: e.clone() }));
                 return Err(e);
             }
         };
         let feature = made["feature"].as_str().unwrap_or_default().to_string();
-        let spec = made["conversation"].as_str().unwrap_or_default().to_string();
-        let warning = self.start_from_brief(ctx, &project, &feature, &spec, &title, &brief, &format!("solo session {name}"));
-        self.conv_mut(conv)?.append(CEvent::Solo(SoloEvent::FeatureStarted {
-            feature: feature.clone(),
-            title,
-            conversation: spec.clone(),
-        }))?;
+        let spec = made["conversation"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
+        let warning = self.start_from_brief(
+            ctx,
+            &project,
+            &feature,
+            &spec,
+            &title,
+            &brief,
+            &format!("solo session {name}"),
+        );
+        self.conv_mut(conv)?
+            .append(CEvent::Solo(SoloEvent::FeatureStarted {
+                feature: feature.clone(),
+                title,
+                conversation: spec.clone(),
+            }))?;
         Ok(json!({ "feature": feature, "conversation": spec, "warning": warning }))
     }
 
@@ -139,8 +156,19 @@ impl Studio {
         self.handover_checks(&project, &title)?;
         let made = self.new_feature_with(&project, &title, lead, Some(format!("conv:{conv}")))?;
         let feature = made["feature"].as_str().unwrap_or_default().to_string();
-        let spec = made["conversation"].as_str().unwrap_or_default().to_string();
-        let warning = self.start_from_brief(ctx, &project, &feature, &spec, &title, &brief, "the project conversation");
+        let spec = made["conversation"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
+        let warning = self.start_from_brief(
+            ctx,
+            &project,
+            &feature,
+            &spec,
+            &title,
+            &brief,
+            "the project conversation",
+        );
         Ok(json!({ "feature": feature, "conversation": spec, "warning": warning }))
     }
 
@@ -173,7 +201,10 @@ impl Studio {
         let Some(c) = self.convs.get(spec) else {
             return Some("the spec session is missing".into());
         };
-        if let Err(e) = std::fs::write(c.dir.join(BRIEF_PENDING), pending(project, feature, title, brief, from).to_string()) {
+        if let Err(e) = std::fs::write(
+            c.dir.join(BRIEF_PENDING),
+            pending(project, feature, title, brief, from).to_string(),
+        ) {
             return Some(format!("the brief could not be kept: {e}"));
         }
         self.run_pending_brief(ctx, spec)
@@ -184,9 +215,16 @@ impl Studio {
     fn run_pending_brief(&mut self, ctx: &Ctx, spec: &str) -> Option<String> {
         let dir = self.convs.get(spec)?.dir.clone();
         let mark = dir.join(BRIEF_PENDING);
-        let mut pending: Value = serde_json::from_str(&std::fs::read_to_string(&mark).ok()?).ok()?;
+        let mut pending: Value =
+            serde_json::from_str(&std::fs::read_to_string(&mark).ok()?).ok()?;
         let s = |k: &str| pending[k].as_str().unwrap_or_default().to_string();
-        let (project, feature, text, message, brief) = (s("project"), s("feature"), s("text"), s("message"), s("brief"));
+        let (project, feature, text, message, brief) = (
+            s("project"),
+            s("feature"),
+            s("text"),
+            s("message"),
+            s("brief"),
+        );
         let outcome = (|| {
             let (_, f, wd) = self.feature_ctx(&project, &feature)?;
             let rel = format!("{}/brief.md", f.dir);
@@ -196,7 +234,8 @@ impl Studio {
                 .map_err(|e| format!("the brief could not be committed: {e}"))?;
             let first = if f.step == "constitution" {
                 // Specify runs on the brief once the constitution step is done.
-                std::fs::write(dir.join(BRIEF_NEXT), &brief).map_err(|e| format!("the brief could not be kept: {e}"))?;
+                std::fs::write(dir.join(BRIEF_NEXT), &brief)
+                    .map_err(|e| format!("the brief could not be kept: {e}"))?;
                 "/constitution".to_string()
             } else {
                 format!("/specify {brief}")
@@ -226,7 +265,11 @@ impl Studio {
         // A marker left in a spec session that has turns already (the engineer ran a step by
         // hand after a failure, or the marker outlived its first turn) is stale: never sent
         // again over work done (Phase 8 review).
-        for c in self.convs.values().filter(|c| c.state.kind == Kind::Spec && !c.state.turns.is_empty()) {
+        for c in self
+            .convs
+            .values()
+            .filter(|c| c.state.kind == Kind::Spec && !c.state.turns.is_empty())
+        {
             let mark = c.dir.join(BRIEF_PENDING);
             if mark.exists() && !c.state.busy {
                 let _ = std::fs::remove_file(&mark);
@@ -235,7 +278,9 @@ impl Studio {
         let waiting: Vec<String> = self
             .convs
             .iter()
-            .filter(|(_, c)| c.state.kind == Kind::Spec && !c.state.busy && c.state.turns.is_empty())
+            .filter(|(_, c)| {
+                c.state.kind == Kind::Spec && !c.state.busy && c.state.turns.is_empty()
+            })
             .filter(|(_, c)| {
                 std::fs::read_to_string(c.dir.join(BRIEF_PENDING))
                     .ok()
@@ -248,20 +293,28 @@ impl Studio {
             let _ = self.run_pending_brief(ctx, &id);
         }
         let step_of = |c: &super::conv::Conv| {
-            c.state
-                .feature
-                .as_ref()
-                .and_then(|f| self.project(&c.state.project).ok().and_then(|p| p.feature(f)).map(|f| f.step.clone()))
+            c.state.feature.as_ref().and_then(|f| {
+                self.project(&c.state.project)
+                    .ok()
+                    .and_then(|p| p.feature(f))
+                    .map(|f| f.step.clone())
+            })
         };
         let mut ready = Vec::new();
         for (id, c) in &self.convs {
-            if c.state.kind != Kind::Spec || c.state.busy || !c.dir.join(BRIEF_NEXT).exists() || c.dir.join(BRIEF_PENDING).exists() {
+            if c.state.kind != Kind::Spec
+                || c.state.busy
+                || !c.dir.join(BRIEF_NEXT).exists()
+                || c.dir.join(BRIEF_PENDING).exists()
+            {
                 continue;
             }
             match step_of(c).as_deref() {
                 Some("constitution") => {}
                 // Specify runs on the brief only at its own step (Phase 8 review).
-                Some("specify") if c.state.turns.iter().any(|t| t.reply.is_some()) => ready.push(id.clone()),
+                Some("specify") if c.state.turns.iter().any(|t| t.reply.is_some()) => {
+                    ready.push(id.clone())
+                }
                 Some("specify") => {}
                 // Past specify (the engineer specified by hand): the brief has nothing left to do.
                 _ => {
@@ -286,7 +339,8 @@ impl Studio {
                 Err(e) => {
                     // Kept aside, not lost: tried again at the next start (Phase 8 review).
                     let _ = std::fs::rename(&mark, set_aside(&mark));
-                    self.console.push(format!("{id}: specify could not start: {e}"));
+                    self.console
+                        .push(format!("{id}: specify could not start: {e}"));
                 }
             }
         }
@@ -300,7 +354,10 @@ impl Studio {
                 let _ = std::fs::rename(&aside, c.dir.join(BRIEF_NEXT));
             }
             let mark = c.dir.join(BRIEF_PENDING);
-            if let Some(mut v) = std::fs::read_to_string(&mark).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok()) {
+            if let Some(mut v) = std::fs::read_to_string(&mark)
+                .ok()
+                .and_then(|t| serde_json::from_str::<Value>(&t).ok())
+            {
                 if !v["failed"].is_null() {
                     v["failed"] = Value::Null;
                     let _ = std::fs::write(&mark, v.to_string());
@@ -320,7 +377,12 @@ impl Studio {
         let Some((title, brief, _)) = c.state.solo.as_ref().and_then(|s| s.starting.clone()) else {
             return;
         };
-        let name = c.state.solo.as_ref().and_then(|s| s.name.clone()).unwrap_or_else(|| "session".into());
+        let name = c
+            .state
+            .solo
+            .as_ref()
+            .and_then(|s| s.name.clone())
+            .unwrap_or_else(|| "session".into());
         let project = c.state.project.clone();
         let origin = format!("solo:{id}");
         let Some(f) = self.project(&project).ok().and_then(|p| {
@@ -334,7 +396,13 @@ impl Studio {
         let spec = f.conversation.clone().unwrap_or_default();
         if let Some(sc) = self.convs.get(&spec) {
             if sc.state.turns.is_empty() && !sc.dir.join(BRIEF_PENDING).exists() {
-                let p = pending(&project, f.name(), &title, &brief, &format!("solo session {name}"));
+                let p = pending(
+                    &project,
+                    f.name(),
+                    &title,
+                    &brief,
+                    &format!("solo session {name}"),
+                );
                 let _ = std::fs::write(sc.dir.join(BRIEF_PENDING), p.to_string());
             }
         }

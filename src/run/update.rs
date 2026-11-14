@@ -571,7 +571,12 @@ pub fn watch(
             let m = merges.iter().find(|(c, _, _)| *c == sha);
             let from = m.map(|(_, f, _)| f.clone());
             let from_kind = m.map(|(_, _, k)| *k).unwrap_or(From::Outside);
-            MovedCommit { sha, subject, from, from_kind }
+            MovedCommit {
+                sha,
+                subject,
+                from,
+                from_kind,
+            }
         })
         .collect();
     let since = match reconciled.filter(|r| git::is_ancestor(repo, r, &tip)) {

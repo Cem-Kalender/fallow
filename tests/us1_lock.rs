@@ -356,7 +356,10 @@ fn a_folder_without_git_gets_its_first_commit_then_features_their_branches() {
     let c = sreq(tx, Req::Conversation { id: conv.clone() }).unwrap();
     let wd = c["workdir"].as_str().unwrap();
     assert!(wd.contains("worktrees"), "{wd}");
-    assert!(!folder.join("specs/001-plots/spec.md").exists(), "never in the folder itself");
+    assert!(
+        !folder.join("specs/001-plots/spec.md").exists(),
+        "never in the folder itself"
+    );
     let d = sreq(
         tx,
         Req::Doc {

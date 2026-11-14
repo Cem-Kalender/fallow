@@ -20,7 +20,10 @@ fn sizes_per_project_and_deleting_what_is_no_longer_needed() {
 
     // 012 (FR-035): no project conversation is started any more; one from before 012 is
     // still kept data, and can be deleted.
-    let pid = ask(tx, Request::Data).unwrap()["projects"][0]["id"].as_str().unwrap().to_string();
+    let pid = ask(tx, Request::Data).unwrap()["projects"][0]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
     sreq(tx, Req::ProjectConversation { project: pid }).unwrap();
     let d = ask(tx, Request::Data).unwrap();
     let p = &d["projects"][0];

@@ -1158,13 +1158,23 @@ mod tests {
         let pos = |a: &[String], flag: &str| a.iter().position(|x| x == flag).unwrap();
         let off = args(&call());
         let d = pos(&off, "--disallowedTools");
-        assert!(off[d + 1..].iter().take_while(|x| !x.starts_with("--")).any(|x| x == "WebFetch"));
+        assert!(
+            off[d + 1..]
+                .iter()
+                .take_while(|x| !x.starts_with("--"))
+                .any(|x| x == "WebFetch")
+        );
         let mut c = call();
         c.web = true;
         let on = args(&c);
         let al = pos(&on, "--allowedTools");
-        let allowed: Vec<&String> = on[al + 1..].iter().take_while(|x| !x.starts_with("--")).collect();
-        assert!(allowed.iter().any(|x| *x == "WebFetch") && allowed.iter().any(|x| *x == "WebSearch"));
+        let allowed: Vec<&String> = on[al + 1..]
+            .iter()
+            .take_while(|x| !x.starts_with("--"))
+            .collect();
+        assert!(
+            allowed.iter().any(|x| *x == "WebFetch") && allowed.iter().any(|x| *x == "WebSearch")
+        );
         assert!(!on.contains(&"--input-format".to_string()));
     }
 
@@ -1176,7 +1186,8 @@ mod tests {
         std::fs::write(&img, b"\x89PNG").unwrap();
         let mut c = call();
         c.instruction = "Fallow step: assistant_turn
-look".into();
+look"
+            .into();
         c.attachments = vec![super::super::Attachment {
             path: img,
             media_type: "image/png".into(),
@@ -1187,8 +1198,11 @@ look".into();
         let text = stdin_text(&c);
         let v: Value = serde_json::from_str(text.trim()).unwrap();
         let content = v["message"]["content"].as_array().unwrap();
-        assert_eq!(content[0]["text"], "Fallow step: assistant_turn
-look");
+        assert_eq!(
+            content[0]["text"],
+            "Fallow step: assistant_turn
+look"
+        );
         assert_eq!(content[1]["type"], "image");
         assert_eq!(content[1]["source"]["media_type"], "image/png");
         assert_eq!(content[1]["source"]["data"], base64(b"\x89PNG"));
@@ -1198,7 +1212,13 @@ look");
 
     #[test]
     fn base64_is_rfc_4648() {
-        for (raw, enc) in [("", ""), ("f", "Zg=="), ("fo", "Zm8="), ("foo", "Zm9v"), ("foobar", "Zm9vYmFy")] {
+        for (raw, enc) in [
+            ("", ""),
+            ("f", "Zg=="),
+            ("fo", "Zm8="),
+            ("foo", "Zm9v"),
+            ("foobar", "Zm9vYmFy"),
+        ] {
             assert_eq!(base64(raw.as_bytes()), enc);
         }
     }
@@ -1206,7 +1226,9 @@ look");
     #[test]
     fn permission_prompts_map_to_the_contracts_requests() {
         use super::super::RequestKind as K;
-        let r = |tool: &str, input: Value| permission_request(&json!({"tool_name": tool, "input": input, "tool_use_id": "t"}));
+        let r = |tool: &str, input: Value| {
+            permission_request(&json!({"tool_name": tool, "input": input, "tool_use_id": "t"}))
+        };
         let x = r("Bash", json!({"command": "npm test"}));
         assert_eq!((x.kind, x.command.as_deref()), (K::Run, Some("npm test")));
         assert_eq!(r("PowerShell", json!({"command": "ls"})).kind, K::Run);
@@ -1217,7 +1239,10 @@ look");
         let x = r("NotebookEdit", json!({"notebook_path": "n.ipynb"}));
         assert_eq!((x.kind, x.path.as_deref()), (K::Edit, Some("n.ipynb")));
         let x = r("WebFetch", json!({"url": "https://example.com"}));
-        assert_eq!((x.kind, x.url.as_deref()), (K::Web, Some("https://example.com")));
+        assert_eq!(
+            (x.kind, x.url.as_deref()),
+            (K::Web, Some("https://example.com"))
+        );
         let x = r("WebSearch", json!({"query": "rust"}));
         assert_eq!((x.kind, x.query.as_deref()), (K::Web, Some("rust")));
         // A tool Fallow does not know, or an input without the field it needs, is Other.
@@ -1225,13 +1250,21 @@ look");
         assert_eq!(r("Bash", json!({})).kind, K::Other);
         assert_eq!(r("Edit", json!({"path": "a"})).kind, K::Other);
         let raw = json!({"tool_name": "Bash", "input": {"command": "x"}});
-        assert_eq!(permission_reply(true, "", &raw), json!({"behavior": "allow", "updatedInput": {"command": "x"}}));
-        assert_eq!(permission_reply(false, "no", &raw), json!({"behavior": "deny", "message": "no"}));
+        assert_eq!(
+            permission_reply(true, "", &raw),
+            json!({"behavior": "allow", "updatedInput": {"command": "x"}})
+        );
+        assert_eq!(
+            permission_reply(false, "no", &raw),
+            json!({"behavior": "deny", "message": "no"})
+        );
     }
 
     #[test]
     fn web_tool_uses_are_web_activity() {
-        let e = tool_call(&json!({"id": "w", "name": "WebFetch", "input": {"url": "https://example.com", "prompt": "title"}}));
+        let e = tool_call(
+            &json!({"id": "w", "name": "WebFetch", "input": {"url": "https://example.com", "prompt": "title"}}),
+        );
         match e {
             Event::ToolCall { kind, summary, .. } => {
                 assert_eq!(kind, ToolKind::Web);
@@ -1240,14 +1273,17 @@ look");
             _ => unreachable!(),
         }
         match tool_call(&json!({"id": "s", "name": "WebSearch", "input": {"query": "rust"}})) {
-            Event::ToolCall { kind, summary, .. } => assert_eq!((kind, summary.as_str()), (ToolKind::Web, "Searched rust")),
+            Event::ToolCall { kind, summary, .. } => {
+                assert_eq!((kind, summary.as_str()), (ToolKind::Web, "Searched rust"))
+            }
             _ => unreachable!(),
         }
     }
 
     #[test]
     fn settings_and_tools_follow_the_kind() {
-        let after = |a: &[String], flag: &str| a[a.iter().position(|x| x == flag).unwrap() + 1].clone();
+        let after =
+            |a: &[String], flag: &str| a[a.iter().position(|x| x == flag).unwrap() + 1].clone();
         // An unattended kind: no settings source, no hooks, a model always, no web, no edits
         // for a checker.
         let mut c = call();
@@ -1276,23 +1312,50 @@ look");
         assert_eq!(after(&a, "--model"), "sonnet");
         // Claude Code's own settings files are never editable.
         let d = a.iter().position(|x| x == "--disallowedTools").unwrap();
-        assert!(a[d + 1..].iter().any(|x| x == "Write(.claude/settings.local.json)"));
+        assert!(
+            a[d + 1..]
+                .iter()
+                .any(|x| x == "Write(.claude/settings.local.json)")
+        );
         // FR-043: no allow rule for the read tools beside their ask rules.
         let al = a.iter().position(|x| x == "--allowedTools").unwrap();
-        let allowed: Vec<&String> = a[al + 1..].iter().take_while(|x| !x.starts_with("--")).collect();
-        assert!(!allowed.iter().any(|x| matches!(x.as_str(), "Read" | "Grep" | "Glob")), "{allowed:?}");
+        let allowed: Vec<&String> = a[al + 1..]
+            .iter()
+            .take_while(|x| !x.starts_with("--"))
+            .collect();
+        assert!(
+            !allowed
+                .iter()
+                .any(|x| matches!(x.as_str(), "Read" | "Grep" | "Glob")),
+            "{allowed:?}"
+        );
     }
 
     #[test]
     fn the_read_tools_are_reads_with_their_paths_and_patterns() {
         use super::super::RequestKind;
         let r = permission_request(&json!({"tool_name": "Read", "input": {"file_path": "a.txt"}}));
-        assert_eq!((r.kind, r.path.as_deref()), (RequestKind::Read, Some("a.txt")));
+        assert_eq!(
+            (r.kind, r.path.as_deref()),
+            (RequestKind::Read, Some("a.txt"))
+        );
         let r = permission_request(&json!({"tool_name": "Read", "input": {}}));
-        assert_eq!(r.kind, RequestKind::Other, "a read without its file is not judged");
-        let r = permission_request(&json!({"tool_name": "Grep", "input": {"pattern": "x", "path": "src", "glob": "*.rs"}}));
-        assert_eq!((r.kind, r.path.as_deref(), r.query.as_deref()), (RequestKind::Read, Some("src"), Some("*.rs")));
+        assert_eq!(
+            r.kind,
+            RequestKind::Other,
+            "a read without its file is not judged"
+        );
+        let r = permission_request(
+            &json!({"tool_name": "Grep", "input": {"pattern": "x", "path": "src", "glob": "*.rs"}}),
+        );
+        assert_eq!(
+            (r.kind, r.path.as_deref(), r.query.as_deref()),
+            (RequestKind::Read, Some("src"), Some("*.rs"))
+        );
         let r = permission_request(&json!({"tool_name": "Glob", "input": {"pattern": "**/*.md"}}));
-        assert_eq!((r.kind, r.path, r.query.as_deref()), (RequestKind::Read, None, Some("**/*.md")));
+        assert_eq!(
+            (r.kind, r.path, r.query.as_deref()),
+            (RequestKind::Read, None, Some("**/*.md"))
+        );
     }
 }

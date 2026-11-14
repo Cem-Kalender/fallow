@@ -38,7 +38,15 @@ fn a_chat_turn_goes_first_and_the_loop_waits_for_a_slot() {
 
     // The engineer asks the lead something while T001 holds the only slot: the turn starts.
     // 012 (FR-035): the project conversation is retired; the lead's turns run in a spec session.
-    let pc = sreq(tx, Req::NewFeature { project, title: "Question".into(), lead: None }).unwrap();
+    let pc = sreq(
+        tx,
+        Req::NewFeature {
+            project,
+            title: "Question".into(),
+            lead: None,
+        },
+    )
+    .unwrap();
     let conv = pc["conversation"].as_str().unwrap().to_string();
     sreq(
         tx,

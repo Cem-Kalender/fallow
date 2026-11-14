@@ -820,11 +820,16 @@ impl Engine {
                             event: crate::agent::Event::ToolResult { id, .. },
                             ..
                         } => {
-                            let done = self.studio.convs.get_mut(conv).and_then(|c| c.open_call.as_mut()).is_some_and(|o| {
-                                // A command without an id waits for its turn's end (review, 5).
-                                o.ids.retain(|x| x != id);
-                                o.ids.is_empty()
-                            });
+                            let done = self
+                                .studio
+                                .convs
+                                .get_mut(conv)
+                                .and_then(|c| c.open_call.as_mut())
+                                .is_some_and(|o| {
+                                    // A command without an id waits for its turn's end (review, 5).
+                                    o.ids.retain(|x| x != id);
+                                    o.ids.is_empty()
+                                });
                             done.then(|| conv.clone())
                         }
                         crate::studio::Note::TurnDone { conv, .. } => Some(conv.clone()),
@@ -835,7 +840,8 @@ impl Engine {
                     }
                     let done = matches!(
                         note,
-                        crate::studio::Note::TurnDone { .. } | crate::studio::Note::GatesDone { .. }
+                        crate::studio::Note::TurnDone { .. }
+                            | crate::studio::Note::GatesDone { .. }
                     );
                     self.studio.note(note);
                     if done {
@@ -1863,7 +1869,12 @@ impl Engine {
         }
         // 012 (R-10, T051): a solo session's commits Fallow saw its commands make (its squashes
         // among them), on the same repository.
-        merges.extend(self.studio.session_commits(&r.state.repo).into_iter().map(|(c, name)| (c, name, From::Session)));
+        merges.extend(
+            self.studio
+                .session_commits(&r.state.repo)
+                .into_iter()
+                .map(|(c, name)| (c, name, From::Session)),
+        );
         let (tx, repo, feature, target, reconciled, scratch) = (
             self.ctx.tx.clone(),
             r.state.repo.clone(),
@@ -3655,7 +3666,12 @@ impl Engine {
     fn file_versions(&self, project: &str) -> Result<Vec<crate::studio::files::Version>, String> {
         let mut v = self.versions_of(project, None)?;
         // 012 (FR-019): each open session's working copy.
-        let sessions = self.studio.store.get(project).map(|p| p.sessions.clone()).unwrap_or_default();
+        let sessions = self
+            .studio
+            .store
+            .get(project)
+            .map(|p| p.sessions.clone())
+            .unwrap_or_default();
         for s in sessions {
             if let Ok(x) = self.file_version(project, &format!("solo:{s}")) {
                 v.push(x);
@@ -3760,7 +3776,10 @@ impl Engine {
         let mut started = Vec::new();
         for (conv, qid, text) in self.studio.waiting_ready() {
             let refs = self.file_refs(&conv, &text);
-            if let Some(n) = self.studio.send_waiting(&self.ctx, &conv, &qid, &text, refs) {
+            if let Some(n) = self
+                .studio
+                .send_waiting(&self.ctx, &conv, &qid, &text, refs)
+            {
                 started.push((conv, n));
             }
         }
@@ -3997,14 +4016,16 @@ impl Engine {
             | Req::SetStep { project, .. }
             | Req::Dismiss { project, .. }
             | Req::GitChanges { project } => Some(project.clone()),
-            Req::Agents { project } | Req::Pipelines { project } | Req::CheckPipeline { project, .. } => {
-                project.clone()
-            }
+            Req::Agents { project }
+            | Req::Pipelines { project }
+            | Req::CheckPipeline { project, .. } => project.clone(),
             Req::PutAgent { scope, .. }
             | Req::PutAgentFields { scope, .. }
             | Req::DeleteAgent { scope, .. }
             | Req::PutPipeline { scope, .. }
-            | Req::DeletePipeline { scope, .. } => scope.strip_prefix("project:").map(str::to_string),
+            | Req::DeletePipeline { scope, .. } => {
+                scope.strip_prefix("project:").map(str::to_string)
+            }
             Req::Conversation { id } => conv(id),
             Req::Say { conv: c, .. }
             | Req::Cancel { conv: c }
@@ -4061,10 +4082,12 @@ impl Engine {
             }
         };
         match kind {
-            crate::project::Kind::Git if !open && new_work && self.studio.setup_left(p) => Some(format!(
-                "{} is not set up yet: give its features their branches first",
-                p.name
-            )),
+            crate::project::Kind::Git if !open && new_work && self.studio.setup_left(p) => {
+                Some(format!(
+                    "{} is not set up yet: give its features their branches first",
+                    p.name
+                ))
+            }
             crate::project::Kind::Git | crate::project::Kind::Missing => None,
             _ if open => None,
             crate::project::Kind::NeedsMove => Some(format!(
@@ -4072,7 +4095,10 @@ impl Engine {
                 p.name
             )),
             crate::project::Kind::Unknown => Some(crate::project::GIT_NEEDED.to_string()),
-            _ => Some(format!("{} is not a git repository yet: make it one first", p.name)),
+            _ => Some(format!(
+                "{} is not a git repository yet: make it one first",
+                p.name
+            )),
         }
     }
 
@@ -4164,7 +4190,9 @@ impl Engine {
                 project,
                 agent,
                 text,
-            } => self.studio.new_session(&self.ctx, &project, agent, &text, Vec::new()),
+            } => self
+                .studio
+                .new_session(&self.ctx, &project, agent, &text, Vec::new()),
             Req::SessionMode { session, mode } => self.studio.set_solo_mode(&session, &mode),
             Req::Sessions { project } => self.studio.list_sessions(&project),
             Req::RenameSession { session, name } => self.studio.rename_session(&session, &name),
@@ -4182,19 +4210,42 @@ impl Engine {
             } => self.studio.undo_turns(&session, turn, confirmed),
             Req::SoloChanges { session } => self.studio.solo_changes(&session),
             Req::GitChanges { project } => self.git_changes(&project),
-            Req::FeatureDraft { session, suggestion } => self.studio.feature_draft(&session, suggestion),
-            Req::FeatureFromSession { session, title, brief, lead } => {
-                self.studio.feature_from_session(&self.ctx, &session, &title, &brief, lead)
-            }
-            Req::FeatureFromConversation { conv, title, brief, lead } => {
-                self.studio.feature_from_conversation(&self.ctx, &conv, &title, &brief, lead)
-            }
+            Req::FeatureDraft {
+                session,
+                suggestion,
+            } => self.studio.feature_draft(&session, suggestion),
+            Req::FeatureFromSession {
+                session,
+                title,
+                brief,
+                lead,
+            } => self
+                .studio
+                .feature_from_session(&self.ctx, &session, &title, &brief, lead),
+            Req::FeatureFromConversation {
+                conv,
+                title,
+                brief,
+                lead,
+            } => self
+                .studio
+                .feature_from_conversation(&self.ctx, &conv, &title, &brief, lead),
             Req::SoloGates { session } => self.studio.run_solo_gates(&self.ctx, &session),
-            Req::SoloAttach { session, name, bytes } => self.studio.solo_attach(&self.ctx, &session, &name, &bytes),
+            Req::SoloAttach {
+                session,
+                name,
+                bytes,
+            } => self.studio.solo_attach(&self.ctx, &session, &name, &bytes),
             Req::SoloAttachment { session, sha } => self.studio.solo_attachment(&session, &sha),
-            Req::SoloSay { session, text, attachments } => {
+            Req::SoloSay {
+                session,
+                text,
+                attachments,
+            } => {
                 let refs = self.file_refs(&session, &text);
-                let mut out = self.studio.solo_say_with(&self.ctx, &session, &text, refs, &attachments);
+                let mut out =
+                    self.studio
+                        .solo_say_with(&self.ctx, &session, &text, refs, &attachments);
                 for (c, n) in self.send_waiting() {
                     if let (true, Ok(v)) = (c == session, out.as_mut()) {
                         if v.get("turn").is_none() {
@@ -4204,17 +4255,31 @@ impl Engine {
                 }
                 out
             }
-            Req::SoloQueue { session, id, text, remove, send } => {
+            Req::SoloQueue {
+                session,
+                id,
+                text,
+                remove,
+                send,
+            } => {
                 let out = self.studio.solo_queue(&session, &id, text, remove, send);
                 self.send_waiting();
                 out
             }
             Req::SoloWeb { session, on } => self.studio.solo_web(&self.ctx, &session, on),
-            Req::CloseSession { session, choice, confirmed, digest } => {
-                self.studio.close_session(&session, choice.as_deref(), confirmed, digest.as_deref())
+            Req::CloseSession {
+                session,
+                choice,
+                confirmed,
+                digest,
+            } => {
+                self.studio
+                    .close_session(&session, choice.as_deref(), confirmed, digest.as_deref())
             }
             Req::RemoveCopy { session, confirmed } => self.studio.remove_copy(&session, confirmed),
-            Req::DeleteSession { session, confirmed } => self.studio.delete_session(&session, confirmed),
+            Req::DeleteSession { session, confirmed } => {
+                self.studio.delete_session(&session, confirmed)
+            }
             Req::Commands { conv } => self.studio.commands(&conv),
             Req::SetMode { conv, mode } => self.studio.set_mode(&conv, mode),
             Req::Approve {
@@ -4270,9 +4335,8 @@ impl Engine {
                 Ok(json!({ "editor": crate::studio::files::editor(&self.studio.data) }))
             }
             Req::GetTheme => Ok(json!({ "theme": crate::studio::files::theme(&self.studio.data) })),
-            Req::SetTheme { theme } => {
-                crate::studio::files::set_theme(&self.studio.data, &theme).map(|t| json!({ "theme": t }))
-            }
+            Req::SetTheme { theme } => crate::studio::files::set_theme(&self.studio.data, &theme)
+                .map(|t| json!({ "theme": t })),
             Req::SetEditor {
                 editor,
                 command,
@@ -4651,7 +4715,11 @@ impl Engine {
         }
         git::create_branch(&p.path, &build, &prep.commit)?;
         let mut notices = Vec::new();
-        let squad = match git::show(&p.path, &prep.commit, &p.in_root(crate::config::squad::SQUAD_FILE)) {
+        let squad = match git::show(
+            &p.path,
+            &prep.commit,
+            &p.in_root(crate::config::squad::SQUAD_FILE),
+        ) {
             Ok(Some(text)) => Squad::parse(crate::config::squad::SQUAD_FILE, &text, &mut notices),
             _ => Squad::parse(crate::config::squad::SQUAD_FILE, "", &mut notices),
         };
@@ -4979,7 +5047,10 @@ impl Engine {
                         | Req::FeatureDraft { .. }
                         | Req::SoloAttachment { .. }
                         | Req::GitScan { .. }
-                        | Req::Move { confirmed: false, .. }
+                        | Req::Move {
+                            confirmed: false,
+                            ..
+                        }
                         | Req::CheckRemote { .. }
                         | Req::Conversation { .. }
                         | Req::Feature { .. }

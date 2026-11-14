@@ -214,27 +214,60 @@ const SESSION_READ: [&str; 6] = [
 /// search that follows git's ignore rules leaves them out.
 pub fn session_files(dir: &Path, under: &str) -> Option<Vec<String>> {
     let mut a: Vec<&str> = SESSION_READ.to_vec();
-    a.extend(["ls-files", "-z", "--cached", "--others", "--exclude-standard", "--"]);
+    a.extend([
+        "ls-files",
+        "-z",
+        "--cached",
+        "--others",
+        "--exclude-standard",
+        "--",
+    ]);
     if !under.is_empty() {
         a.push(under);
     }
     let out = git(dir, &a).ok()?;
-    Some(out.split('\0').filter(|s| !s.is_empty()).map(str::to_string).collect())
+    Some(
+        out.split('\0')
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .collect(),
+    )
 }
 
 /// 012 (R-18): whether `path` (a file or folder) is in `dir`'s `HEAD` as it is in the folder:
 /// committed, and not changed since.
 pub fn committed_as_is(dir: &Path, path: &str) -> bool {
-    let at_head = git(dir, &["--literal-pathspecs", "ls-tree", "--name-only", "HEAD", "--", path])
-        .is_ok_and(|s| !s.trim().is_empty());
+    let at_head = git(
+        dir,
+        &[
+            "--literal-pathspecs",
+            "ls-tree",
+            "--name-only",
+            "HEAD",
+            "--",
+            path,
+        ],
+    )
+    .is_ok_and(|s| !s.trim().is_empty());
     let untracked = git(
         dir,
-        &["--literal-pathspecs", "ls-files", "--others", "--exclude-standard", "--", path],
+        &[
+            "--literal-pathspecs",
+            "ls-files",
+            "--others",
+            "--exclude-standard",
+            "--",
+            path,
+        ],
     )
     .map_or(true, |s| !s.trim().is_empty());
     at_head
         && !untracked
-        && git(dir, &["--literal-pathspecs", "diff", "--quiet", "HEAD", "--", path]).is_ok()
+        && git(
+            dir,
+            &["--literal-pathspecs", "diff", "--quiet", "HEAD", "--", path],
+        )
+        .is_ok()
 }
 
 /// 012 (FR-043): whether git ignores `path` in a session's working copy (exit 0); an error
@@ -246,7 +279,11 @@ pub fn is_ignored(dir: &Path, path: &str) -> bool {
 /// Whether git ignores `path` in `dir`, or `None` when git could not tell (an error).
 pub fn ignore_state(dir: &Path, path: &str) -> Option<bool> {
     // `check-ignore` refuses `--literal-pathspecs`: it reads `path` as a path anyway.
-    let mut a: Vec<&str> = SESSION_READ.iter().copied().filter(|f| *f != "--literal-pathspecs").collect();
+    let mut a: Vec<&str> = SESSION_READ
+        .iter()
+        .copied()
+        .filter(|f| *f != "--literal-pathspecs")
+        .collect();
     a.extend(["check-ignore", "-q", "--", path]);
     let status = crate::platform::command("git")
         .args(&a)
@@ -266,12 +303,25 @@ pub fn ignore_state(dir: &Path, path: &str) -> Option<bool> {
 /// (an ignored folder as one entry, `dir/`).
 pub fn session_ignored(dir: &Path, under: &str) -> Option<Vec<String>> {
     let mut a: Vec<&str> = SESSION_READ.to_vec();
-    a.extend(["ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--directory", "--"]);
+    a.extend([
+        "ls-files",
+        "-z",
+        "--others",
+        "--ignored",
+        "--exclude-standard",
+        "--directory",
+        "--",
+    ]);
     if !under.is_empty() {
         a.push(under);
     }
     let out = git(dir, &a).ok()?;
-    Some(out.split('\0').filter(|s| !s.is_empty()).map(str::to_string).collect())
+    Some(
+        out.split('\0')
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .collect(),
+    )
 }
 
 /// `files_between`, every name as it is (`-z`: never quoted), to match `session_changes`.
@@ -1809,7 +1859,12 @@ fn commit_index(wt: &Path, branch: &str, message: &str) -> Result<Option<String>
 /// 012 (R-12): a detached worktree at `commit`, without hooks or LFS download (a gate run).
 pub fn worktree_add_detached_nohooks(repo: &Path, dir: &Path, commit: &str) -> Result<(), String> {
     let d = dir.display().to_string();
-    git_nohooks(repo, &["worktree", "add", "-q", "--detach", &d, commit], &[]).map(|_| ())
+    git_nohooks(
+        repo,
+        &["worktree", "add", "-q", "--detach", &d, commit],
+        &[],
+    )
+    .map(|_| ())
 }
 
 /// Removes a worktree Fallow made, without hooks.
@@ -1852,7 +1907,18 @@ pub fn commits_oldest_first(dir: &Path, from: &str, to: &str) -> Vec<String> {
 pub fn files_of(dir: &Path, commit: &str) -> Vec<String> {
     git(
         dir,
-        &["-c", "core.quotePath=false", "diff-tree", "--no-commit-id", "--name-only", "-r", "-z", "-m", "--first-parent", commit],
+        &[
+            "-c",
+            "core.quotePath=false",
+            "diff-tree",
+            "--no-commit-id",
+            "--name-only",
+            "-r",
+            "-z",
+            "-m",
+            "--first-parent",
+            commit,
+        ],
     )
     .unwrap_or_default()
     .split('\0')
@@ -1872,19 +1938,25 @@ pub fn subjects(dir: &Path, range: &str) -> Vec<String> {
 
 /// 012 (R-10): the first-parent commits of `from..to`, newest first.
 pub fn first_parents(dir: &Path, from: &str, to: &str) -> Vec<String> {
-    git(dir, &["rev-list", "--first-parent", &format!("{from}..{to}")])
-        .unwrap_or_default()
-        .lines()
-        .map(str::to_string)
-        .collect()
+    git(
+        dir,
+        &["rev-list", "--first-parent", &format!("{from}..{to}")],
+    )
+    .unwrap_or_default()
+    .lines()
+    .map(str::to_string)
+    .collect()
 }
 
 /// The blob `path` has in `commit`, if any (R-11).
 pub fn blob_at(dir: &Path, commit: &str, path: &str) -> Option<String> {
-    git(dir, &["rev-parse", "-q", "--verify", &format!("{commit}:{path}")])
-        .ok()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
+    git(
+        dir,
+        &["rev-parse", "-q", "--verify", &format!("{commit}:{path}")],
+    )
+    .ok()
+    .map(|s| s.trim().to_string())
+    .filter(|s| !s.is_empty())
 }
 
 /// How many commits `to` has that `from` has not.
@@ -2007,24 +2079,58 @@ pub fn install_hint() -> &'static str {
 pub fn contained_elsewhere(repo: &Path, commit: &str, exclude: &str) -> bool {
     git(
         repo,
-        &["--no-optional-locks", "for-each-ref", "--format=%(refname)", "--contains", commit, "refs/heads", "refs/remotes"],
+        &[
+            "--no-optional-locks",
+            "for-each-ref",
+            "--format=%(refname)",
+            "--contains",
+            commit,
+            "refs/heads",
+            "refs/remotes",
+        ],
     )
-    .map(|out| out.lines().map(str::trim).any(|r| !r.is_empty() && !r.starts_with(exclude) && !r.ends_with("/HEAD")))
+    .map(|out| {
+        out.lines()
+            .map(str::trim)
+            .any(|r| !r.is_empty() && !r.starts_with(exclude) && !r.ends_with("/HEAD"))
+    })
     .unwrap_or(false)
 }
 
 /// 012 (R-14): the commits of `range` (`a..b`), oldest first, with their subjects.
 pub fn log_subjects(dir: &Path, range: &str) -> Vec<(String, String)> {
-    git(dir, &["--no-optional-locks", "log", "--reverse", "--format=%H %s", range])
-        .unwrap_or_default()
-        .lines()
-        .filter_map(|l| l.split_once(' ').map(|(a, b)| (a.to_string(), b.to_string())))
-        .collect()
+    git(
+        dir,
+        &[
+            "--no-optional-locks",
+            "log",
+            "--reverse",
+            "--format=%H %s",
+            range,
+        ],
+    )
+    .unwrap_or_default()
+    .lines()
+    .filter_map(|l| {
+        l.split_once(' ')
+            .map(|(a, b)| (a.to_string(), b.to_string()))
+    })
+    .collect()
 }
 
 /// 012 (R-14): a working copy's uncommitted paths and its ignored files, one by one.
 pub fn status_with_ignored(wt: &Path) -> Result<(Vec<String>, Vec<String>), String> {
-    let out = git(wt, &["--no-optional-locks", "status", "--porcelain=v1", "-z", "--ignored", "--untracked-files=all"])?;
+    let out = git(
+        wt,
+        &[
+            "--no-optional-locks",
+            "status",
+            "--porcelain=v1",
+            "-z",
+            "--ignored",
+            "--untracked-files=all",
+        ],
+    )?;
     let mut changed = Vec::new();
     let mut ignored = Vec::new();
     let mut parts = out.split('\0').filter(|p| !p.is_empty());
@@ -2050,11 +2156,22 @@ pub fn status_with_ignored(wt: &Path) -> Result<(Vec<String>, Vec<String>), Stri
 
 /// 012 (R-14): the refs under `prefix` with their commits.
 pub fn refs_under(dir: &Path, prefix: &str) -> Vec<(String, String)> {
-    git(dir, &["--no-optional-locks", "for-each-ref", "--format=%(refname) %(objectname)", prefix])
-        .unwrap_or_default()
-        .lines()
-        .filter_map(|l| l.split_once(' ').map(|(a, b)| (a.to_string(), b.to_string())))
-        .collect()
+    git(
+        dir,
+        &[
+            "--no-optional-locks",
+            "for-each-ref",
+            "--format=%(refname) %(objectname)",
+            prefix,
+        ],
+    )
+    .unwrap_or_default()
+    .lines()
+    .filter_map(|l| {
+        l.split_once(' ')
+            .map(|(a, b)| (a.to_string(), b.to_string()))
+    })
+    .collect()
 }
 
 /// 012 (R-14): deletes the local branch `branch`, without hooks.

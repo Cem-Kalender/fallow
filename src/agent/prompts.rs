@@ -67,7 +67,10 @@ pub fn assistant_turn(t: &AssistantTurn) -> String {
     if !t.undone.is_empty() {
         s.push_str("The engineer undid these turns: their changes are gone from the working copy. Do not build on them:\n");
         for (n, said) in t.undone {
-            s.push_str(&format!("- turn {n}: {}\n", said.lines().next().unwrap_or_default()));
+            s.push_str(&format!(
+                "- turn {n}: {}\n",
+                said.lines().next().unwrap_or_default()
+            ));
         }
         s.push('\n');
     }
@@ -625,9 +628,11 @@ be brief
 
 ",
         });
-        assert!(s.starts_with("Fallow step: lead_turn
+        assert!(s.starts_with(
+            "Fallow step: lead_turn
 
-The project's instructions for coding agents, from `AGENTS.md`"));
+The project's instructions for coding agents, from `AGENTS.md`"
+        ));
     }
 
     #[test]

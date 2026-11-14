@@ -62,11 +62,23 @@ fn a_missing_or_old_git_is_named_and_no_identity_stops_the_first_commit() {
     assert_eq!(g["ok"], true, "{g}");
     let added = sreq(tx, Req::AddProject { path: shop.clone() }).unwrap();
     let project = added["project"].as_str().unwrap().to_string();
-    sreq(tx, Req::Project { id: project.clone() }).unwrap();
+    sreq(
+        tx,
+        Req::Project {
+            id: project.clone(),
+        },
+    )
+    .unwrap();
     // While git is gone again, every project request answers so.
     unsafe { std::env::set_var("FALLOW_GIT_CHECK", root.join("no-such-git")) };
     ask(tx, Request::Git { check: true }).unwrap();
-    let err = sreq(tx, Req::Project { id: project.clone() }).unwrap_err();
+    let err = sreq(
+        tx,
+        Req::Project {
+            id: project.clone(),
+        },
+    )
+    .unwrap_err();
     assert!(err.contains("needs git"), "{err}");
     unsafe { std::env::remove_var("FALLOW_GIT_CHECK") };
     ask(tx, Request::Git { check: true }).unwrap();
@@ -75,11 +87,24 @@ fn a_missing_or_old_git_is_named_and_no_identity_stops_the_first_commit() {
     let plain = root.join("notes");
     std::fs::create_dir_all(&plain).unwrap();
     std::fs::write(plain.join("a.md"), "a\n").unwrap();
-    let added = sreq(tx, Req::AddProject { path: plain.clone() }).unwrap();
+    let added = sreq(
+        tx,
+        Req::AddProject {
+            path: plain.clone(),
+        },
+    )
+    .unwrap();
     let notes = added["project"].as_str().unwrap().to_string();
     let scan = sreq(tx, Req::GitScan { id: notes.clone() }).unwrap();
     assert_eq!(scan["identity"], false, "{scan}");
-    let err = sreq(tx, Req::GitInit { id: notes, gitignore: None }).unwrap_err();
+    let err = sreq(
+        tx,
+        Req::GitInit {
+            id: notes,
+            gitignore: None,
+        },
+    )
+    .unwrap_err();
     assert!(err.contains("git config --global user.name"), "{err}");
     assert!(!plain.join(".git").exists(), "nothing changed");
 }

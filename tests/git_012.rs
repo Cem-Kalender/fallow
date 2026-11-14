@@ -23,7 +23,10 @@ fn a_session_worktree_and_its_snapshots_run_no_hook_and_sign_nothing() {
     git(&repo, &["config", "commit.gpgsign", "true"]);
     let start = g::head(&repo).unwrap();
     g::worktree_add_new(&repo, &wt, "fallow/solo/s1", &start).unwrap();
-    assert!(g::worktree_add_new(&repo, &root.join("wt2"), "fallow/solo/s1", &start).is_err(), "a taken name is refused");
+    assert!(
+        g::worktree_add_new(&repo, &root.join("wt2"), "fallow/solo/s1", &start).is_err(),
+        "a taken name is refused"
+    );
     g::rename_branch_nohooks(&wt, "fallow/solo/s1", "fallow/solo/fix-it").unwrap();
     std::fs::write(wt.join("a.txt"), "changed\n").unwrap();
     std::fs::write(wt.join(".gitignore"), "build/\n").unwrap();
@@ -32,24 +35,40 @@ fn a_session_worktree_and_its_snapshots_run_no_hook_and_sign_nothing() {
     let c = g::snapshot(&wt, "fallow/solo/fix-it", "Fallow solo s1, turn 1: fix it")
         .unwrap()
         .expect("a commit");
-    assert!(hooks_ran(&root).is_empty(), "no hook ran: {:?}", hooks_ran(&root));
+    assert!(
+        hooks_ran(&root).is_empty(),
+        "no hook ran: {:?}",
+        hooks_ran(&root)
+    );
     let raw = git(&wt, &["cat-file", "-p", &c]);
     assert!(!raw.contains("gpgsig"), "not signed: {raw}");
-    assert_eq!(git(&wt, &["log", "-1", "--format=%s"]), "Fallow solo s1, turn 1: fix it");
+    assert_eq!(
+        git(&wt, &["log", "-1", "--format=%s"]),
+        "Fallow solo s1, turn 1: fix it"
+    );
     let files = git(&wt, &["show", "--name-only", "--format=", &c]);
-    assert!(files.contains("a.txt") && !files.contains("build/"), "ignore rules followed: {files}");
+    assert!(
+        files.contains("a.txt") && !files.contains("build/"),
+        "ignore rules followed: {files}"
+    );
     assert_eq!(g::rev(&repo, "refs/heads/fallow/solo/fix-it").unwrap(), c);
     // The engineer's folder and branch did not move.
     assert_eq!(g::head(&repo).unwrap(), start);
     assert_eq!(g::branch(&repo).as_deref(), Some("main"));
     // Nothing changed: no commit.
-    assert_eq!(g::snapshot(&wt, "fallow/solo/fix-it", "again").unwrap(), None);
+    assert_eq!(
+        g::snapshot(&wt, "fallow/solo/fix-it", "again").unwrap(),
+        None
+    );
     assert!(hooks_ran(&root).is_empty());
     // The control: an ordinary commit in the same repository does run the hooks.
     git(&repo, &["config", "commit.gpgsign", "false"]);
     git(&repo, &["commit", "-q", "--allow-empty", "-m", "control"]);
     let ran = hooks_ran(&root);
-    assert!(ran.iter().any(|h| h == "pre-commit") && ran.iter().any(|h| h == "post-commit"), "{ran:?}");
+    assert!(
+        ran.iter().any(|h| h == "pre-commit") && ran.iter().any(|h| h == "post-commit"),
+        "{ran:?}"
+    );
 }
 
 #[test]
@@ -60,7 +79,10 @@ fn a_snapshot_refuses_a_working_copy_off_its_branch() {
     git(&wt, &["checkout", "-q", "--detach"]);
     std::fs::write(wt.join("a.txt"), "x\n").unwrap();
     let e = g::snapshot(&wt, "fallow/solo/s2", "m").unwrap_err();
-    assert!(e.contains("not on the session's branch (it is on a detached commit)"), "{e}");
+    assert!(
+        e.contains("not on the session's branch (it is on a detached commit)"),
+        "{e}"
+    );
 }
 
 #[test]
@@ -84,7 +106,10 @@ fn refs_and_the_folders_status_are_read_without_a_lock() {
 #[test]
 fn the_identity_and_the_git_check() {
     let (_root, repo, _wt) = setup("g012-id");
-    assert_eq!(g::identity(&repo), Some(("t".into(), "t@example.invalid".into())));
+    assert_eq!(
+        g::identity(&repo),
+        Some(("t".into(), "t@example.invalid".into()))
+    );
     let c = g::git_check();
     assert!(c.ok, "this machine has git {:?}", c.found);
     assert_eq!(c.min, "2.38");

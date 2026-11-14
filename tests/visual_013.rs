@@ -44,7 +44,11 @@ fn us1_build() -> String {
         task_step("T001", &[("calc/__init__.py", "")], ""),
         handover_step(1, ""),
         task_step("T002", &[("calc/__init__.py", CALC_INIT)], ""),
-        task_step("T003", &[("tests/__init__.py", ""), ("tests/test_add.py", TEST_ADD)], ""),
+        task_step(
+            "T003",
+            &[("tests/__init__.py", ""), ("tests/test_add.py", TEST_ADD)],
+            "",
+        ),
         handover_step(2, ""),
     ]
     .concat()
@@ -66,7 +70,10 @@ fn session_steps() -> String {
 #[ignore]
 fn serve_the_013_demo() {
     let root = PathBuf::from(std::env::var("FALLOW_VISUAL_ROOT").expect("FALLOW_VISUAL_ROOT"));
-    let secs: u64 = std::env::var("FALLOW_VISUAL_SECS").ok().and_then(|s| s.parse().ok()).unwrap_or(1800);
+    let secs: u64 = std::env::var("FALLOW_VISUAL_SECS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(1800);
     std::fs::create_dir_all(root.join("config").join("pipelines")).unwrap();
     std::fs::write(root.join("config/pipelines/ask-me.toml"), ASK_ME).unwrap();
     let scenario = root.join("scenario.toml");
@@ -90,14 +97,23 @@ fn serve_the_013_demo() {
     wait_for(tx, a, "ready", |v| v["stage"] == "ready");
     let lab = repo_named(&root, "lab");
     let b = lock_calc_in(tx, &lab, Some("ask-me"), Some((5.0, 60)), None);
-    wait_for(tx, b, "the engineer asked", |v| !v["needs_engineer"].is_null());
+    wait_for(tx, b, "the engineer asked", |v| {
+        !v["needs_engineer"].is_null()
+    });
 
     let week = repo_named(&root, "week");
-    std::fs::write(week.join("week.js"), "module.exports = () => ['Mon','Tue','Wed','Thu','Fri','Sat'];\n").unwrap();
+    std::fs::write(
+        week.join("week.js"),
+        "module.exports = () => ['Mon','Tue','Wed','Thu','Fri','Sat'];\n",
+    )
+    .unwrap();
     git(&week, &["add", "."]);
     git(&week, &["commit", "-q", "-m", "week"]);
     git(&week, &["branch", "old"]);
-    let project = sreq(tx, Req::AddProject { path: week.clone() }).unwrap()["project"].as_str().unwrap().to_string();
+    let project = sreq(tx, Req::AddProject { path: week.clone() }).unwrap()["project"]
+        .as_str()
+        .unwrap()
+        .to_string();
     git(&week, &["add", "."]);
     git(&week, &["commit", "-q", "-m", "spec kit"]);
     let s = start_session(tx, &project, "fix the week");
@@ -105,7 +121,9 @@ fn serve_the_013_demo() {
     say_solo(tx, &s, "make it a feature");
     wait_turn(tx, &s, 2);
     say_solo(tx, &s, "delete the old branch");
-    wait_conv(tx, &s, "a command waiting", |v| !v["pending_approval"].is_null());
+    wait_conv(tx, &s, "a command waiting", |v| {
+        !v["pending_approval"].is_null()
+    });
     sreq(tx, Req::OpenSession { session: s.clone() }).unwrap();
 
     let web = fallow::service::http::Web::start(e.tx.clone(), "a".repeat(64)).unwrap();

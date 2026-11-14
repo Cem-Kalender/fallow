@@ -348,7 +348,9 @@ impl Studio {
         refs: Vec<prompts::FileRef>,
     ) -> Result<Value, String> {
         if text.trim() == "/close" {
-            return self.close_session(conv, None, false, None).map(|v| json!({ "close": v }));
+            return self
+                .close_session(conv, None, false, None)
+                .map(|v| json!({ "close": v }));
         }
         self.solo_turn(ctx, conv, text, refs, None, Vec::new())
     }
@@ -464,7 +466,8 @@ impl Studio {
         );
         // The project's instruction files: with a new agent session, and when they changed.
         let c = self.convs.get(conv).ok_or("there is no session")?;
-        let instr = agent::instructions::read(&wt, &agent::instructions::extra_at_head(&p.root_dir()));
+        let instr =
+            agent::instructions::read(&wt, &agent::instructions::extra_at_head(&p.root_dir()));
         let now: Vec<(String, String)> = instr
             .iter()
             .map(|i| (i.path.clone(), i.sha.clone()))
@@ -852,7 +855,17 @@ impl Studio {
                     (_, p, _) => format!("read {}", p.unwrap_or_default()),
                 };
                 let tool = req.tool.clone();
-                self.ask_engineer(conv, runtime, &tool, true, what, vec![why], raw, reply, None)
+                self.ask_engineer(
+                    conv,
+                    runtime,
+                    &tool,
+                    true,
+                    what,
+                    vec![why],
+                    raw,
+                    reply,
+                    None,
+                )
             }
             agent::RequestKind::Other => Err(format!(
                 "{} is not a tool Fallow can judge.",
@@ -888,10 +901,18 @@ impl Studio {
                 // What a request that changes the engineer's folder shows (FR-016, T037).
                 let facts = self.project(&c.state.project).ok().and_then(|p| {
                     super::refwatch::in_folder(&command, &p.path, &jc.wt).then(|| {
-                        super::refwatch::folder_facts(&p.path, &command, &jc.branch, &p.in_root(""), &jc.wt)
+                        super::refwatch::folder_facts(
+                            &p.path,
+                            &command,
+                            &jc.branch,
+                            &p.in_root(""),
+                            &jc.wt,
+                        )
                     })
                 });
-                self.ask_engineer(conv, runtime, &tool, false, command, reasons, raw, reply, facts)
+                self.ask_engineer(
+                    conv, runtime, &tool, false, command, reasons, raw, reply, facts,
+                )
             }
         }
     }
@@ -1199,8 +1220,7 @@ impl Studio {
     /// Not after a failure or a refused approval until the engineer says something, nor after a
     /// restart (held), nor while a commit is pending.
     pub fn waiting_ready(&self) -> Vec<(String, String, String)> {
-        self
-            .convs
+        self.convs
             .values()
             .filter(|c| !c.state.busy && !c.queue_hold)
             .filter_map(|c| {
@@ -1223,7 +1243,14 @@ impl Studio {
     /// Sends a waiting message as the next turn, with its images and the files its text names
     /// (`refs`, read now): the turn's number, or `None` when it still waits for a slot. A
     /// failure holds the queue until the engineer says something: not tried every second.
-    pub fn send_waiting(&mut self, ctx: &Ctx, conv: &str, qid: &str, text: &str, refs: Vec<prompts::FileRef>) -> Option<u32> {
+    pub fn send_waiting(
+        &mut self,
+        ctx: &Ctx,
+        conv: &str,
+        qid: &str,
+        text: &str,
+        refs: Vec<prompts::FileRef>,
+    ) -> Option<u32> {
         let attachments = self
             .convs
             .get(conv)
@@ -1232,7 +1259,10 @@ impl Studio {
             .map(|w| w.attachments.clone())
             .unwrap_or_default();
         // Checked again as they go: the kept bytes must still be the images attached (review).
-        let attachments = attachments.iter().map(|a| self.attachment_checked(conv, &a.sha)).collect::<Result<Vec<_>, _>>();
+        let attachments = attachments
+            .iter()
+            .map(|a| self.attachment_checked(conv, &a.sha))
+            .collect::<Result<Vec<_>, _>>();
         match attachments.and_then(|a| self.solo_turn(ctx, conv, text, refs, Some(qid), a)) {
             Ok(v) => v["turn"].as_u64().map(|n| n as u32),
             Err(e) => {
@@ -1257,15 +1287,27 @@ impl Studio {
             let Some(s) = c.state.solo.as_ref() else {
                 continue;
             };
-            if self.project(&c.state.project).map(|p| p.path != repo).unwrap_or(true) {
+            if self
+                .project(&c.state.project)
+                .map(|p| p.path != repo)
+                .unwrap_or(true)
+            {
                 continue;
             }
             let name = s.name.clone().unwrap_or_else(|| "session".into());
             for t in s.commits.values() {
-                out.extend(t.commits.iter().chain(t.commit.iter()).map(|k| (k.clone(), name.clone())));
+                out.extend(
+                    t.commits
+                        .iter()
+                        .chain(t.commit.iter())
+                        .map(|k| (k.clone(), name.clone())),
+                );
             }
             for o in &s.observed {
-                if o.how == crate::conversation::solo::How::Commits && o.n == Some(1) && o.commits.len() == 1 {
+                if o.how == crate::conversation::solo::How::Commits
+                    && o.n == Some(1)
+                    && o.commits.len() == 1
+                {
                     out.push((o.commits[0].clone(), name.clone()));
                 }
             }

@@ -251,8 +251,13 @@ mod tests {
 agent = \"assistant\"
 when = \"task\"
 on_fail = \"repair\"
-").unwrap_err();
-        assert!(e.iter().any(|x| x.contains("the assistant is not a pipeline step")), "{e:?}");
+")
+        .unwrap_err();
+        assert!(
+            e.iter()
+                .any(|x| x.contains("the assistant is not a pipeline step")),
+            "{e:?}"
+        );
     }
 
     fn p(text: &str) -> Result<Pipeline, Vec<String>> {

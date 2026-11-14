@@ -578,7 +578,19 @@ mod tests {
         // A conversation event still reads as itself.
         let m: Event = serde_json::from_str(r#"{"type":"mode_set","mode":"ask"}"#).unwrap();
         assert!(matches!(m, Event::ModeSet { .. }));
-        let created = logged(1, Event::ConversationCreated { kind: Kind::Solo, project: "shop".into(), feature: None, forked_from: None, workdir: "w".into(), lead: None, agent: Some("assistant".into()), origin: None });
+        let created = logged(
+            1,
+            Event::ConversationCreated {
+                kind: Kind::Solo,
+                project: "shop".into(),
+                feature: None,
+                forked_from: None,
+                workdir: "w".into(),
+                lead: None,
+                agent: Some("assistant".into()),
+                origin: None,
+            },
+        );
         let s = State::fold("s1", &[created, logged(2, e)]).unwrap();
         assert_eq!(s.solo.as_ref().unwrap().branch, "fallow/solo/fix");
         assert_eq!(s.agent.as_deref(), Some("assistant"));

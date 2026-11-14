@@ -34,7 +34,11 @@ struct Facts {
 impl Facts {
     /// Nothing to lose but undone turns.
     fn clean(&self) -> bool {
-        self.merged && self.files.is_empty() && self.ignored.is_empty() && self.unreadable.is_none() && self.head_off.is_empty()
+        self.merged
+            && self.files.is_empty()
+            && self.ignored.is_empty()
+            && self.unreadable.is_none()
+            && self.head_off.is_empty()
     }
 
     /// What the engineer is shown, fingerprinted: a choice is done only while it still holds.
@@ -66,7 +70,10 @@ impl Facts {
 /// The dependency or build folder a path lies in, counted rather than named (R-14, R-18).
 fn heavy_of(path: &str) -> Option<String> {
     let folders = path.rsplit_once('/').map(|(d, _)| d).unwrap_or("");
-    folders.split('/').find(|c| super::repo::HEAVY.contains(c)).map(str::to_string)
+    folders
+        .split('/')
+        .find(|c| super::repo::HEAVY.contains(c))
+        .map(str::to_string)
 }
 
 /// R-11: every commit not undone is in another local or remote-tracking ref, or the last squash
@@ -106,7 +113,9 @@ impl Studio {
         if !f.merged {
             f.commits = match &head {
                 Some(h) => git::log_subjects(&repo, &format!("{}..{h}", s.start_commit)),
-                None if linked => git::log_subjects(&s.worktree, &format!("{}..HEAD", s.start_commit)),
+                None if linked => {
+                    git::log_subjects(&s.worktree, &format!("{}..HEAD", s.start_commit))
+                }
                 None => Vec::new(),
             };
             let mine: Vec<&String> = f.commits.iter().map(|(c, _)| c).collect();
@@ -128,7 +137,10 @@ impl Studio {
             if git::head(&s.worktree).is_ok_and(|h| h != *tip) {
                 f.head_off = git::log_subjects(&s.worktree, &format!("{tip}..HEAD"));
                 if f.head_off.is_empty() {
-                    f.head_off.push((git::head(&s.worktree).unwrap_or_default(), "the copy is not on its branch".into()));
+                    f.head_off.push((
+                        git::head(&s.worktree).unwrap_or_default(),
+                        "the copy is not on its branch".into(),
+                    ));
                 }
             }
         }
@@ -157,7 +169,13 @@ impl Studio {
     ///
     /// A choice (and a confirmation of undone turns) carries the `digest` of the question it
     /// answers; when the session changed since, the question comes back instead (II).
-    pub fn close_session(&mut self, conv: &str, choice: Option<&str>, confirmed: bool, digest: Option<&str>) -> Result<Value, String> {
+    pub fn close_session(
+        &mut self,
+        conv: &str,
+        choice: Option<&str>,
+        confirmed: bool,
+        digest: Option<&str>,
+    ) -> Result<Value, String> {
         let c = self.convs.get(conv).ok_or("there is no session")?;
         let s = c.state.solo.as_ref().ok_or("not a session")?;
         if s.closed.is_some() {
@@ -183,20 +201,31 @@ impl Studio {
                 ch
             }
             None => {
-                if !f.clean() || (!f.undone.is_empty() && (!confirmed || digest != Some(now.as_str()))) {
+                if !f.clean()
+                    || (!f.undone.is_empty() && (!confirmed || digest != Some(now.as_str())))
+                {
                     return Ok(f.ask());
                 }
                 CloseChoice::Merged
             }
         };
-        self.conv_mut(conv)?.append(CEvent::Solo(SoloEvent::CloseStarted { choice, digest: Some(now) }))?;
+        self.conv_mut(conv)?
+            .append(CEvent::Solo(SoloEvent::CloseStarted {
+                choice,
+                digest: Some(now),
+            }))?;
         self.finish_close(conv, choice, false)
     }
 
     /// The close after its intent: also what a restart runs, skipping the steps already done.
     /// `restart`: finished after a restart, when the copy may have changed since the engineer
     /// was shown what closing would do.
-    fn finish_close(&mut self, conv: &str, choice: CloseChoice, restart: bool) -> Result<Value, String> {
+    fn finish_close(
+        &mut self,
+        conv: &str,
+        choice: CloseChoice,
+        restart: bool,
+    ) -> Result<Value, String> {
         let c = self.convs.get(conv).ok_or("there is no session")?;
         let s = c.state.solo.clone().ok_or("not a session")?;
         let p = self.project(&c.state.project)?.clone();
@@ -230,14 +259,20 @@ impl Studio {
             let committed = if !copy {
                 Err("git cannot read the working copy".to_string())
             } else {
-                git::status_with_ignored(&s.worktree).map(|(c, _)| c).and_then(|left| {
-                    if left.is_empty() {
-                        return Ok(());
-                    }
-                    self.settle(conv)?;
-                    let still = git::status_with_ignored(&s.worktree)?.0;
-                    if still.is_empty() { Ok(()) } else { Err(format!("still uncommitted: {}", still.join(", "))) }
-                })
+                git::status_with_ignored(&s.worktree)
+                    .map(|(c, _)| c)
+                    .and_then(|left| {
+                        if left.is_empty() {
+                            return Ok(());
+                        }
+                        self.settle(conv)?;
+                        let still = git::status_with_ignored(&s.worktree)?.0;
+                        if still.is_empty() {
+                            Ok(())
+                        } else {
+                            Err(format!("still uncommitted: {}", still.join(", ")))
+                        }
+                    })
             };
             // The copy's own commits must be on the branch kept: a detached or diverged HEAD
             // keeps the copy (review).
@@ -252,7 +287,8 @@ impl Studio {
                 }
             };
             if let Err(e) = committed.and_then(|()| on_branch()) {
-                self.console.push(format!("session {conv}: keeping its working copy: {e}"));
+                self.console
+                    .push(format!("session {conv}: keeping its working copy: {e}"));
                 how = Closed::KeptWithCopy;
             }
         }
@@ -273,7 +309,11 @@ impl Studio {
         let branch = matches!(how, Closed::Kept | Closed::KeptWithCopy).then(|| s.branch.clone());
         let worktree = (how == Closed::KeptWithCopy).then(|| s.worktree.clone());
         let c = self.conv_mut(conv)?;
-        c.append(CEvent::Solo(SoloEvent::SessionClosed { how, branch: branch.clone(), worktree: worktree.clone() }))?;
+        c.append(CEvent::Solo(SoloEvent::SessionClosed {
+            how,
+            branch: branch.clone(),
+            worktree: worktree.clone(),
+        }))?;
         c.tick();
         if let Ok(pm) = self.project_mut(&p.id) {
             if pm.last_session.as_deref() == Some(conv) {
@@ -297,7 +337,9 @@ impl Studio {
             return;
         };
         if let Err(e) = self.finish_close(id, choice, true) {
-            self.console.push(format!("session {id}: the close could not be finished: {e}"));
+            self.console.push(format!(
+                "session {id}: the close could not be finished: {e}"
+            ));
         }
     }
 
@@ -307,11 +349,16 @@ impl Studio {
         let c = self.convs.get(conv).ok_or("there is no session")?;
         let s = c.state.solo.clone().ok_or("not a session")?;
         if !matches!(s.closed, Some((Closed::KeptWithCopy, _, _))) || s.copy_removed {
-            return Err("only a session closed with its working copy kept has one to remove".into());
+            return Err(
+                "only a session closed with its working copy kept has one to remove".into(),
+            );
         }
         let lost = if s.worktree.join(".git").is_file() {
-            let (c, i) = git::status_with_ignored(&s.worktree)
-                .map_err(|e| format!("Fallow cannot read the working copy, so it cannot name what would be lost: {e}"))?;
+            let (c, i) = git::status_with_ignored(&s.worktree).map_err(|e| {
+                format!(
+                    "Fallow cannot read the working copy, so it cannot name what would be lost: {e}"
+                )
+            })?;
             [c, i].concat()
         } else if s.worktree.exists() {
             vec!["(git cannot read this copy: its files are not listed)".to_string()]
@@ -321,13 +368,19 @@ impl Studio {
         if !confirmed {
             return Err(format!(
                 "this needs the engineer's confirmation: it removes the working copy{}",
-                if lost.is_empty() { String::new() } else { format!(" and loses {}", lost.join(", ")) }
+                if lost.is_empty() {
+                    String::new()
+                } else {
+                    format!(" and loses {}", lost.join(", "))
+                }
             ));
         }
         let repo = self.project(&c.state.project)?.path.clone();
         git::worktree_remove_nohooks(&repo, &s.worktree);
         let c = self.conv_mut(conv)?;
-        c.append(CEvent::Solo(SoloEvent::CopyRemoved { files: lost.clone() }))?;
+        c.append(CEvent::Solo(SoloEvent::CopyRemoved {
+            files: lost.clone(),
+        }))?;
         c.tick();
         Ok(json!({ "files_lost": lost }))
     }
@@ -366,8 +419,14 @@ mod tests {
 
     #[test]
     fn dependency_folders_are_counted_not_named() {
-        assert_eq!(heavy_of("node_modules/x/index.js").as_deref(), Some("node_modules"));
-        assert_eq!(heavy_of("web/node_modules/a.js").as_deref(), Some("node_modules"));
+        assert_eq!(
+            heavy_of("node_modules/x/index.js").as_deref(),
+            Some("node_modules")
+        );
+        assert_eq!(
+            heavy_of("web/node_modules/a.js").as_deref(),
+            Some("node_modules")
+        );
         assert_eq!(heavy_of(".env"), None);
         assert_eq!(heavy_of("config/.env.local"), None);
         assert_eq!(heavy_of("build"), None, "a file named build is named");

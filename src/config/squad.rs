@@ -197,8 +197,10 @@ impl Squad {
             for (k, v) in t {
                 match (k.as_str(), v.as_array()) {
                     ("extra", Some(a)) => {
-                        instructions_extra =
-                            a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect()
+                        instructions_extra = a
+                            .iter()
+                            .filter_map(|x| x.as_str().map(str::to_string))
+                            .collect()
                     }
                     _ => notices.push(Notice {
                         file: file.into(),
@@ -370,7 +372,10 @@ other = 1
             &mut n,
         );
         assert_eq!(s.instructions_extra, ["docs/AGENT_NOTES.md"]);
-        assert!(n.iter().any(|x| x.message.contains("instructions.other")), "{n:?}");
+        assert!(
+            n.iter().any(|x| x.message.contains("instructions.other")),
+            "{n:?}"
+        );
     }
 
     #[test]

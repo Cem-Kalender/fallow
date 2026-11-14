@@ -84,6 +84,13 @@ process.stdout.write(JSON.stringify(Fallow.filesRead([
         eprintln!("node is not installed: the read list is not checked");
         return;
     };
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
-    assert_eq!(String::from_utf8(out.stdout).unwrap(), r#"["notes.txt","no-id.txt"]"#);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(out.stdout).unwrap(),
+        r#"["notes.txt","no-id.txt"]"#
+    );
 }

@@ -88,22 +88,33 @@ pub fn run(args: &[String]) -> Result<(), String> {
         )
     })?;
     let mut failed = Vec::new();
-    let one = |name: &'static str, unit: &'static str, f: fn(&Args) -> Result<(f64, f64), String>| {
-        move |a: &Args| f(a).map(|(v, b)| vec![(name, v, b, unit)])
-    };
+    let one =
+        |name: &'static str, unit: &'static str, f: fn(&Args) -> Result<(f64, f64), String>| {
+            move |a: &Args| f(a).map(|(v, b)| vec![(name, v, b, unit)])
+        };
     type Bench = Box<dyn Fn(&Args) -> Result<Vec<Measure>, String>>;
     let benches: Vec<(&str, Bench)> = vec![
         ("page ready", Box::new(one("page ready", "ms", ready))),
         ("idle memory", Box::new(one("idle memory", "MB", idle))),
-        ("running memory", Box::new(one("running memory", "MB", running))),
+        (
+            "running memory",
+            Box::new(one("running memory", "MB", running)),
+        ),
         ("solo_start", Box::new(solo_start)),
         ("solo_four", Box::new(solo_four)),
         ("refwatch_latency", Box::new(refwatch_latency)),
     ];
-    let chosen: Vec<&(&str, Bench)> = benches.iter().filter(|(n, _)| args.only.as_deref().is_none_or(|o| n.starts_with(o))).collect();
+    let chosen: Vec<&(&str, Bench)> = benches
+        .iter()
+        .filter(|(n, _)| args.only.as_deref().is_none_or(|o| n.starts_with(o)))
+        .collect();
     if chosen.is_empty() {
         let names: Vec<&str> = benches.iter().map(|(n, _)| *n).collect();
-        return Err(format!("bench: no benchmark is named like {:?}: {}", args.only.unwrap_or_default(), names.join(", ")));
+        return Err(format!(
+            "bench: no benchmark is named like {:?}: {}",
+            args.only.unwrap_or_default(),
+            names.join(", ")
+        ));
     }
     for (_, f) in chosen {
         let first = f(&args)?;
@@ -405,14 +416,23 @@ fn cookie_of(svc: &Service) -> Result<String, String> {
         .unwrap_or_default();
     let (_, head, _) = http(svc.port, "GET", &path_q, "", None)?;
     head.lines()
-        .find_map(|l| l.strip_prefix("Set-Cookie: ").or_else(|| l.strip_prefix("set-cookie: ")))
+        .find_map(|l| {
+            l.strip_prefix("Set-Cookie: ")
+                .or_else(|| l.strip_prefix("set-cookie: "))
+        })
         .and_then(|c| c.split(';').next())
         .map(str::to_string)
         .ok_or_else(|| "no cookie".to_string())
 }
 
 /// One JSON request to the service, its `value`.
-fn call(svc: &Service, cookie: &str, method: &str, path: &str, body: Value) -> Result<Value, String> {
+fn call(
+    svc: &Service,
+    cookie: &str,
+    method: &str,
+    path: &str,
+    body: Value,
+) -> Result<Value, String> {
     let (_, _, b) = http(svc.port, method, path, cookie, Some(&body))?;
     let v: Value = serde_json::from_str(&b).map_err(|e| format!("{path}: {e}: {b}"))?;
     if v["ok"] == false {
@@ -423,7 +443,12 @@ fn call(svc: &Service, cookie: &str, method: &str, path: &str, body: Value) -> R
 
 /// A service whose `claude` plays `scenario`, with up to four agents at once, and a project
 /// for `repo`: the service, its cookie and the project's id.
-fn solo_service(args: &Args, dir: &Path, scenario: &str, repo: &Path) -> Result<(Service, String, String), String> {
+fn solo_service(
+    args: &Args,
+    dir: &Path,
+    scenario: &str,
+    repo: &Path,
+) -> Result<(Service, String, String), String> {
     let sc = dir.join("scenario.toml");
     std::fs::write(&sc, scenario).map_err(|e| e.to_string())?;
     std::fs::write(
@@ -437,7 +462,13 @@ fn solo_service(args: &Args, dir: &Path, scenario: &str, repo: &Path) -> Result<
     .map_err(|e| e.to_string())?;
     let (svc, _) = start(args, dir)?;
     let cookie = cookie_of(&svc)?;
-    let p = call(&svc, &cookie, "POST", "/api/projects", json!({ "path": repo }))?["project"]
+    let p = call(
+        &svc,
+        &cookie,
+        "POST",
+        "/api/projects",
+        json!({ "path": repo }),
+    )?["project"]
         .as_str()
         .unwrap_or_default()
         .to_string();
@@ -447,7 +478,13 @@ fn solo_service(args: &Args, dir: &Path, scenario: &str, repo: &Path) -> Result<
 }
 
 /// Waits until `pred` holds for the session's view; the time it took.
-fn until(svc: &Service, cookie: &str, s: &str, t0: Instant, pred: impl Fn(&Value) -> bool) -> Result<f64, String> {
+fn until(
+    svc: &Service,
+    cookie: &str,
+    s: &str,
+    t0: Instant,
+    pred: impl Fn(&Value) -> bool,
+) -> Result<f64, String> {
     let end = t0 + Duration::from_secs(60);
     loop {
         let v = call(svc, cookie, "GET", &format!("/api/sessions/{s}"), json!({}))?;
@@ -471,16 +508,29 @@ fn solo_start(args: &Args) -> Result<Vec<Measure>, String> {
         if i % 100 == 0 {
             std::fs::create_dir_all(&d).map_err(|e| e.to_string())?;
         }
-        std::fs::write(d.join(format!("f{i}.txt")), format!("file {i}\n")).map_err(|e| e.to_string())?;
+        std::fs::write(d.join(format!("f{i}.txt")), format!("file {i}\n"))
+            .map_err(|e| e.to_string())?;
     }
     git(&r, &["add", "."])?;
     git(&r, &["commit", "-q", "-m", "ten thousand files"])?;
-    let scenario = "[[step]]\nkind = \"assistant_turn\"\nsleep_ms = 20000\noutput = { reply = \"done\" }\n";
+    let scenario =
+        "[[step]]\nkind = \"assistant_turn\"\nsleep_ms = 20000\noutput = { reply = \"done\" }\n";
     let (svc, cookie, p) = solo_service(args, &dir, scenario, &r)?;
     let t0 = Instant::now();
-    let v = call(&svc, &cookie, "POST", &format!("/api/projects/{p}/sessions"), json!({ "text": "Fix the week" }))?;
-    let s = v["session"].as_str().ok_or_else(|| format!("no session: {v}"))?.to_string();
-    let ms = until(&svc, &cookie, &s, t0, |v| v["busy"] == true || v["turns"].as_array().is_some_and(|t| !t.is_empty()))?;
+    let v = call(
+        &svc,
+        &cookie,
+        "POST",
+        &format!("/api/projects/{p}/sessions"),
+        json!({ "text": "Fix the week" }),
+    )?;
+    let s = v["session"]
+        .as_str()
+        .ok_or_else(|| format!("no session: {v}"))?
+        .to_string();
+    let ms = until(&svc, &cookie, &s, t0, |v| {
+        v["busy"] == true || v["turns"].as_array().is_some_and(|t| !t.is_empty())
+    })?;
     Ok(vec![("solo_start", ms, SOLO_START_MS, "ms")])
 }
 
@@ -494,22 +544,38 @@ fn solo_four(args: &Args) -> Result<Vec<Measure>, String> {
     let mut sessions = Vec::new();
     for i in 0..4 {
         let t0 = Instant::now();
-        let v = call(&svc, &cookie, "POST", &format!("/api/projects/{p}/sessions"), json!({ "text": format!("Look up the docs {i}") }))?;
-        let s = v["session"].as_str().ok_or_else(|| format!("no session: {v}"))?.to_string();
+        let v = call(
+            &svc,
+            &cookie,
+            "POST",
+            &format!("/api/projects/{p}/sessions"),
+            json!({ "text": format!("Look up the docs {i}") }),
+        )?;
+        let s = v["session"]
+            .as_str()
+            .ok_or_else(|| format!("no session: {v}"))?
+            .to_string();
         sessions.push((s, t0));
     }
     let mut seen = Vec::new();
     for (s, t0) in &sessions {
-        seen.push(until(&svc, &cookie, s, *t0, |v| v["activity"].as_array().is_some_and(|a| !a.is_empty()))?);
+        seen.push(until(&svc, &cookie, s, *t0, |v| {
+            v["activity"].as_array().is_some_and(|a| !a.is_empty())
+        })?);
     }
     seen.sort_by(|a, b| a.total_cmp(b));
-    let p95 = seen[((seen.len() as f64 * 0.95).ceil() as usize).saturating_sub(1).min(seen.len() - 1)];
+    let p95 = seen[((seen.len() as f64 * 0.95).ceil() as usize)
+        .saturating_sub(1)
+        .min(seen.len() - 1)];
     let mut peak: f64 = 0.0;
     for _ in 0..10 {
         peak = peak.max(rss_mb(svc.child.id())?);
         std::thread::sleep(Duration::from_millis(500));
     }
-    Ok(vec![("solo_four memory", peak, SOLO_FOUR_MB, "MB"), ("solo_four activity", p95, SOLO_ACTIVITY_MS, "ms")])
+    Ok(vec![
+        ("solo_four memory", peak, SOLO_FOUR_MB, "MB"),
+        ("solo_four activity", p95, SOLO_ACTIVITY_MS, "ms"),
+    ])
 }
 
 /// 012 SC-004: a commit made in the project folder from a terminal, shown among the project's
@@ -536,8 +602,17 @@ fn refwatch_latency(args: &Args) -> Result<Vec<Measure>, String> {
     }
     let end = t0 + Duration::from_secs(60);
     loop {
-        let v = call(&svc, &cookie, "GET", &format!("/api/projects/{p}/git-changes"), json!({}))?;
-        if v["changes"].as_array().is_some_and(|c| c.iter().any(|c| c["refname"] == "refs/heads/main" && c["after"] == head.as_str())) {
+        let v = call(
+            &svc,
+            &cookie,
+            "GET",
+            &format!("/api/projects/{p}/git-changes"),
+            json!({}),
+        )?;
+        if v["changes"].as_array().is_some_and(|c| {
+            c.iter()
+                .any(|c| c["refname"] == "refs/heads/main" && c["after"] == head.as_str())
+        }) {
             let ms = t0.elapsed().as_secs_f64() * 1000.0;
             return Ok(vec![("refwatch_latency", ms, REFWATCH_MS, "ms")]);
         }

@@ -165,7 +165,11 @@ struct KeptTheme {
 pub fn page_with_theme(theme: &str) -> String {
     match theme {
         "light" | "dark" => INDEX
-            .replacen("<html lang=\"en\">", &format!("<html lang=\"en\" data-theme=\"{theme}\">"), 1)
+            .replacen(
+                "<html lang=\"en\">",
+                &format!("<html lang=\"en\" data-theme=\"{theme}\">"),
+                1,
+            )
             .replacen(
                 "<meta name=\"color-scheme\" content=\"light dark\">",
                 &format!("<meta name=\"color-scheme\" content=\"{theme}\">"),
@@ -822,13 +826,35 @@ fn handle(
             return json_reply(req, Reply::Err("an image can be up to 5 MiB".into()));
         }
         let name = query_arg(&url, "name").unwrap_or_else(|| "image".into());
-        return json_reply(req, ask(tx, Request::Studio(crate::studio::Req::SoloAttach { session, name, bytes: b })));
+        return json_reply(
+            req,
+            ask(
+                tx,
+                Request::Studio(crate::studio::Req::SoloAttach {
+                    session,
+                    name,
+                    bytes: b,
+                }),
+            ),
+        );
     }
     if let (true, ["api", "sessions", s, "attachments", sha]) = (is_get, parts.as_slice()) {
-        let r = ask(tx, Request::Studio(crate::studio::Req::SoloAttachment { session: percent_decode(s), sha: percent_decode(sha) }));
+        let r = ask(
+            tx,
+            Request::Studio(crate::studio::Req::SoloAttachment {
+                session: percent_decode(s),
+                sha: percent_decode(sha),
+            }),
+        );
         return match r {
             Reply::Ok(v) => match std::fs::read(v["path"].as_str().unwrap_or_default()) {
-                Ok(bytes) => respond_data(req, v["media_type"].as_str().unwrap_or("application/octet-stream"), bytes),
+                Ok(bytes) => respond_data(
+                    req,
+                    v["media_type"]
+                        .as_str()
+                        .unwrap_or("application/octet-stream"),
+                    bytes,
+                ),
                 Err(_) => respond(req, 404, "text/plain", "not found".into()),
             },
             Reply::Err(e) => respond(req, 404, "text/plain", e),

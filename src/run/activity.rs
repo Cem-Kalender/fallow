@@ -133,16 +133,13 @@ fn fallow_lines(run: &Run, last_line: &BTreeMap<u32, u64>) -> Vec<Value> {
         }
         if let Some(why) = first.strip_prefix(super::machine::NOT_STARTED) {
             let text = match why.strip_prefix(super::machine::SIGNED_OUT) {
-                Some(w) => format!("{label} {what}: the agent is not signed in, it goes again once you sign in: {}", w.trim_start_matches(crate::agent::ENDED_WITH_ERROR)),
+                Some(w) => format!(
+                    "{label} {what}: the agent is not signed in, it goes again once you sign in: {}",
+                    w.trim_start_matches(crate::agent::ENDED_WITH_ERROR)
+                ),
                 None => format!("{label} {what} did not start, it goes again: {why}"),
             };
-            out.push(check(
-                at,
-                task,
-                text,
-                None,
-                String::new(),
-            ));
+            out.push(check(at, task, text, None, String::new()));
             continue;
         }
         if first.starts_with(super::machine::INTERRUPTED)

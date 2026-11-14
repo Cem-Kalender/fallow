@@ -37,15 +37,23 @@ fn reads_in_the_copy_go_unasked_and_secrets_or_outside_reads_are_asked() {
     let s = start_session(tx, &project, "read the notes");
 
     // notes.txt went unasked; .env is asked first, as a read, with its reason.
-    let w = wait_conv(tx, &s, "a read waiting", |v| !v["pending_approval"].is_null());
+    let w = wait_conv(tx, &s, "a read waiting", |v| {
+        !v["pending_approval"].is_null()
+    });
     let p = &w["pending_approval"];
     assert_eq!(p["kind"], "read", "{p}");
     assert_eq!(p["command"], "read .env", "{p}");
     assert!(p["always"].is_null(), "never always: {p}");
     let asked = &w["turns"][0]["approvals"];
-    assert_eq!(asked.as_array().unwrap().len(), 1, "notes.txt was not asked: {asked}");
+    assert_eq!(
+        asked.as_array().unwrap().len(),
+        1,
+        "notes.txt was not asked: {asked}"
+    );
     assert!(
-        asked[0]["reasons"][0].as_str().is_some_and(|r| r.contains("secrets")),
+        asked[0]["reasons"][0]
+            .as_str()
+            .is_some_and(|r| r.contains("secrets")),
         "{asked}"
     );
     let id = p["id"].as_str().unwrap().to_string();
@@ -79,7 +87,9 @@ fn reads_in_the_copy_go_unasked_and_secrets_or_outside_reads_are_asked() {
     });
     let asked = &w["turns"][0]["approvals"][1];
     assert!(
-        asked["reasons"][0].as_str().is_some_and(|r| r.contains("outside")),
+        asked["reasons"][0]
+            .as_str()
+            .is_some_and(|r| r.contains("outside")),
         "{asked}"
     );
     let id = w["pending_approval"]["id"].as_str().unwrap().to_string();

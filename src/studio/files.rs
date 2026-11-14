@@ -548,7 +548,12 @@ fn who_of(
         if rest.contains("the engineer's edits") {
             who = Some("you".into());
         } else if let Some(t) = rest.split(", turn").nth(1) {
-            let n = t.trim_start_matches('s').split(':').next().unwrap_or_default().trim();
+            let n = t
+                .trim_start_matches('s')
+                .split(':')
+                .next()
+                .unwrap_or_default()
+                .trim();
             who = Some(format!("assistant, turn {n}"));
         } else {
             who = Some("assistant".into());
@@ -613,7 +618,11 @@ const THEMES: [&str; 3] = ["system", "light", "dark"];
 pub fn theme(data: &Path) -> &'static str {
     let t = read_prefs(data).theme;
     let t = t.as_ref().and_then(Value::as_str);
-    THEMES.iter().copied().find(|x| Some(*x) == t).unwrap_or("system")
+    THEMES
+        .iter()
+        .copied()
+        .find(|x| Some(*x) == t)
+        .unwrap_or("system")
 }
 
 /// Keeps the engineer's theme beside the other preferences.

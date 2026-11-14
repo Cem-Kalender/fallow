@@ -724,7 +724,11 @@ pub const MARKER_HOOKS: [&str; 5] = [
 /// `repo` with `MARKER_HOOKS` installed in `.git/hooks`.
 pub fn repo_with_markers(root: &Path) -> PathBuf {
     let r = repo(root);
-    let log = root.join("hooks.log").display().to_string().replace('\\', "/");
+    let log = root
+        .join("hooks.log")
+        .display()
+        .to_string()
+        .replace('\\', "/");
     for h in MARKER_HOOKS {
         let p = r.join(".git/hooks").join(h);
         std::fs::write(&p, format!("#!/bin/sh\necho {h} >> \"{log}\"\nexit 0\n")).unwrap();

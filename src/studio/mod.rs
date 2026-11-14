@@ -2,12 +2,12 @@
 //! S-16; contracts/web-api.md). The engine owns one `Studio`; turns of the lead run on threads
 //! and report back as `Note`s.
 
+pub mod close;
 pub mod commands;
 pub mod conv;
 pub mod defs;
-pub mod files;
-pub mod close;
 pub mod extras;
+pub mod files;
 pub mod handover;
 pub mod judge;
 pub mod refwatch;
@@ -709,7 +709,16 @@ impl Studio {
         workdir: PathBuf,
         lead: Option<String>,
     ) -> Result<String, String> {
-        self.new_conv_with(kind, project, feature, forked_from, workdir, lead, None, None)
+        self.new_conv_with(
+            kind,
+            project,
+            feature,
+            forked_from,
+            workdir,
+            lead,
+            None,
+            None,
+        )
     }
 
     /// `new_conv` with 012's `agent` (a solo session's assistant) and `origin` (the session a
@@ -1002,13 +1011,33 @@ impl Studio {
         {
             project::install::scaffold(workdir)?;
         }
-        let mut list = commands::catalogue(&p.root_dir(), &workdir.join(&p.spec_root), c.state.kind == Kind::Project);
+        let mut list = commands::catalogue(
+            &p.root_dir(),
+            &workdir.join(&p.spec_root),
+            c.state.kind == Kind::Project,
+        );
         // 012 (R-15): a session offers Fallow's own commands and the project's, not Spec Kit's
         // steps (those are a spec session's).
         if c.state.kind == Kind::Solo {
             list.retain(|x| x.group == commands::Group::Project);
-            list.insert(0, commands::fallow("close", "Close this session: merge it, keep its branch, or discard it", true, None));
-            list.insert(0, commands::fallow("feature", "Ask the assistant to suggest a feature from this discussion", true, None));
+            list.insert(
+                0,
+                commands::fallow(
+                    "close",
+                    "Close this session: merge it, keep its branch, or discard it",
+                    true,
+                    None,
+                ),
+            );
+            list.insert(
+                0,
+                commands::fallow(
+                    "feature",
+                    "Ask the assistant to suggest a feature from this discussion",
+                    true,
+                    None,
+                ),
+            );
         }
         Ok(json!({ "commands": list }))
     }
@@ -1114,13 +1143,20 @@ impl Studio {
             if let Some(d) = fj.parent() {
                 let _ = std::fs::create_dir_all(d);
             }
-            let rel = f.dir.strip_prefix(project::feature_root(&f.dir)).unwrap_or(&f.dir);
+            let rel = f
+                .dir
+                .strip_prefix(project::feature_root(&f.dir))
+                .unwrap_or(&f.dir);
             let _ = std::fs::write(&fj, json!({ "feature_directory": rel }).to_string());
             let _ = std::fs::create_dir_all(workdir.join(&f.dir));
         }
         // 009 US1: a message whose first word names a command of the `/` menu runs it; any other
         // message is plain text (FR-005).
-        let catalogue = commands::catalogue(&p.root_dir(), &workdir.join(&p.spec_root), kind == Kind::Project);
+        let catalogue = commands::catalogue(
+            &p.root_dir(),
+            &workdir.join(&p.spec_root),
+            kind == Kind::Project,
+        );
         let command = match commands::resolve(&catalogue, text) {
             Some((cmd, _)) if !cmd.available => {
                 return Err(format!(
@@ -1141,7 +1177,9 @@ impl Studio {
                     instructions: commands::instructions(cmd, &input)?,
                 },
                 // A session's own commands never reach a spec session's lead.
-                commands::Group::Fallow => return Err(format!("/{} is a session's command", cmd.name)),
+                commands::Group::Fallow => {
+                    return Err(format!("/{} is a session's command", cmd.name));
+                }
             }),
             None => None,
         };
@@ -1164,8 +1202,9 @@ impl Studio {
         let def_model = Some(def.model.clone()).filter(|m| !m.is_empty());
         // The project's approved commands, with its gates (FR-007a).
         let mut approved = p.approved_commands.clone();
-        let squad_text = std::fs::read_to_string(workdir.join(p.in_root(crate::config::squad::SQUAD_FILE)))
-            .unwrap_or_default();
+        let squad_text =
+            std::fs::read_to_string(workdir.join(p.in_root(crate::config::squad::SQUAD_FILE)))
+                .unwrap_or_default();
         let mut notices = Vec::new();
         let squad = crate::config::Squad::parse(
             crate::config::squad::SQUAD_FILE,
@@ -1250,10 +1289,8 @@ impl Studio {
             .collect();
         // 012 (FR-042, research R-7): the project's instruction files, read from the working
         // copy, handed with a session's first turn and again when one of them changed.
-        let instr = agent::instructions::read(
-            &workdir,
-            &agent::instructions::extra_at_head(&p.root_dir()),
-        );
+        let instr =
+            agent::instructions::read(&workdir, &agent::instructions::extra_at_head(&p.root_dir()));
         let now: Vec<(String, String)> = instr
             .iter()
             .map(|i| (i.path.clone(), i.sha.clone()))
@@ -1383,7 +1420,15 @@ impl Studio {
         let stop = Arc::clone(&c.stop);
         let turn_file = c.turns_dir().join(format!("{n}.jsonl"));
         let _ = std::fs::create_dir_all(c.turns_dir());
-        spawn_turn(ctx.tx.clone(), conv.to_string(), n, runtime, call, stop, turn_file)?;
+        spawn_turn(
+            ctx.tx.clone(),
+            conv.to_string(),
+            n,
+            runtime,
+            call,
+            stop,
+            turn_file,
+        )?;
         Ok(json!({ "turn": n }))
     }
 
@@ -1402,9 +1447,9 @@ impl Studio {
         }
         c.stop.store(true, std::sync::atomic::Ordering::Relaxed);
         if let Some(p) = c.pending.take() {
-            let _ = p
-                .reply
-                .send(Reply::Ok(p.answer(false, "The engineer cancelled this turn.")));
+            let _ = p.reply.send(Reply::Ok(
+                p.answer(false, "The engineer cancelled this turn."),
+            ));
         }
         let said = c
             .state
@@ -1726,8 +1771,9 @@ impl Studio {
             origin.clone(),
         )?;
         // A project whose constitution is still the template starts with the constitution.
-        let constitution = std::fs::read_to_string(p.root_dir().join(".specify/memory/constitution.md"))
-            .unwrap_or_default();
+        let constitution =
+            std::fs::read_to_string(p.root_dir().join(".specify/memory/constitution.md"))
+                .unwrap_or_default();
         let step = if constitution.is_empty() || constitution.contains("[PROJECT_NAME]") {
             "constitution"
         } else {
@@ -1833,7 +1879,10 @@ impl Studio {
         .iter()
         .map(|d| format!("{}/{d}", f.dir))
         .collect();
-        v.push(format!("{}.specify/memory/constitution.md", project::feature_root(&f.dir)));
+        v.push(format!(
+            "{}.specify/memory/constitution.md",
+            project::feature_root(&f.dir)
+        ));
         v
     }
 
@@ -1841,7 +1890,11 @@ impl Studio {
         !path.contains("..")
             && !path.starts_with('/')
             && !path.contains('\\')
-            && (path == format!("{}.specify/memory/constitution.md", project::feature_root(&f.dir))
+            && (path
+                == format!(
+                    "{}.specify/memory/constitution.md",
+                    project::feature_root(&f.dir)
+                )
                 || path.starts_with(&format!("{}/", f.dir)))
             && (path.ends_with(".md")
                 || path.ends_with(".json")

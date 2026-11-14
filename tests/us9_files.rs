@@ -532,14 +532,30 @@ output = { reply = "Not reading it.", step = "none" }
     put(&wd, "shop/cart.py", b"def total():\n    return 0\n");
     put(&repo, ".env", b"TOKEN=never\n");
     // 012 (FR-035): the project conversation is retired; the lead's turns run in a spec session.
-    let pc = sreq(tx, Req::NewFeature { project, title: "Files talk".into(), lead: None }).unwrap()["conversation"]
+    let pc = sreq(
+        tx,
+        Req::NewFeature {
+            project,
+            title: "Files talk".into(),
+            lead: None,
+        },
+    )
+    .unwrap()["conversation"]
         .as_str()
         .unwrap()
         .to_string();
     // A spec session's references are to its own copy: the secret is there too.
-    let swd = std::path::PathBuf::from(sreq(tx, Req::Conversation { id: pc.clone() }).unwrap()["workdir"].as_str().unwrap());
-    put(&swd, ".env", b"TOKEN=never
-");
+    let swd = std::path::PathBuf::from(
+        sreq(tx, Req::Conversation { id: pc.clone() }).unwrap()["workdir"]
+            .as_str()
+            .unwrap(),
+    );
+    put(
+        &swd,
+        ".env",
+        b"TOKEN=never
+",
+    );
     let say = |text: &str| {
         sreq(
             tx,

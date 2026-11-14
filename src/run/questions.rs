@@ -346,14 +346,10 @@ fn start_lead(
     let runtime = agent::registry::runtime(&def.runtime, &ctx.settings)
         .map_err(|e| format!("the lead cannot answer: {e}"))?;
     let at = git::head(&lead.workdir)?;
-    let spec_text = git::show(
-        &run.state.repo,
-        &at,
-        &format!("{}/spec.md", l.dir()),
-    )
-    .ok()
-    .flatten()
-    .unwrap_or_default();
+    let spec_text = git::show(&run.state.repo, &at, &format!("{}/spec.md", l.dir()))
+        .ok()
+        .flatten()
+        .unwrap_or_default();
     let reserved = speckit::spec::read("spec.md", &spec_text)
         .map(|s| s.all_reserved())
         .unwrap_or_default();

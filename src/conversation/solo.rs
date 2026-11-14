@@ -474,7 +474,13 @@ impl Solo {
         match &self.gates {
             None => "not_run",
             Some((commit, _, _)) if commit != head => "stale",
-            Some((_, _, results)) if results.iter().all(|r| r.class == "passed" || r.class == "pass" || r.class == "skipped") => "passed",
+            Some((_, _, results))
+                if results
+                    .iter()
+                    .all(|r| r.class == "passed" || r.class == "pass" || r.class == "skipped") =>
+            {
+                "passed"
+            }
             Some(_) => "failed",
         }
     }
@@ -509,32 +515,102 @@ mod tests {
     #[test]
     fn the_base_is_the_last_move_of_a_turn_not_undone() {
         let mut s = created();
-        assert_eq!(s.base(), Base { mark: "s0".into(), gates: "s0".into() });
-        s.apply(&SoloEvent::BaseMoved { turn: 2, mark: "m2".into(), gates: "g2".into(), why: BaseWhy::UpToDate });
-        s.apply(&SoloEvent::BaseMoved { turn: 4, mark: "t3".into(), gates: "sq".into(), why: BaseWhy::Squash });
+        assert_eq!(
+            s.base(),
+            Base {
+                mark: "s0".into(),
+                gates: "s0".into()
+            }
+        );
+        s.apply(&SoloEvent::BaseMoved {
+            turn: 2,
+            mark: "m2".into(),
+            gates: "g2".into(),
+            why: BaseWhy::UpToDate,
+        });
+        s.apply(&SoloEvent::BaseMoved {
+            turn: 4,
+            mark: "t3".into(),
+            gates: "sq".into(),
+            why: BaseWhy::Squash,
+        });
         assert_eq!(s.base().gates, "sq");
-        s.apply(&SoloEvent::TurnsUndone { from: 4, to: 4, head_before: "h".into(), head_after: "a".into(), keep_ref: "r".into() });
-        assert_eq!(s.base().gates, "g2", "undoing the squash's turn moves the base back");
-        s.apply(&SoloEvent::TurnsUndone { from: 2, to: 3, head_before: "h".into(), head_after: "a".into(), keep_ref: "r".into() });
+        s.apply(&SoloEvent::TurnsUndone {
+            from: 4,
+            to: 4,
+            head_before: "h".into(),
+            head_after: "a".into(),
+            keep_ref: "r".into(),
+        });
+        assert_eq!(
+            s.base().gates,
+            "g2",
+            "undoing the squash's turn moves the base back"
+        );
+        s.apply(&SoloEvent::TurnsUndone {
+            from: 2,
+            to: 3,
+            head_before: "h".into(),
+            head_after: "a".into(),
+            keep_ref: "r".into(),
+        });
         assert_eq!(s.base().gates, "s0");
     }
 
     #[test]
     fn a_failed_commit_is_pending_until_committed_folded_or_discarded() {
         let mut s = created();
-        s.turn_finished(1, TurnCommits { failed: Some("index.lock".into()), ..Default::default() });
+        s.turn_finished(
+            1,
+            TurnCommits {
+                failed: Some("index.lock".into()),
+                ..Default::default()
+            },
+        );
         assert_eq!(s.pending_commit, Some(1));
         s.apply(&SoloEvent::FoldNext { n: 1 });
         assert!(s.fold_next);
-        s.turn_finished(2, TurnCommits { commit: Some("c2".into()), folded_into: Some(1), ..Default::default() });
+        s.turn_finished(
+            2,
+            TurnCommits {
+                commit: Some("c2".into()),
+                folded_into: Some(1),
+                ..Default::default()
+            },
+        );
         assert_eq!(s.pending_commit, None);
         // A folded commit that fails too stays pending, as the later turn.
-        s.turn_finished(5, TurnCommits { failed: Some("a".into()), ..Default::default() });
-        s.turn_finished(6, TurnCommits { failed: Some("b".into()), folded_into: Some(5), ..Default::default() });
+        s.turn_finished(
+            5,
+            TurnCommits {
+                failed: Some("a".into()),
+                ..Default::default()
+            },
+        );
+        s.turn_finished(
+            6,
+            TurnCommits {
+                failed: Some("b".into()),
+                folded_into: Some(5),
+                ..Default::default()
+            },
+        );
         assert_eq!(s.pending_commit, Some(6));
-        s.apply(&SoloEvent::TurnCommitted { n: 6, commit: "c6".into() });
-        s.turn_finished(3, TurnCommits { failed: Some("x".into()), ..Default::default() });
-        s.apply(&SoloEvent::TurnCommitted { n: 3, commit: "c3".into() });
+        s.apply(&SoloEvent::TurnCommitted {
+            n: 6,
+            commit: "c6".into(),
+        });
+        s.turn_finished(
+            3,
+            TurnCommits {
+                failed: Some("x".into()),
+                ..Default::default()
+            },
+        );
+        s.apply(&SoloEvent::TurnCommitted {
+            n: 3,
+            commit: "c3".into(),
+        });
         assert_eq!(s.pending_commit, None);
         assert_eq!(s.commits[&3].commit.as_deref(), Some("c3"));
     }
@@ -543,12 +619,25 @@ mod tests {
     fn the_queue_keeps_its_order_and_edits() {
         let mut s = created();
         for (id, t) in [("q1", "one"), ("q2", "two"), ("q3", "three")] {
-            s.apply(&SoloEvent::MessageQueued { id: id.into(), text: t.into(), attachments: vec![] });
+            s.apply(&SoloEvent::MessageQueued {
+                id: id.into(),
+                text: t.into(),
+                attachments: vec![],
+            });
         }
-        s.apply(&SoloEvent::QueueEdited { id: "q2".into(), text: "TWO".into() });
+        s.apply(&SoloEvent::QueueEdited {
+            id: "q2".into(),
+            text: "TWO".into(),
+        });
         s.apply(&SoloEvent::QueueRemoved { id: "q3".into() });
-        s.apply(&SoloEvent::QueueSent { id: "q1".into(), n: 2 });
-        assert_eq!(s.queue.iter().map(|w| w.text.as_str()).collect::<Vec<_>>(), ["TWO"]);
+        s.apply(&SoloEvent::QueueSent {
+            id: "q1".into(),
+            n: 2,
+        });
+        assert_eq!(
+            s.queue.iter().map(|w| w.text.as_str()).collect::<Vec<_>>(),
+            ["TWO"]
+        );
     }
 
     #[test]
@@ -556,14 +645,31 @@ mod tests {
         let mut s = created();
         assert_eq!(s.gates_label("h1", false), "no_gates");
         assert_eq!(s.gates_label("h1", true), "not_run");
-        s.apply(&SoloEvent::GatesRun { commit: "h1".into(), base: "s0".into(), results: vec![GateOutcome { gate: "tests".into(), outcome: "passed".into(), class: "passed".into(), output: String::new() }] });
+        s.apply(&SoloEvent::GatesRun {
+            commit: "h1".into(),
+            base: "s0".into(),
+            results: vec![GateOutcome {
+                gate: "tests".into(),
+                outcome: "passed".into(),
+                class: "passed".into(),
+                output: String::new(),
+            }],
+        });
         assert_eq!(s.gates_label("h1", true), "passed");
         assert_eq!(s.gates_label("h2", true), "stale");
     }
 
     #[test]
     fn events_round_trip_as_tagged_json() {
-        let e = SoloEvent::GitObserved(Observed { refname: "refs/heads/main".into(), before: Some("a".into()), after: Some("b".into()), how: How::Commits, n: Some(1), commits: vec!["b".into()], turn: 3 });
+        let e = SoloEvent::GitObserved(Observed {
+            refname: "refs/heads/main".into(),
+            before: Some("a".into()),
+            after: Some("b".into()),
+            how: How::Commits,
+            n: Some(1),
+            commits: vec!["b".into()],
+            turn: 3,
+        });
         let j = serde_json::to_value(&e).unwrap();
         assert_eq!(j["type"], "git_observed");
         assert_eq!(serde_json::from_value::<SoloEvent>(j).unwrap(), e);

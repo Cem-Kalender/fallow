@@ -595,9 +595,11 @@ fn main() -> ExitCode {
     }
     if let Some(n) = step.expect_images {
         if n != images {
-            emit(json!({"type": "result", "subtype": "error", "is_error": true,
+            emit(
+                json!({"type": "result", "subtype": "error", "is_error": true,
                 "session_id": session, "total_cost_usd": 0.0,
-                "result": format!("expected {n} images, got {images}"), "permission_denials": []}));
+                "result": format!("expected {n} images, got {images}"), "permission_denials": []}),
+            );
             return ExitCode::SUCCESS;
         }
     }
@@ -624,12 +626,20 @@ fn main() -> ExitCode {
             match (&prompt_tool, mode.as_str(), &mcp_config) {
                 (Some(t), "default", Some(c)) => {
                     let tool = t.trim_start_matches("mcp__fallow__");
-                    mcp_call(c, tool, json!({"tool_name": "Read", "input": input, "tool_use_id": id}))
-                        .ok()
-                        .and_then(|text| serde_json::from_str::<Value>(&text).ok())
-                        .unwrap_or_else(|| json!({"behavior": "deny", "message": "the prompt tool failed"}))
+                    mcp_call(
+                        c,
+                        tool,
+                        json!({"tool_name": "Read", "input": input, "tool_use_id": id}),
+                    )
+                    .ok()
+                    .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+                    .unwrap_or_else(
+                        || json!({"behavior": "deny", "message": "the prompt tool failed"}),
+                    )
                 }
-                _ => json!({"behavior": "deny", "message": "Permission to use Read has been denied."}),
+                _ => {
+                    json!({"behavior": "deny", "message": "Permission to use Read has been denied."})
+                }
             }
         } else {
             json!({"behavior": "allow"})
@@ -640,8 +650,12 @@ fn main() -> ExitCode {
                 Err(e) => (true, e.to_string()),
             }
         } else {
-            prompt_denials.push(json!({"tool_name": "Read", "tool_use_id": id, "tool_input": input}));
-            (true, verdict["message"].as_str().unwrap_or("denied").to_string())
+            prompt_denials
+                .push(json!({"tool_name": "Read", "tool_use_id": id, "tool_input": input}));
+            (
+                true,
+                verdict["message"].as_str().unwrap_or("denied").to_string(),
+            )
         };
         emit(json!({"type": "user", "message": {"content": [
             {"type": "tool_result", "tool_use_id": id, "is_error": bad, "content": text}]}}));
@@ -664,12 +678,20 @@ fn main() -> ExitCode {
             match (&prompt_tool, mode.as_str(), &mcp_config) {
                 (Some(t), "default", Some(c)) => {
                     let tool = t.trim_start_matches("mcp__fallow__");
-                    mcp_call(c, tool, json!({"tool_name": "Bash", "input": input, "tool_use_id": id}))
-                        .ok()
-                        .and_then(|text| serde_json::from_str::<Value>(&text).ok())
-                        .unwrap_or_else(|| json!({"behavior": "deny", "message": "the prompt tool failed"}))
+                    mcp_call(
+                        c,
+                        tool,
+                        json!({"tool_name": "Bash", "input": input, "tool_use_id": id}),
+                    )
+                    .ok()
+                    .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+                    .unwrap_or_else(
+                        || json!({"behavior": "deny", "message": "the prompt tool failed"}),
+                    )
                 }
-                _ => json!({"behavior": "deny", "message": "Permission to use Bash has been denied."}),
+                _ => {
+                    json!({"behavior": "deny", "message": "Permission to use Bash has been denied."})
+                }
             }
         };
         let verdict = if !tool_on("Bash") || covers(&disallowed) {
@@ -703,7 +725,8 @@ fn main() -> ExitCode {
             let msg = verdict["message"].as_str().unwrap_or("denied").to_string();
             emit(json!({"type": "user", "message": {"content": [
                 {"type": "tool_result", "tool_use_id": id, "is_error": true, "content": msg}]}}));
-            prompt_denials.push(json!({"tool_name": "Bash", "tool_use_id": id, "tool_input": input}));
+            prompt_denials
+                .push(json!({"tool_name": "Bash", "tool_use_id": id, "tool_input": input}));
         }
     }
     if step.sleep_ms > 0 {

@@ -40,10 +40,17 @@ fn scan(root: &Path) -> Scan {
     let mut s = Scan::default();
     let mut stack = vec![root.to_path_buf()];
     while let Some(d) = stack.pop() {
-        let entries: Vec<_> = std::fs::read_dir(&d).into_iter().flatten().flatten().collect();
-        let csproj = entries
-            .iter()
-            .any(|e| e.file_name().to_string_lossy().to_ascii_lowercase().ends_with(".csproj"));
+        let entries: Vec<_> = std::fs::read_dir(&d)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .collect();
+        let csproj = entries.iter().any(|e| {
+            e.file_name()
+                .to_string_lossy()
+                .to_ascii_lowercase()
+                .ends_with(".csproj")
+        });
         for e in entries {
             let p = e.path();
             let name = e.file_name().to_string_lossy().to_string();
@@ -58,7 +65,9 @@ fn scan(root: &Path) -> Scan {
                 if name == ".git" {
                     continue;
                 }
-                if HEAVY.contains(&name.as_str()) || (csproj && matches!(name.as_str(), "bin" | "obj")) {
+                if HEAVY.contains(&name.as_str())
+                    || (csproj && matches!(name.as_str(), "bin" | "obj"))
+                {
                     s.heavy.push(format!("{rel}/"));
                     continue;
                 }
@@ -96,7 +105,10 @@ fn proposed_gitignore(root: &Path, s: &Scan) -> String {
     for f in &s.secrets {
         add(format!("/{f}"), &mut new);
     }
-    let new: Vec<String> = new.into_iter().filter(|l| !lines.iter().any(|x| x.trim() == l)).collect();
+    let new: Vec<String> = new
+        .into_iter()
+        .filter(|l| !lines.iter().any(|x| x.trim() == l))
+        .collect();
     if !new.is_empty() {
         if !lines.is_empty() {
             lines.push(String::new());
@@ -138,8 +150,7 @@ impl Studio {
     /// or a folder made a repository outside Fallow): set up by the same click before it is used.
     pub fn setup_left(&self, p: &project::Project) -> bool {
         p.features.iter().any(|f| f.branch.is_none())
-            || p
-                .conversation
+            || p.conversation
                 .as_ref()
                 .and_then(|c| self.convs.get(c))
                 .is_some_and(|c| !super::own_copy(&c.state.workdir))
@@ -150,8 +161,12 @@ impl Studio {
         let p = self.project(id)?;
         match p.kind() {
             Kind::Git if self.setup_left(p) => {
-                let left: Vec<&str> =
-                    p.features.iter().filter(|f| f.branch.is_none()).map(|f| f.name()).collect();
+                let left: Vec<&str> = p
+                    .features
+                    .iter()
+                    .filter(|f| f.branch.is_none())
+                    .map(|f| f.name())
+                    .collect();
                 return Ok(json!({ "needs": "branches", "features": left, "identity": true }));
             }
             Kind::Git => return Err(format!("{} is already a git repository", p.name)),
@@ -247,7 +262,10 @@ impl Studio {
         // The features and conversations move onto branches and worktrees, as in any git
         // project (research S-6), so nothing more is written in the engineer's own checkout.
         let base = git::branch(&path).ok_or_else(|| {
-            format!("{} is on a detached HEAD: check out the branch to build on first", path.display())
+            format!(
+                "{} is on a detached HEAD: check out the branch to build on first",
+                path.display()
+            )
         })?;
         std::fs::create_dir_all(self.worktrees(&p.id)).map_err(|e| e.to_string())?;
         // A branch the engineer has checked out, or a feature folder git ignores, would stop it
@@ -344,12 +362,15 @@ impl Studio {
         if p.kind() != Kind::NeedsMove {
             return Err(format!("{} is not inside a bigger repository", p.name));
         }
-        let top = project::top_of(&p.path).ok_or("the repository's top folder could not be read")?;
+        let top =
+            project::top_of(&p.path).ok_or("the repository's top folder could not be read")?;
         let sub = sub_path(&top, &p.path)?;
         let moves: Vec<Value> = p
             .features
             .iter()
-            .map(|f| json!({ "feature": f.name(), "from": f.dir, "to": format!("{sub}/{}", f.dir) }))
+            .map(
+                |f| json!({ "feature": f.name(), "from": f.dir, "to": format!("{sub}/{}", f.dir) }),
+            )
             .collect();
         match git::ignore_state(&top, &sub) {
             Some(false) => {}
@@ -359,7 +380,12 @@ impl Studio {
                     top.display()
                 ));
             }
-            None => return Err(format!("git could not read the repository {}", top.display())),
+            None => {
+                return Err(format!(
+                    "git could not read the repository {}",
+                    top.display()
+                ));
+            }
         }
         // Gates and instructions are read from the top's commit: what is not committed there yet
         // is named, for the engineer to commit (Phase 5 review, 6).
@@ -382,21 +408,39 @@ impl Studio {
             (Ok(x), Ok(y)) => x == y,
             _ => a == b,
         };
-        if let Some(other) = self.store.projects.iter().find(|q| q.id != p.id && same(&q.path, &top)) {
-            return Err(format!("{} is already the project {}", top.display(), other.name));
+        if let Some(other) = self
+            .store
+            .projects
+            .iter()
+            .find(|q| q.id != p.id && same(&q.path, &top))
+        {
+            return Err(format!(
+                "{} is already the project {}",
+                top.display(),
+                other.name
+            ));
         }
-        let head = git::head(&top).map_err(|_| format!("the repository {} has no commit yet", top.display()))?;
+        let head = git::head(&top)
+            .map_err(|_| format!("the repository {} has no commit yet", top.display()))?;
         let base = git::branch(&top).ok_or_else(|| {
-            format!("{} is on a detached HEAD: check out the branch to build on first", top.display())
+            format!(
+                "{} is on a detached HEAD: check out the branch to build on first",
+                top.display()
+            )
         })?;
         for f in &p.features {
             let name = f.name().to_string();
             if git::rev_exists(&top, &format!("refs/heads/{name}")) {
-                return Err(format!("the branch {name} exists already in {}", top.display()));
+                return Err(format!(
+                    "the branch {name} exists already in {}",
+                    top.display()
+                ));
             }
             // Never undo a working copy this move did not make (Phase 5 review, 7).
             if self.worktrees(&p.id).join(&name).exists() {
-                return Err(format!("a working copy of {name} is there already: remove it first"));
+                return Err(format!(
+                    "a working copy of {name} is there already: remove it first"
+                ));
             }
         }
         std::fs::create_dir_all(self.worktrees(&p.id)).map_err(|e| e.to_string())?;
@@ -432,18 +476,25 @@ impl Studio {
             })();
             if let Err(e) = step {
                 undo(&made);
-                return Err(format!("the project could not be moved, nothing changed: {e}"));
+                return Err(format!(
+                    "the project could not be moved, nothing changed: {e}"
+                ));
             }
             plan.push((name, dir, wd));
         }
         // The project conversation, if there was one, works in a worktree as everywhere: never
         // in the engineer's checkout (Phase 5 review, 1).
         let project_wd = self.worktrees(&p.id).join("_project");
-        if p.conversation.as_ref().is_some_and(|c| self.convs.contains_key(c)) {
+        if p.conversation
+            .as_ref()
+            .is_some_and(|c| self.convs.contains_key(c))
+        {
             if let Err(e) = git::worktree_add(&top, &project_wd, None, &head) {
                 made.push((String::new(), project_wd.clone()));
                 undo(&made);
-                return Err(format!("the project could not be moved, nothing changed: {e}"));
+                return Err(format!(
+                    "the project could not be moved, nothing changed: {e}"
+                ));
             }
         }
         for (name, dir, wd) in plan {
@@ -458,7 +509,9 @@ impl Studio {
             }
         }
         if let Some(c) = p.conversation.as_ref().and_then(|c| self.convs.get_mut(c)) {
-            c.append(CEvent::WorkdirSet { workdir: project_wd })?;
+            c.append(CEvent::WorkdirSet {
+                workdir: project_wd,
+            })?;
         }
         let pm = self.project_mut(id)?;
         pm.path = top.clone();

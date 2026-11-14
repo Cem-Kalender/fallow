@@ -67,7 +67,10 @@ output = { reply = "I saw your edit.", step = "clarify" }
     )
     .unwrap_err();
     assert!(refused.contains("read-only"), "{refused}");
-    assert!(!repo.join("shop.py").exists(), "the engineer's folder is untouched");
+    assert!(
+        !repo.join("shop.py").exists(),
+        "the engineer's folder is untouched"
+    );
 
     // A feature: its branch and worktree, and a spec session of its own (012: no fork).
     let f = sreq(
@@ -104,7 +107,10 @@ output = { reply = "I saw your edit.", step = "clarify" }
     let t = &v["turns"][0];
     assert_eq!(t["reply"], "I wrote the first spec.");
     let session = v["session"].as_str().unwrap();
-    assert!(!session.contains("-fork"), "an agent session of its own (FR-035): {session}");
+    assert!(
+        !session.contains("-fork"),
+        "an agent session of its own (FR-035): {session}"
+    );
     assert_eq!(
         t["documents_changed"],
         serde_json::json!(["specs/001-cart/spec.md"]),

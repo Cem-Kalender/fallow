@@ -328,15 +328,26 @@ fn an_agent_that_is_not_signed_in_uses_no_repair_and_the_engineer_is_asked_to_si
     let tx = &e.tx;
     let v = wait_for(tx, id, "the engineer asked", |v| !v["needs"].is_null());
     let why = v["needs"]["why"].as_str().unwrap();
-    assert!(why.contains("is not signed in") && why.contains("OAuth session expired") && why.contains("/login"), "{why}");
+    assert!(
+        why.contains("is not signed in")
+            && why.contains("OAuth session expired")
+            && why.contains("/login"),
+        "{why}"
+    );
     assert!(!why.contains("repair"), "{why}");
     assert!(steps_of(&v, "repair", "T001").is_empty(), "no repair round");
     assert_eq!(v["feature_loop"]["tasks"]["T001"]["repairs"], 0);
     let b = steps_of(&v, "build", "T001");
-    assert_eq!(b.len(), 2, "the failed start and the one queued for the retry: {b:?}");
+    assert_eq!(
+        b.len(),
+        2,
+        "the failed start and the one queued for the retry: {b:?}"
+    );
     // Signed in again: the retry runs the queued step, and the task is accepted unrepaired.
     ask(tx, Request::Retry { id }).unwrap();
-    let v = wait_for(tx, id, "T001 accepted", |v| v["feature_loop"]["tasks"]["T001"]["state"] == "accepted");
+    let v = wait_for(tx, id, "T001 accepted", |v| {
+        v["feature_loop"]["tasks"]["T001"]["state"] == "accepted"
+    });
     assert_eq!(v["feature_loop"]["tasks"]["T001"]["repairs"], 0);
     assert!(steps_of(&v, "repair", "T001").is_empty(), "no repair round");
     stop(e);

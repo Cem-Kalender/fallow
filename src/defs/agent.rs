@@ -540,12 +540,29 @@ mod tests {
     #[test]
     fn the_shipped_assistant_parses_as_kind_assistant() {
         let text = include_str!("../../assets/agents/assistant.md");
-        let d = parse("assistant.md", "assistant", text, Source::Default, &["claude"]).unwrap();
+        let d = parse(
+            "assistant.md",
+            "assistant",
+            text,
+            Source::Default,
+            &["claude"],
+        )
+        .unwrap();
         assert_eq!(d.kind, Kind::Assistant);
         assert_eq!(d.returns, "assistant_reply");
         let wrong = text.replace("returns: assistant_reply", "returns: reply");
-        let e = parse("assistant.md", "assistant", &wrong, Source::Default, &["claude"]).unwrap_err();
-        assert!(e.iter().any(|p| p.message.contains("an assistant returns")), "{e:?}");
+        let e = parse(
+            "assistant.md",
+            "assistant",
+            &wrong,
+            Source::Default,
+            &["claude"],
+        )
+        .unwrap_err();
+        assert!(
+            e.iter().any(|p| p.message.contains("an assistant returns")),
+            "{e:?}"
+        );
     }
 
     #[test]

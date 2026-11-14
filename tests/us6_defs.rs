@@ -576,7 +576,15 @@ fn a_pipeline_the_lead_proposes_is_used_only_once_saved() {
     )
     .unwrap();
     // 012 (FR-035): the project conversation is retired; the lead's turns run in a spec session.
-    let c = sreq(tx, Req::NewFeature { project: p.clone(), title: "Pipeline talk".into(), lead: None }).unwrap()["conversation"]
+    let c = sreq(
+        tx,
+        Req::NewFeature {
+            project: p.clone(),
+            title: "Pipeline talk".into(),
+            lead: None,
+        },
+    )
+    .unwrap()["conversation"]
         .as_str()
         .unwrap()
         .to_string();

@@ -58,12 +58,22 @@ fn a_folder_without_git_is_scanned_and_becomes_a_repository_on_the_click() {
     let tx = &e.tx;
     let added = sreq(tx, Req::AddProject { path: shop.clone() }).unwrap();
     let project = added["project"].as_str().unwrap().to_string();
-    let v = sreq(tx, Req::Project { id: project.clone() }).unwrap();
+    let v = sreq(
+        tx,
+        Req::Project {
+            id: project.clone(),
+        },
+    )
+    .unwrap();
     assert_eq!(v["kind"], "needs_git", "{v}");
     // Nothing else opens, and nothing in the folder changed.
     let refused = sreq(
         tx,
-        Req::NewFeature { project: project.clone(), title: "Cart".into(), lead: None },
+        Req::NewFeature {
+            project: project.clone(),
+            title: "Cart".into(),
+            lead: None,
+        },
     )
     .unwrap_err();
     assert!(refused.contains("not a git repository yet"), "{refused}");
@@ -78,27 +88,66 @@ fn a_folder_without_git_is_scanned_and_becomes_a_repository_on_the_click() {
     )
     .unwrap_err();
     assert!(refused.contains("not a git repository yet"), "{refused}");
-    let scan = sreq(tx, Req::GitScan { id: project.clone() }).unwrap();
+    let scan = sreq(
+        tx,
+        Req::GitScan {
+            id: project.clone(),
+        },
+    )
+    .unwrap();
     assert_eq!(scan["needs"], "init", "{scan}");
     assert_eq!(scan["files"], 1, "only app.js would be committed: {scan}");
     assert_eq!(scan["heavy"], json!(["node_modules/"]), "{scan}");
     assert_eq!(scan["secrets"], json!([".env"]), "{scan}");
     assert_eq!(scan["identity"], true);
     let ignore = scan["gitignore"].as_str().unwrap().to_string();
-    assert!(ignore.contains("node_modules/") && ignore.contains("/.env"), "{ignore}");
+    assert!(
+        ignore.contains("node_modules/") && ignore.contains("/.env"),
+        "{ignore}"
+    );
     assert_eq!(listing(&shop), before, "the scan changes nothing");
 
     // The click: one commit, without the dependencies and the secret.
-    let r = sreq(tx, Req::GitInit { id: project.clone(), gitignore: Some(ignore) }).unwrap();
+    let r = sreq(
+        tx,
+        Req::GitInit {
+            id: project.clone(),
+            gitignore: Some(ignore),
+        },
+    )
+    .unwrap();
     assert!(r["commit"].is_string(), "{r}");
     assert_eq!(git(&shop, &["rev-list", "--count", "HEAD"]), "1");
     let files = git(&shop, &["ls-files"]);
-    assert!(files.contains("app.js") && files.contains(".gitignore"), "{files}");
-    assert!(!files.contains(".env") && !files.contains("node_modules"), "{files}");
-    let v = sreq(tx, Req::Project { id: project.clone() }).unwrap();
+    assert!(
+        files.contains("app.js") && files.contains(".gitignore"),
+        "{files}"
+    );
+    assert!(
+        !files.contains(".env") && !files.contains("node_modules"),
+        "{files}"
+    );
+    let v = sreq(
+        tx,
+        Req::Project {
+            id: project.clone(),
+        },
+    )
+    .unwrap();
     assert_eq!(v["kind"], "git", "{v}");
-    assert!(shop.join(".specify").is_dir(), "Spec Kit comes once it is a repository");
-    sreq(tx, Req::NewFeature { project, title: "Cart".into(), lead: None }).unwrap();
+    assert!(
+        shop.join(".specify").is_dir(),
+        "Spec Kit comes once it is a repository"
+    );
+    sreq(
+        tx,
+        Req::NewFeature {
+            project,
+            title: "Cart".into(),
+            lead: None,
+        },
+    )
+    .unwrap();
 }
 
 #[test]
@@ -110,7 +159,13 @@ fn a_subfolder_of_a_repository_is_refused_naming_its_top_folder() {
     let scenario = root.join("scenario.toml");
     std::fs::write(&scenario, "").unwrap();
     let e = start_studio(&root, &scenario, None);
-    let err = sreq(&e.tx, Req::AddProject { path: mono.join("app") }).unwrap_err();
+    let err = sreq(
+        &e.tx,
+        Req::AddProject {
+            path: mono.join("app"),
+        },
+    )
+    .unwrap_err();
     assert!(err.contains("inside"), "{err}");
     assert!(err.contains("mono"), "names the top folder: {err}");
     assert!(!mono.join("app/.specify").exists(), "nothing written");
@@ -160,23 +215,53 @@ fn a_subfolder_project_from_before_moves_to_the_top_folder_and_its_feature_can_b
     let tx = &e.tx;
     let v = sreq(tx, Req::Project { id: "app".into() }).unwrap();
     assert_eq!(v["kind"], "needs_move", "{v}");
-    let refused = sreq(tx, Req::Feature { project: "app".into(), feature: "001-plots".into() })
-        .unwrap_err();
+    let refused = sreq(
+        tx,
+        Req::Feature {
+            project: "app".into(),
+            feature: "001-plots".into(),
+        },
+    )
+    .unwrap_err();
     assert!(refused.contains("top folder"), "{refused}");
     // What would move, and nothing changes before the click.
-    let m = sreq(tx, Req::Move { id: "app".into(), confirmed: false }).unwrap();
+    let m = sreq(
+        tx,
+        Req::Move {
+            id: "app".into(),
+            confirmed: false,
+        },
+    )
+    .unwrap();
     assert_eq!(m["features"][0]["to"], "app/specs/001-plots", "{m}");
     assert!(m["top"].as_str().unwrap().contains("mono"), "{m}");
     assert_eq!(git(&mono, &["branch", "--list", "001-plots"]), "");
 
-    let r = sreq(tx, Req::Move { id: "app".into(), confirmed: true }).unwrap();
+    let r = sreq(
+        tx,
+        Req::Move {
+            id: "app".into(),
+            confirmed: true,
+        },
+    )
+    .unwrap();
     assert_eq!(r["spec_root"], "app", "{r}");
     let v = sreq(tx, Req::Project { id: "app".into() }).unwrap();
     assert_eq!(v["kind"], "git", "{v}");
     // Its feature has a branch holding its documents; they are still where they were.
-    assert_eq!(git(&mono, &["show", "001-plots:app/specs/001-plots/spec.md"]), SPEC.trim_end());
+    assert_eq!(
+        git(&mono, &["show", "001-plots:app/specs/001-plots/spec.md"]),
+        SPEC.trim_end()
+    );
     assert!(docs.join("spec.md").exists());
-    let fv = sreq(tx, Req::Feature { project: "app".into(), feature: "001-plots".into() }).unwrap();
+    let fv = sreq(
+        tx,
+        Req::Feature {
+            project: "app".into(),
+            feature: "001-plots".into(),
+        },
+    )
+    .unwrap();
     assert_eq!(fv["branch"], "001-plots", "{fv}");
     let locked = ask(
         tx,
@@ -201,15 +286,33 @@ fn a_subfolder_project_from_before_moves_to_the_top_folder_and_its_feature_can_b
         .1;
     sreq(
         tx,
-        Req::PutAgent { name: "reviewer".into(), scope: "project:app".into(), text: reviewer.into() },
+        Req::PutAgent {
+            name: "reviewer".into(),
+            scope: "project:app".into(),
+            text: reviewer.into(),
+        },
     )
     .unwrap();
     assert!(app.join(".fallow/agents/reviewer.md").is_file());
     assert!(!mono.join(".fallow/agents/reviewer.md").exists());
     // A new feature goes under the spec root too, numbered after the moved one.
-    let f = sreq(tx, Req::NewFeature { project: "app".into(), title: "Charts".into(), lead: None })
-        .unwrap();
-    let fv = sreq(tx, Req::Feature { project: "app".into(), feature: "002-charts".into() }).unwrap();
+    let f = sreq(
+        tx,
+        Req::NewFeature {
+            project: "app".into(),
+            title: "Charts".into(),
+            lead: None,
+        },
+    )
+    .unwrap();
+    let fv = sreq(
+        tx,
+        Req::Feature {
+            project: "app".into(),
+            feature: "002-charts".into(),
+        },
+    )
+    .unwrap();
     assert_eq!(fv["dir"], "app/specs/002-charts", "{f} {fv}");
 }
 
@@ -234,10 +337,27 @@ fn a_plain_folder_project_from_before_gets_the_question_and_keeps_its_documents(
     assert_eq!(v["kind"], "needs_git", "{v}");
     let scan = sreq(tx, Req::GitScan { id: "app".into() }).unwrap();
     assert_eq!(scan["files"], 2, "{scan}");
-    sreq(tx, Req::GitInit { id: "app".into(), gitignore: None }).unwrap();
+    sreq(
+        tx,
+        Req::GitInit {
+            id: "app".into(),
+            gitignore: None,
+        },
+    )
+    .unwrap();
     // The feature's documents are in the first commit; the feature has its branch.
-    assert_eq!(git(&thesis, &["show", "HEAD:specs/001-plots/spec.md"]), "# Plots");
-    let fv = sreq(tx, Req::Feature { project: "app".into(), feature: "001-plots".into() }).unwrap();
+    assert_eq!(
+        git(&thesis, &["show", "HEAD:specs/001-plots/spec.md"]),
+        "# Plots"
+    );
+    let fv = sreq(
+        tx,
+        Req::Feature {
+            project: "app".into(),
+            feature: "001-plots".into(),
+        },
+    )
+    .unwrap();
     assert_eq!(fv["branch"], "001-plots", "{fv}");
 }
 
@@ -249,8 +369,12 @@ fn a_plain_folder_project_from_before_gets_the_question_and_keeps_its_documents(
 #[test]
 #[ignore]
 fn serve_the_012_repo_demo() {
-    let root = std::path::PathBuf::from(std::env::var("FALLOW_VISUAL_ROOT").expect("FALLOW_VISUAL_ROOT"));
-    let secs: u64 = std::env::var("FALLOW_VISUAL_SECS").ok().and_then(|s| s.parse().ok()).unwrap_or(1800);
+    let root =
+        std::path::PathBuf::from(std::env::var("FALLOW_VISUAL_ROOT").expect("FALLOW_VISUAL_ROOT"));
+    let secs: u64 = std::env::var("FALLOW_VISUAL_SECS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(1800);
     std::fs::create_dir_all(&root).unwrap();
     identity(&root);
     let shop = root.join("shop");
@@ -298,8 +422,12 @@ fn a_project_made_a_repository_outside_fallow_gives_its_features_their_branches_
         json!([{ "dir": "specs/001-plots", "title": "Plots", "created": "2026-10-01T00:00:00Z" }]),
     );
     // The engineer made it a repository by hand, its spec documents left out.
-    std::fs::write(thesis.join("README.md"), "thesis
-").unwrap();
+    std::fs::write(
+        thesis.join("README.md"),
+        "thesis
+",
+    )
+    .unwrap();
     git(&thesis, &["init", "-q"]);
     git(&thesis, &["add", "README.md"]);
     git(&thesis, &["commit", "-q", "-m", "mine"]);
@@ -309,17 +437,47 @@ fn a_project_made_a_repository_outside_fallow_gives_its_features_their_branches_
     let tx = &e.tx;
     let v = sreq(tx, Req::Project { id: "app".into() }).unwrap();
     assert_eq!(v["git"]["setup_left"], true, "{v}");
-    let refused = sreq(tx, Req::Feature { project: "app".into(), feature: "001-plots".into() })
-        .unwrap_err();
+    let refused = sreq(
+        tx,
+        Req::Feature {
+            project: "app".into(),
+            feature: "001-plots".into(),
+        },
+    )
+    .unwrap_err();
     assert!(refused.contains("not set up yet"), "{refused}");
     let scan = sreq(tx, Req::GitScan { id: "app".into() }).unwrap();
     assert_eq!(scan["needs"], "branches", "{scan}");
-    sreq(tx, Req::GitInit { id: "app".into(), gitignore: None }).unwrap();
-    assert_eq!(git(&thesis, &["rev-list", "--count", "HEAD"]), "1", "no second commit");
-    let fv = sreq(tx, Req::Feature { project: "app".into(), feature: "001-plots".into() }).unwrap();
+    sreq(
+        tx,
+        Req::GitInit {
+            id: "app".into(),
+            gitignore: None,
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        git(&thesis, &["rev-list", "--count", "HEAD"]),
+        "1",
+        "no second commit"
+    );
+    let fv = sreq(
+        tx,
+        Req::Feature {
+            project: "app".into(),
+            feature: "001-plots".into(),
+        },
+    )
+    .unwrap();
     assert_eq!(fv["branch"], "001-plots", "{fv}");
     // Its documents are on its branch; the engineer's checkout is as it was.
-    assert_eq!(git(&thesis, &["show", "001-plots:specs/001-plots/spec.md"]), "# Plots");
+    assert_eq!(
+        git(&thesis, &["show", "001-plots:specs/001-plots/spec.md"]),
+        "# Plots"
+    );
     assert_eq!(git(&thesis, &["rev-list", "--count", "main"]), "1");
-    assert!(!thesis.join(".specify").exists(), "nothing written in the folder");
+    assert!(
+        !thesis.join(".specify").exists(),
+        "nothing written in the folder"
+    );
 }

@@ -11,7 +11,10 @@ use fallow::studio::Req;
 use serde_json::Value;
 
 /// A project whose gate passes anywhere, with `a.txt` and `c.txt` committed.
-fn project_with(root: &std::path::Path, scenario: &str) -> (fallow::service::ToolEngine, std::path::PathBuf, String) {
+fn project_with(
+    root: &std::path::Path,
+    scenario: &str,
+) -> (fallow::service::ToolEngine, std::path::PathBuf, String) {
     let repo = repo(root);
     std::fs::write(repo.join("a.txt"), "one\n").unwrap();
     std::fs::write(repo.join("c.txt"), "gone soon\n").unwrap();
@@ -103,11 +106,26 @@ output = { reply = "added d" }
     assert_eq!(file_of(&ch, "a.txt")["turns"], serde_json::json!([2]));
     assert_eq!(file_of(&ch, "c.txt")["mark"], "D");
     assert_eq!(file_of(&ch, "c.txt")["turns"], serde_json::json!([3]));
-    assert!(ch["notice"].as_str().unwrap().contains("only this session's working copy"));
-    // The Files tab has the session's copy as a version.
-    let vs = sreq(tx, Req::FileVersions { project: project.clone() }).unwrap();
     assert!(
-        vs["versions"].as_array().unwrap().iter().any(|x| x["id"] == format!("solo:{s}")),
+        ch["notice"]
+            .as_str()
+            .unwrap()
+            .contains("only this session's working copy")
+    );
+    // The Files tab has the session's copy as a version.
+    let vs = sreq(
+        tx,
+        Req::FileVersions {
+            project: project.clone(),
+        },
+    )
+    .unwrap();
+    assert!(
+        vs["versions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|x| x["id"] == format!("solo:{s}")),
         "{vs}"
     );
 
@@ -121,14 +139,23 @@ output = { reply = "added d" }
     assert!(git(&wt, &["log", "-1", "--format=%s"]).contains("the engineer's edits before turn 4"));
     let ch = sreq(tx, Req::SoloChanges { session: s.clone() }).unwrap();
     let by = file_of(&ch, "a.txt")["by"].as_array().unwrap().clone();
-    assert!(by.iter().any(|b| b == "you") && by.iter().any(|b| b == "assistant"), "{by:?}");
+    assert!(
+        by.iter().any(|b| b == "you") && by.iter().any(|b| b == "assistant"),
+        "{by:?}"
+    );
 
     // The gates: not run, then passed on the head with no independent check, then stale.
     assert_eq!(v["session"]["gates"]["label"], "not_run");
     let r = sreq(tx, Req::SoloGates { session: s.clone() }).unwrap();
     assert_eq!(r["running"], true, "{r}");
-    let v = wait_conv(tx, &s, "the gates", |v| v["session"]["gates"]["running"] == false && v["session"]["gates"]["label"] != "not_run");
-    assert_eq!(v["session"]["gates"]["label"], "passed", "{}", v["session"]["gates"]);
+    let v = wait_conv(tx, &s, "the gates", |v| {
+        v["session"]["gates"]["running"] == false && v["session"]["gates"]["label"] != "not_run"
+    });
+    assert_eq!(
+        v["session"]["gates"]["label"], "passed",
+        "{}",
+        v["session"]["gates"]
+    );
     assert_eq!(v["session"]["gates"]["commit"], v["session"]["head"]);
     say_solo(tx, &s, "turn five");
     wait_conv(tx, &s, "turn five working", |v| v["busy"] == true);
@@ -141,20 +168,56 @@ output = { reply = "added d" }
     // Undo turn 2: it names turns 2-5, the engineer's edits and what is not committed yet, and
     // needs the confirmation.
     std::fs::write(wt.join("e.txt"), "not committed\n").unwrap();
-    let p = sreq(tx, Req::UndoPreview { session: s.clone(), turn: 2 }).unwrap();
+    let p = sreq(
+        tx,
+        Req::UndoPreview {
+            session: s.clone(),
+            turn: 2,
+        },
+    )
+    .unwrap();
     assert_eq!(p["uncommitted"], serde_json::json!(["e.txt"]), "{p}");
     assert_eq!(p["turns"], serde_json::json!([2, 3, 4, 5]), "{p}");
     assert_eq!(p["edits"][0]["files"], serde_json::json!(["a.txt"]), "{p}");
     assert_eq!(p["needs_confirm"], true);
-    let err = sreq(tx, Req::Undo { session: s.clone(), turn: 2, confirmed: false }).unwrap_err();
+    let err = sreq(
+        tx,
+        Req::Undo {
+            session: s.clone(),
+            turn: 2,
+            confirmed: false,
+        },
+    )
+    .unwrap_err();
     assert!(err.contains("confirmation"), "{err}");
     let turn1 = v["turns"][1]["head"].as_str().unwrap().to_string();
-    sreq(tx, Req::Undo { session: s.clone(), turn: 2, confirmed: true }).unwrap();
+    sreq(
+        tx,
+        Req::Undo {
+            session: s.clone(),
+            turn: 2,
+            confirmed: true,
+        },
+    )
+    .unwrap();
     // The edit not committed was committed as the engineer's first, then undone with the rest.
-    let head_before = git(&repo, &["rev-parse", &format!("refs/fallow/solo/{s}/undone/2")]);
-    assert_eq!(git(&repo, &["show", &format!("{head_before}:e.txt")]), "not committed");
-    assert!(!wt.join("e.txt").exists(), "nothing is left in the working copy");
-    assert_eq!(git(&wt, &["rev-parse", "HEAD"]), turn1, "the branch is at turn 1's commit");
+    let head_before = git(
+        &repo,
+        &["rev-parse", &format!("refs/fallow/solo/{s}/undone/2")],
+    );
+    assert_eq!(
+        git(&repo, &["show", &format!("{head_before}:e.txt")]),
+        "not committed"
+    );
+    assert!(
+        !wt.join("e.txt").exists(),
+        "nothing is left in the working copy"
+    );
+    assert_eq!(
+        git(&wt, &["rev-parse", "HEAD"]),
+        turn1,
+        "the branch is at turn 1's commit"
+    );
     assert_eq!(std::fs::read_to_string(wt.join("a.txt")).unwrap(), "one\n");
     assert!(wt.join("c.txt").exists());
     assert!(
@@ -166,7 +229,11 @@ output = { reply = "added d" }
     // The next turn's prompt names what was undone.
     say_solo(tx, &s, "what now");
     let v = wait_turn(tx, &s, 6);
-    assert_eq!(v["turns"][5]["reply"], "I know what was undone.", "{}", v["turns"][5]);
+    assert_eq!(
+        v["turns"][5]["reply"], "I know what was undone.",
+        "{}",
+        v["turns"][5]
+    );
 }
 
 #[test]
@@ -208,12 +275,28 @@ output = { reply = "folded" }
     let wt = std::path::PathBuf::from(v["session"]["worktree"].as_str().unwrap());
     let lock = {
         let link = std::fs::read_to_string(wt.join(".git")).unwrap();
-        std::path::PathBuf::from(link.trim().trim_start_matches("gitdir: ").trim()).join("index.lock")
+        std::path::PathBuf::from(link.trim().trim_start_matches("gitdir: ").trim())
+            .join("index.lock")
     };
     // Still locked: the next turn and an undo wait, saying why.
-    let err = sreq(tx, Req::Say { conv: s.clone(), text: "after the retry".into() }).unwrap_err();
+    let err = sreq(
+        tx,
+        Req::Say {
+            conv: s.clone(),
+            text: "after the retry".into(),
+        },
+    )
+    .unwrap_err();
     assert!(err.contains("could not commit turn 1"), "{err}");
-    let err = sreq(tx, Req::Undo { session: s.clone(), turn: 1, confirmed: true }).unwrap_err();
+    let err = sreq(
+        tx,
+        Req::Undo {
+            session: s.clone(),
+            turn: 1,
+            confirmed: true,
+        },
+    )
+    .unwrap_err();
     assert!(err.contains("turn 1"), "{err}");
     // Unlocked, with an edit of the engineer's since: the retry keeps them apart.
     std::fs::remove_file(&lock).unwrap();
@@ -223,11 +306,23 @@ output = { reply = "folded" }
     assert!(v["session"]["pending_commit"].is_null(), "{}", v["session"]);
     let log = git(&wt, &["log", "--format=%s", "-3"]);
     let lines: Vec<&str> = log.lines().collect();
-    assert!(lines.iter().any(|l| l.contains("turn 1: committed again")), "{log}");
-    assert!(lines.iter().any(|l| l.contains("the engineer's edits")), "{log}");
-    assert_eq!(v["session"]["engineer_edits"][0]["files"], serde_json::json!(["y.txt"]));
+    assert!(
+        lines.iter().any(|l| l.contains("turn 1: committed again")),
+        "{log}"
+    );
+    assert!(
+        lines.iter().any(|l| l.contains("the engineer's edits")),
+        "{log}"
+    );
+    assert_eq!(
+        v["session"]["engineer_edits"][0]["files"],
+        serde_json::json!(["y.txt"])
+    );
     let shown = git(&wt, &["show", "--name-only", "--format=", "HEAD~1"]);
-    assert!(shown.contains("x.txt") && !shown.contains("y.txt"), "the turn's commit holds only x: {shown}");
+    assert!(
+        shown.contains("x.txt") && !shown.contains("y.txt"),
+        "the turn's commit holds only x: {shown}"
+    );
 
     // Another failure, fixed in the next turn: one commit for both turns.
     say_solo(tx, &s, "make z");
@@ -236,7 +331,11 @@ output = { reply = "folded" }
     std::fs::remove_file(&lock).unwrap();
     sreq(
         tx,
-        Req::SoloPending { session: s.clone(), choice: "fold_next".into(), confirmed: false },
+        Req::SoloPending {
+            session: s.clone(),
+            choice: "fold_next".into(),
+            confirmed: false,
+        },
     )
     .unwrap();
     say_solo(tx, &s, "fold it");
@@ -245,7 +344,10 @@ output = { reply = "folded" }
     let subject = git(&wt, &["log", "-1", "--format=%s"]);
     assert!(subject.contains("turns 3-4"), "{subject}");
     let shown = git(&wt, &["show", "--name-only", "--format=", "HEAD"]);
-    assert!(shown.contains("z.txt") && shown.contains("w.txt"), "{shown}");
+    assert!(
+        shown.contains("z.txt") && shown.contains("w.txt"),
+        "{shown}"
+    );
 }
 
 #[test]
@@ -283,9 +385,15 @@ output = { reply = "main has it" }
     git(&repo, &["commit", "-q", "-m", "on main"]);
     let main = git(&repo, &["rev-parse", "main"]);
     let v = view(tx, &s);
-    assert_eq!(v["session"]["start_moved"]["commits"], 1, "{}", v["session"]);
+    assert_eq!(
+        v["session"]["start_moved"]["commits"], 1,
+        "{}",
+        v["session"]
+    );
     say_solo(tx, &s, "bring it up to date");
-    let w = wait_conv(tx, &s, "the merge asked", |v| !v["pending_approval"].is_null());
+    let w = wait_conv(tx, &s, "the merge asked", |v| {
+        !v["pending_approval"].is_null()
+    });
     let id = w["pending_approval"]["id"].as_str().unwrap().to_string();
     sreq(
         tx,
@@ -298,19 +406,46 @@ output = { reply = "main has it" }
     )
     .unwrap();
     let v = wait_turn(tx, &s, 2);
-    assert_eq!(v["session"]["base"]["gates"], main.as_str(), "{}", v["session"]);
+    assert_eq!(
+        v["session"]["base"]["gates"],
+        main.as_str(),
+        "{}",
+        v["session"]
+    );
     assert!(v["session"]["start_moved"].is_null(), "{}", v["session"]);
-    let p = sreq(tx, Req::UndoPreview { session: s.clone(), turn: 2 }).unwrap();
+    let p = sreq(
+        tx,
+        Req::UndoPreview {
+            session: s.clone(),
+            turn: 2,
+        },
+    )
+    .unwrap();
     assert_eq!(p["base_moves"], true, "{p}");
-    sreq(tx, Req::Undo { session: s.clone(), turn: 2, confirmed: false }).unwrap();
+    sreq(
+        tx,
+        Req::Undo {
+            session: s.clone(),
+            turn: 2,
+            confirmed: false,
+        },
+    )
+    .unwrap();
     let v = view(tx, &s);
-    assert_eq!(v["session"]["base"]["gates"], start.as_str(), "the base is back");
+    assert_eq!(
+        v["session"]["base"]["gates"],
+        start.as_str(),
+        "the base is back"
+    );
     // The session's own commit put on main moves nothing (R-5: a merge into the starting branch).
     say_solo(tx, &s, "publish it on main");
     let mut asked = 0;
     let v = loop {
         let w = wait_conv(tx, &s, "a command or the end", |v| {
-            !v["pending_approval"].is_null() || v["turns"].as_array().is_some_and(|t| t.len() >= 3 && !t[2]["reply"].is_null())
+            !v["pending_approval"].is_null()
+                || v["turns"]
+                    .as_array()
+                    .is_some_and(|t| t.len() >= 3 && !t[2]["reply"].is_null())
         });
         if w["pending_approval"].is_null() {
             break w;
@@ -329,7 +464,12 @@ output = { reply = "main has it" }
         )
         .unwrap();
     };
-    assert_eq!(v["session"]["base"]["gates"], start.as_str(), "{}", v["session"]);
+    assert_eq!(
+        v["session"]["base"]["gates"],
+        start.as_str(),
+        "{}",
+        v["session"]
+    );
 }
 
 #[test]
@@ -368,7 +508,11 @@ output = { reply = "3" }
         drop(e);
     }
     // Fallow stopped right after writing `undo_started`.
-    let log = root.join("data").join("conversations").join(&s).join("events.jsonl");
+    let log = root
+        .join("data")
+        .join("conversations")
+        .join(&s)
+        .join("events.jsonl");
     let text = std::fs::read_to_string(&log).unwrap();
     let last: Value = serde_json::from_str(text.lines().last().unwrap()).unwrap();
     let seq = last["seq"].as_u64().unwrap() + 1;
@@ -381,10 +525,21 @@ output = { reply = "3" }
     let e = start_studio(&root, &root.join("scenario.toml"), None);
     let tx = &e.tx;
     let v = view(tx, &s);
-    assert_eq!(v["session"]["undone"], serde_json::json!([2]), "{}", v["session"]);
+    assert_eq!(
+        v["session"]["undone"],
+        serde_json::json!([2]),
+        "{}",
+        v["session"]
+    );
     assert_eq!(git(&wt, &["rev-parse", "HEAD"]), head_after);
     assert_eq!(std::fs::read_to_string(wt.join("f.txt")).unwrap(), "1\n");
-    assert!(!git(&wt, &["rev-parse", &format!("refs/fallow/solo/{s}/undone/2")]).is_empty());
+    assert!(
+        !git(
+            &wt,
+            &["rev-parse", &format!("refs/fallow/solo/{s}/undone/2")]
+        )
+        .is_empty()
+    );
 
     // An editor opened on the session's copy during a turn is said.
     say_solo(tx, &s, "slow");
@@ -395,7 +550,12 @@ output = { reply = "3" }
             project: project.clone(),
             version: format!("solo:{s}"),
             path: ".".into(),
-            editor: Some(serde_json::from_value(serde_json::json!({ "program": "git", "args": ["--version"] })).unwrap()),
+            editor: Some(
+                serde_json::from_value(
+                    serde_json::json!({ "program": "git", "args": ["--version"] }),
+                )
+                .unwrap(),
+            ),
             command: None,
         },
     )
@@ -414,8 +574,12 @@ output = { reply = "3" }
 #[test]
 #[ignore]
 fn serve_the_012_check_demo() {
-    let root = std::path::PathBuf::from(std::env::var("FALLOW_VISUAL_ROOT").expect("FALLOW_VISUAL_ROOT"));
-    let secs: u64 = std::env::var("FALLOW_VISUAL_SECS").ok().and_then(|s| s.parse().ok()).unwrap_or(1800);
+    let root =
+        std::path::PathBuf::from(std::env::var("FALLOW_VISUAL_ROOT").expect("FALLOW_VISUAL_ROOT"));
+    let secs: u64 = std::env::var("FALLOW_VISUAL_SECS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(1800);
     std::fs::create_dir_all(&root).unwrap();
     let (e, _repo, project) = project_with(
         &root,
@@ -447,8 +611,18 @@ output = { reply = "Deleted `c.txt`." }
     say_solo(tx, &s, "Remove the old notes");
     wait_turn(tx, &s, 3);
     sreq(tx, Req::SoloGates { session: s.clone() }).unwrap();
-    wait_conv(tx, &s, "the gates", |v| v["session"]["gates"]["label"] == "passed");
-    sreq(tx, Req::NewFeature { project: project.clone(), title: "Charts".into(), lead: None }).unwrap();
+    wait_conv(tx, &s, "the gates", |v| {
+        v["session"]["gates"]["label"] == "passed"
+    });
+    sreq(
+        tx,
+        Req::NewFeature {
+            project: project.clone(),
+            title: "Charts".into(),
+            lead: None,
+        },
+    )
+    .unwrap();
     let web = fallow::service::http::Web::start(e.tx.clone(), "a".repeat(64)).unwrap();
     let url = format!("http://127.0.0.1:{}/?k={}", web.port, "a".repeat(64));
     std::fs::write(root.join("url.txt"), &url).unwrap();

@@ -526,11 +526,22 @@ mod login_tests {
 
     #[test]
     fn a_login_failure_is_told_apart() {
-        assert!(login_failure("the agent ended with an error: Failed to authenticate: OAuth session expired and could not be refreshed"));
-        assert!(login_failure("the agent ended with an error: Invalid API key · Please run /login"));
-        assert!(!login_failure("the agent ended without a result: test_login: invalid api key"), "the project's own error");
-        assert!(!login_failure("the agent ended with an error: the user is not logged in"));
-        assert!(!login_failure("the agent ended with an error: tests failed"));
+        assert!(login_failure(
+            "the agent ended with an error: Failed to authenticate: OAuth session expired and could not be refreshed"
+        ));
+        assert!(login_failure(
+            "the agent ended with an error: Invalid API key · Please run /login"
+        ));
+        assert!(
+            !login_failure("the agent ended without a result: test_login: invalid api key"),
+            "the project's own error"
+        );
+        assert!(!login_failure(
+            "the agent ended with an error: the user is not logged in"
+        ));
+        assert!(!login_failure(
+            "the agent ended with an error: tests failed"
+        ));
         assert!(!login_failure("the agent gave no structured result"));
     }
 }

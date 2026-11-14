@@ -88,7 +88,11 @@ impl Studio {
         let mut engineer: Vec<String> = Vec::new();
         if let Some(n) = solo.pending_commit {
             // What the turn left, by content; whatever differs since is the engineer's.
-            let recs = solo.commits.get(&n).map(|t| t.changed.clone()).unwrap_or_default();
+            let recs = solo
+                .commits
+                .get(&n)
+                .map(|t| t.changed.clone())
+                .unwrap_or_default();
             let mut turn_paths = Vec::new();
             for r in &recs {
                 if git::blob_of(&wt, &r.path) == r.blob {
@@ -106,10 +110,11 @@ impl Studio {
                 Ok(None) => {
                     // Nothing of the turn's is left as it left it: no commit of its own (the
                     // engineer's edits go in theirs). Its pending state ends.
-                    self.conv_mut(conv)?.append(CEvent::Solo(SoloEvent::UncommittedDiscarded {
-                        n,
-                        files: Vec::new(),
-                    }))?;
+                    self.conv_mut(conv)?
+                        .append(CEvent::Solo(SoloEvent::UncommittedDiscarded {
+                            n,
+                            files: Vec::new(),
+                        }))?;
                 }
                 Err(e) => {
                     return Err(format!(
@@ -135,11 +140,12 @@ impl Studio {
         let msg = format!("Fallow solo {conv}: the engineer's edits before {before}");
         match git::snapshot(&wt, &solo.branch, &msg) {
             Ok(Some(commit)) => {
-                self.conv_mut(conv)?.append(CEvent::Solo(SoloEvent::EngineerEdits {
-                    before,
-                    commit,
-                    files: engineer.clone(),
-                }))?;
+                self.conv_mut(conv)?
+                    .append(CEvent::Solo(SoloEvent::EngineerEdits {
+                        before,
+                        commit,
+                        files: engineer.clone(),
+                    }))?;
                 Ok(engineer)
             }
             Ok(None) => Ok(Vec::new()),
@@ -152,7 +158,12 @@ impl Studio {
     /// 012 (R-4, contracts/web-api.md): the engineer's way on from a failed turn commit: "Fix it
     /// in the next turn", or "Undo these changes" (with `confirmed`), which discards the working
     /// copy's uncommitted changes and answers the files lost.
-    pub fn solo_pending(&mut self, conv: &str, choice: &str, confirmed: bool) -> Result<Value, String> {
+    pub fn solo_pending(
+        &mut self,
+        conv: &str,
+        choice: &str,
+        confirmed: bool,
+    ) -> Result<Value, String> {
         let c = self.convs.get(conv).ok_or("there is no session")?;
         if c.state.busy {
             return Err("Wait until the turn ends".into());
@@ -161,10 +172,13 @@ impl Studio {
         let n = solo.pending_commit.ok_or("no turn's commit is waiting")?;
         match choice {
             "fold_next" => {
-                self.conv_mut(conv)?.append(CEvent::Solo(SoloEvent::FoldNext { n }))?;
+                self.conv_mut(conv)?
+                    .append(CEvent::Solo(SoloEvent::FoldNext { n }))?;
                 Ok(json!({}))
             }
-            "discard_preview" => Ok(json!({ "files": git::changes_all(&solo.worktree).unwrap_or_default() })),
+            "discard_preview" => {
+                Ok(json!({ "files": git::changes_all(&solo.worktree).unwrap_or_default() }))
+            }
             "discard" => {
                 let files: Vec<String> = git::changes_all(&solo.worktree)
                     .unwrap_or_default()
@@ -174,14 +188,19 @@ impl Studio {
                 if !confirmed {
                     return Err(format!(
                         "this needs the engineer's confirmation: it discards {}",
-                        if files.is_empty() { "nothing".to_string() } else { files.join(", ") }
+                        if files.is_empty() {
+                            "nothing".to_string()
+                        } else {
+                            files.join(", ")
+                        }
                     ));
                 }
                 git::discard_nohooks(&solo.worktree)?;
-                self.conv_mut(conv)?.append(CEvent::Solo(SoloEvent::UncommittedDiscarded {
-                    n,
-                    files: files.clone(),
-                }))?;
+                self.conv_mut(conv)?
+                    .append(CEvent::Solo(SoloEvent::UncommittedDiscarded {
+                        n,
+                        files: files.clone(),
+                    }))?;
                 Ok(json!({ "files": files }))
             }
             other => Err(format!("no choice {other:?}: fold_next or discard")),
@@ -195,7 +214,9 @@ impl Studio {
         let c = self.convs.get(conv).ok_or("there is no session")?;
         let solo = c.state.solo.as_ref().ok_or("not a session")?;
         let last = c.state.turns.len() as u32;
-        let live = |n: u32| !solo.undone.contains(&n) && c.state.turns.iter().any(|t| t.n == n && !t.withdrawn);
+        let live = |n: u32| {
+            !solo.undone.contains(&n) && c.state.turns.iter().any(|t| t.n == n && !t.withdrawn)
+        };
         if !live(k) {
             return Err(format!("there is no turn {k} to undo"));
         }
@@ -218,11 +239,21 @@ impl Studio {
         let turns: Vec<u32> = (from..=last).filter(|n| live(*n)).collect();
         let shared: Vec<(u32, u32)> = turns
             .iter()
-            .filter_map(|t| solo.commits.get(t).and_then(|c| c.folded_into).map(|j| (j, *t)))
+            .filter_map(|t| {
+                solo.commits
+                    .get(t)
+                    .and_then(|c| c.folded_into)
+                    .map(|j| (j, *t))
+            })
             .collect();
         // The engineer's edits made after turn `from` started: before turns from+1 … last+1.
         let head_now = git::head(&solo.worktree).unwrap_or_default();
-        let head_after_ = c.state.turns.iter().find(|t| t.n == from).and_then(|t| t.head.clone());
+        let head_after_ = c
+            .state
+            .turns
+            .iter()
+            .find(|t| t.n == from)
+            .and_then(|t| t.head.clone());
         let edits: Vec<(String, Vec<String>)> = solo
             .engineer_edits
             .iter()
@@ -248,7 +279,9 @@ impl Studio {
             .iter()
             .find(|t| t.n == from)
             .and_then(|t| t.head.clone())
-            .ok_or_else(|| format!("Fallow does not know where the branch stood before turn {from}"))?;
+            .ok_or_else(|| {
+                format!("Fallow does not know where the branch stood before turn {from}")
+            })?;
         Ok(UndoPlan {
             from,
             to: last,
@@ -285,7 +318,12 @@ impl Studio {
         if first.needs_confirm() && !confirmed {
             return Err(format!(
                 "this needs the engineer's confirmation: it undoes turns {}",
-                first.turns.iter().map(u32::to_string).collect::<Vec<_>>().join(", ")
+                first
+                    .turns
+                    .iter()
+                    .map(u32::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ")
             ));
         }
         // A failed commit is tried again first, a fold chosen or not; when it still fails the
@@ -295,11 +333,12 @@ impl Studio {
         let wt = solo.worktree.clone();
         let head_before = git::head(&wt)?;
         let keep_ref = format!("refs/fallow/solo/{conv}/undone/{}", plan.from);
-        self.conv_mut(conv)?.append(CEvent::Solo(SoloEvent::UndoStarted {
-            from: plan.from,
-            head_before: head_before.clone(),
-            head_after: plan.head_after.clone(),
-        }))?;
+        self.conv_mut(conv)?
+            .append(CEvent::Solo(SoloEvent::UndoStarted {
+                from: plan.from,
+                head_before: head_before.clone(),
+                head_after: plan.head_after.clone(),
+            }))?;
         git::update_ref_nohooks(&wt, &keep_ref, &head_before)?;
         git::reset_hard_nohooks(&wt, &plan.head_after)?;
         // Exactly the commit before (SC-003): nothing untracked is left either.
@@ -307,7 +346,10 @@ impl Studio {
         let c = self.conv_mut(conv)?;
         // A fold chosen for a turn that is undone now has nothing left to fold.
         if let Some(n) = solo.pending_commit.filter(|n| *n >= plan.from) {
-            c.append(CEvent::Solo(SoloEvent::UncommittedDiscarded { n, files: Vec::new() }))?;
+            c.append(CEvent::Solo(SoloEvent::UncommittedDiscarded {
+                n,
+                files: Vec::new(),
+            }))?;
         }
         c.append(CEvent::Solo(SoloEvent::TurnsUndone {
             from: plan.from,
@@ -409,7 +451,11 @@ impl Studio {
         let s_before = c
             .start_before
             .take()
-            .or_else(|| std::fs::read_to_string(&mark).ok().map(|s| s.trim().to_string()))
+            .or_else(|| {
+                std::fs::read_to_string(&mark)
+                    .ok()
+                    .map(|s| s.trim().to_string())
+            })
             .filter(|s| !s.is_empty());
         let _ = std::fs::remove_file(&mark);
         let c = &*c;
@@ -422,7 +468,8 @@ impl Studio {
         let wt = solo.worktree.clone();
         // The starting branch as it was when the turn began: a merge of the session's own
         // commits into it moves nothing (R-5; Phase 6 review, 3).
-        let Some(s) = s_before.or_else(|| git::rev(&wt, &format!("refs/heads/{start}")).ok()) else {
+        let Some(s) = s_before.or_else(|| git::rev(&wt, &format!("refs/heads/{start}")).ok())
+        else {
             return;
         };
         if before == after {
@@ -473,7 +520,9 @@ impl Studio {
         }
         for (n, t) in &solo.commits {
             for commit in t.commits.iter().chain(t.commit.iter()) {
-                whose.entry(commit.clone()).or_insert((Some(*n), "assistant"));
+                whose
+                    .entry(commit.clone())
+                    .or_insert((Some(*n), "assistant"));
             }
         }
         let mut per: BTreeMap<String, (BTreeSet<u32>, BTreeSet<&'static str>)> = BTreeMap::new();
@@ -526,7 +575,12 @@ impl Studio {
             return Ok(json!({ "running": true }));
         }
         let project = c.state.project.clone();
-        if let Some(n) = c.state.solo.as_ref().and_then(|s| s.pending_commit.filter(|_| s.fold_next)) {
+        if let Some(n) = c
+            .state
+            .solo
+            .as_ref()
+            .and_then(|s| s.pending_commit.filter(|_| s.fold_next))
+        {
             return Err(format!(
                 "Turn {n}'s changes are not committed yet: they go with the next turn. Send it, or undo them, first"
             ));
@@ -539,27 +593,41 @@ impl Studio {
         let base = solo.base().gates;
         let squad = super::solo::squad_at_head(&p.root_dir());
         if squad.gates.is_empty() {
-            self.conv_mut(conv)?.append(CEvent::Solo(SoloEvent::GatesRun {
-                commit: head,
-                base,
-                results: Vec::new(),
-            }))?;
+            self.conv_mut(conv)?
+                .append(CEvent::Solo(SoloEvent::GatesRun {
+                    commit: head,
+                    base,
+                    results: Vec::new(),
+                }))?;
             return Ok(json!({ "running": false, "gates": 0 }));
         }
         // A baseline is kept per commit and per gate definitions: a changed squad file runs it
         // again (Phase 6 review, 12).
         let defs_key = format!(
             "{base}:{}",
-            squad.gates.iter().map(|g| format!("{}={}", g.name, g.command)).collect::<Vec<_>>().join(";")
+            squad
+                .gates
+                .iter()
+                .map(|g| format!("{}={}", g.name, g.command))
+                .collect::<Vec<_>>()
+                .join(";")
         );
-        let baseline = (base != head).then(|| c.gate_baselines.get(&defs_key).cloned()).flatten();
+        let baseline = (base != head)
+            .then(|| c.gate_baselines.get(&defs_key).cloned())
+            .flatten();
         let need_baseline = base != head && baseline.is_none();
         let stamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_millis())
             .unwrap_or_default();
-        let dir: PathBuf = self.worktrees(&p.id).join("_solo").join(format!("{conv}-gates-{stamp}"));
-        let base_dir: PathBuf = self.worktrees(&p.id).join("_solo").join(format!("{conv}-gates-{stamp}-base"));
+        let dir: PathBuf = self
+            .worktrees(&p.id)
+            .join("_solo")
+            .join(format!("{conv}-gates-{stamp}"));
+        let base_dir: PathBuf = self
+            .worktrees(&p.id)
+            .join("_solo")
+            .join(format!("{conv}-gates-{stamp}-base"));
         let repo = p.path.clone();
         let tx = ctx.tx.clone();
         let id = conv.to_string();
@@ -570,7 +638,9 @@ impl Studio {
             .spawn(move || {
                 let stop = AtomicBool::new(false);
                 // Each gate with the end of its output (FR-021).
-                let run_at = |commit: &str, d: &std::path::Path| -> Result<Vec<(GateResult, String)>, String> {
+                let run_at = |commit: &str,
+                              d: &std::path::Path|
+                 -> Result<Vec<(GateResult, String)>, String> {
                     if let Err(e) = git::worktree_add_detached_nohooks(&repo, d, commit) {
                         git::worktree_remove_nohooks(&repo, d);
                         return Err(e);
@@ -579,15 +649,23 @@ impl Studio {
                         .iter()
                         .map(|g| {
                             let mut text = String::new();
-                            let r = gates::run(g, d, commit, &mut |l| {
-                                text.push_str(l);
-                                text.push('\n');
-                                if text.len() > 8192 {
-                                    let cut = text.len() - 4096;
-                                    let cut = (cut..text.len()).find(|i| text.is_char_boundary(*i)).unwrap_or(cut);
-                                    text.drain(..cut);
-                                }
-                            }, &stop);
+                            let r = gates::run(
+                                g,
+                                d,
+                                commit,
+                                &mut |l| {
+                                    text.push_str(l);
+                                    text.push('\n');
+                                    if text.len() > 8192 {
+                                        let cut = text.len() - 4096;
+                                        let cut = (cut..text.len())
+                                            .find(|i| text.is_char_boundary(*i))
+                                            .unwrap_or(cut);
+                                        text.drain(..cut);
+                                    }
+                                },
+                                &stop,
+                            );
                             (r, text)
                         })
                         .collect();

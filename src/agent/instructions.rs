@@ -151,7 +151,11 @@ pub fn block(list: &[Instruction]) -> String {
     for i in list {
         match &i.skipped {
             None => {
-                let fence = if i.text.contains("```") { "````" } else { "```" };
+                let fence = if i.text.contains("```") {
+                    "````"
+                } else {
+                    "```"
+                };
                 s.push_str(&format!(
                     "The project's instructions for coding agents, from `{}`{}:\n{fence}\n{}\n{fence}\n\n",
                     i.path,
@@ -189,10 +193,7 @@ mod tests {
         std::fs::write(d.join(".cursor/rules/a.mdc"), "a").unwrap();
         std::fs::write(d.join(".env"), "TOKEN=x").unwrap();
         std::fs::write(d.join("NOTES.md"), "notes").unwrap();
-        let list = read(
-            &d,
-            &[".env".into(), "NOTES.md".into(), "missing.md".into()],
-        );
+        let list = read(&d, &[".env".into(), "NOTES.md".into(), "missing.md".into()]);
         let paths: Vec<&str> = list.iter().map(|i| i.path.as_str()).collect();
         assert_eq!(
             paths,
@@ -234,7 +235,10 @@ mod tests {
         let d = tmp("out");
         let outside = tmp("outside");
         std::fs::write(outside.join("secret.md"), "outside").unwrap();
-        let list = read(&d, &["../".to_string() + outside.file_name().unwrap().to_str().unwrap() + "/secret.md"]);
+        let list = read(
+            &d,
+            &["../".to_string() + outside.file_name().unwrap().to_str().unwrap() + "/secret.md"],
+        );
         assert_eq!(list[0].skipped.as_deref(), Some("outside the working copy"));
         assert!(!block(&list).contains("outside\n"));
     }

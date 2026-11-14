@@ -30,7 +30,12 @@ fn run(dir: &Path, scenario: &str, args: &[&str], stdin: &str, env: &[(&str, &st
         cmd.env(k, v);
     }
     let mut child = cmd.spawn().unwrap();
-    child.stdin.take().unwrap().write_all(stdin.as_bytes()).unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(stdin.as_bytes())
+        .unwrap();
     let out = child.wait_with_output().unwrap();
     String::from_utf8_lossy(&out.stdout)
         .lines()
@@ -46,7 +51,12 @@ fn tool_results(lines: &[Value]) -> Vec<(bool, String)> {
     lines
         .iter()
         .filter(|l| l["type"] == "user")
-        .flat_map(|l| l["message"]["content"].as_array().cloned().unwrap_or_default())
+        .flat_map(|l| {
+            l["message"]["content"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default()
+        })
         .filter(|c| c["type"] == "tool_result")
         .map(|c| {
             (
@@ -62,14 +72,20 @@ const IMG_MSG: &str = r#"{"type":"user","message":{"role":"user","content":[{"ty
 #[test]
 fn expect_images_counts_the_stream_json_image_blocks() {
     let d = scratch("img");
-    let sc = "[[step]]\nkind = \"assistant_turn\"\nexpect_images = 1\noutput = { reply = \"seen\" }\n";
+    let sc =
+        "[[step]]\nkind = \"assistant_turn\"\nexpect_images = 1\noutput = { reply = \"seen\" }\n";
     let ok = run(&d, sc, &["--input-format", "stream-json"], IMG_MSG, &[]);
     assert_eq!(result(&ok)["is_error"], false, "{ok:?}");
     assert_eq!(result(&ok)["structured_output"]["reply"], "seen");
     let sc2 = "[[step]]\nkind = \"assistant_turn\"\nexpect_images = 2\n";
     let bad = run(&d, sc2, &["--input-format", "stream-json"], IMG_MSG, &[]);
     assert_eq!(result(&bad)["is_error"], true);
-    assert!(result(&bad)["result"].as_str().unwrap().contains("expected 2 images, got 1"));
+    assert!(
+        result(&bad)["result"]
+            .as_str()
+            .unwrap()
+            .contains("expected 2 images, got 1")
+    );
     // Without stream-json input there are no images.
     let none = run(&d, sc, &[], "Fallow step: assistant_turn\nlook", &[]);
     assert_eq!(result(&none)["is_error"], true);
@@ -88,9 +104,21 @@ fn web_steps_are_web_fetch_calls_refused_when_the_tool_is_off() {
     assert_eq!(uses.len(), 1);
     assert_eq!(uses[0]["input"]["url"], "https://example.com");
     assert_eq!(tool_results(&on), vec![(false, "fetched".to_string())]);
-    let off = run(&d, sc, &["--disallowedTools", "WebFetch", "WebSearch"], "Fallow step: assistant_turn\n", &[]);
+    let off = run(
+        &d,
+        sc,
+        &["--disallowedTools", "WebFetch", "WebSearch"],
+        "Fallow step: assistant_turn\n",
+        &[],
+    );
     assert!(tool_results(&off)[0].0);
-    let not_listed = run(&d, sc, &["--tools", "Read,Bash"], "Fallow step: assistant_turn\n", &[]);
+    let not_listed = run(
+        &d,
+        sc,
+        &["--tools", "Read,Bash"],
+        "Fallow step: assistant_turn\n",
+        &[],
+    );
     assert!(tool_results(&not_listed)[0].0);
 }
 
@@ -99,20 +127,67 @@ fn exec_runs_commands_through_the_rules_ask_beating_allow() {
     let d = scratch("exec");
     let sc = "[[step]]\nkind = \"assistant_turn\"\nexec = [\"echo made > made.txt\"]\n";
     // An allow rule runs it.
-    let lines = run(&d, sc, &["--permission-mode", "dontAsk", "--allowedTools", "Bash(echo:*)"], "Fallow step: assistant_turn\n", &[]);
+    let lines = run(
+        &d,
+        sc,
+        &[
+            "--permission-mode",
+            "dontAsk",
+            "--allowedTools",
+            "Bash(echo:*)",
+        ],
+        "Fallow step: assistant_turn\n",
+        &[],
+    );
     assert!(!tool_results(&lines)[0].0, "{lines:?}");
     assert!(d.join("made.txt").exists());
     std::fs::remove_file(d.join("made.txt")).unwrap();
     // A whole-tool ask rule beats it; with no prompt tool it is refused, as Claude Code does.
     let ask = r#"{"permissions":{"ask":["Bash","PowerShell","Edit","Write","MultiEdit","NotebookEdit"]}}"#;
-    let lines = run(&d, sc, &["--permission-mode", "default", "--allowedTools", "Bash(echo:*)", "--settings", ask], "Fallow step: assistant_turn\n", &[]);
+    let lines = run(
+        &d,
+        sc,
+        &[
+            "--permission-mode",
+            "default",
+            "--allowedTools",
+            "Bash(echo:*)",
+            "--settings",
+            ask,
+        ],
+        "Fallow step: assistant_turn\n",
+        &[],
+    );
     assert!(tool_results(&lines)[0].0);
     assert!(!d.join("made.txt").exists());
-    assert_eq!(result(&lines)["permission_denials"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        result(&lines)["permission_denials"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
     // A deny rule wins, and so does a tool list without Bash.
-    let lines = run(&d, sc, &["--allowedTools", "Bash", "--disallowedTools", "Bash(echo:*)"], "Fallow step: assistant_turn\n", &[]);
+    let lines = run(
+        &d,
+        sc,
+        &[
+            "--allowedTools",
+            "Bash",
+            "--disallowedTools",
+            "Bash(echo:*)",
+        ],
+        "Fallow step: assistant_turn\n",
+        &[],
+    );
     assert!(tool_results(&lines)[0].0);
-    let lines = run(&d, sc, &["--allowedTools", "Bash", "--tools", "Read"], "Fallow step: assistant_turn\n", &[]);
+    let lines = run(
+        &d,
+        sc,
+        &["--allowedTools", "Bash", "--tools", "Read"],
+        "Fallow step: assistant_turn\n",
+        &[],
+    );
     assert!(tool_results(&lines)[0].0);
     assert!(!d.join("made.txt").exists());
 }
@@ -123,10 +198,25 @@ fn the_argument_log_records_every_invocation() {
     let log = d.join("args.log");
     let sc = "[[step]]\nkind = \"assistant_turn\"\n[[step]]\nkind = \"assistant_turn\"\n";
     let l = log.display().to_string();
-    run(&d, sc, &["--setting-sources", "user"], "Fallow step: assistant_turn\n", &[("FALLOW_FAKE_ARGS_LOG", &l)]);
-    run(&d, sc, &["--model", "haiku"], "Fallow step: assistant_turn\n", &[("FALLOW_FAKE_ARGS_LOG", &l)]);
+    run(
+        &d,
+        sc,
+        &["--setting-sources", "user"],
+        "Fallow step: assistant_turn\n",
+        &[("FALLOW_FAKE_ARGS_LOG", &l)],
+    );
+    run(
+        &d,
+        sc,
+        &["--model", "haiku"],
+        "Fallow step: assistant_turn\n",
+        &[("FALLOW_FAKE_ARGS_LOG", &l)],
+    );
     let text = std::fs::read_to_string(&log).unwrap();
-    let calls: Vec<&str> = text.split("---\n").filter(|c| !c.trim().is_empty()).collect();
+    let calls: Vec<&str> = text
+        .split("---\n")
+        .filter(|c| !c.trim().is_empty())
+        .collect();
     assert_eq!(calls.len(), 2);
     assert!(calls[0].contains("--setting-sources\nuser\n"));
     assert!(calls[1].contains("--model\nhaiku\n"));

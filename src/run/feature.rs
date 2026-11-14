@@ -44,7 +44,11 @@ fn lp(run: &Run) -> Result<LoopState, String> {
 
 pub(crate) fn library(run: &Run, ctx: &Ctx) -> Library {
     // 012 (R-18): a moved project's `.fallow/` is at its spec root.
-    let root = run.state.feature_loop.as_ref().map_or("", |l| l.spec_root.as_str());
+    let root = run
+        .state
+        .feature_loop
+        .as_ref()
+        .map_or("", |l| l.spec_root.as_str());
     Library::load(ctx.config.as_deref(), Some(&run.state.repo.join(root)))
 }
 
@@ -109,13 +113,9 @@ fn is_protected(l: &LoopState, path: &str) -> bool {
 
 pub(crate) fn doc_at(run: &Run, commit: &str, name: &str) -> Option<String> {
     let l = run.state.feature_loop.as_ref()?;
-    git::show(
-        &run.state.repo,
-        commit,
-        &format!("{}/{name}", l.dir()),
-    )
-    .ok()
-    .flatten()
+    git::show(&run.state.repo, commit, &format!("{}/{name}", l.dir()))
+        .ok()
+        .flatten()
 }
 
 fn handover_path(l: &LoopState, n: u32) -> String {
@@ -922,7 +922,10 @@ fn requeue_one(run: &mut Run, last: &Step) -> Result<bool, String> {
         )?;
         // An agent that was not signed in: the engineer signs in first (retry starts the step
         // queued here).
-        if let Some(why) = reason.trim_start_matches(NOT_STARTED).strip_prefix(machine::SIGNED_OUT) {
+        if let Some(why) = reason
+            .trim_start_matches(NOT_STARTED)
+            .strip_prefix(machine::SIGNED_OUT)
+        {
             return Err(format!(
                 "{def} is not signed in ({}): {}",
                 why.trim_start_matches(crate::agent::ENDED_WITH_ERROR),
@@ -939,7 +942,8 @@ fn requeue_one(run: &mut Run, last: &Step) -> Result<bool, String> {
             .filter(|x| x.end.is_some())
             .take_while(|x| {
                 machine::first_reason(x).is_some_and(|r| {
-                    r.strip_prefix(NOT_STARTED).is_some_and(|w| !w.starts_with(machine::SIGNED_OUT))
+                    r.strip_prefix(NOT_STARTED)
+                        .is_some_and(|w| !w.starts_with(machine::SIGNED_OUT))
                 })
             })
             .count();
@@ -1436,13 +1440,7 @@ fn phase(
                     .prev_lock_commit
                     .as_deref()
                     .and_then(|old| {
-                        git::diff_between(
-                            &run.state.repo,
-                            old,
-                            &l.lock_commit,
-                            &l.dir(),
-                        )
-                        .ok()
+                        git::diff_between(&run.state.repo, old, &l.lock_commit, &l.dir()).ok()
                     })
                     .unwrap_or_default();
                 let text = prompts::loop_relock(&loop_cx(l, &may, &hand), &story, l.lock, &change);
@@ -2505,9 +2503,14 @@ fn start(run: &mut Run, ctx: &Ctx, n: u32) -> Result<(), String> {
             // worktree, with every step (a builder or checker never reads them by itself).
             let instr = crate::agent::instructions::block(&crate::agent::instructions::read(
                 &worktree,
-                &crate::agent::instructions::extra_at_head(&repo.join(
-                    run.state.feature_loop.as_ref().map_or("", |l| l.spec_root.as_str()),
-                )),
+                &crate::agent::instructions::extra_at_head(
+                    &repo.join(
+                        run.state
+                            .feature_loop
+                            .as_ref()
+                            .map_or("", |l| l.spec_root.as_str()),
+                    ),
+                ),
             ));
             if !instr.is_empty() {
                 text.push_str("\n\n");

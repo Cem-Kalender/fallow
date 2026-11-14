@@ -49,10 +49,25 @@ output = { reply = "Ja.", step = "none" }
     git(&repo, &["add", "."]);
     git(&repo, &["commit", "-q", "-m", "spec kit"]);
     // 012 (FR-035): a spec session, the project conversation being retired.
-    let pc = sreq(tx, Req::NewFeature { project: project.clone(), title: "Greeting".into(), lead: None }).unwrap();
+    let pc = sreq(
+        tx,
+        Req::NewFeature {
+            project: project.clone(),
+            title: "Greeting".into(),
+            lead: None,
+        },
+    )
+    .unwrap();
     let pc = pc["conversation"].as_str().unwrap().to_string();
     let say = |text: &str| {
-        sreq(tx, Req::Say { conv: pc.clone(), text: text.into() }).unwrap();
+        sreq(
+            tx,
+            Req::Say {
+                conv: pc.clone(),
+                text: text.into(),
+            },
+        )
+        .unwrap();
     };
 
     say("first question");
@@ -60,9 +75,16 @@ output = { reply = "Ja.", step = "none" }
     let t = &v["turns"][0];
     assert_eq!(t["reply"], "Oui.", "the first turn carried AGENTS.md: {t}");
     let handed = t["instructions"].as_array().unwrap();
-    assert!(handed.iter().any(|i| i["path"] == "AGENTS.md" && i["skipped"].is_null()), "{t}");
     assert!(
-        handed.iter().any(|i| i["path"] == ".env" && i["skipped"] == "may hold secrets"),
+        handed
+            .iter()
+            .any(|i| i["path"] == "AGENTS.md" && i["skipped"].is_null()),
+        "{t}"
+    );
+    assert!(
+        handed
+            .iter()
+            .any(|i| i["path"] == ".env" && i["skipped"] == "may hold secrets"),
         "the secret is named, not read: {t}"
     );
 
@@ -70,7 +92,12 @@ output = { reply = "Ja.", step = "none" }
     say("second question");
     let v = turn_ended(tx, &pc, 2);
     assert_eq!(v["turns"][1]["reply"], "Encore oui.", "{v}");
-    assert!(v["turns"][1]["instructions"].as_array().is_none_or(|a| a.is_empty()), "{v}");
+    assert!(
+        v["turns"][1]["instructions"]
+            .as_array()
+            .is_none_or(|a| a.is_empty()),
+        "{v}"
+    );
 
     // Changed on the session's branch (012: a spec session's copy is on its feature's branch):
     // handed again.
@@ -79,7 +106,10 @@ output = { reply = "Ja.", step = "none" }
     git(&wd, &["commit", "-q", "-am", "german"]);
     say("third question");
     let v = turn_ended(tx, &pc, 3);
-    assert_eq!(v["turns"][2]["reply"], "Ja.", "the changed file was handed: {v}");
+    assert_eq!(
+        v["turns"][2]["reply"], "Ja.",
+        "the changed file was handed: {v}"
+    );
 }
 
 #[test]
@@ -112,5 +142,8 @@ fn a_builder_step_gets_the_instruction_files_from_its_worktree() {
             .join(format!("{}.prompt", review["n"])),
     )
     .unwrap();
-    assert!(prompt.contains("Prefer small functions."), "a checker too: {prompt}");
+    assert!(
+        prompt.contains("Prefer small functions."),
+        "a checker too: {prompt}"
+    );
 }

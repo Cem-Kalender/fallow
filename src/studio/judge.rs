@@ -147,15 +147,33 @@ pub fn split(cmd: &str) -> Result<Vec<Part>, String> {
                 return Err("a script block, a brace group or a brace expansion".into());
             }
             ' ' | '\t' => {
-                finish_word(&mut cur, &mut word, &mut in_word, &mut esc, &mut redirect_next);
+                finish_word(
+                    &mut cur,
+                    &mut word,
+                    &mut in_word,
+                    &mut esc,
+                    &mut redirect_next,
+                );
                 text.push(c);
             }
             '\n' | '\r' | ';' => {
-                finish_word(&mut cur, &mut word, &mut in_word, &mut esc, &mut redirect_next);
+                finish_word(
+                    &mut cur,
+                    &mut word,
+                    &mut in_word,
+                    &mut esc,
+                    &mut redirect_next,
+                );
                 push_part(&mut parts, &mut cur, &mut text);
             }
             '&' if next == Some('&') => {
-                finish_word(&mut cur, &mut word, &mut in_word, &mut esc, &mut redirect_next);
+                finish_word(
+                    &mut cur,
+                    &mut word,
+                    &mut in_word,
+                    &mut esc,
+                    &mut redirect_next,
+                );
                 push_part(&mut parts, &mut cur, &mut text);
                 i += 1;
             }
@@ -170,7 +188,13 @@ pub fn split(cmd: &str) -> Result<Vec<Part>, String> {
                 }
             }
             '|' => {
-                finish_word(&mut cur, &mut word, &mut in_word, &mut esc, &mut redirect_next);
+                finish_word(
+                    &mut cur,
+                    &mut word,
+                    &mut in_word,
+                    &mut esc,
+                    &mut redirect_next,
+                );
                 push_part(&mut parts, &mut cur, &mut text);
                 if next == Some('|') {
                     i += 1;
@@ -188,7 +212,13 @@ pub fn split(cmd: &str) -> Result<Vec<Part>, String> {
                     word.clear();
                     in_word = false;
                 } else {
-                    finish_word(&mut cur, &mut word, &mut in_word, &mut esc, &mut redirect_next);
+                    finish_word(
+                        &mut cur,
+                        &mut word,
+                        &mut in_word,
+                        &mut esc,
+                        &mut redirect_next,
+                    );
                 }
                 if c == '<' {
                     cur.input = true;
@@ -222,7 +252,13 @@ pub fn split(cmd: &str) -> Result<Vec<Part>, String> {
     if quote.is_some() {
         return Err("an unclosed quote".into());
     }
-    finish_word(&mut cur, &mut word, &mut in_word, &mut esc, &mut redirect_next);
+    finish_word(
+        &mut cur,
+        &mut word,
+        &mut in_word,
+        &mut esc,
+        &mut redirect_next,
+    );
     if redirect_next {
         return Err("a redirection with no target".into());
     }
@@ -246,7 +282,10 @@ fn quoted_heredoc(chars: &[char]) -> Option<(String, usize)> {
     let q = *chars.get(i).filter(|c| **c == '\'' || **c == '"')?;
     i += 1;
     let tag_start = i;
-    while chars.get(i).is_some_and(|c| c.is_ascii_alphanumeric() || *c == '_') {
+    while chars
+        .get(i)
+        .is_some_and(|c| c.is_ascii_alphanumeric() || *c == '_')
+    {
         i += 1;
     }
     if i == tag_start || chars.get(i) != Some(&q) {
@@ -322,12 +361,19 @@ fn normalize(p: &Path) -> PathBuf {
 /// Where a path argument points: its folder resolved through symlinks as far as it exists.
 fn resolve(base: &Path, arg: &str) -> PathBuf {
     let p = Path::new(arg);
-    let joined = normalize(&if p.is_absolute() { p.to_path_buf() } else { base.join(p) });
+    let joined = normalize(&if p.is_absolute() {
+        p.to_path_buf()
+    } else {
+        base.join(p)
+    });
     // The longest existing ancestor is canonicalized (symlinks followed); the rest appended.
     let mut existing = joined.clone();
     let mut rest = Vec::new();
     while !existing.exists() {
-        match (existing.file_name().map(|n| n.to_os_string()), existing.parent()) {
+        match (
+            existing.file_name().map(|n| n.to_os_string()),
+            existing.parent(),
+        ) {
             (Some(n), Some(parent)) => {
                 rest.push(n);
                 existing = parent.to_path_buf();
@@ -558,26 +604,105 @@ fn has_opt(opts: &[String], f: &str) -> bool {
 /// Programs that run other code given inline, or run things Fallow cannot see: judged
 /// "cannot tell", and never safe as an approved prefix (one list for both, review B4, H1).
 const OPAQUE: &[&str] = &[
-    "eval", "exec", "source", ".", "invoke-expression", "iex", "invoke-command", "icm",
-    "start-process", "saps", "start-job", "xargs", "npx", "pnpx", "bunx", "env", "nohup", "sudo",
-    "runas", "doas", "su", "watch", "ionice", "command", "builtin",
-    "stdbuf", "unbuffer", "parallel", "wsl", "ssh", "scp", "sftp", "rsync", "docker", "podman",
-    "kubectl", "awk", "gawk", "mawk", "nawk", "sed", "busybox", "schtasks", "at", "crontab",
-    "reg", "regedit", "set-itemproperty", "new-itemproperty", "rundll32", "mshta", "cscript",
-    "wscript", "osascript", "uvx", "start", "claude", "gemini", "codex", "set-alias",
-    "new-alias", "alias", "function", "filter", "trap", "case", "for", "foreach", "select",
-    "foreach-object", "where-object", "measure-command", "invoke-item", "ii",
+    "eval",
+    "exec",
+    "source",
+    ".",
+    "invoke-expression",
+    "iex",
+    "invoke-command",
+    "icm",
+    "start-process",
+    "saps",
+    "start-job",
+    "xargs",
+    "npx",
+    "pnpx",
+    "bunx",
+    "env",
+    "nohup",
+    "sudo",
+    "runas",
+    "doas",
+    "su",
+    "watch",
+    "ionice",
+    "command",
+    "builtin",
+    "stdbuf",
+    "unbuffer",
+    "parallel",
+    "wsl",
+    "ssh",
+    "scp",
+    "sftp",
+    "rsync",
+    "docker",
+    "podman",
+    "kubectl",
+    "awk",
+    "gawk",
+    "mawk",
+    "nawk",
+    "sed",
+    "busybox",
+    "schtasks",
+    "at",
+    "crontab",
+    "reg",
+    "regedit",
+    "set-itemproperty",
+    "new-itemproperty",
+    "rundll32",
+    "mshta",
+    "cscript",
+    "wscript",
+    "osascript",
+    "uvx",
+    "start",
+    "claude",
+    "gemini",
+    "codex",
+    "set-alias",
+    "new-alias",
+    "alias",
+    "function",
+    "filter",
+    "trap",
+    "case",
+    "for",
+    "foreach",
+    "select",
+    "foreach-object",
+    "where-object",
+    "measure-command",
+    "invoke-item",
+    "ii",
 ];
 
 /// Shells: any option, or for PowerShell 5.1 any argument at all (a bare one runs as
 /// `-Command`), is code Fallow cannot see.
 const SHELLS: &[&str] = &[
-    "sh", "bash", "zsh", "dash", "ksh", "fish", "csh", "tcsh", "pwsh", "powershell", "cmd",
+    "sh",
+    "bash",
+    "zsh",
+    "dash",
+    "ksh",
+    "fish",
+    "csh",
+    "tcsh",
+    "pwsh",
+    "powershell",
+    "cmd",
 ];
 
 /// Interpreters and the letters or long options that give them code inline.
 const INLINE: &[(&str, &str, &[&str])] = &[
-    ("node", "ep", &["--eval", "--print", "--import", "--require", "--loader"]),
+    (
+        "node",
+        "ep",
+        &["--eval", "--print", "--import", "--require", "--loader"],
+    ),
     ("deno", "", &["eval"]),
     ("bun", "e", &["--eval", "--print"]),
     ("python", "c", &[]),
@@ -622,7 +747,10 @@ fn part_reasons(p: &Part, ctx: &Ctx, base: &mut PathBuf) -> Vec<String> {
         }
     };
     for t in &p.redirects {
-        if matches!(t.to_ascii_lowercase().as_str(), "/dev/null" | "$null" | "nul") {
+        if matches!(
+            t.to_ascii_lowercase().as_str(),
+            "/dev/null" | "$null" | "nul"
+        ) {
             continue;
         }
         if let Some(w) = opaque_word(t) {
@@ -638,11 +766,22 @@ fn part_reasons(p: &Part, ctx: &Ctx, base: &mut PathBuf) -> Vec<String> {
     const KEYWORDS: &[&str] = &[
         "if", "elif", "then", "else", "do", "while", "until", "!", "fi", "done", "esac",
     ];
-    if p.words.first().is_some_and(|w| KEYWORDS.contains(&w.as_str())) {
-        let skip = p.words.iter().take_while(|w| KEYWORDS.contains(&w.as_str())).count();
+    if p.words
+        .first()
+        .is_some_and(|w| KEYWORDS.contains(&w.as_str()))
+    {
+        let skip = p
+            .words
+            .iter()
+            .take_while(|w| KEYWORDS.contains(&w.as_str()))
+            .count();
         let inner = Part {
             words: p.words[skip..].to_vec(),
-            escaped: p.escaped.get(skip..).map(<[bool]>::to_vec).unwrap_or_default(),
+            escaped: p
+                .escaped
+                .get(skip..)
+                .map(<[bool]>::to_vec)
+                .unwrap_or_default(),
             text: p.words[skip..].join(" "),
             ..p.clone()
         };
@@ -673,7 +812,10 @@ fn part_reasons(p: &Part, ctx: &Ctx, base: &mut PathBuf) -> Vec<String> {
     if WRAPPERS.contains(&prog.as_str()) {
         let mut i = 1;
         while i < p.words.len() && p.words[i].starts_with('-') {
-            if matches!(p.words[i].as_str(), "-s" | "-k" | "-n" | "--signal" | "--kill-after" | "--adjustment") {
+            if matches!(
+                p.words[i].as_str(),
+                "-s" | "-k" | "-n" | "--signal" | "--kill-after" | "--adjustment"
+            ) {
                 i += 1;
             }
             i += 1;
@@ -703,7 +845,10 @@ fn part_reasons(p: &Part, ctx: &Ctx, base: &mut PathBuf) -> Vec<String> {
             || inline_of(&prog).is_some()
             || OPAQUE.contains(&prog.as_str()))
     {
-        push(&mut r, format!("cannot tell what it does: {prog} runs code from its input"));
+        push(
+            &mut r,
+            format!("cannot tell what it does: {prog} runs code from its input"),
+        );
         return r;
     }
     let args: Vec<&str> = p.words[1..].iter().map(String::as_str).collect();
@@ -713,22 +858,32 @@ fn part_reasons(p: &Part, ctx: &Ctx, base: &mut PathBuf) -> Vec<String> {
         if prog == "env" && args.is_empty() {
             push(&mut r, "shows the environment's values".into());
         } else {
-            push(&mut r, format!("cannot tell what it does: {prog} runs other commands or code"));
+            push(
+                &mut r,
+                format!("cannot tell what it does: {prog} runs other commands or code"),
+            );
         }
         return r;
     }
     if SHELLS.contains(&prog.as_str()) {
-        let any_option = args.iter().any(|a| a.starts_with('-') || a.starts_with('/'));
-        if any_option || (prog == "powershell" && !args.is_empty()) || prog == "cmd" && !args.is_empty() {
-            push(&mut r, format!("cannot tell what it does: {prog} runs code given to it"));
+        let any_option = args
+            .iter()
+            .any(|a| a.starts_with('-') || a.starts_with('/'));
+        if any_option
+            || (prog == "powershell" && !args.is_empty())
+            || prog == "cmd" && !args.is_empty()
+        {
+            push(
+                &mut r,
+                format!("cannot tell what it does: {prog} runs code given to it"),
+            );
             return r;
         }
     }
     if let Some((_, letters, longs)) = inline_of(&prog) {
         let short = args.iter().any(|a| {
-            a.strip_prefix('-').is_some_and(|s| {
-                !s.starts_with('-') && s.chars().any(|c| letters.contains(c))
-            })
+            a.strip_prefix('-')
+                .is_some_and(|s| !s.starts_with('-') && s.chars().any(|c| letters.contains(c)))
         });
         let long = longs.iter().any(|l| {
             if l.starts_with("--") {
@@ -738,7 +893,10 @@ fn part_reasons(p: &Part, ctx: &Ctx, base: &mut PathBuf) -> Vec<String> {
             }
         });
         if short || long {
-            push(&mut r, format!("cannot tell what it does: {prog} runs code given inline"));
+            push(
+                &mut r,
+                format!("cannot tell what it does: {prog} runs code given inline"),
+            );
             return r;
         }
     }
@@ -746,7 +904,10 @@ fn part_reasons(p: &Part, ctx: &Ctx, base: &mut PathBuf) -> Vec<String> {
         // The subcommand is the first word that is not an option (`npm --yes exec`).
         if let Some(sub) = args.iter().find(|a| !a.starts_with('-')) {
             if subs.contains(sub) {
-                push(&mut r, format!("cannot tell what it does: {prog} {sub} runs another program"));
+                push(
+                    &mut r,
+                    format!("cannot tell what it does: {prog} {sub} runs another program"),
+                );
                 return r;
             }
         }
@@ -766,7 +927,10 @@ fn part_reasons(p: &Part, ctx: &Ctx, base: &mut PathBuf) -> Vec<String> {
             if args.iter().find(|a| !a.starts_with('-')) == Some(&"init")
                 && args.iter().filter(|a| !a.starts_with('-')).nth(1).is_some() =>
         {
-            push(&mut r, format!("cannot tell what it does: {prog} init runs a downloaded initializer"));
+            push(
+                &mut r,
+                format!("cannot tell what it does: {prog} init runs a downloaded initializer"),
+            );
             return r;
         }
         // The engineer's GitHub through `gh`: merging, deleting, raw API calls and the login
@@ -789,7 +953,9 @@ fn part_reasons(p: &Part, ctx: &Ctx, base: &mut PathBuf) -> Vec<String> {
             // (sixth review).
             let later = |names: &[&str]| pos.iter().skip(1).any(|w| names.contains(w));
             let risky = match pos.first().copied() {
-                Some("auth" | "api" | "secret" | "ssh-key" | "gpg-key" | "extension" | "alias") => true,
+                Some("auth" | "api" | "secret" | "ssh-key" | "gpg-key" | "extension" | "alias") => {
+                    true
+                }
                 Some("pr") => later(&["merge", "close"]),
                 Some("repo") => later(&["delete", "archive", "rename", "edit", "sync"]),
                 Some("release") => later(&["delete"]),
@@ -798,7 +964,13 @@ fn part_reasons(p: &Part, ctx: &Ctx, base: &mut PathBuf) -> Vec<String> {
                 _ => false,
             };
             if risky {
-                push(&mut r, format!("changes or reads your GitHub account (gh {})", pos.first().copied().unwrap_or_default()));
+                push(
+                    &mut r,
+                    format!(
+                        "changes or reads your GitHub account (gh {})",
+                        pos.first().copied().unwrap_or_default()
+                    ),
+                );
                 return r;
             }
         }
@@ -831,9 +1003,12 @@ fn part_reasons(p: &Part, ctx: &Ctx, base: &mut PathBuf) -> Vec<String> {
             match target {
                 Some(t) => match place(ctx, base, &t) {
                     Place::Inside(rel) => *base = canon(&canon(ctx.wt).join(rel)),
-                    _ => push(&mut r, format!(
-                        "moves out of the session's working copy ({t}); later commands would run there"
-                    )),
+                    _ => push(
+                        &mut r,
+                        format!(
+                            "moves out of the session's working copy ({t}); later commands would run there"
+                        ),
+                    ),
                 },
                 None => push(&mut r, "moves to your home folder".into()),
             }
@@ -853,13 +1028,19 @@ fn part_reasons(p: &Part, ctx: &Ctx, base: &mut PathBuf) -> Vec<String> {
                                 push(&mut r, format!("writes a file: {x}"));
                             }
                         }
-                        None => push(&mut r, "cannot tell what it does: find writes a file".into()),
+                        None => push(
+                            &mut r,
+                            "cannot tell what it does: find writes a file".into(),
+                        ),
                     }
                 }
             }
         }
         "rg" if has_opt(&opts, "--pre") || has_opt(&opts, "--pre-glob") => {
-            push(&mut r, "cannot tell what it does: rg --pre runs a program on every file".into());
+            push(
+                &mut r,
+                "cannot tell what it does: rg --pre runs a program on every file".into(),
+            );
         }
         "tee" | "tee-object" | "out-file" | "set-content" | "add-content" => {
             for t in args.iter().filter(|a| !a.starts_with('-')) {
@@ -880,7 +1061,11 @@ fn part_reasons(p: &Part, ctx: &Ctx, base: &mut PathBuf) -> Vec<String> {
             candidates.push(v);
         } else if a.starts_with("-o") && a.len() > 2 && looks_like_path(&a[2..]) {
             candidates.push(&a[2..]);
-        } else if let Some(v) = a.strip_prefix('-').and_then(|s| s.split_once(':')).map(|(_, v)| v) {
+        } else if let Some(v) = a
+            .strip_prefix('-')
+            .and_then(|s| s.split_once(':'))
+            .map(|(_, v)| v)
+        {
             candidates.push(v);
         } else if !(*a == "-o" || *a == "--output") {
             candidates.push(a);
@@ -898,7 +1083,11 @@ fn part_reasons(p: &Part, ctx: &Ctx, base: &mut PathBuf) -> Vec<String> {
             let moved = *base != canon(ctx.wt) && !c.starts_with('-');
             if output || moved || looks_like_path(c) {
                 if let Some(x) = path_reason(ctx, base, c, output) {
-                    let x = if output { format!("writes a file: {x}") } else { x };
+                    let x = if output {
+                        format!("writes a file: {x}")
+                    } else {
+                        x
+                    };
                     push(&mut r, x);
                     continue;
                 }
@@ -917,12 +1106,54 @@ fn part_reasons(p: &Part, ctx: &Ctx, base: &mut PathBuf) -> Vec<String> {
 /// The git subcommands Fallow judges; any other (an alias, a plumbing command) is asked
 /// (review M3).
 const GIT_KNOWN: &[&str] = &[
-    "status", "diff", "log", "show", "blame", "branch", "tag", "add", "commit", "push", "pull",
-    "fetch", "merge", "rebase", "reset", "checkout", "switch", "restore", "stash", "cherry-pick",
-    "revert", "rev-parse", "rev-list", "ls-files", "ls-tree", "remote", "config", "describe",
-    "shortlog", "grep", "mv", "rm", "update-ref", "symbolic-ref", "clean", "worktree",
-    "filter-branch", "filter-repo", "format-patch", "cat-file", "merge-base", "name-rev",
-    "show-ref", "for-each-ref", "help", "version", "--version", "apply",
+    "status",
+    "diff",
+    "log",
+    "show",
+    "blame",
+    "branch",
+    "tag",
+    "add",
+    "commit",
+    "push",
+    "pull",
+    "fetch",
+    "merge",
+    "rebase",
+    "reset",
+    "checkout",
+    "switch",
+    "restore",
+    "stash",
+    "cherry-pick",
+    "revert",
+    "rev-parse",
+    "rev-list",
+    "ls-files",
+    "ls-tree",
+    "remote",
+    "config",
+    "describe",
+    "shortlog",
+    "grep",
+    "mv",
+    "rm",
+    "update-ref",
+    "symbolic-ref",
+    "clean",
+    "worktree",
+    "filter-branch",
+    "filter-repo",
+    "format-patch",
+    "cat-file",
+    "merge-base",
+    "name-rev",
+    "show-ref",
+    "for-each-ref",
+    "help",
+    "version",
+    "--version",
+    "apply",
 ];
 
 /// The git forms asked per command (R-6).
@@ -944,11 +1175,16 @@ fn git_reasons(args: &[&str], ctx: &Ctx, base: &Path, r: &mut Vec<String>) {
                 continue;
             }
             a if a == "-c" || a.starts_with("--config-env") || a.starts_with("--exec-path") => {
-                r.push(format!("cannot tell what it does: git {a} can run another program"));
+                r.push(format!(
+                    "cannot tell what it does: git {a} can run another program"
+                ));
                 i += if a == "-c" { 2 } else { 1 };
                 continue;
             }
-            a if a.starts_with("--git-dir") || a.starts_with("--work-tree") || a.starts_with("--namespace") => {
+            a if a.starts_with("--git-dir")
+                || a.starts_with("--work-tree")
+                || a.starts_with("--namespace") =>
+            {
                 r.push(format!("works on another repository or folder (git {a})"));
                 i += if a.contains('=') { 1 } else { 2 };
                 continue;
@@ -968,7 +1204,11 @@ fn git_reasons(args: &[&str], ctx: &Ctx, base: &Path, r: &mut Vec<String>) {
     let rest: Vec<&str> = args[i + 1..].to_vec();
     let opts = options(&rest);
     let has = |f: &str| has_opt(&opts, f);
-    let positional: Vec<&str> = rest.iter().copied().filter(|a| !a.starts_with('-')).collect();
+    let positional: Vec<&str> = rest
+        .iter()
+        .copied()
+        .filter(|a| !a.starts_with('-'))
+        .collect();
     let other_branch = |b: &str| b != ctx.branch && b != "HEAD" && !b.is_empty();
     // Options that run another program (review H1).
     if *sub == "grep" && (has("--open-files-in-pager") || opts.iter().any(|o| o == "-O")) {
@@ -976,7 +1216,9 @@ fn git_reasons(args: &[&str], ctx: &Ctx, base: &Path, r: &mut Vec<String>) {
     }
     for f in ["--exec", "--upload-pack", "--receive-pack", "--ext-diff"] {
         if has(f) && !(f == "--ext-diff" && matches!(*sub, "diff" | "log" | "show")) {
-            r.push(format!("cannot tell what it does: git {sub} {f} runs another program"));
+            r.push(format!(
+                "cannot tell what it does: git {sub} {f} runs another program"
+            ));
         }
     }
     if *sub == "rebase" && opts.iter().any(|o| o == "-x") {
@@ -995,7 +1237,9 @@ fn git_reasons(args: &[&str], ctx: &Ctx, base: &Path, r: &mut Vec<String>) {
                 "-d",
             ] {
                 if has(f) {
-                    r.push(format!("force-pushes or deletes on the remote (git push {f})"));
+                    r.push(format!(
+                        "force-pushes or deletes on the remote (git push {f})"
+                    ));
                     break;
                 }
             }
@@ -1026,9 +1270,11 @@ fn git_reasons(args: &[&str], ctx: &Ctx, base: &Path, r: &mut Vec<String>) {
             }
         }
         "branch" => {
-            let changing = ["-d", "-D", "-m", "-M", "-f", "--force", "--delete", "--move", "-c", "-C", "--copy"]
-                .iter()
-                .any(|f| has(f));
+            let changing = [
+                "-d", "-D", "-m", "-M", "-f", "--force", "--delete", "--move", "-c", "-C", "--copy",
+            ]
+            .iter()
+            .any(|f| has(f));
             if changing {
                 for b in &positional {
                     if other_branch(b) {
@@ -1038,12 +1284,23 @@ fn git_reasons(args: &[&str], ctx: &Ctx, base: &Path, r: &mut Vec<String>) {
                 if positional.is_empty() {
                     r.push("deletes, moves or rewrites a branch".into());
                 }
-            } else if has("-u") || has("--set-upstream-to") || has("--unset-upstream") || has("--edit-description") {
+            } else if has("-u")
+                || has("--set-upstream-to")
+                || has("--unset-upstream")
+                || has("--edit-description")
+            {
                 r.push("changes git's configuration, shared with your project folder".into());
             } else if !positional.is_empty()
-                && !["--list", "-l", "--contains", "--merged", "--no-merged", "--points-at"]
-                    .iter()
-                    .any(|f| has(f))
+                && ![
+                    "--list",
+                    "-l",
+                    "--contains",
+                    "--merged",
+                    "--no-merged",
+                    "--points-at",
+                ]
+                .iter()
+                .any(|f| has(f))
             {
                 r.push(format!("creates the branch {}", positional[0]));
             }
@@ -1060,7 +1317,8 @@ fn git_reasons(args: &[&str], ctx: &Ctx, base: &Path, r: &mut Vec<String>) {
                 && positional[0] == ctx.branch
                 && rest.iter().all(|a| !a.starts_with('-'));
             if !own_only {
-                if has("-f") || has("--force") || rest.contains(&"--") || positional.contains(&".") {
+                if has("-f") || has("--force") || rest.contains(&"--") || positional.contains(&".")
+                {
                     r.push("discards uncommitted changes (git checkout)".into());
                 } else {
                     r.push("moves the session's working copy off its branch (git checkout)".into());
@@ -1086,7 +1344,11 @@ fn git_reasons(args: &[&str], ctx: &Ctx, base: &Path, r: &mut Vec<String>) {
             }
         }
         "clean" => r.push("deletes untracked files (git clean)".into()),
-        "stash" if positional.first().is_some_and(|s| matches!(*s, "drop" | "clear")) => {
+        "stash"
+            if positional
+                .first()
+                .is_some_and(|s| matches!(*s, "drop" | "clear")) =>
+        {
             r.push("discards stashed changes (git stash)".into())
         }
         "rebase" => {
@@ -1107,7 +1369,11 @@ fn git_reasons(args: &[&str], ctx: &Ctx, base: &Path, r: &mut Vec<String>) {
                     pos.push(a);
                 }
             }
-            let branch = if has("--root") { pos.first() } else { pos.get(1) };
+            let branch = if has("--root") {
+                pos.first()
+            } else {
+                pos.get(1)
+            };
             if let Some(b) = branch {
                 if other_branch(b) {
                     r.push(format!("rewrites the branch {b}"));
@@ -1117,20 +1383,45 @@ fn git_reasons(args: &[&str], ctx: &Ctx, base: &Path, r: &mut Vec<String>) {
         "rm" if has("-f") || has("--force") => {
             r.push("discards uncommitted changes (git rm --force)".into())
         }
-        "remote" if positional.first().is_some_and(|s| !matches!(*s, "show" | "get-url" | "-v")) => {
-            r.push("changes git's configuration, shared with your project folder (git remote)".into())
+        "remote"
+            if positional
+                .first()
+                .is_some_and(|s| !matches!(*s, "show" | "get-url" | "-v")) =>
+        {
+            r.push(
+                "changes git's configuration, shared with your project folder (git remote)".into(),
+            )
         }
         // `git worktree list` only reads (T055: the real `claude` asked to list them).
-        "worktree" if positional.first() != Some(&"list") => r.push("adds, moves or removes worktrees".into()),
+        "worktree" if positional.first() != Some(&"list") => {
+            r.push("adds, moves or removes worktrees".into())
+        }
         "filter-branch" | "filter-repo" => r.push(format!("rewrites history (git {sub})")),
         "config" => {
-            let reading = ["--get", "--get-all", "--get-regexp", "--list", "-l", "--show-origin", "--show-scope"]
-                .iter()
-                .any(|f| has(f))
+            let reading = [
+                "--get",
+                "--get-all",
+                "--get-regexp",
+                "--list",
+                "-l",
+                "--show-origin",
+                "--show-scope",
+            ]
+            .iter()
+            .any(|f| has(f))
                 || (positional.len() == 1
-                    && !["--unset", "--unset-all", "--add", "--edit", "-e", "--replace-all", "--rename-section", "--remove-section"]
-                        .iter()
-                        .any(|f| has(f)));
+                    && ![
+                        "--unset",
+                        "--unset-all",
+                        "--add",
+                        "--edit",
+                        "-e",
+                        "--replace-all",
+                        "--rename-section",
+                        "--remove-section",
+                    ]
+                    .iter()
+                    .any(|f| has(f)));
             if !reading {
                 r.push("changes git's configuration, shared with your project folder".into());
             }
@@ -1151,7 +1442,9 @@ fn secret_reason(ctx: &Ctx, base: &Path, arg: &str) -> Option<String> {
         if rev.len() != 1 && !rest.is_empty() && !rest.starts_with(['\\', '/']) {
             let rel = rest.trim_start_matches("./").replace('\\', "/");
             if super::files::is_secret(&rel) {
-                return Some(format!("names {rel} as git holds it ({arg}), a file that may hold secrets"));
+                return Some(format!(
+                    "names {rel} as git holds it ({arg}), a file that may hold secrets"
+                ));
             }
         }
     }
@@ -1178,7 +1471,14 @@ fn secret_reason(ctx: &Ctx, base: &Path, arg: &str) -> Option<String> {
 fn wildcard_secret(ctx: &Ctx, base: &Path, arg: &str) -> Option<String> {
     let w = arg.replace('\\', "/");
     let (dir, pat) = match w.rsplit_once('/') {
-        Some((d, p)) => (if d.is_empty() { "/".to_string() } else { d.to_string() }, p.to_string()),
+        Some((d, p)) => (
+            if d.is_empty() {
+                "/".to_string()
+            } else {
+                d.to_string()
+            },
+            p.to_string(),
+        ),
         None => (".".to_string(), w.clone()),
     };
     // Wildcards in the folders too: a regex or a sed script as often as a path, so the folders
@@ -1186,8 +1486,9 @@ fn wildcard_secret(ctx: &Ctx, base: &Path, arg: &str) -> Option<String> {
     // (`cat */.env`, `head **/a.pem`).
     if dir.contains(['*', '?', '[']) {
         let plain = pat.trim_start_matches('*');
-        return (super::files::is_secret(&pat) || (!plain.is_empty() && super::files::is_secret(plain)))
-            .then(|| format!("names {pat} in any folder ({arg}), a file that may hold secrets"));
+        return (super::files::is_secret(&pat)
+            || (!plain.is_empty() && super::files::is_secret(plain)))
+        .then(|| format!("names {pat} in any folder ({arg}), a file that may hold secrets"));
     }
     let m = globset::GlobBuilder::new(&pat)
         .case_insensitive(cfg!(windows))
@@ -1204,7 +1505,9 @@ fn wildcard_secret(ctx: &Ctx, base: &Path, arg: &str) -> Option<String> {
         }
         if let Place::Inside(rel) = place(ctx, &folder, &name) {
             if super::files::is_secret(&rel) {
-                return Some(format!("names {rel} by a pattern, a file that may hold secrets"));
+                return Some(format!(
+                    "names {rel} by a pattern, a file that may hold secrets"
+                ));
             }
         }
     }
@@ -1233,23 +1536,34 @@ pub fn listing_problem(path: Option<&str>, pattern: Option<&str>, ctx: &Ctx) -> 
     if let Some(why) = read_problem(path, ctx) {
         return Some(why);
     }
-    let pat = pattern.map(str::trim).unwrap_or_default().replace('\\', "/");
+    let pat = pattern
+        .map(str::trim)
+        .unwrap_or_default()
+        .replace('\\', "/");
     if pat.starts_with('~') || pat.starts_with("$") || pat.contains("$env:") {
-        return Some(format!("lists names from a folder Fallow cannot follow ({pat})"));
+        return Some(format!(
+            "lists names from a folder Fallow cannot follow ({pat})"
+        ));
     }
     // The fixed folders before the first wildcard.
     let fixed: Vec<&str> = pat
         .split('/')
         .take_while(|c| !c.contains(['*', '?', '[', '{']))
         .collect();
-    let lead = if pat.starts_with('/') { format!("/{}", fixed.join("/").trim_start_matches('/')) } else { fixed.join("/") };
+    let lead = if pat.starts_with('/') {
+        format!("/{}", fixed.join("/").trim_start_matches('/'))
+    } else {
+        fixed.join("/")
+    };
     let absolute = pat.starts_with('/') || (pat.len() >= 2 && pat.as_bytes()[1] == b':');
     // `..` anywhere, in braces too (`{..,src}/*`).
     if !(absolute || pat.contains("..")) {
         return None;
     }
     if pat.split('/').skip(fixed.len()).any(|c| c.contains("..")) {
-        return Some(format!("lists names outside the session's working copy ({pat})"));
+        return Some(format!(
+            "lists names outside the session's working copy ({pat})"
+        ));
     }
     let start = match path.map(str::trim).filter(|p| !p.is_empty()) {
         Some(p) if !absolute => format!("{p}/{lead}"),
@@ -1310,7 +1624,9 @@ pub fn search_problem(path: Option<&str>, pattern: Option<&str>, ctx: &Ctx) -> O
             let secret = super::files::is_secret(f) || super::files::is_secret(&format!("{f}/x"));
             let folder = ignored_folder(&base, f);
             if secret && (matched || folder) {
-                return Some(format!("searches {f} too, which git ignores and may hold secrets"));
+                return Some(format!(
+                    "searches {f} too, which git ignores and may hold secrets"
+                ));
             }
             // A pattern matching an ignored folder's name takes the search into it (`*`, `**`).
             if folder && matched {
@@ -1336,7 +1652,9 @@ fn walk_secret(base: &Path, dir: &Path, name: &str) -> Option<String> {
         for e in std::fs::read_dir(&d).into_iter().flatten().flatten() {
             seen += 1;
             if seen > SEARCH_LOOK {
-                return Some(format!("searches {name}, a folder git ignores, too big to look through"));
+                return Some(format!(
+                    "searches {name}, a folder git ignores, too big to look through"
+                ));
             }
             let p = e.path();
             if e.file_type().is_ok_and(|t| t.is_dir()) {
@@ -1446,7 +1764,12 @@ mod tests {
             ".claude/settings.json".to_string(),
             ".claude/settings.local.json".to_string(),
         ];
-        let ctx = Ctx { wt: &wt, branch: "fallow/solo/fix", folder: &folder, protect: &protect };
+        let ctx = Ctx {
+            wt: &wt,
+            branch: "fallow/solo/fix",
+            folder: &folder,
+            protect: &protect,
+        };
         assess(cmd, &ctx)
     }
 
@@ -1652,7 +1975,8 @@ EOF
             "git commit -m \"$(cat <<EOF
 $(whoami)
 EOF
-)\"".into(),
+)\""
+            .into(),
             "echo \"unclosed".into(),
         ];
         for c in &asked {
@@ -1668,12 +1992,19 @@ EOF
         let (_, folder) = dirs();
         // Case does not hide a protected file on Windows.
         if cfg!(windows) {
-            assert!(matches!(judge("echo x > .CLAUDE/SETTINGS.LOCAL.JSON"), Verdict::Ask(_)));
+            assert!(matches!(
+                judge("echo x > .CLAUDE/SETTINGS.LOCAL.JSON"),
+                Verdict::Ask(_)
+            ));
         }
-        let Verdict::Ask(w) = judge("git branch -D main") else { panic!() };
+        let Verdict::Ask(w) = judge("git branch -D main") else {
+            panic!()
+        };
         assert_eq!(w, ["deletes, moves or rewrites the branch main"]);
         let f = folder.display().to_string();
-        let Verdict::Ask(w) = judge(&format!("git -C {f} merge x")) else { panic!() };
+        let Verdict::Ask(w) = judge(&format!("git -C {f} merge x")) else {
+            panic!()
+        };
         assert!(w[0].starts_with("changes your project folder"), "{w:?}");
     }
 
@@ -1681,9 +2012,18 @@ EOF
     fn only_safe_prefixes_and_gates_run_without_asking() {
         let (wt, folder) = dirs();
         let protect: Vec<String> = Vec::new();
-        let ctx = Ctx { wt: &wt, branch: "fallow/solo/fix", folder: &folder, protect: &protect };
+        let ctx = Ctx {
+            wt: &wt,
+            branch: "fallow/solo/fix",
+            folder: &folder,
+            protect: &protect,
+        };
         let gates = vec!["python -m unittest".to_string()];
-        let approved = vec!["npm test".to_string(), "git push".to_string(), "sh".to_string()];
+        let approved = vec![
+            "npm test".to_string(),
+            "git push".to_string(),
+            "sh".to_string(),
+        ];
         assert!(prefix_safe("npm test", &ctx));
         assert!(!prefix_safe("git push", &ctx));
         assert!(!prefix_safe("sh", &ctx));
@@ -1697,10 +2037,23 @@ EOF
         assert!(!unasked("npm test > ../f"));
         assert!(!unasked("git push origin x"), "git is never a safe prefix");
         assert!(!unasked("npm testing"), "a prefix ends at a word");
-        assert!(!unasked("python -m unittest discover"), "a gate is matched whole");
+        assert!(
+            !unasked("python -m unittest discover"),
+            "a gate is matched whole"
+        );
         let approved_npm = vec!["npm".to_string()];
-        assert!(!runs_unasked("npm exec -- sh -c \"rm -rf src\"", &gates, &approved_npm, &ctx));
-        assert!(!runs_unasked("npm --yes exec evil", &gates, &approved_npm, &ctx));
+        assert!(!runs_unasked(
+            "npm exec -- sh -c \"rm -rf src\"",
+            &gates,
+            &approved_npm,
+            &ctx
+        ));
+        assert!(!runs_unasked(
+            "npm --yes exec evil",
+            &gates,
+            &approved_npm,
+            &ctx
+        ));
     }
 
     #[test]
@@ -1716,7 +2069,12 @@ EOF
 
     #[test]
     fn files_that_may_hold_secrets_are_asked_however_named() {
-        for cmd in ["cat .env", "less server.pem", "type config/prod.env", "grep x < .env"] {
+        for cmd in [
+            "cat .env",
+            "less server.pem",
+            "type config/prod.env",
+            "grep x < .env",
+        ] {
             let v = judge(cmd);
             assert!(
                 matches!(&v, Verdict::Ask(w) if w.iter().any(|r| r.contains("secrets"))),
@@ -1728,7 +2086,10 @@ EOF
         // Search words, messages and scripts are not files (reviews of FR-043).
         assert_eq!(judge("grep -rn token src"), Verdict::Allow);
         assert_eq!(judge("git log --grep=credentials"), Verdict::Allow);
-        assert_eq!(judge("git commit -m \"load settings from .env\""), Verdict::Allow);
+        assert_eq!(
+            judge("git commit -m \"load settings from .env\""),
+            Verdict::Allow
+        );
         assert_eq!(judge("grep -E '[0-9]+/[a-z]*' Cargo.toml"), Verdict::Allow);
         assert_eq!(judge("ls src/*/mod.rs"), Verdict::Allow);
         assert!(matches!(judge("git show HEAD:.env"), Verdict::Ask(_)));
@@ -1738,7 +2099,10 @@ EOF
         assert!(matches!(judge("cat .e*"), Verdict::Ask(_)));
         assert!(matches!(judge("cat ./.en?"), Verdict::Ask(_)));
         assert_eq!(judge("cat src/*.rs"), Verdict::Allow);
-        assert!(matches!(judge("Get-Content *"), Verdict::Ask(_)), "PowerShell's * matches .env");
+        assert!(
+            matches!(judge("Get-Content *"), Verdict::Ask(_)),
+            "PowerShell's * matches .env"
+        );
         assert!(matches!(judge("cat */.env"), Verdict::Ask(_)));
         assert!(matches!(judge("git show :.npmrc"), Verdict::Ask(_)));
     }
@@ -1754,11 +2118,18 @@ EOF
         std::fs::write(wt.join("src/a.rs"), "").unwrap();
         std::fs::write(wt.join("node_modules/x/.env"), "").unwrap();
         let protect = Vec::new();
-        let ctx = Ctx { wt: &wt, branch: "fallow/solo/fix", folder: &folder, protect: &protect };
+        let ctx = Ctx {
+            wt: &wt,
+            branch: "fallow/solo/fix",
+            folder: &folder,
+            protect: &protect,
+        };
         assert_eq!(read_problem(Some("src/a.rs"), &ctx), None);
         assert_eq!(read_problem(None, &ctx), None);
         assert!(read_problem(Some(".env"), &ctx).is_some_and(|w| w.contains("secrets")));
-        assert!(read_problem(Some("../shop/x"), &ctx).is_some_and(|w| w.contains("project folder")));
+        assert!(
+            read_problem(Some("../shop/x"), &ctx).is_some_and(|w| w.contains("project folder"))
+        );
         let far = root.join("far.txt").display().to_string();
         assert!(read_problem(Some(&far), &ctx).is_some_and(|w| w.contains("outside")));
         // A search: its folder, its file pattern, and the files it would read.
@@ -1767,7 +2138,10 @@ EOF
         // A listing whose pattern names its own folder.
         assert_eq!(listing_problem(None, Some("src/**/*.rs"), &ctx), None);
         let far = format!("{}/**/*", root.join("shop").display());
-        assert!(listing_problem(None, Some(&far), &ctx).is_some_and(|w| w.contains("project folder")), "{far}");
+        assert!(
+            listing_problem(None, Some(&far), &ctx).is_some_and(|w| w.contains("project folder")),
+            "{far}"
+        );
         assert!(listing_problem(None, Some("../../**/*"), &ctx).is_some());
         assert!(listing_problem(None, Some("~/.ssh/*"), &ctx).is_some());
         assert!(listing_problem(None, Some("{..,src}/**/*"), &ctx).is_some());
@@ -1784,15 +2158,28 @@ EOF
         std::fs::create_dir_all(wt.join("src")).unwrap();
         std::fs::create_dir_all(&folder).unwrap();
         let git = |args: &[&str]| {
-            std::process::Command::new("git").args(args).current_dir(&wt).output().unwrap()
+            std::process::Command::new("git")
+                .args(args)
+                .current_dir(&wt)
+                .output()
+                .unwrap()
         };
         git(&["init", "-q"]);
         std::fs::write(wt.join(".gitignore"), ".env\nbuild/\n").unwrap();
         std::fs::write(wt.join(".env"), "").unwrap();
         std::fs::write(wt.join("src/a.rs"), "").unwrap();
         let protect = Vec::new();
-        let ctx = Ctx { wt: &wt, branch: "fallow/solo/fix", folder: &folder, protect: &protect };
-        assert_eq!(search_problem(None, None, &ctx), None, "the search skips ignored files");
+        let ctx = Ctx {
+            wt: &wt,
+            branch: "fallow/solo/fix",
+            folder: &folder,
+            protect: &protect,
+        };
+        assert_eq!(
+            search_problem(None, None, &ctx),
+            None,
+            "the search skips ignored files"
+        );
         assert!(search_problem(None, Some("*"), &ctx).is_some_and(|w| w.contains(".env")));
         assert_eq!(search_problem(None, Some("*.rs"), &ctx), None);
         // A pattern matching an ignored folder goes into it (fourth review, 1).

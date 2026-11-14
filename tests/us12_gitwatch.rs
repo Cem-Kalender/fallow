@@ -15,7 +15,10 @@ use serde_json::Value;
 
 type Tx = std::sync::mpsc::Sender<fallow::run::engine::Msg>;
 
-fn project_with(root: &std::path::Path, scenario: &str) -> (fallow::service::ToolEngine, std::path::PathBuf, String) {
+fn project_with(
+    root: &std::path::Path,
+    scenario: &str,
+) -> (fallow::service::ToolEngine, std::path::PathBuf, String) {
     let repo = repo(root);
     std::fs::write(repo.join("a.txt"), "one\n").unwrap();
     git(&repo, &["add", "."]);
@@ -31,18 +34,38 @@ fn project_with(root: &std::path::Path, scenario: &str) -> (fallow::service::Too
 }
 
 fn changes(tx: &Tx, project: &str) -> Value {
-    sreq(tx, Req::GitChanges { project: project.to_string() }).unwrap()
+    sreq(
+        tx,
+        Req::GitChanges {
+            project: project.to_string(),
+        },
+    )
+    .unwrap()
 }
 
 fn change_of<'a>(list: &'a Value, refname: &str) -> Option<&'a Value> {
-    list.as_array().unwrap().iter().find(|c| c["refname"] == refname)
+    list.as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["refname"] == refname)
 }
 
 /// Waits for a pending approval and answers it once.
 fn allow_next(tx: &Tx, s: &str) -> Value {
-    let w = wait_conv(tx, s, "a command waiting", |v| !v["pending_approval"].is_null());
+    let w = wait_conv(tx, s, "a command waiting", |v| {
+        !v["pending_approval"].is_null()
+    });
     let id = w["pending_approval"]["id"].as_str().unwrap().to_string();
-    sreq(tx, Req::Approve { conv: s.to_string(), id, answer: ApprovalAnswer::Once, prefix: None }).unwrap();
+    sreq(
+        tx,
+        Req::Approve {
+            conv: s.to_string(),
+            id,
+            answer: ApprovalAnswer::Once,
+            prefix: None,
+        },
+    )
+    .unwrap();
     w
 }
 
@@ -75,16 +98,29 @@ output = {{ reply = "squashed" }}
     let f = &w["pending_approval"]["facts"];
     assert_eq!(f["folder_branch"], "main", "{f}");
     assert_eq!(f["merge"]["squash"], true, "{f}");
-    assert_eq!(f["merge"]["commits"].as_array().unwrap().len(), 1, "one snapshot commit: {f}");
+    assert_eq!(
+        f["merge"]["commits"].as_array().unwrap().len(),
+        1,
+        "one snapshot commit: {f}"
+    );
     assert_eq!(f["merge"]["own_commits"], "unknown");
     let v = wait_turn(tx, &s, 2);
-    assert_eq!(v["turns"][1]["approvals"].as_array().unwrap().len(), 1, "one approval");
+    assert_eq!(
+        v["turns"][1]["approvals"].as_array().unwrap().len(),
+        1,
+        "one approval"
+    );
     let main = git(&repo, &["rev-parse", "main"]);
     // main moved by one commit, the session named as its source.
     let ch = changes(tx, &project);
     let c = change_of(&ch["changes"], "refs/heads/main").unwrap_or_else(|| panic!("{ch}"));
     // Only the squash is the session's: what came before it is not.
-    let theirs: Vec<&Value> = ch["changes"].as_array().unwrap().iter().filter(|c| c["source"]["kind"] == "session").collect();
+    let theirs: Vec<&Value> = ch["changes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|c| c["source"]["kind"] == "session")
+        .collect();
     assert_eq!(theirs.len(), 1, "{ch}");
     assert_eq!(c["after"], main.as_str(), "{ch}");
     assert_eq!(c["how"], "commits");
@@ -116,7 +152,10 @@ fn a_terminal_commit_shows_as_outside_fallow_within_five_seconds() {
         if let Some(c) = change_of(&ch["changes"], "refs/heads/main") {
             break c.clone();
         }
-        assert!(t0.elapsed() < std::time::Duration::from_secs(5), "not seen within 5 s: {ch}");
+        assert!(
+            t0.elapsed() < std::time::Duration::from_secs(5),
+            "not seen within 5 s: {ch}"
+        );
         std::thread::sleep(std::time::Duration::from_millis(200));
     };
     assert_eq!(c["source"]["kind"], "outside", "{c}");
@@ -152,7 +191,10 @@ output = {{ reply = "asked" }}
 "#
     );
     let (e, repo, project) = project_with(&root, &scenario);
-    git(&repo, &["remote", "add", "origin", &bare.display().to_string()]);
+    git(
+        &repo,
+        &["remote", "add", "origin", &bare.display().to_string()],
+    );
     let tx = &e.tx;
     let s = start_session(tx, &project, "make p");
     wait_turn(tx, &s, 1);
@@ -160,19 +202,38 @@ output = {{ reply = "asked" }}
     allow_next(tx, &s);
     wait_turn(tx, &s, 2);
     let ch = changes(tx, &project);
-    let c = change_of(&ch["changes"], "refs/remotes/origin/fallow/solo/make-p").unwrap_or_else(|| panic!("{ch}"));
+    let c = change_of(&ch["changes"], "refs/remotes/origin/fallow/solo/make-p")
+        .unwrap_or_else(|| panic!("{ch}"));
     assert_eq!(c["how"], "created");
     assert_eq!(c["source"]["kind"], "session", "{c}");
     // A command that changes the folder (not a merge) carries its branch and uncommitted changes.
     std::fs::write(repo.join("dirty.txt"), "mine\n").unwrap();
     say_solo(tx, &s, "reset the folder");
-    let w = wait_conv(tx, &s, "the reset asked", |v| !v["pending_approval"].is_null());
+    let w = wait_conv(tx, &s, "the reset asked", |v| {
+        !v["pending_approval"].is_null()
+    });
     let f = &w["pending_approval"]["facts"];
     assert_eq!(f["folder_branch"], "main", "{f}");
-    assert!(f["uncommitted"].as_array().unwrap().iter().any(|l| l.as_str().unwrap().contains("dirty.txt")), "{f}");
+    assert!(
+        f["uncommitted"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|l| l.as_str().unwrap().contains("dirty.txt")),
+        "{f}"
+    );
     assert!(f["merge"].is_null());
     let id = w["pending_approval"]["id"].as_str().unwrap().to_string();
-    sreq(tx, Req::Approve { conv: s.clone(), id, answer: ApprovalAnswer::Deny, prefix: None }).unwrap();
+    sreq(
+        tx,
+        Req::Approve {
+            conv: s.clone(),
+            id,
+            answer: ApprovalAnswer::Deny,
+            prefix: None,
+        },
+    )
+    .unwrap();
     wait_turn(tx, &s, 3);
     assert!(repo.join("dirty.txt").exists(), "denied: nothing changed");
 }
@@ -211,16 +272,38 @@ output = {{ reply = "Drafted.", step = "specify" }}
     say_solo(tx, &s, "merge it");
     allow_next(tx, &s);
     let v = wait_turn(tx, &s, 2);
-    assert_eq!(v["session"]["folder"]["state"], "conflicted", "{}", v["session"]);
+    assert_eq!(
+        v["session"]["folder"]["state"], "conflicted",
+        "{}",
+        v["session"]
+    );
     git(&repo, &["merge", "--abort"]);
     // A spec session's commits are Fallow's own, folded, never "outside".
-    let f = sreq(tx, Req::NewFeature { project: project.clone(), title: "Charts".into(), lead: None }).unwrap();
+    let f = sreq(
+        tx,
+        Req::NewFeature {
+            project: project.clone(),
+            title: "Charts".into(),
+            lead: None,
+        },
+    )
+    .unwrap();
     let conv = f["conversation"].as_str().unwrap().to_string();
-    sreq(tx, Req::Say { conv: conv.clone(), text: "Draft it.".into() }).unwrap();
+    sreq(
+        tx,
+        Req::Say {
+            conv: conv.clone(),
+            text: "Draft it.".into(),
+        },
+    )
+    .unwrap();
     turn_ended(tx, &conv, 1);
     std::thread::sleep(std::time::Duration::from_millis(3000));
     let ch = changes(tx, &project);
-    assert!(change_of(&ch["changes"], "refs/heads/001-charts").is_none(), "not in the main list: {ch}");
+    assert!(
+        change_of(&ch["changes"], "refs/heads/001-charts").is_none(),
+        "not in the main list: {ch}"
+    );
     let q = change_of(&ch["quiet"], "refs/heads/001-charts").unwrap_or_else(|| panic!("{ch}"));
     assert_eq!(q["source"]["kind"], "spec", "{q}");
 }
@@ -233,8 +316,12 @@ output = {{ reply = "Drafted.", step = "specify" }}
 #[test]
 #[ignore]
 fn serve_the_012_git_demo() {
-    let root = std::path::PathBuf::from(std::env::var("FALLOW_VISUAL_ROOT").expect("FALLOW_VISUAL_ROOT"));
-    let secs: u64 = std::env::var("FALLOW_VISUAL_SECS").ok().and_then(|s| s.parse().ok()).unwrap_or(1800);
+    let root =
+        std::path::PathBuf::from(std::env::var("FALLOW_VISUAL_ROOT").expect("FALLOW_VISUAL_ROOT"));
+    let secs: u64 = std::env::var("FALLOW_VISUAL_SECS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(1800);
     std::fs::create_dir_all(&root).unwrap();
     let repo_path = root.join("repo").display().to_string().replace('\\', "/");
     let scenario = format!(
@@ -272,7 +359,9 @@ output = {{ reply = "asked" }}
     std::fs::write(repo.join("draft.md"), "mine\n").unwrap();
     std::thread::sleep(std::time::Duration::from_millis(3000));
     say_solo(tx, &s, "Clean the folder");
-    wait_conv(tx, &s, "the reset asked", |v| !v["pending_approval"].is_null());
+    wait_conv(tx, &s, "the reset asked", |v| {
+        !v["pending_approval"].is_null()
+    });
     let web = fallow::service::http::Web::start(e.tx.clone(), "a".repeat(64)).unwrap();
     let url = format!("http://127.0.0.1:{}/?k={}", web.port, "a".repeat(64));
     std::fs::write(root.join("url.txt"), &url).unwrap();
@@ -311,6 +400,13 @@ output = { reply = "made f" }
         std::thread::sleep(std::time::Duration::from_millis(200));
     }
     let v = sreq(tx, Req::Conversation { id: s.clone() }).unwrap();
-    assert!(v["session"]["squashes"].as_array().unwrap().is_empty(), "{}", v["session"]);
-    assert!(v["session"]["observed"].as_array().unwrap().is_empty(), "not the session's command");
+    assert!(
+        v["session"]["squashes"].as_array().unwrap().is_empty(),
+        "{}",
+        v["session"]
+    );
+    assert!(
+        v["session"]["observed"].as_array().unwrap().is_empty(),
+        "not the session's command"
+    );
 }

@@ -6,17 +6,28 @@
 mod common;
 
 use common::*;
-use fallow::run::engine::Request;
 use fallow::conversation::events::ApprovalAnswer;
+use fallow::run::engine::Request;
 use fallow::studio::Req;
 use serde_json::Value;
 
 type Tx = std::sync::mpsc::Sender<fallow::run::engine::Msg>;
 
 fn allow_next(tx: &Tx, s: &str) {
-    let w = wait_conv(tx, s, "a command waiting", |v| !v["pending_approval"].is_null());
+    let w = wait_conv(tx, s, "a command waiting", |v| {
+        !v["pending_approval"].is_null()
+    });
     let id = w["pending_approval"]["id"].as_str().unwrap().to_string();
-    sreq(tx, Req::Approve { conv: s.to_string(), id, answer: ApprovalAnswer::Once, prefix: None }).unwrap();
+    sreq(
+        tx,
+        Req::Approve {
+            conv: s.to_string(),
+            id,
+            answer: ApprovalAnswer::Once,
+            prefix: None,
+        },
+    )
+    .unwrap();
 }
 
 #[test]
@@ -43,7 +54,10 @@ output = {{ reply = "squashed" }}
     let v = wait_for(tx, id, "ready to merge", |v| v["stage"] == "ready");
     let target = v["target"]["branch"].as_str().unwrap_or("main").to_string();
     assert_eq!(target, "main", "{}", v["target"]);
-    let project = ask(tx, Request::Data).unwrap()["projects"][0]["id"].as_str().unwrap().to_string();
+    let project = ask(tx, Request::Data).unwrap()["projects"][0]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
 
     let s = start_session(tx, &project, "make b");
     wait_turn(tx, &s, 1);
@@ -51,22 +65,42 @@ output = {{ reply = "squashed" }}
     allow_next(tx, &s);
     let sv = wait_turn(tx, &s, 2);
     let main = git(&repo, &["rev-parse", "main"]);
-    assert_eq!(sv["session"]["squashes"][0]["commit"], main.as_str(), "{}", sv["session"]);
+    assert_eq!(
+        sv["session"]["squashes"][0]["commit"],
+        main.as_str(),
+        "{}",
+        sv["session"]
+    );
 
     // The loop's target watch names the commit as the session's.
     let end = std::time::Instant::now() + std::time::Duration::from_secs(90);
     let v = loop {
         let v = ask(tx, Request::Loop { id }).unwrap();
-        let seen = v["target"]["commits"].as_array().is_some_and(|c| c.iter().any(|c| c["sha"] == main.as_str() && c["from_kind"] == "session"));
+        let seen = v["target"]["commits"].as_array().is_some_and(|c| {
+            c.iter()
+                .any(|c| c["sha"] == main.as_str() && c["from_kind"] == "session")
+        });
         if seen {
             break v;
         }
-        assert!(std::time::Instant::now() < end, "never named as the session's: {}", v["target"]);
+        assert!(
+            std::time::Instant::now() < end,
+            "never named as the session's: {}",
+            v["target"]
+        );
         std::thread::sleep(std::time::Duration::from_millis(300));
     };
-    let c: &Value = v["target"]["commits"].as_array().unwrap().iter().find(|c| c["sha"] == main.as_str()).unwrap();
+    let c: &Value = v["target"]["commits"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["sha"] == main.as_str())
+        .unwrap();
     assert_eq!(c["from"], "make b", "{c}");
     assert_eq!(v["target"]["moved"], true);
     // The session never joins the merge line: the loop's line has no session in it.
-    assert!(!v.to_string().contains(&format!("\"session\":\"{s}\"")), "{v}");
+    assert!(
+        !v.to_string().contains(&format!("\"session\":\"{s}\"")),
+        "{v}"
+    );
 }

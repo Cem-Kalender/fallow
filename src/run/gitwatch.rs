@@ -52,21 +52,25 @@ pub type WatchList = Arc<Mutex<Vec<(String, PathBuf)>>>;
 
 /// The watcher thread: every 2 s, each project's snapshot to the engine. It ends with the engine.
 pub fn spawn(tx: Sender<Msg>, list: WatchList) {
-    let _ = std::thread::Builder::new().name("refwatch".into()).spawn(move || loop {
-        std::thread::sleep(Duration::from_secs(2));
-        let items = list.lock().map(|l| l.clone()).unwrap_or_default();
-        for (project, path) in items {
-            let at = Instant::now();
-            if let Some(snap) = refwatch::take(&path) {
-                if tx.send(Msg::Refs { project, snap, at }).is_err() {
+    let _ = std::thread::Builder::new()
+        .name("refwatch".into())
+        .spawn(move || {
+            loop {
+                std::thread::sleep(Duration::from_secs(2));
+                let items = list.lock().map(|l| l.clone()).unwrap_or_default();
+                for (project, path) in items {
+                    let at = Instant::now();
+                    if let Some(snap) = refwatch::take(&path) {
+                        if tx.send(Msg::Refs { project, snap, at }).is_err() {
+                            return;
+                        }
+                    }
+                }
+                if tx.send(Msg::RefsRound).is_err() {
                     return;
                 }
             }
-        }
-        if tx.send(Msg::RefsRound).is_err() {
-            return;
-        }
-    });
+        });
 }
 
 /// Who owns what by the records (R-10): each loop, spec session and session of the project with
@@ -81,7 +85,9 @@ struct Owner {
 
 /// Whether branch `b` is `o`'s own: one of its names, or under a `…/` prefix of them.
 fn owns(o: &Owner, b: &str) -> bool {
-    o.branches.iter().any(|x| x == b || (x.ends_with('/') && b.starts_with(x.as_str())))
+    o.branches
+        .iter()
+        .any(|x| x == b || (x.ends_with('/') && b.starts_with(x.as_str())))
 }
 
 impl Engine {
@@ -175,7 +181,12 @@ impl Engine {
     fn owners(&self, project: &str) -> Vec<Owner> {
         let mut out = Vec::new();
         for (id, r) in &self.runs {
-            let Some(l) = r.state.feature_loop.as_ref().filter(|l| l.project == project) else {
+            let Some(l) = r
+                .state
+                .feature_loop
+                .as_ref()
+                .filter(|l| l.project == project)
+            else {
                 continue;
             };
             // What the loop made: its record's commits, less those it only points at (where it
@@ -184,17 +195,36 @@ impl Engine {
             refwatch::strip_keys(
                 &mut v,
                 &[
-                    "start_commit", "base_commit", "target_commit", "lock_commit", "prev_lock_commit",
-                    "reconciled_target", "lined_at", "publish_moved", "overtaken_tip", "unchecked",
-                    "update_merges", "base", "merge_unchecked", "publish_unchecked", "moved",
+                    "start_commit",
+                    "base_commit",
+                    "target_commit",
+                    "lock_commit",
+                    "prev_lock_commit",
+                    "reconciled_target",
+                    "lined_at",
+                    "publish_moved",
+                    "overtaken_tip",
+                    "unchecked",
+                    "update_merges",
+                    "base",
+                    "merge_unchecked",
+                    "publish_unchecked",
+                    "moved",
                 ],
             );
             let mut commits = BTreeSet::new();
             refwatch::commits_in(&v, &mut commits);
             out.push(Owner {
-                source: Source::Loop { id: *id, feature: l.feature.clone() },
+                source: Source::Loop {
+                    id: *id,
+                    feature: l.feature.clone(),
+                },
                 commits,
-                branches: vec![l.build_branch.clone(), format!("fallow/{}", l.feature), format!("fallow/{}/", l.feature)],
+                branches: vec![
+                    l.build_branch.clone(),
+                    format!("fallow/{}", l.feature),
+                    format!("fallow/{}/", l.feature),
+                ],
                 fallows: true,
             });
         }
@@ -219,7 +249,10 @@ impl Engine {
                     }
                     commits.extend(s.engineer_edits.iter().map(|(_, c, _)| c.clone()));
                     out.push(Owner {
-                        source: Source::Session { id: id.clone(), name: s.name.clone().unwrap_or_default() },
+                        source: Source::Session {
+                            id: id.clone(),
+                            name: s.name.clone().unwrap_or_default(),
+                        },
                         commits,
                         branches: vec![s.branch.clone()],
                         fallows: false,
@@ -227,11 +260,18 @@ impl Engine {
                 }
                 (Kind::Spec, _) => {
                     let feature = c.state.feature.clone().unwrap_or_default();
-                    if let Some(f) = self.studio.store.get(project).and_then(|p| p.feature(&feature)) {
+                    if let Some(f) = self
+                        .studio
+                        .store
+                        .get(project)
+                        .and_then(|p| p.feature(&feature))
+                    {
                         commits.extend(f.locks.iter().map(|l| l.commit.clone()));
                     }
                     out.push(Owner {
-                        source: Source::Spec { feature: feature.clone() },
+                        source: Source::Spec {
+                            feature: feature.clone(),
+                        },
                         commits,
                         branches: vec![feature],
                         fallows: true,
@@ -279,7 +319,10 @@ impl Engine {
                     .and_then(|c| c.state.solo.as_ref())
                     .and_then(|s| s.name.clone())
                     .unwrap_or_default();
-                Source::Session { id: conv.to_string(), name }
+                Source::Session {
+                    id: conv.to_string(),
+                    name,
+                }
             } else {
                 let probe = after.clone().or_else(|| before.clone()).unwrap_or_default();
                 owners
@@ -288,7 +331,11 @@ impl Engine {
                     // A branch's creation or deletion is its owner's, whose records name it.
                     .or_else(|| {
                         matches!(how, How::Created | How::Deleted)
-                            .then(|| owners.iter().find(|o| branch.as_ref().is_some_and(|b| owns(o, b))))
+                            .then(|| {
+                                owners
+                                    .iter()
+                                    .find(|o| branch.as_ref().is_some_and(|b| owns(o, b)))
+                            })
                             .flatten()
                     })
                     .map(|o| o.source.clone())
@@ -308,7 +355,11 @@ impl Engine {
                 continue;
             }
             let quiet = owners.iter().any(|o| {
-                o.fallows && o.source == source && branch.as_ref().is_some_and(|b| owns(o, b) || b.starts_with("fallow/"))
+                o.fallows
+                    && o.source == source
+                    && branch
+                        .as_ref()
+                        .is_some_and(|b| owns(o, b) || b.starts_with("fallow/"))
             });
             if let (Some((id, _, _)), Source::Session { .. }) = (by_call, &source) {
                 let id = &id.to_string();
@@ -330,7 +381,16 @@ impl Engine {
                     },
                 ));
             }
-            kept.push(GitChange { refname, before, after, how, n, source, quiet, at: at.clone() });
+            kept.push(GitChange {
+                refname,
+                before,
+                after,
+                how,
+                n,
+                source,
+                quiet,
+                at: at.clone(),
+            });
         }
         for (id, o) in observed {
             self.squash_check(&id, &o);
@@ -345,7 +405,12 @@ impl Engine {
                 .studio
                 .convs
                 .iter()
-                .filter(|(_, c)| c.state.solo.as_ref().is_some_and(|s| gone_branches.contains(&s.branch)))
+                .filter(|(_, c)| {
+                    c.state
+                        .solo
+                        .as_ref()
+                        .is_some_and(|s| gone_branches.contains(&s.branch))
+                })
                 .map(|(id, _)| id.clone())
                 .collect();
             for id in ids {
@@ -383,7 +448,8 @@ impl Engine {
         for (_, tx) in w.waiters.drain(..) {
             let _ = tx.send(Reply::Ok(json!({ "seq": seq })));
         }
-        self.bus.publish(json!({ "type": "git", "project": project }));
+        self.bus
+            .publish(json!({ "type": "git", "project": project }));
     }
 
     /// R-11: a session's command that put one new commit on a local branch holding exactly the
@@ -393,16 +459,24 @@ impl Engine {
             return;
         }
         // A fast-forward to one of the session's own commits is no squash (Phase 7 review, 3).
-        if let Some(s) = self.studio.convs.get(conv).and_then(|c| c.state.solo.as_ref()) {
+        if let Some(s) = self
+            .studio
+            .convs
+            .get(conv)
+            .and_then(|c| c.state.solo.as_ref())
+        {
             let own = o.after.as_deref().is_some_and(|a| {
-                s.commits.values().any(|t| t.commit.as_deref() == Some(a) || t.commits.iter().any(|c| c == a))
+                s.commits
+                    .values()
+                    .any(|t| t.commit.as_deref() == Some(a) || t.commits.iter().any(|c| c == a))
                     || s.engineer_edits.iter().any(|(_, c, _)| c == a)
             });
             if own {
                 return;
             }
         }
-        let (Some(b), Some(c_new)) = (o.refname.strip_prefix("refs/heads/"), o.after.as_deref()) else {
+        let (Some(b), Some(c_new)) = (o.refname.strip_prefix("refs/heads/"), o.after.as_deref())
+        else {
             return;
         };
         let Some(c) = self.studio.convs.get(conv) else {
@@ -506,17 +580,27 @@ impl Engine {
             last
         };
         if let Some(from) = from {
-            let changed: Vec<String> = refwatch::diff(&repo, &from, &closing).into_iter().map(|c| c.0).collect();
+            let changed: Vec<String> = refwatch::diff(&repo, &from, &closing)
+                .into_iter()
+                .map(|c| c.0)
+                .collect();
             let mut by: Vec<(String, u32, Vec<String>)> = Vec::new();
             let mut rest: Vec<String> = Vec::new();
             for r in changed {
-                let mut who: Vec<&Claim> = claims.iter().filter(|c| refwatch::targeted(&c.targets, &r)).collect();
+                let mut who: Vec<&Claim> = claims
+                    .iter()
+                    .filter(|c| refwatch::targeted(&c.targets, &r))
+                    .collect();
                 who.dedup_by(|a, b| a.conv == b.conv);
-                let convs: std::collections::BTreeSet<&str> = who.iter().map(|c| c.conv.as_str()).collect();
+                let convs: std::collections::BTreeSet<&str> =
+                    who.iter().map(|c| c.conv.as_str()).collect();
                 if convs.len() == 1 && self.studio.convs.contains_key(who[0].conv.as_str()) {
                     // The latest of that session's commands naming it.
                     let c = *who.iter().max_by_key(|c| c.turn).unwrap_or(&who[0]);
-                    match by.iter_mut().find(|(id, t, _)| *id == c.conv && *t == c.turn) {
+                    match by
+                        .iter_mut()
+                        .find(|(id, t, _)| *id == c.conv && *t == c.turn)
+                    {
                         Some(e) => e.2.push(r),
                         None => by.push((c.conv.clone(), c.turn, vec![r])),
                     }
@@ -528,7 +612,13 @@ impl Engine {
                 self.record_between(project, &from, &closing, None, Some(&rest));
             }
             for (conv, turn, refs) in &by {
-                self.record_between(project, &from, &closing, Some((conv, refs, *turn)), Some(refs));
+                self.record_between(
+                    project,
+                    &from,
+                    &closing,
+                    Some((conv, refs, *turn)),
+                    Some(refs),
+                );
             }
         }
         self.keep_seen(project, closing, now);
@@ -536,7 +626,10 @@ impl Engine {
             let state = refwatch::folder_state(&repo);
             for c in claims.iter().filter(|c| c.folder) {
                 if let Some(cv) = self.studio.convs.get_mut(&c.conv) {
-                    let _ = cv.append(CEvent::Solo(SoloEvent::FolderStateSeen { state, turn: c.turn }));
+                    let _ = cv.append(CEvent::Solo(SoloEvent::FolderStateSeen {
+                        state,
+                        turn: c.turn,
+                    }));
                     cv.tick();
                 }
             }
@@ -545,10 +638,18 @@ impl Engine {
 
     /// `GET /api/projects/<p>/git-changes`: the changes, newest first, the quiet ones apart.
     pub(crate) fn git_changes(&self, project: &str) -> Result<Value, String> {
-        self.studio.store.get(project).ok_or_else(|| format!("there is no project {project}"))?;
-        let text = std::fs::read_to_string(self.watch_dir(project).join("git.jsonl")).unwrap_or_default();
-        let all: Vec<GitChange> = text.lines().filter_map(|l| serde_json::from_str(l).ok()).collect();
-        let (quiet, main): (Vec<&GitChange>, Vec<&GitChange>) = all.iter().rev().take(300).partition(|c| c.quiet);
+        self.studio
+            .store
+            .get(project)
+            .ok_or_else(|| format!("there is no project {project}"))?;
+        let text =
+            std::fs::read_to_string(self.watch_dir(project).join("git.jsonl")).unwrap_or_default();
+        let all: Vec<GitChange> = text
+            .lines()
+            .filter_map(|l| serde_json::from_str(l).ok())
+            .collect();
+        let (quiet, main): (Vec<&GitChange>, Vec<&GitChange>) =
+            all.iter().rev().take(300).partition(|c| c.quiet);
         let seq = self.watch.get(project).map_or(0, |w| w.seq);
         Ok(json!({ "changes": main, "quiet": quiet, "seq": seq }))
     }
@@ -571,8 +672,10 @@ impl Engine {
     pub(crate) fn prune_watch_waiters(&mut self) {
         for w in self.watch.values_mut() {
             let seq = w.seq;
-            let (old, keep): (Vec<_>, Vec<_>) =
-                w.waiters.drain(..).partition(|(since, _)| since.elapsed() > Duration::from_secs(25));
+            let (old, keep): (Vec<_>, Vec<_>) = w
+                .waiters
+                .drain(..)
+                .partition(|(since, _)| since.elapsed() > Duration::from_secs(25));
             w.waiters = keep;
             for (_, tx) in old {
                 let _ = tx.send(Reply::Ok(json!({ "seq": seq, "timeout": true })));
