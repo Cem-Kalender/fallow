@@ -1,54 +1,29 @@
 <!--
 Sync Impact Report
 ==================
-Version change: 6.5.1 → 7.0.0
-Bump rationale: MAJOR. Fallow becomes a standalone desktop application: the Studio is shown only
-in Fallow's own window, and the browser page is retired (V redefined). The memory budget now counts
-the window's web view and is raised, and the page-ready budget becomes window-ready and is raised
-(budgets loosened). Decided by the project owner on 2026-11-14: own desktop window only (no editor
-or terminal for the engineer, no extensions), one combined memory budget, window only.
+Version change: 7.0.0 → 7.0.1
+Bump rationale: PATCH. A clarification of Budgets & Measurement: budgets are measured on each
+platform Fallow supports, not on "each of the three platforms". 7.0.0 wrongly assumed three; since
+006 (clarified 2026-10-29) the first version supports Windows only, and Linux and macOS come later,
+each in its own feature. Nothing added, removed or loosened. Decided by the project owner on
+2026-11-14 ("Let's do windows first"), during /speckit-clarify for feature 014.
 
-Proposal and impact:
-  - Change: Fallow ships as an installable app per platform that opens the Studio in its own
-    window, using the operating system's web view (WebView2, WKWebView, WebKitGTK). Opening the
-    Studio in a browser is no longer supported.
-  - Rationale: a downloadable, standalone tool like other IDEs, started from the dock, start menu
-    or launcher, without a browser tab or a per-launch address.
-  - Existing features: 007/008/009/012/013 Studio pages keep their behaviour inside the window.
-    013's note that the browser keeps nothing per address no longer applies. 006 FR-034 (terminal
-    app retired) is unaffected. The loopback/secret/origin checks stay valid when the window
-    reaches Fallow through a loopback connection, and get extended by the window rules.
-  - Benchmarks: idle and running memory now sum Fallow's process and its web view processes;
-    page ready becomes window ready (launch to the Studio drawn in the window). The CI benchmark
-    harness must start the window (Linux CI needs a virtual display).
-  - Budget values (250 MB, 400 MB, 1 s) are the owner-approved ceilings for 7.0.0; feature 014's
-    plan measures them on all three platforms, and lowering them later is a MINOR amendment.
-
-Modified principles:
-  - Preamble: "a local page" → "its own window"
-  - V. Local and Private by Construction: the run page rules replaced by the window rules; the web
-    view's own network features disabled
-  - VI. Least Privilege: a per-user install without elevated privileges
-  - VII. Runs Survive: a run never depends on the window being open
-  - VIII. Small and Measured: combined memory budgets, window ready
-  - IX. Runtime-Agnostic: "the page" → "the window"
-
-Changed sections: Budgets & Measurement (table); Development Workflow & Quality Gates (window
-checks in CI, release rules).
+Modified sections: Budgets & Measurement (where budgets are measured).
 
 Added sections: none. Removed sections: none.
 
-Templates requiring updates: none (plan, spec and tasks templates read the constitution at
-runtime).
+Templates requiring updates: none.
 
-Follow-up TODOs: none in this file. Outside it (feature 014): deny.toml bans wry, tao, winit, gtk
-and webkit2gtk under the retired terminal-only rule; 014's plan must choose and justify the window
-and web view crates and lift only those bans.
+Follow-up TODOs: none.
 
-Previous amendments: 6.5.1 (PATCH) V clarified for fetching the target branch; 6.5.0 (MINOR) every
-project is a git repository (III, VI); 6.4.0 (MINOR) VI names the assistant; 6.3.1 (PATCH) V
-clarified for showing a project's remote; 6.3.0 (MINOR) solo sessions in II and V; 6.2.0 (MINOR)
-IX. Runtime-Agnostic; 6.1.0 (MINOR) feature 007; 6.0.0 (MAJOR) the constitution replaced for the
+Previous amendments: 7.0.0 (MAJOR, 2026-11-14) Fallow as a standalone desktop app: the Studio
+only in Fallow's own window through the system's web view, the browser page retired, combined
+memory budgets (< 250 MB idle, < 400 MB running) and window ready < 1 s, a per-user install
+without elevated privileges, releases built by CI from a tagged commit with checksums and no
+self-update; 6.5.1 (PATCH) V clarified for fetching the target branch; 6.5.0 (MINOR) every project
+is a git repository (III, VI); 6.4.0 (MINOR) VI names the assistant; 6.3.1 (PATCH) V clarified for
+showing a project's remote; 6.3.0 (MINOR) solo sessions in II and V; 6.2.0 (MINOR) IX.
+Runtime-Agnostic; 6.1.0 (MINOR) feature 007; 6.0.0 (MAJOR) the constitution replaced for the
 headless orchestrator.
 -->
 
@@ -246,7 +221,7 @@ breaks silently on the next, and ties the engineer to one supplier.
 | Window ready | < 1 s | Process launch to the Studio drawn in the window; p95 of 30 launches after 3 warm-ups |
 | Activity latency | < 2 s | An agent's output event to its appearance in the window; p95 over the reference run |
 
-- Budgets are measured on the installed app, on each of the three platforms.
+- Budgets are measured on the installed app, on each platform Fallow supports.
 - The reference run is a pinned, versioned fixture with scripted agents. Changing it changes the
   budgets and requires an amendment.
 - A failing benchmark job on a shared CI runner is re-run once automatically; the second result
@@ -286,4 +261,4 @@ breaks silently on the next, and ties the engineer to one supplier.
   section; unjustified violations block merge.
 - Compliance is reviewed at every pull request and at every release.
 
-**Version**: 7.0.0 | **Ratified**: 2026-10-13 | **Last Amended**: 2026-11-14
+**Version**: 7.0.1 | **Ratified**: 2026-10-13 | **Last Amended**: 2026-11-14
