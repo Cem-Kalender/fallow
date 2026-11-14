@@ -1,6 +1,6 @@
 # Fallow
 
-Fallow is a local dashboard for spec-driven development with coding agents. You work out each
+Fallow is a desktop app for spec-driven development with coding agents. You work out each
 feature with a lead agent, following [Spec Kit](https://github.com/github/spec-kit): constitution,
 specify, clarify, plan, tasks, analyze. When the documents are clear you lock them. A loop then
 builds the whole locked `tasks.md`, task by task, and Fallow checks the work itself: it commits
@@ -53,17 +53,27 @@ the project's principles are in [`.specify/memory/constitution.md`](.specify/mem
 
 ## Getting started
 
-Fallow needs `git`, and `claude` signed in for real agents.
+Fallow needs Windows 10 or 11 with the Microsoft Edge WebView2 Runtime (part of Windows 11), `git`,
+and `claude` signed in for real agents.
 
 ```sh
 cargo build
-target/debug/fallow            # starts the service if needed and opens the dashboard
+target/debug/fallow            # starts the service if needed and opens Fallow's window
+target/debug/fallow quit       # quits, asking first when loops or sessions are working
 target/debug/fallow status     # lists the loops
-target/debug/fallow stop       # stops the service; loops resume at the next start
+target/debug/fallow stop       # stops the service at once; loops resume at the next start
 ```
 
-The dashboard is served on `127.0.0.1` only, with a secret per launch; `fallow` opens it signed
-in. Fallow's settings are in its config folder (`settings.toml`), its data (loops, conversations,
+CI also builds a per-user installer (`Fallow-<version>-x64-setup.exe`, with its SHA-256): it needs
+no administrator rights and adds Fallow to the Start menu.
+
+The Studio is shown only in Fallow's own window, through the system's web view; nothing listens on
+any port, and no browser can reach it. Closing the window keeps Fallow and its loops running in
+the background, with its icon in the notification area; Quit (the icon's menu, the window's system
+menu, or `fallow quit`) stops it after naming the work that would pause. On other platforms the
+Studio is still a page on `127.0.0.1` with a secret per launch, until their own window comes.
+
+Fallow's settings are in its config folder (`settings.toml`), its data (loops, conversations,
 worktrees, run records) in its data folder, readable by you only. The dashboard's "What Fallow
 keeps on disk" shows how large each part is and deletes what you no longer need. On Windows, Fallow
 also registers its name and icon for its notifications, for you only, under
@@ -71,20 +81,28 @@ also registers its name and icon for its notifications, for you only, under
 
 ## Budgets
 
-Measured by `cargo xtask bench` in CI (constitution VIII), on Fallow's own process:
-- the page answers within 500 ms of Fallow starting (p95 of 30 launches);
-- under 60 MB of memory when idle, and under 200 MB with 4 agent steps running at once.
+Measured by `cargo xtask bench` in CI (constitution VIII), on Fallow's process and its window's web
+view processes, as each one's own memory (private working set) summed:
+- the window shows the Studio within 1 s of `fallow` (p95 of 30 launches after 3 warm-ups);
+- under 250 MB of memory when idle with the window open (60 MB with it closed), and under 400 MB
+  with 4 agent steps running at once;
+- an agent's activity appears within 2 s.
 
 Fallow makes no network requests of its own; the traffic of a loop is the agents' own traffic
 to their providers.
+
+What the window's web view (Microsoft Edge WebView2) does that Fallow cannot switch off: Windows'
+required diagnostic data from the runtime (optional data follows Windows' own setting), and
+updates of the WebView2 runtime through Microsoft Edge Update. Fallow switches off SmartScreen
+lookups and keeps the web view's crash reports on the machine.
 
 ## Development
 
 ```sh
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace          # agents are the scripted fake agent: no network, no cost
-cargo xtask bench               # the budgets above
+cargo test --workspace --features automation   # the fake agent: no network, no cost
+cargo build --features automation && cargo xtask bench   # the budgets above
 ```
 
 Licensed under MIT or Apache-2.0, at your option.
