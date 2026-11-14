@@ -85,3 +85,75 @@ jobs:
       - name: "Benchmarks: page ready, idle and running memory (constitution VIII)"
         # 014: the benchmarks drive the Studio over the `automation` build's page (research R-15).
         run: cargo build --locked --features automation && cargo xtask bench
+
+  # 014 (research R-11, R-16, T025): the Windows package, built from the release binaries; the
+  # release has no `automation` test page; the package installs and uninstalls as a standard
+  # (non-administrator) user. Publishing it is 015.
+  package:
+    name: package
+    runs-on: windows-2025
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust toolchain (from rust-toolchain.toml)
+        run: rustup toolchain install
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release
+
+      - name: Release build
+        run: cargo build --release --locked --bins
+
+      - name: "Gate: the release has no automation test page"
+        run: |
+          if grep -c "automation build: the Studio's test page" target/release/fallow.exe; then
+            echo "the release carries the automation build's page"; exit 1
+          fi
+          echo "no automation marker in the release"
+
+      - name: Inno Setup
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) {
+            choco install innosetup -y --no-progress
+          }
+
+      - name: The installer and its checksum
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" "//DAppVersion=$version" installer/fallow.iss
+          cd target/installer
+          sha256sum "Fallow-$version-x64-setup.exe" > "Fallow-$version-x64-setup.exe.sha256"
+          cat "Fallow-$version-x64-setup.exe.sha256"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fallow-windows-x64
+          path: target/installer/
+
+      - name: "Gate: install and uninstall as a standard user, without elevation (VI)"
+        shell: pwsh
+        run: |
+          $setup = Get-ChildItem target/installer/*-setup.exe | Select-Object -First 1
+          $pw = -join ((48..57) + (65..90) + (97..122) | Get-Random -Count 20 | ForEach-Object {[char]$_}) + "!a1"
+          $secure = ConvertTo-SecureString $pw -AsPlainText -Force
+          New-LocalUser -Name fallowci -Password $secure -AccountNeverExpires | Out-Null
+          $cred = New-Object System.Management.Automation.PSCredential ("$env:COMPUTERNAME\fallowci", $secure)
+          $log = "$env:RUNNER_TEMP\install.log"
+          $p = Start-Process -FilePath $setup.FullName -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',"/LOG=$log" -Credential $cred -LoadUserProfile -WorkingDirectory $env:RUNNER_TEMP -Wait -PassThru
+          if ($p.ExitCode -ne 0) { Get-Content $log -ErrorAction SilentlyContinue; throw "install exited $($p.ExitCode)" }
+          $installed = "C:\Users\fallowci\AppData\Local\Programs\Fallow"
+          foreach ($f in 'fallow.exe','fallow-app.exe') {
+            if (-not (Test-Path "$installed\$f")) { Get-Content $log; throw "$f is not in $installed" }
+          }
+          if (Test-Path "${env:ProgramFiles}\Fallow") { throw "installed for all users" }
+          $u = Start-Process -FilePath "$installed\unins000.exe" -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -Credential $cred -LoadUserProfile -WorkingDirectory $env:RUNNER_TEMP -Wait -PassThru
+          if ($u.ExitCode -ne 0) { throw "uninstall exited $($u.ExitCode)" }
+          Start-Sleep -Seconds 3
+          if (Test-Path "$installed\fallow.exe") { throw "fallow.exe is still installed" }
+          "installed and uninstalled as fallowci, under its own profile"
