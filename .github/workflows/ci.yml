@@ -116,6 +116,9 @@ jobs:
           fi
           echo "no automation marker in the release"
 
+      - name: "Benchmarks: window ready, idle memory with the window open and closed (VIII, release)"
+        run: cargo xtask bench --bin target/release/fallow.exe --fake target/release/fallow-fake-agent.exe --only window
+
       - name: Inno Setup
         shell: pwsh
         run: |

@@ -37,11 +37,14 @@ use serde_json::{Value, json};
 
 const WARMUPS: usize = 3;
 const RUNS: usize = 30;
-const READY_MS: f64 = 500.0;
-const IDLE_MB: f64 = 60.0;
-const RUNNING_MB: f64 = 200.0;
+// 014 (constitution 8.0.0, research R-15): the window counts; memory is each process's own
+// (private working set), summed over Fallow and its window's web view processes.
+const WINDOW_READY_MS: f64 = 1000.0;
+const IDLE_OPEN_MB: f64 = 250.0;
+const IDLE_CLOSED_MB: f64 = 60.0;
+const RUNNING_MB: f64 = 400.0;
 const SOLO_START_MS: f64 = 5000.0;
-const SOLO_FOUR_MB: f64 = 200.0;
+const SOLO_FOUR_MB: f64 = 400.0;
 const SOLO_ACTIVITY_MS: f64 = 2000.0;
 const REFWATCH_MS: f64 = 5000.0;
 
@@ -99,8 +102,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
         };
     type Bench = Box<dyn Fn(&Args) -> Result<Vec<Measure>, String>>;
     let benches: Vec<(&str, Bench)> = vec![
-        ("page ready", Box::new(one("page ready", "ms", ready))),
-        ("idle memory", Box::new(one("idle memory", "MB", idle))),
+        ("window", Box::new(window)),
         (
             "running memory",
             Box::new(one("running memory", "MB", running)),
@@ -155,6 +157,8 @@ struct Service {
     child: Child,
     port: u16,
     dir: PathBuf,
+    /// The service's other log lines (`window ready <ms>`, 014).
+    log: std::sync::Mutex<std::sync::mpsc::Receiver<String>>,
 }
 
 impl Drop for Service {
@@ -179,6 +183,7 @@ fn start(args: &Args, dir: &Path) -> Result<(Service, Instant), String> {
     // 014 (research R-15): the page the bench drives is the `automation` build's, asked for.
     let mut child = Command::new(&args.bin)
         .env("FALLOW_AUTOMATION", "1")
+        .env("FALLOW_BENCH", "1")
         .args(["serve", "--config-dir"])
         .arg(dir.join("config"))
         .arg("--data-dir")
@@ -190,8 +195,14 @@ fn start(args: &Args, dir: &Path) -> Result<(Service, Instant), String> {
         .map_err(|e| format!("cannot start {}: {e}", args.bin.display()))?;
     let err = child.stderr.take().ok_or("no stderr")?;
     let (tx, rx) = std::sync::mpsc::channel();
+    let (ltx, lrx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
         for line in BufReader::new(err).lines().map_while(Result::ok) {
+            // A release build on Windows has no page (014): running is enough.
+            if line.starts_with("Fallow is running (its window") {
+                let _ = tx.send(Ok(0));
+                continue;
+            }
             // The page's port: `http://127.0.0.1:<port>/` elsewhere, `… on port <port>` from the
             // Windows `automation` build (014: no secret in the log).
             if let Some(rest) = line
@@ -203,6 +214,8 @@ fn start(args: &Args, dir: &Path) -> Result<(Service, Instant), String> {
                 let _ = tx.send(Ok(port.parse::<u16>().unwrap_or(0)));
             } else if line.contains("already running") {
                 let _ = tx.send(Err(line));
+            } else {
+                let _ = ltx.send(line);
             }
         }
     });
@@ -214,6 +227,7 @@ fn start(args: &Args, dir: &Path) -> Result<(Service, Instant), String> {
             child,
             port,
             dir: dir.to_path_buf(),
+            log: std::sync::Mutex::new(lrx),
         },
         t0,
     ))
@@ -247,6 +261,7 @@ fn http(
     Ok((status, head.to_string(), rest.to_string()))
 }
 
+#[cfg_attr(windows, allow(dead_code))]
 fn rss_mb(pid: u32) -> Result<f64, String> {
     #[cfg(windows)]
     {
@@ -279,39 +294,147 @@ fn rss_mb(pid: u32) -> Result<f64, String> {
 
 // ---- Page ready -----------------------------------------------------------------------------
 
-fn ready(args: &Args) -> Result<(f64, f64), String> {
-    let mut times = Vec::new();
-    for i in 0..WARMUPS + RUNS {
-        let dir = scratch(&format!("ready-{i}"));
-        let (svc, t0) = start(args, &dir)?;
-        let end = Instant::now() + Duration::from_secs(10);
-        loop {
-            // The page answers: any HTTP answer (without the secret it refuses, which is an
-            // answer too).
-            if http(svc.port, "GET", "/", "", None).is_ok_and(|(code, _, _)| code > 0) {
-                break;
-            }
-            if Instant::now() > end {
-                return Err("the page did not answer within 10 s".into());
-            }
-            std::thread::sleep(Duration::from_millis(2));
-        }
-        if i >= WARMUPS {
-            times.push(t0.elapsed().as_secs_f64() * 1000.0);
-        }
-    }
-    times.sort_by(|a, b| a.total_cmp(b));
-    let p95 = times[(times.len() * 95).div_ceil(100) - 1];
-    Ok((p95, READY_MS))
+// ---- 014: the window (research R-14, R-15) ---------------------------------------------------
+
+/// The service's process and its descendants (the window's web view processes), with each one's
+/// own memory (private working set) summed, in MB. Windows: PowerShell's process table and
+/// performance counters.
+#[cfg(windows)]
+fn private_mb(pid: u32) -> Result<f64, String> {
+    let script = format!(
+        "$ids=@({pid}); $all=Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId; do {{ $n=$ids.Count; $ids=@($ids + ($all | Where-Object {{ $ids -contains $_.ParentProcessId }} | ForEach-Object ProcessId)) | Select-Object -Unique }} while ($ids.Count -ne $n); $s=(Get-CimInstance Win32_PerfFormattedData_PerfProc_Process | Where-Object {{ $ids -contains $_.IDProcess }} | Measure-Object WorkingSetPrivate -Sum).Sum; [math]::Round($s/1MB,1)"
+    );
+    let out = Command::new("powershell")
+        .args(["-NoProfile", "-Command", &script])
+        .output()
+        .map_err(|e| e.to_string())?;
+    String::from_utf8_lossy(&out.stdout)
+        .trim()
+        .replace(',', ".")
+        .parse()
+        .map_err(|e| format!("private memory: {e}"))
 }
 
-// ---- Memory ---------------------------------------------------------------------------------
+/// How many web view processes the service has.
+#[cfg(windows)]
+fn web_views(pid: u32) -> usize {
+    let script = format!(
+        "$ids=@({pid}); $all=Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,Name; do {{ $n=$ids.Count; $ids=@($ids + ($all | Where-Object {{ $ids -contains $_.ParentProcessId }} | ForEach-Object ProcessId)) | Select-Object -Unique }} while ($ids.Count -ne $n); @($all | Where-Object {{ ($ids -contains $_.ProcessId) -and $_.Name -eq 'msedgewebview2.exe' }}).Count"
+    );
+    Command::new("powershell")
+        .args(["-NoProfile", "-Command", &script])
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8_lossy(&o.stdout).trim().parse().ok())
+        .unwrap_or(0)
+}
 
-fn idle(args: &Args) -> Result<(f64, f64), String> {
-    let dir = scratch("idle");
+/// `fallow` (the command line) asks the running service for its window; returns once it exists.
+#[cfg(windows)]
+fn open_window(args: &Args) -> Result<(), String> {
+    let out = Command::new(&args.bin)
+        .output()
+        .map_err(|e| format!("cannot run {}: {e}", args.bin.display()))?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "the window did not open: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        ))
+    }
+}
+
+/// Closes the service's window as its close button does, and waits until its web view's
+/// processes have ended.
+#[cfg(windows)]
+fn close_window(pid: u32) -> Result<(), String> {
+    let script = format!(
+        "$p=Get-Process -Id {pid} -ErrorAction SilentlyContinue; if ($p -and $p.MainWindowHandle -ne 0) {{ [void]$p.CloseMainWindow() }}"
+    );
+    let _ = Command::new("powershell")
+        .args(["-NoProfile", "-Command", &script])
+        .output();
+    let end = Instant::now() + Duration::from_secs(15);
+    while web_views(pid) > 0 {
+        if Instant::now() > end {
+            return Err("the window's web view processes did not end".into());
+        }
+        std::thread::sleep(Duration::from_millis(250));
+    }
+    Ok(())
+}
+
+/// 014 (SC-002, SC-003, FR-011): window ready (`fallow` with the service running and the window
+/// closed, p95 of 30 after 3 warm-ups, one data folder), then idle memory with the window open
+/// and with it closed.
+#[cfg(windows)]
+fn window(args: &Args) -> Result<Vec<Measure>, String> {
+    let dir = scratch("window");
     let (svc, _) = start(args, &dir)?;
-    std::thread::sleep(Duration::from_secs(5));
-    Ok((rss_mb(svc.child.id())?, IDLE_MB))
+    let pid = svc.child.id();
+    let mut times = Vec::new();
+    for i in 0..WARMUPS + RUNS {
+        open_window(args)?;
+        let end = Instant::now() + Duration::from_secs(20);
+        let ms = loop {
+            let left = end.saturating_duration_since(Instant::now());
+            let line = svc
+                .log
+                .lock()
+                .map_err(|_| "the log".to_string())?
+                .recv_timeout(left)
+                .map_err(|_| "the window never said it was drawn".to_string())?;
+            if let Some(v) = line.strip_prefix("window ready ") {
+                break v
+                    .trim_end_matches(" ms")
+                    .parse::<f64>()
+                    .map_err(|e| e.to_string())?;
+            }
+        };
+        if i >= WARMUPS {
+            times.push(ms);
+        }
+        close_window(pid)?;
+    }
+    times.sort_by(f64::total_cmp);
+    let p95 = times[((times.len() as f64 * 0.95).ceil() as usize).saturating_sub(1)];
+    println!(
+        "bench: window ready (ms): median {:.0}, p95 {p95:.0}, slowest {:.0}",
+        times[times.len() / 2],
+        times[times.len() - 1]
+    );
+    open_window(args)?;
+    std::thread::sleep(Duration::from_secs(8));
+    let open = private_mb(pid)?;
+    close_window(pid)?;
+    std::thread::sleep(Duration::from_secs(3));
+    let closed = private_mb(pid)?;
+    Ok(vec![
+        ("window ready", p95, WINDOW_READY_MS, "ms"),
+        ("idle memory, window open", open, IDLE_OPEN_MB, "MB"),
+        ("idle memory, window closed", closed, IDLE_CLOSED_MB, "MB"),
+    ])
+}
+
+/// Other platforms have no window yet (006: Windows first).
+#[cfg(not(windows))]
+fn window(_args: &Args) -> Result<Vec<Measure>, String> {
+    Ok(Vec::new())
+}
+
+/// The memory counted: the service with its window open on Windows (014), the service elsewhere.
+fn counted_mb(args: &Args, svc: &Service) -> Result<f64, String> {
+    #[cfg(windows)]
+    {
+        let _ = args;
+        private_mb(svc.child.id())
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = args;
+        rss_mb(svc.child.id())
+    }
 }
 
 const SPEC: &str = "# Feature Specification: Calc\n\n## User Scenarios & Testing\n\n### User Story 1 - Add (Priority: P1)\n\n**Acceptance Scenarios**:\n\n1. **Given** two numbers, **When** adding 2 and 3, **Then** the result is 5.\n2. **Given** a string, **When** adding 'a' and 1, **Then** a TypeError is raised (must fail)\n\n### User Story 2 - Subtract (Priority: P2)\n\n**Acceptance Scenarios**:\n\n1. **Given** two numbers, **When** subtracting 3 from 5, **Then** the result is 2.\n2. **Given** a string, **When** subtracting 1 from 'a', **Then** a TypeError is raised (must fail)\n";
@@ -642,9 +765,14 @@ fn solo_four(args: &Args) -> Result<Vec<Measure>, String> {
     let p95 = seen[((seen.len() as f64 * 0.95).ceil() as usize)
         .saturating_sub(1)
         .min(seen.len() - 1)];
+    #[cfg(windows)]
+    {
+        open_window(args)?;
+        std::thread::sleep(Duration::from_secs(5));
+    }
     let mut peak: f64 = 0.0;
     for _ in 0..10 {
-        peak = peak.max(rss_mb(svc.child.id())?);
+        peak = peak.max(counted_mb(args, &svc)?);
         std::thread::sleep(Duration::from_millis(500));
     }
     Ok(vec![
@@ -857,9 +985,15 @@ fn running(args: &Args) -> Result<(f64, f64), String> {
         }
         std::thread::sleep(Duration::from_millis(300));
     }
+    // 014: with the window open, its web view counted (constitution 8.0.0).
+    #[cfg(windows)]
+    {
+        open_window(args)?;
+        std::thread::sleep(Duration::from_secs(5));
+    }
     let mut peak: f64 = 0.0;
     for _ in 0..10 {
-        peak = peak.max(rss_mb(svc.child.id())?);
+        peak = peak.max(counted_mb(args, &svc)?);
         std::thread::sleep(Duration::from_millis(500));
     }
     Ok((peak, RUNNING_MB))
