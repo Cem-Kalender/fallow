@@ -1,5 +1,7 @@
 # Visual check (T085; SC-007, SC-008)
 
+> The screenshots (`.png`) were removed from the repository on 2026-11-14, before it became public. The `.html` mockups and the check scripts that make them are kept; run them to take the screenshots again locally.
+
 Each screen at 1440 px and 390 px, taken on 2026-10-31 from a debug build, with two demo
 projects whose loops run on the scripted fake agent (one waits for an answer). They are taken
 with headless Chrome through its DevTools protocol, at full page height. None of them scrolls

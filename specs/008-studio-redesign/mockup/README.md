@@ -1,5 +1,7 @@
 # 008's reference mockup
 
+> The screenshots (`.png`) were removed from the repository on 2026-11-14, before it became public. The `.html` mockups and the check scripts that make them are kept; run them to take the screenshots again locally.
+
 Static screens, for the redesign's look (FR-017). They are made from the mocks the engineer reviewed on 2026-10-31 and 2026-11-01, use 007's tokens, fonts and logo (`mockup.css` copies them from `src/service/web/app.css`), and show the cart feature of the T086 runs. Open the `.html` files in a browser; the `.png` files are their screenshots at 1440 px and 390 px.
 
 | Screen | Shows |

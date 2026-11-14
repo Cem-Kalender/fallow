@@ -1,5 +1,7 @@
 # 009's mockup: the project's files
 
+> The screenshots (`.png`) were removed from the repository on 2026-11-14, before it became public. The `.html` mockups and the check scripts that make them are kept; run them to take the screenshots again locally.
+
 `files.html` (open it in a browser; `files-1440.png` is its screenshot at 1440 px) shows where the read-only file views of User Story 5 go. It uses 008's `mockup.css` (007's tokens, fonts and logo) and the cart feature of the T086 runs.
 
 | Place | Shows |

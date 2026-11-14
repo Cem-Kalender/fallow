@@ -22,3 +22,6 @@ Thumbs.db
 
 # Benchmark output
 bench-memory-*.csv
+
+# Screenshots from visual checks and mockups (kept local; removed before going public)
+specs/**/*.png

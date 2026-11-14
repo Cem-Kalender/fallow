@@ -1,5 +1,7 @@
 # Visual check (T032; SC-002, SC-005, FR-018)
 
+> The screenshots (`.png`) were removed from the repository on 2026-11-14, before it became public. The `.html` mockups and the check scripts that make them are kept; run them to take the screenshots again locally.
+
 Each screen 008 changes, at 1440 px and 390 px, taken on 2026-11-01 from a debug build. They are
 taken with headless Chrome through its DevTools protocol, at full page height (except the
 `-fold` shot, which is the 1440 × 900 window). The loops run on the scripted fake agent, made by
