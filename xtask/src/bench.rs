@@ -102,8 +102,6 @@ pub fn run(args: &[String]) -> Result<(), String> {
         };
     type Bench = Box<dyn Fn(&Args) -> Result<Vec<Measure>, String>>;
     let benches: Vec<(&str, Bench)> = vec![
-        ("window", Box::new(window)),
-        ("close_keeps_work", Box::new(close_keeps_work)),
         (
             "running memory",
             Box::new(one("running memory", "MB", running)),
@@ -111,6 +109,10 @@ pub fn run(args: &[String]) -> Result<(), String> {
         ("solo_start", Box::new(solo_start)),
         ("solo_four", Box::new(solo_four)),
         ("refwatch_latency", Box::new(refwatch_latency)),
+        // 014: after the sessions' benchmarks, whose 10,000-file checkout is sensitive to what
+        // ran before it on a runner.
+        ("window", Box::new(window)),
+        ("close_keeps_work", Box::new(close_keeps_work)),
     ];
     let chosen: Vec<&(&str, Bench)> = benches
         .iter()

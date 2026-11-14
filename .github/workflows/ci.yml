@@ -218,6 +218,13 @@ jobs:
           New-LocalUser -Name fallowci -Password $secure -AccountNeverExpires | Out-Null
           Add-LocalGroupMember -Group Users -Member fallowci
           $cred = New-Object System.Management.Automation.PSCredential ("$env:COMPUTERNAME\fallowci", $secure)
+          # The processes started as fallowci inherit this environment: their TEMP must be one
+          # fallowci can write (the runner's is not), or Setup cannot unpack itself.
+          $tmp = "$env:PUBLIC\fallow-tmp"
+          New-Item -ItemType Directory -Force $tmp | Out-Null
+          icacls $tmp /grant "fallowci:(OI)(CI)F" | Out-Null
+          $env:TEMP = $tmp
+          $env:TMP = $tmp
           $log = "$env:PUBLIC\fallow-install.log"
           $p = Start-Process -FilePath $setup.FullName -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',"/LOG=$log" -Credential $cred -LoadUserProfile -WorkingDirectory $env:RUNNER_TEMP -Wait -PassThru
           if ($p.ExitCode -ne 0) { Get-Content $log -ErrorAction SilentlyContinue; throw "install exited $($p.ExitCode)" }
