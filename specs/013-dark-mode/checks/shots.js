@@ -38,17 +38,21 @@ const opt = (k) => { const i = args.indexOf(k); return i < 0 ? null : args[i + 1
 const compareCss = opt("--compare");
 const newCss = opt("--css") ? fs.readFileSync(opt("--css"), "utf8") : null;
 const only = opt("--only");
-const url = fs.readFileSync(path.join(root, "url.txt"), "utf8").trim();
+// 014 (T030): `--window <port>` drives Fallow's own window (the `automation` build started with
+// FALLOW_AUTOMATION_CDP=<port>) instead of headless Chrome; its page needs no key.
+const windowPort = opt("--window");
+const url = windowPort ? "http://fallow.localhost/" : fs.readFileSync(path.join(root, "url.txt"), "utf8").trim();
 const ids = JSON.parse(fs.readFileSync(path.join(root, "ids.json"), "utf8"));
 const base = url.replace(/\/\?k=.*$/, "/");
+const key = windowPort ? "" : `?k=${url.split("?k=")[1]}`;
 fs.mkdirSync(out, { recursive: true });
 
 const chrome = process.env.CHROME || "C:/Program Files/Google/Chrome/Application/chrome.exe";
-const port = 9361;
+const port = windowPort ? Number(windowPort) : 9361;
 const prof = path.join(out, ".chrome");
-const proc = spawn(chrome, ["--headless=new", "--disable-gpu", "--force-device-scale-factor=1", `--remote-debugging-port=${port}`, `--user-data-dir=${prof}`, "about:blank"], { stdio: "ignore" });
+const proc = windowPort ? null : spawn(chrome, ["--headless=new", "--disable-gpu", "--force-device-scale-factor=1", `--remote-debugging-port=${port}`, `--user-data-dir=${prof}`, "about:blank"], { stdio: "ignore" });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const kill = () => { try { proc.kill(); } catch (_) {} };
+const kill = () => { try { if (proc) proc.kill(); } catch (_) {} };
 setTimeout(() => { console.log("TIMEOUT"); kill(); process.exit(1); }, 15 * 60 * 1000);
 
 // ---- the reference set ----------------------------------------------------------------------
@@ -193,7 +197,7 @@ if (oldCss && opt("--fixes")) {
   }
 }
   let failed = 0;
-  const go = (hash) => send("Page.navigate", { url: `${base}?k=${url.split("?k=")[1]}${hash}` });
+  const go = (hash) => send("Page.navigate", { url: `${base}${key}${hash}` });
   const ground = () => ev(`return getComputedStyle(document.body).backgroundColor;`);
   const dark = (rgb) => { const m = String(rgb).match(/\d+/g) || [255]; return Number(m[0]) < 100; };
   // The emulated setting, keeping reduced motion on (review: setting one feature drops the rest).
@@ -365,7 +369,7 @@ if (oldCss && opt("--fixes")) {
   for (const [name, hash, act] of SHOTS) {
     if (only && name !== only) continue;
     sheets.clear();
-    await send("Page.navigate", { url: `${base}?k=${url.split("?k=")[1]}${hash}` });
+    await send("Page.navigate", { url: `${base}${key}${hash}` });
     // Until the screen has drawn and stopped changing (up to 15 s).
     let last = -1;
     for (let i = 0; i < 30; i++) {
