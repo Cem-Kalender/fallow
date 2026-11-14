@@ -73,9 +73,22 @@ pub fn environment(data: &Path) -> Result<ICoreWebView2Environment, String> {
     let folder = data.join("webview");
     std::fs::create_dir_all(&folder).map_err(|e| format!("{}: {e}", folder.display()))?;
     let options = CoreWebView2EnvironmentOptions::default();
+    #[allow(unused_mut)]
+    let mut args = BROWSER_ARGS.to_string();
+    // 014 (research R-15, SC-004): the `automation` test build only: checks drive the real
+    // window over WebView2's debugging port, on loopback, when asked. Never in a release.
+    #[cfg(feature = "automation")]
+    if let Some(port) = std::env::var("FALLOW_AUTOMATION_CDP")
+        .ok()
+        .and_then(|p| p.parse::<u16>().ok())
+    {
+        args.push_str(&format!(
+            " --remote-debugging-port={port} --remote-debugging-address=127.0.0.1"
+        ));
+    }
     // SAFETY: setting fields of an options object this thread owns.
     unsafe {
-        options.set_additional_browser_arguments(BROWSER_ARGS.to_string());
+        options.set_additional_browser_arguments(args);
         options.set_is_custom_crash_reporting_enabled(true);
     }
     let (tx, rx) = std::sync::mpsc::channel();

@@ -82,9 +82,78 @@ jobs:
       - name: Tests (agents are the scripted fake agent; no network, no cost)
         run: cargo test --workspace --locked --features automation
 
-      - name: "Benchmarks: page ready, idle and running memory (constitution VIII)"
-        # 014: the benchmarks drive the Studio over the `automation` build's page (research R-15).
-        run: cargo build --locked --features automation && cargo xtask bench
+
+  # 014 (T032): the benchmarks in a job of their own (constitution VIII), with the window; they
+  # drive the Studio over the `automation` build's page (research R-15).
+  bench:
+    name: benchmarks
+    runs-on: windows-2025
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust toolchain (from rust-toolchain.toml)
+        run: rustup toolchain install
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: "Benchmarks: window, memory, activity, sessions (constitution VIII)"
+        run: cargo build --locked --features automation --bins && cargo xtask bench
+
+  # 014 (research R-6, T029, SC-007): with the release window open and idle for 10 minutes,
+  # Fallow's own process opens no connection; the web view's connections and the names Windows
+  # resolved meanwhile are listed (the release notes say what WebView2 does that Fallow cannot
+  # switch off). Polled every 500 ms from the system's connection tables, by process tree.
+  trace:
+    name: network trace
+    runs-on: windows-2025
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust toolchain (from rust-toolchain.toml)
+        run: rustup toolchain install
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release
+
+      - name: Release build
+        run: cargo build --release --locked --bins
+
+      - name: "Gate: no connection of Fallow's own, window open and idle for 10 minutes"
+        shell: pwsh
+        run: |
+          $root = "$env:RUNNER_TEMP/fallow-trace"
+          New-Item -ItemType Directory -Force "$root/data", "$root/config" | Out-Null
+          Clear-DnsClientCache
+          $exe = (Resolve-Path "target/release/fallow.exe").Path
+          $svc = Start-Process -FilePath $exe -ArgumentList 'serve','--data-dir',"$root/data",'--config-dir',"$root/config" -PassThru -WindowStyle Hidden
+          Start-Sleep -Seconds 3
+          & $exe
+          if ($LASTEXITCODE -ne 0) { throw "the window did not open" }
+          $seen = @{}
+          $end = (Get-Date).AddMinutes(10)
+          while ((Get-Date) -lt $end) {
+            $all = Get-CimInstance Win32_Process | Select-Object ProcessId, ParentProcessId, Name
+            $ids = @($svc.Id)
+            do { $n = $ids.Count; $ids = @($ids + ($all | Where-Object { $ids -contains $_.ParentProcessId } | ForEach-Object ProcessId)) | Select-Object -Unique } while ($ids.Count -ne $n)
+            foreach ($c in @(Get-NetTCPConnection -ErrorAction SilentlyContinue | Where-Object { $ids -contains $_.OwningProcess -and $_.RemoteAddress -notin @('0.0.0.0','::','127.0.0.1','::1') })) {
+              $name = ($all | Where-Object ProcessId -eq $c.OwningProcess).Name
+              $seen["$name $($c.RemoteAddress):$($c.RemotePort)"] = $c.OwningProcess
+            }
+            Start-Sleep -Milliseconds 500
+          }
+          "connections seen from Fallow's process tree:"
+          $seen.Keys | Sort-Object
+          "names resolved on the machine meanwhile:"
+          Get-DnsClientCache | Select-Object -ExpandProperty Entry -Unique | Sort-Object
+          & $exe stop
+          $own = @($seen.Keys | Where-Object { $_ -like 'fallow.exe *' })
+          if ($own.Count -gt 0) { throw "Fallow's own process connected: $own" }
 
   # 014 (research R-11, R-16, T025): the Windows package, built from the release binaries; the
   # release has no `automation` test page; the package installs and uninstalls as a standard
