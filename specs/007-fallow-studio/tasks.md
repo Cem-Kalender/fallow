@@ -458,7 +458,7 @@ Notes on Phase 10 as built:
     US2 changed, the preview and the new lock named US2 alone, and only US2 was repaired, rebuilt
     and reviewed; "Find ignores case" on Solo ($0.39 + $0.37) ended "Done, not verified by
     Fallow: no review at checkpoints" (left unmerged for the engineer).
-  - Problems found, all fixed with tests (86b1563 and the commit after it): no lead turn could
+  - Problems found, all fixed with tests (70672a5 and the commit after it): no lead turn could
     start (npm's `claude.cmd` cannot take a multi-line argument; Fallow starts the `claude.exe`
     behind it); Spec Kit installed but not committed was missing in the lead's worktrees, and its
     template constitution blocked the merge; a review whose agent could not start (Claude Code

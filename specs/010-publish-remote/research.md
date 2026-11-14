@@ -1,7 +1,7 @@
 # Research: Publishing that respects the remote (010)
 
 Decisions taken for the plan, each with why and what else was weighed. The code facts come from a
-survey of the repository on 2026-11-02 (file references as of commit bc77490).
+survey of the repository on 2026-11-02 (file references as of commit 855def6).
 
 ## R-1 Finding the remote, with git only
 

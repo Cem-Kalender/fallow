@@ -44,7 +44,7 @@ cargo xtask bench-startup         # unchanged, < 100 ms; no hub before the first
 ### Windows (T054), 2026-10-21, Claude Code 2.1.304–2.1.306, done
 
 Run by the engineer in `C:\Repos\FallowSandbox` with two Claude Code sessions (#1 in the project
-folder, #3 in the worktree `FallowSandbox.worktrees\claude-1`), release build of `8d27fc8`.
+folder, #3 in the worktree `FallowSandbox.worktrees\claude-1`), release build of `8cd78ae`.
 
 | # | Result | Notes |
 |---|---|---|
@@ -62,5 +62,5 @@ folder, #3 in the worktree `FallowSandbox.worktrees\claude-1`), release build of
 
 Also found: a repository with no commits offers a worktree by default and fails (002 T062).
 
-Automated gates: CI run 39600896179 (`8d27fc8`): Windows and macOS green; Linux red only in the
-session canary harness (fixed in `b4e2de7`).
+Automated gates: CI run 39600896179 (`8cd78ae`): Windows and macOS green; Linux red only in the
+session canary harness (fixed in `1a6c7c6`).

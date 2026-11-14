@@ -1,6 +1,6 @@
 # Research: Chat commands and lead choice (009)
 
-Decisions for [spec.md](./spec.md), on top of 008's code. Each has a decision, why, and what else was considered. File references are to the code as of commit `ece6607`.
+Decisions for [spec.md](./spec.md), on top of 008's code. Each has a decision, why, and what else was considered. File references are to the code as of commit `5ccac69`.
 
 ## R-1 Which Spec Kit steps the menu offers, and how the lead runs one
 

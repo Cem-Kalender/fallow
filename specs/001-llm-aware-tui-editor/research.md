@@ -376,7 +376,7 @@ Pass: peak RSS ≤ 25 MB over 5 minutes on each platform. Results are recorded h
 **Results**
 
 Recorded run: [38414881466](https://github.com/Cem-Kalender/fallow/actions/runs/38414881466),
-commit `0259825`, 2026-10-13. rustc 1.99.0, release profile (thin LTO, `panic = "abort"`,
+commit `d31e4d8`, 2026-10-13. rustc 1.99.0, release profile (thin LTO, `panic = "abort"`,
 stripped), 301 one-second samples, 120×40 PTY.
 
 | Platform | Peak RSS | Peak after 30 s | Final | Result | RSS source |
@@ -412,7 +412,7 @@ The harness now fails a run as INVALID (exit 2) unless all of the following hold
 
 **Consistency across runs**: The previous valid run,
 [38411827336](https://github.com/Cem-Kalender/fallow/actions/runs/38411827336) (commit
-`83febda`, before the evidence checks existed), measured 5.60, 7.59 and 11.46 MB, within 0.4 MB
+`e000766`, before the evidence checks existed), measured 5.60, 7.59 and 11.46 MB, within 0.4 MB
 of the recorded run. In run
 [38413742547](https://github.com/Cem-Kalender/fallow/actions/runs/38413742547) the executable
 check fired too early on Linux and macOS. It read `/proc/<pid>/exe` and `proc_pidpath` right

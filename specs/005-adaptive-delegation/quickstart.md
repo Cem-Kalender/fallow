@@ -70,7 +70,7 @@ tasks (one small, one with two independent components), each with two hidden tes
   `cart` (two components meeting at the `Cart` interface), both starting at `782a472`, each with two
   hidden test commands (with `python3` overrides for Linux). The hidden tests fail on the seed and
   pass on a reference solution.
-- Fallow: the debug build of `27633bd`.
+- Fallow: the debug build of `2741919`.
 - Linux VPS: the same setup, cloned there; the task set's `project` then names the clone.
 
 **Results** (fill in: PASS, FAIL with what happened, or not run)
@@ -78,7 +78,7 @@ tasks (one small, one with two independent components), each with two hidden tes
 | Scenario | Windows | Linux VPS |
 |---|---|---|
 | Q1 One loop by default | PASS 2026-10-29: builder refused (no manifest); lead built and reported it; baseline and final gate; reviewer #2 approved; merged by `m` (`530a604`) | |
-| Q2 A prepared split | PASS with findings, 2026-10-29 (second run, after the manifest-format fix 790785f): refused without a contract; two builders started; signal answered by a commit; a done report without the contract commit refused, naming it; an edit outside the part reported to the lead, who left it out; merged by `m`, the hidden cart tests pass on the result. Findings: (1) a part already reported done cannot report follow-up work after a contract change (its task is closed); (2) criterion ids shared by two parts make a review verdict ambiguous | |
+| Q2 A prepared split | PASS with findings, 2026-10-29 (second run, after the manifest-format fix b7ce848): refused without a contract; two builders started; signal answered by a commit; a done report without the contract commit refused, naming it; an edit outside the part reported to the lead, who left it out; merged by `m`, the hidden cart tests pass on the result. Findings: (1) a part already reported done cannot report follow-up work after a contract change (its task is closed); (2) criterion ids shared by two parts make a review verdict ambiguous | |
 | Q3 Verification | | |
 | Q4 Replace the lead | | |
 | Q5 Compare | | |
