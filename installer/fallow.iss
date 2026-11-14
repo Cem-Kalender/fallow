@@ -85,9 +85,9 @@ begin
   Code := QuitFallow(ExpandConstant('{app}\fallow.exe'));
   Result := Code = 0;
   if Code = 1 then
-    MsgBox('Fallow is still running: Quit was cancelled. Uninstall again when its work can pause.', mbInformation, MB_OK)
+    SuppressibleMsgBox('Fallow is still running: Quit was cancelled. Uninstall again when its work can pause.', mbInformation, MB_OK, IDOK)
   else if Code <> 0 then
-    MsgBox('Fallow could not be quit. Quit it from its icon, then uninstall again.', mbError, MB_OK);
+    SuppressibleMsgBox('Fallow could not be quit. Quit it from its icon, then uninstall again.', mbError, MB_OK, IDOK);
 end;
 
 { The user's PATH, with Fallow's folder added or removed. }
@@ -108,8 +108,9 @@ begin
   end
   else if (not Add) and (P > 0) then
   begin
+    { Removed whatever its letter case: P is where it starts in ';' + Path + ';'. }
     Path := ';' + Path + ';';
-    StringChangeEx(Path, ';' + Dir + ';', ';', True);
+    Delete(Path, P, Length(Dir) + 1);
     Path := Copy(Path, 2, Length(Path) - 2);
     RegWriteExpandStringValue(HKEY_CURRENT_USER, EnvKey, 'Path', Path);
   end;

@@ -27,8 +27,10 @@ use crate::run::engine::Msg;
 use crate::service::answer::{HEADERS, KeptTheme, PageRequest, answer};
 
 /// The browser arguments (research R-6): `wry`'s defaults, which passing any replaces, with
-/// SmartScreen off.
-const BROWSER_ARGS: &str = "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection";
+/// SmartScreen off; and no proxy, so the web view does not probe the network for one (WPAD): the
+/// window loads nothing but Fallow's own scheme.
+const BROWSER_ARGS: &str =
+    "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --no-proxy-server";
 
 /// The environment variables WebView2 reads from the process: inherited from a shell, they could
 /// open a debugging port (a listener showing the Studio) or pick another runtime (research R-6).

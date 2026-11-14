@@ -156,6 +156,14 @@ has an old address; with no listener, an old address reaches nothing.
   own setting);
 - updates of the Evergreen WebView2 runtime through Microsoft Edge Update.
 
+**Measured (2026-11-14, the engineer's laptop, WebView2 157)**: with the window open and idle,
+the web view's network service made no request but `fallow.localhost` and lookups of `wpad:80`
+(proxy discovery, now off with `--no-proxy-server`); its browser process holds a TLS connection to
+a Microsoft address (2603:1026::/…) that is not in the network service's log, i.e. made by the
+runtime itself: Windows' diagnostic data, listed below. `--disable-background-networking`,
+`--disable-component-update`, `--disable-domain-reliability` and `--no-pings` changed nothing and
+are not used (Microsoft advises against undocumented switches).
+
 **Check (SC-007)**: a 10-minute network trace (`pktmon`, so short connections are not missed) with
 the window open and idle: Fallow's own process opens no connection; the web view's processes open
 only what this list names, or the check fails.

@@ -297,23 +297,27 @@ fn rss_mb(pid: u32) -> Result<f64, String> {
 
 // ---- 014: the window (research R-14, R-15) ---------------------------------------------------
 
-/// The service's process and its descendants (the window's web view processes), with each one's
-/// own memory (private working set) summed, in MB. Windows: PowerShell's process table and
-/// performance counters.
+/// The service's process and its window's web view processes (never its agents, their bridges or
+/// the commands they run), each one's own memory (private working set) summed, in MB. Windows:
+/// PowerShell's process table and performance counters; no reading is an error, never 0.
 #[cfg(windows)]
 fn private_mb(pid: u32) -> Result<f64, String> {
     let script = format!(
-        "$ids=@({pid}); $all=Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId; do {{ $n=$ids.Count; $ids=@($ids + ($all | Where-Object {{ $ids -contains $_.ParentProcessId }} | ForEach-Object ProcessId)) | Select-Object -Unique }} while ($ids.Count -ne $n); $s=(Get-CimInstance Win32_PerfFormattedData_PerfProc_Process | Where-Object {{ $ids -contains $_.IDProcess }} | Measure-Object WorkingSetPrivate -Sum).Sum; [math]::Round($s/1MB,1)"
+        "$ids=@({pid}); $all=Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,Name; do {{ $n=$ids.Count; $ids=@($ids + ($all | Where-Object {{ $ids -contains $_.ParentProcessId }} | ForEach-Object ProcessId)) | Select-Object -Unique }} while ($ids.Count -ne $n); $counted=@($all | Where-Object {{ ($ids -contains $_.ProcessId) -and ($_.ProcessId -eq {pid} -or $_.Name -eq 'msedgewebview2.exe') }} | ForEach-Object ProcessId); $s=(Get-CimInstance Win32_PerfFormattedData_PerfProc_Process | Where-Object {{ $counted -contains $_.IDProcess }} | Measure-Object WorkingSetPrivate -Sum).Sum; if ($s) {{ [math]::Round($s/1MB,1) }} else {{ 'none' }}"
     );
     let out = Command::new("powershell")
         .args(["-NoProfile", "-Command", &script])
         .output()
         .map_err(|e| e.to_string())?;
-    String::from_utf8_lossy(&out.stdout)
+    let mb: f64 = String::from_utf8_lossy(&out.stdout)
         .trim()
         .replace(',', ".")
         .parse()
-        .map_err(|e| format!("private memory: {e}"))
+        .map_err(|e| format!("private memory could not be read: {e}"))?;
+    if mb <= 0.0 {
+        return Err("private memory could not be read (no performance counters?)".into());
+    }
+    Ok(mb)
 }
 
 /// How many web view processes the service has.
