@@ -36,13 +36,14 @@ fn the_service_listens_on_no_port() {
             break;
         }
     }
-    if already {
-        // One service per user: another Fallow runs on this machine (a developer's).
+    if already || !started {
         let _ = child.kill();
+        let _ = child.wait();
+        // One service per user: another Fallow runs on this machine (a developer's).
+        assert!(already, "the service did not start");
         eprintln!("skipped: another Fallow service runs for this user");
         return;
     }
-    assert!(started, "the service did not start");
     let mut listening = Vec::new();
     for proto in ["TCP", "TCPv6", "UDP", "UDPv6"] {
         let out = Command::new("netstat")
