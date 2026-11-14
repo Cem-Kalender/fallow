@@ -4,6 +4,7 @@
 
 pub mod answer;
 pub mod bus;
+#[cfg(any(not(windows), feature = "automation"))]
 pub mod http;
 pub mod notify;
 
@@ -19,6 +20,11 @@ use crate::mcp::pipe;
 use crate::run::engine::{self, Ctx, Engine, Msg, Reply, Request};
 
 pub const SERVICE_FILE: &str = "service.json";
+
+/// 014 (research R-16): a string only the `automation` test build carries; CI checks a release
+/// build has none of it.
+#[cfg(feature = "automation")]
+pub const AUTOMATION_MARKER: &str = "automation build: the Studio's test page";
 
 /// Where Fallow keeps its data.
 pub fn data_dir() -> Result<PathBuf, String> {
@@ -75,8 +81,23 @@ pub fn serve(
         std::env::current_exe().map_err(|e| format!("cannot find Fallow's own executable: {e}"))?;
     // The pipe first: it is what makes this the only service.
     let secret = crate::platform::random::hex(32).map_err(|e| e.to_string())?;
-    let web = http::Web::start(tx.clone(), secret.clone())?;
-    let port = web.port;
+    // 014 (research R-3, R-15): no web server on Windows, unless this is the `automation` test
+    // build and `FALLOW_AUTOMATION=1` asks for one; elsewhere the Studio's page as before.
+    #[cfg(not(windows))]
+    let web = Some(http::Web::start(tx.clone(), secret.clone())?);
+    // The marker CI looks for: never in a release build (research R-16).
+    #[cfg(all(windows, feature = "automation"))]
+    eprintln!("fallow: {AUTOMATION_MARKER}");
+    #[cfg(all(windows, feature = "automation"))]
+    let web = if std::env::var_os("FALLOW_AUTOMATION").is_some_and(|v| v == "1") {
+        Some(http::Web::start(tx.clone(), secret.clone())?)
+    } else {
+        None
+    };
+    #[cfg(any(not(windows), feature = "automation"))]
+    let port = web.as_ref().map_or(0, |w| w.port);
+    #[cfg(all(windows, not(feature = "automation")))]
+    let port = 0u16;
     // The notification icon (research S-14); without it, Fallow goes on without notifications.
     // The menu's switch is kept across restarts: a file says it is off.
     let off_file = data.join("notifications-off");
@@ -169,7 +190,9 @@ pub fn serve(
             None => Arc::new(crate::platform::notify::Off),
         },
         notify_on,
-        page: Some(home),
+        // 014: on Windows a notification carries the item's route only (the window opens it);
+        // elsewhere the page's address with its secret, as before.
+        page: if cfg!(windows) { None } else { Some(home) },
     };
     let tx_pipe = tx.clone();
     let url_secret = secret.clone();
@@ -188,13 +211,20 @@ pub fn serve(
         data.join(SERVICE_FILE),
         json!({
             "pid": std::process::id(),
-            "port": port,
+            "port": (port != 0).then_some(port),
             "started": crate::run::time::rfc3339(crate::run::time::unix_now()),
         })
         .to_string(),
     )
     .map_err(|e| format!("cannot write {SERVICE_FILE}: {e}"))?;
-    eprintln!("Fallow is running: http://127.0.0.1:{port}/ (open it with `fallow`)");
+    // Never the page's secret in the log (014 FR-016; the log is a file).
+    if port == 0 {
+        eprintln!("Fallow is running (its window opens with `fallow`)");
+    } else if cfg!(windows) {
+        eprintln!("Fallow is running; automation page on port {port}");
+    } else {
+        eprintln!("Fallow is running: http://127.0.0.1:{port}/ (open it with `fallow`)");
+    }
     if !resumed.is_empty() {
         eprintln!(
             "Resuming run(s) {}",
@@ -208,6 +238,7 @@ pub fn serve(
     engine.serve(rx);
     drop(tray);
     drop(listener);
+    #[cfg(any(not(windows), feature = "automation"))]
     drop(web);
     let _ = std::fs::remove_file(data.join(SERVICE_FILE));
     Ok(())
@@ -342,6 +373,11 @@ fn cli_request(req: &Value, tx: &Sender<Msg>, port: u16, secret: &str) -> Value 
         Reply::Err(e) => json!({ "ok": false, "error": e }),
     };
     match req["cmd"].as_str() {
+        // 014: the page's address with its secret, where there is a page (other platforms, and
+        // the Windows `automation` test build with FALLOW_AUTOMATION=1).
+        Some("url") if port == 0 => {
+            json!({ "ok": false, "error": "the Studio is in Fallow's window: run `fallow`" })
+        }
         Some("url") => {
             json!({ "ok": true, "url": page_url(port, secret, req["path"].as_str().unwrap_or("/")) })
         }

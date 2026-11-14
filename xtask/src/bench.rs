@@ -78,7 +78,7 @@ fn parse(args: &[String]) -> Result<Args, String> {
     for p in [&a.bin, &a.fake] {
         if !p.is_file() {
             return Err(format!(
-                "{} is missing: build it first (cargo build)",
+                "{} is missing: build it first (cargo build --features automation)",
                 p.display()
             ));
         }
@@ -176,7 +176,9 @@ fn scratch(name: &str) -> PathBuf {
 /// Starts `fallow serve`; returns when it says its port, and the time that took.
 fn start(args: &Args, dir: &Path) -> Result<(Service, Instant), String> {
     let t0 = Instant::now();
+    // 014 (research R-15): the page the bench drives is the `automation` build's, asked for.
     let mut child = Command::new(&args.bin)
+        .env("FALLOW_AUTOMATION", "1")
         .args(["serve", "--config-dir"])
         .arg(dir.join("config"))
         .arg("--data-dir")
@@ -190,7 +192,13 @@ fn start(args: &Args, dir: &Path) -> Result<(Service, Instant), String> {
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
         for line in BufReader::new(err).lines().map_while(Result::ok) {
-            if let Some(rest) = line.split("http://127.0.0.1:").nth(1) {
+            // The page's port: `http://127.0.0.1:<port>/` elsewhere, `… on port <port>` from the
+            // Windows `automation` build (014: no secret in the log).
+            if let Some(rest) = line
+                .split("http://127.0.0.1:")
+                .nth(1)
+                .or_else(|| line.split("page on port ").nth(1))
+            {
                 let port: String = rest.chars().take_while(char::is_ascii_digit).collect();
                 let _ = tx.send(Ok(port.parse::<u16>().unwrap_or(0)));
             } else if line.contains("already running") {

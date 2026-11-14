@@ -64,6 +64,9 @@ jobs:
       - name: "Gate: writes only where allowed (project install, discarded lead edits)"
         run: cargo test --locked --test us1_projects --test us1_conversation
 
+      - name: "Gate: no listener without the automation build (014 FR-015)"
+        run: cargo test --locked --test no_listener
+
       - name: "Gate: the page on the loopback only, to the engineer only"
         run: cargo test --locked --features automation --test service_http
 
@@ -80,4 +83,5 @@ jobs:
         run: cargo test --workspace --locked --features automation
 
       - name: "Benchmarks: page ready, idle and running memory (constitution VIII)"
-        run: cargo xtask bench
+        # 014: the benchmarks drive the Studio over the `automation` build's page (research R-15).
+        run: cargo build --locked --features automation && cargo xtask bench

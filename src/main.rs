@@ -14,12 +14,12 @@ Fallow works out features with you following Spec Kit, then builds them in a loo
 itself, on a local dashboard.
 
 Usage:
-  fallow                       open the dashboard (starts the service if needed)
+  fallow                       open Fallow's window (starts the service if needed)
+  fallow quit [--installer]    quit Fallow, asking first when work is running
   fallow status                list the loops
   fallow stop                  stop the service (runs resume at the next start)
   fallow serve [--config-dir <dir>] [--data-dir <dir>]
                                run the service in the foreground
-  fallow autostart             print the command that starts Fallow at login
   fallow --version
 ";
 
@@ -169,15 +169,6 @@ fn main() -> ExitCode {
                 ExitCode::SUCCESS
             }
         },
-        "autostart" => {
-            let exe = std::env::current_exe()
-                .map(|p| p.display().to_string())
-                .unwrap_or_else(|_| "fallow".into());
-            println!(
-                "Fallow does not change your login items itself. To start it at login, run this once in PowerShell:\n\n$s = (New-Object -ComObject WScript.Shell).CreateShortcut(\"$env:APPDATA\\Microsoft\\Windows\\Start Menu\\Programs\\Startup\\Fallow.lnk\"); $s.TargetPath = '{exe}'; $s.Arguments = 'serve'; $s.WindowStyle = 7; $s.Save()"
-            );
-            ExitCode::SUCCESS
-        }
         "bench" => fail("measured series arrive with 006 user story 7"),
         other => usage(format!("unknown command {other:?}")),
     }

@@ -124,8 +124,9 @@ unless asked.
 
 **Independent Test**: quickstart Q6.
 
-- [ ] T026 [US5] Retire the web server on Windows (R-3, FR-015, FR-022, contracts/cli.md): `serve` starts no `http::Web` unless `feature = "automation"` and `FALLOW_AUTOMATION=1`; `service.json` and stderr carry no page address (the automation transport writes its port only); `fallow autostart` is removed; `fallow status`, `stop`, `serve`, `--version` and `mcp-bridge` unchanged.
-- [ ] T027 [US5] CI gate in `.github/workflows/ci.yml` and `tests/no_listener.rs` (R-16): the release build's service, window open, has no listening TCP or UDP socket in its process tree (Fallow and its `msedgewebview2.exe` processes, from the system's connection table); the string marking the `automation` feature is absent from the release `fallow.exe`.
+- [X] T026 [US5] Retire the web server on Windows (R-3, FR-015, FR-022, contracts/cli.md): `serve` starts no `http::Web` unless `feature = "automation"` and `FALLOW_AUTOMATION=1`; `service.json` and stderr carry no page address (the automation transport writes its port only); `fallow autostart` is removed; `fallow status`, `stop`, `serve`, `--version` and `mcp-bridge` unchanged.
+- [X] T027 [US5] CI gate in `.github/workflows/ci.yml` and `tests/no_listener.rs` (R-16): the release build's service, window open, has no listening TCP or UDP socket in its process tree (Fallow and its `msedgewebview2.exe` processes, from the system's connection table); the string marking the `automation` feature is absent from the release `fallow.exe`.
+  - *Done*: `tests/no_listener.rs` and CI's gate step; the marker (`service::AUTOMATION_MARKER`) is checked absent in the package job (T025), which builds the release.
 
 ---
 
