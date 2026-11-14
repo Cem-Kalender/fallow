@@ -1,4 +1,5 @@
-//! Gives `fallow.exe` its icon on Windows (MSVC), for its notifications and Explorer: the linker
+//! Gives `fallow.exe` and `fallow-app.exe` (014) their icon, version and application manifest on
+//! Windows (MSVC), for their notifications, Explorer, the task dialog and DPI: the linker
 //! takes the prebuilt resource file `assets/icon/fallow.res` (made by `assets/icon/make_res.py`)
 //! as an input, so no resource compiler is needed.
 
@@ -9,5 +10,6 @@ fn main() {
     if windows && msvc {
         let res = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/icon/fallow.res");
         println!("cargo:rustc-link-arg-bin=fallow={}", res.display());
+        println!("cargo:rustc-link-arg-bin=fallow-app={}", res.display());
     }
 }

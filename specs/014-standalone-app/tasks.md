@@ -21,13 +21,13 @@ holds `target/debug`). Windows only; other platforms keep 006's browser page (`c
 
 ## Phase 1: Setup
 
-- [ ] T001 Dependencies and policy (research R-1, R-3, plan Technical Context):
+- [X] T001 Dependencies and policy (research R-1, R-3, plan Technical Context):
   - `Cargo.toml`: `wry = "=0.57.2"` and `raw-window-handle = "0.6"` under `[target.'cfg(windows)'.dependencies]`; `windows-sys` gains `Win32_System_Ole`, `Win32_Graphics_Dwm`, `Win32_UI_Controls`, `Win32_System_StationsAndDesktops`, `Win32_System_Diagnostics_ToolHelp`, `Win32_System_ProcessStatus`;
   - `tiny_http` becomes `optional = true` for Windows and stays plain for `cfg(not(windows))`; a feature `automation = ["dep:tiny_http"]`;
   - a second binary `[[bin]] name = "fallow-app"`, `path = "src/bin/fallow-app.rs"`;
   - `deny.toml`: remove `wry` from `deny`; keep `tao`, `winit`, `gtk`, `webkit2gtk`; add `[graph] targets = ["x86_64-pc-windows-msvc"]`;
   - check `cargo deny check` and record the build's time, the binary's size and the target folder's size in `specs/014-standalone-app/checks/build.md`.
-- [ ] T002 The application manifest (R-17): `assets/icon/make_res.py` adds an `RT_MANIFEST` (Common Controls 6.0, per-monitor DPI awareness v2, Windows 10/11 `supportedOS`, `asInvoker`) to `assets/icon/fallow.res`; `build.rs` links it into both `fallow.exe` and `fallow-app.exe`. Check `TaskDialogIndirect` resolves (a unit test that loads it with `GetProcAddress` on Windows).
+- [X] T002 The application manifest (R-17): `assets/icon/make_res.py` adds an `RT_MANIFEST` (Common Controls 6.0, per-monitor DPI awareness v2, Windows 10/11 `supportedOS`, `asInvoker`) to `assets/icon/fallow.res`; `build.rs` links it into both `fallow.exe` and `fallow-app.exe`. Check `TaskDialogIndirect` resolves (a unit test that loads it with `GetProcAddress` on Windows).
 
 ---
 

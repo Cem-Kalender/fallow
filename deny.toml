@@ -2,6 +2,9 @@
 
 [graph]
 all-features = true
+# 014: Windows first (006); `wry`'s Linux and macOS dependencies (gtk, webkit2gtk) are not built
+# here and would otherwise trip the bans below (research R-1).
+targets = ["x86_64-pc-windows-msvc"]
 
 [licenses]
 allow = [
@@ -25,14 +28,14 @@ unused-allowed-license = "allow"
 multiple-versions = "allow"
 wildcards = "deny"
 allow-wildcard-paths = true
-# Async runtimes (R-6), resolver crates (R-5), GUI/webview toolkits (Constitution III) and
+# Async runtimes (R-6), resolver crates (R-5), GUI/webview toolkits (Constitution III; 014 allows
+# `wry` only, on Fallow's own window, research R-1) and
 # netstat2 (R-4) are rejected in the plan's Dependency budget.
 deny = [
     { crate = "tokio" },
     { crate = "async-std" },
     { crate = "smol" },
     { crate = "hickory-resolver" },
-    { crate = "wry" },
     { crate = "tao" },
     { crate = "winit" },
     { crate = "gtk" },
