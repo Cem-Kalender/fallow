@@ -33,6 +33,7 @@ fn usage(msg: impl std::fmt::Display) -> ExitCode {
     ExitCode::from(2)
 }
 
+#[cfg(not(windows))]
 fn open(url: &str) {
     println!("{}", url.split("?k=").next().unwrap_or(url));
     if let Err(e) = fallow::platform::open_browser(url) {
@@ -56,6 +57,20 @@ fn main() -> ExitCode {
     let args: Vec<OsString> = std::env::args_os().skip(1).collect();
     let first = args.first().and_then(|a| a.to_str()).unwrap_or("");
     match first {
+        // 014 (contracts/cli.md): Fallow's window on Windows, never a browser.
+        #[cfg(windows)]
+        "" => {
+            if !fallow::platform::display::interactive() {
+                return fail(
+                    "the Studio needs Fallow's window and a desktop; `fallow serve` runs the service without one",
+                );
+            }
+            match service::open_window(None) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(e) => fail(e),
+            }
+        }
+        #[cfg(not(windows))]
         "" => {
             if let Err(e) = service::ensure_running() {
                 return fail(e);

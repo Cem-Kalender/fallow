@@ -55,6 +55,8 @@ Plain strings; anything else is ignored.
 | `ready` | The page's first render after `start()` | With `FALLOW_BENCH` set, logs `window ready <ms>` (since `launched`, R-14). |
 | `theme:light`, `theme:dark`, `theme:system` | The engineer picks a theme (013's control) | Sets the frame's dark mode (R-7). |
 | `close` | The page's answer to `Fallow.closeAsked()`: no unsaved edits, or the engineer chose to leave them | Closes the window, or goes on with Quit (R-9). |
+| `asking` | The page shows "Leave your changes?" for `Fallow.closeAsked()` | Stops the 3 s wait: the engineer is deciding. |
+| `kept` | The engineer kept their changes | The window stays open; Quit is cancelled. |
 | `activity:<session id>` | An activity line is drawn for a session | With `FALLOW_BENCH` set (`automation` builds), logs `activity <session> <unix ms>` (R-15). |
 
 No message changes anything but the window's own frame and the bench's log; the page's work goes

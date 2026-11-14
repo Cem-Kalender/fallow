@@ -87,10 +87,30 @@ pub fn serve(
     if let Err(e) = crate::platform::notify::register_identity(&data) {
         eprintln!("fallow: {e}");
     }
-    // 014: until the window (T013), what the icon and a notification open is the page: a
-    // notification's address as it is, a route joined to the page's address (review).
-    let home_open = home.clone();
-    let tray = crate::platform::notify::Tray::start(
+    // 014: what the icon, a notification and `fallow` open: Fallow's window on Windows (research
+    // R-2), the page elsewhere (a notification's address as it is, a route joined to the page's
+    // address).
+    #[cfg(windows)]
+    let opener: crate::platform::notify::Open = {
+        // Inherited from a shell, these could give the web view a debugging port or another
+        // runtime (research R-6).
+        for v in crate::window::view::WEBVIEW2_VARIABLES {
+            // SAFETY: no other thread of this process reads or writes these variables, and the
+            // web view's environment is made later, on the UI thread.
+            unsafe { std::env::remove_var(v) };
+        }
+        crate::window::configure(
+            data.clone(),
+            crate::window::view::Service {
+                tx: tx.clone(),
+                theme: Arc::default(),
+            },
+        );
+        Arc::new(crate::window::open)
+    };
+    #[cfg(not(windows))]
+    let opener: crate::platform::notify::Open = {
+        let home_open = home.clone();
         Arc::new(move |what: Option<String>| {
             let url = match what {
                 Some(r) if r.starts_with("#/") => format!("{home_open}{r}"),
@@ -98,7 +118,10 @@ pub fn serve(
                 _ => home_open.clone(),
             };
             let _ = crate::platform::open_browser(&url);
-        }),
+        })
+    };
+    let tray = crate::platform::notify::Tray::start(
+        opener,
         Arc::clone(&notify_on),
         Box::new(move |c| match c {
             crate::platform::notify::Choice::Stop => {
@@ -338,12 +361,56 @@ pub fn request(req: Value) -> Result<Value, String> {
     }
 }
 
+/// The service's program: `fallow` beside the running one (`fallow-app` starts it too, 014).
+fn service_exe() -> Result<PathBuf, String> {
+    let me = std::env::current_exe().map_err(|e| e.to_string())?;
+    let name = format!("fallow{}", std::env::consts::EXE_SUFFIX);
+    Ok(match me.parent() {
+        Some(dir) if me.file_name().is_some_and(|n| n != name.as_str()) => dir.join(name),
+        _ => me,
+    })
+}
+
+/// The running service's process id, from its service file.
+fn service_pid() -> Option<u32> {
+    let data = data_dir().ok()?;
+    std::fs::read_to_string(data.join(SERVICE_FILE))
+        .ok()
+        .and_then(|t| serde_json::from_str::<Value>(&t).ok())
+        .and_then(|v| v["pid"].as_u64())
+        .map(|p| p as u32)
+}
+
+/// 014 (research R-2, contracts/cli.md): starts the service if needed and asks it for its
+/// window (on `route`, `#/…`), allowing it to come to the front.
+#[cfg(windows)]
+pub fn open_window(route: Option<&str>) -> Result<(), String> {
+    ensure_running()?;
+    if let Some(pid) = service_pid() {
+        // SAFETY: a plain call; a failure only leaves the window behind others.
+        unsafe { windows_sys::Win32::UI::WindowsAndMessaging::AllowSetForegroundWindow(pid) };
+    }
+    let mut req = json!({ "cmd": "window" });
+    if let Some(r) = route {
+        req["route"] = json!(r);
+    }
+    let v = request(req)?;
+    if v["ok"] == true {
+        Ok(())
+    } else {
+        Err(v["error"]
+            .as_str()
+            .unwrap_or("the service did not open its window")
+            .to_string())
+    }
+}
+
 /// Starts the service in the background unless it is running (`fallow`, `fallow run`).
 pub fn ensure_running() -> Result<(), String> {
     if request(json!({ "cmd": "status" })).is_ok() {
         return Ok(());
     }
-    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let exe = service_exe()?;
     let data = data_dir()?;
     crate::platform::private_dir(&data)?;
     let log = std::fs::OpenOptions::new()
@@ -366,8 +433,9 @@ pub fn ensure_running() -> Result<(), String> {
     }
     cmd.spawn()
         .map_err(|e| format!("cannot start the service: {e}"))?;
-    for _ in 0..100 {
-        std::thread::sleep(std::time::Duration::from_millis(100));
+    // Every 25 ms for 10 s: the start counts toward the window's 1 s (research R-14).
+    for _ in 0..400 {
+        std::thread::sleep(std::time::Duration::from_millis(25));
         if request(json!({ "cmd": "status" })).is_ok() {
             return Ok(());
         }

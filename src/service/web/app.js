@@ -290,6 +290,27 @@ const Fallow = (() => {
     stamp();
   }
 
+  // 014 (contracts/window.md §4): a message to Fallow's window; nothing in a browser.
+  function toWindow(m) {
+    try {
+      if (window.ipc && typeof window.ipc.postMessage === "function") window.ipc.postMessage(m);
+    } catch (_) { /* not in Fallow's window */ }
+  }
+
+  // 014 (contracts/window.md §5, research R-9): the window asks before it closes or Fallow
+  // quits. Without unsaved changes it closes at once; with them, only if the engineer leaves them.
+  // The window waits 3 s for an answer (a page that does not answer is closed anyway), so
+  // `asking` tells it a question is open, then `close` or `kept` follows.
+  async function closeAsked() {
+    if (current && current.dirty && current.dirty()) {
+      toWindow("asking");
+      const ok = await confirm({ title: "Leave your changes?", text: "What you changed here is not saved. Closing drops it.", ok: "Leave them" });
+      toWindow(ok ? "close" : "kept");
+      return;
+    }
+    toWindow("close");
+  }
+
   // A screen that already asked "Leave your changes?" itself, before it goes (009).
   function leaveAsked() { forced = true; }
   // A screen that put its own address back (its own question, answered "stay"): the guard
@@ -315,6 +336,7 @@ const Fallow = (() => {
     const choose = (theme) => {
       if (theme === "system") delete document.documentElement.dataset.theme;
       else document.documentElement.dataset.theme = theme;
+      toWindow(`theme:${theme}`);
       saving = saving.then(() => post("/api/theme", { theme })).catch((err) => {
         alertLine(`Fallow could not keep the theme for the next start: ${err.message}`);
       });
@@ -342,6 +364,14 @@ const Fallow = (() => {
     headerWatch = watch("global", () => header());
     show();
     stamp();
+    // 014 (research R-14): the window learns when the Studio is first drawn.
+    const drawn = setInterval(() => {
+      const app = document.getElementById("app");
+      if (app && app.children.length) {
+        clearInterval(drawn);
+        requestAnimationFrame(() => toWindow("ready"));
+      }
+    }, 5);
   }
 
   const money = (v) => (typeof v === "number" ? `$${v.toFixed(2)}` : "cost not reported");
@@ -571,8 +601,17 @@ const Fallow = (() => {
   const DOING = { read: "Reading", edit: "Editing", write: "Writing", run: "Running", search: "Searching for", tool: "Using" };
 
   // What the lead does now: its last action, or thinking once that action has its result.
+  // 014 (research R-15): the window learns when a conversation's activity grows, for the
+  // activity benchmark (logged only when it measures).
+  const shownActivity = new Map();
   function doing(c) {
     if (c && c.pending_approval) return h`Waiting for you to allow a command`;
+    const id = c && (c.id || (c.session && c.session.id));
+    const count = ((c && c.activity) || []).length;
+    if (id && count > (shownActivity.get(id) || 0)) {
+      shownActivity.set(id, count);
+      toWindow(`activity:${id}`);
+    }
     const last = ((c && c.activity) || []).filter((a) => a.kind !== "say" && a.kind !== "progress").slice(-1)[0];
     if (last && DOING[last.kind] && last.text) return h`${DOING[last.kind]} <code>${last.text}</code>…`;
     return h`Thinking…`;
@@ -972,7 +1011,7 @@ const Fallow = (() => {
   }
 
   return { deleteSession, chatWide, expandBtn, saveFor, scopeOf, esc, h, raw, md, inline, LOGO, icon, api, get, post, watch, live, here, confirm, register, route, show, start, money,
-    MODE_LABEL, messages, composer, syncComposer, chatAct, sendSay, alertLine, atEnd, stagePill, filesRead, leadHead, leadNotice, working, leaveAsked, restamp, showWorking,
+    MODE_LABEL, messages, composer, syncComposer, chatAct, sendSay, alertLine, atEnd, stagePill, filesRead, leadHead, leadNotice, working, leaveAsked, restamp, showWorking, closeAsked,
     get headerWatch() { return headerWatch; } };
 
 })();
