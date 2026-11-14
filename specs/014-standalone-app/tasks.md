@@ -99,9 +99,10 @@ theme from the first frame, where it was last time.
 
 **Independent Test**: quickstart Q3's native steps.
 
-- [ ] T021 [US3] `src/platform/picker.rs`: the folder picker owned by Fallow's window when it is open (its handle kept by the UI thread); the topmost helper window goes.
-- [ ] T022 [US3] `src/service/web/screens/solo.js` (R-5, R-4): `dragover`/`drop` on the message box attach dropped image files exactly as the file dialog does (same types and limits); `app.js` cancels every other drop (`preventDefault` on `dragover` and `drop` on `document`); the attachment thumbnails open in an in-page viewer (a `<dialog>` with the image, closed with Escape or a click) instead of `target=_blank` links.
+- [X] T021 [US3] `src/platform/picker.rs`: the folder picker owned by Fallow's window when it is open (its handle kept by the UI thread); the topmost helper window goes.
+- [X] T022 [US3] `src/service/web/screens/solo.js` (R-5, R-4): `dragover`/`drop` on the message box attach dropped image files exactly as the file dialog does (same types and limits); `app.js` cancels every other drop (`preventDefault` on `dragover` and `drop` on `document`); the attachment thumbnails open in an in-page viewer (a `<dialog>` with the image, closed with Escape or a click) instead of `target=_blank` links.
 - [ ] T023 [US3] Check by hand and record in `specs/014-standalone-app/checks/native.md`: copy, cut, paste, select all, undo, redo in text fields; zoom shortcuts; reload keeps the route; the context menu has no entry that leaves the Studio in a release build; a notification click with the window closed opens it on the item.
+  - *So far* (`checks/native.md`): what can be checked without the engineer's hands is checked; the rest waits for them (T034).
 
 ---
 

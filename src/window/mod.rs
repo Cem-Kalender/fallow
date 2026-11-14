@@ -195,6 +195,7 @@ mod host {
         let place = frame::opening_place(state::load(&cfg.data));
         let hwnd = frame::create(&place, dark)?;
         LIVE.with(|l| *l.borrow_mut() = Some(Live { hwnd, view: None }));
+        crate::platform::picker::OWNER.store(hwnd as isize, std::sync::atomic::Ordering::Release);
         let env = match view::environment(&cfg.data) {
             Ok(e) => e,
             Err(e) => {
@@ -513,6 +514,12 @@ mod host {
     }
 
     pub(super) fn destroyed(hwnd: HWND) {
+        let _ = crate::platform::picker::OWNER.compare_exchange(
+            hwnd as isize,
+            0,
+            std::sync::atomic::Ordering::AcqRel,
+            std::sync::atomic::Ordering::Acquire,
+        );
         LIVE.with(|l| {
             let mut l = l.borrow_mut();
             if l.as_ref().is_some_and(|x| x.hwnd == hwnd) {

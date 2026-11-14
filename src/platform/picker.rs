@@ -23,6 +23,10 @@ pub fn pick_folder(_title: &str) -> Result<Option<PathBuf>, String> {
     Err("there is no folder picker on this platform yet: type the folder's path".into())
 }
 
+/// 014 (research R-5): Fallow's window, the picker's owner while it is open (0: none).
+#[cfg(windows)]
+pub static OWNER: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(0);
+
 #[cfg(windows)]
 mod win {
     use std::ffi::c_void;
@@ -114,8 +118,13 @@ mod win {
                     opts | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST,
                 );
                 (vt.set_title)(dialog, wide.as_ptr());
-                // An owner kept on top, so the picker opens in front of the browser, not
-                // behind it.
+                // Fallow's window when it is open (014): the picker is its dialog. Otherwise an
+                // owner kept on top, so the picker opens in front of the browser, not behind it.
+                let window = super::OWNER.load(std::sync::atomic::Ordering::Acquire) as HWND;
+                if !window.is_null() {
+                    let shown = (vt.show)(dialog, window);
+                    return finish(dialog, vt, shown);
+                }
                 let class: Vec<u16> = "STATIC".encode_utf16().chain(Some(0)).collect();
                 let owner = CreateWindowExW(
                     WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
@@ -138,39 +147,54 @@ mod win {
                 if !owner.is_null() {
                     DestroyWindow(owner);
                 }
-                let out = if shown == ERROR_CANCELLED {
-                    Ok(None)
-                } else if shown < 0 {
-                    Err(format!("the folder picker failed ({shown:#x})"))
-                } else {
-                    let mut item: *mut c_void = std::ptr::null_mut();
-                    let hr = (vt.get_result)(dialog, &mut item);
-                    if hr < 0 || item.is_null() {
-                        Err(format!("the folder picker gave no folder ({hr:#x})"))
-                    } else {
-                        let iv = &**(item as *mut *const ItemVtbl);
-                        let mut name: PWSTR = std::ptr::null_mut();
-                        let hr = (iv.get_display_name)(item, SIGDN_FILESYSPATH, &mut name);
-                        let path = if hr < 0 || name.is_null() {
-                            Err(format!("the folder chosen has no path on disk ({hr:#x})"))
-                        } else {
-                            let mut n = 0;
-                            while *name.add(n) != 0 {
-                                n += 1;
-                            }
-                            let s = String::from_utf16_lossy(std::slice::from_raw_parts(name, n));
-                            CoTaskMemFree(name as *const c_void);
-                            Ok(Some(PathBuf::from(s)))
-                        };
-                        (iv.release)(item);
-                        path
-                    }
-                };
-                (vt.release)(dialog);
-                out
+                finish(dialog, vt, shown)
             })();
             CoUninitialize();
             result
+        }
+    }
+
+    /// The folder the dialog gave, then the dialog released.
+    ///
+    /// # Safety
+    /// `dialog` is a live IFileOpenDialog with vtable `vt`, shown with the result `shown`.
+    unsafe fn finish(
+        dialog: *mut c_void,
+        vt: &DialogVtbl,
+        shown: HRESULT,
+    ) -> Result<Option<PathBuf>, String> {
+        // SAFETY: as the caller promises; every interface is released.
+        unsafe {
+            let out = if shown == ERROR_CANCELLED {
+                Ok(None)
+            } else if shown < 0 {
+                Err(format!("the folder picker failed ({shown:#x})"))
+            } else {
+                let mut item: *mut c_void = std::ptr::null_mut();
+                let hr = (vt.get_result)(dialog, &mut item);
+                if hr < 0 || item.is_null() {
+                    Err(format!("the folder picker gave no folder ({hr:#x})"))
+                } else {
+                    let iv = &**(item as *mut *const ItemVtbl);
+                    let mut name: PWSTR = std::ptr::null_mut();
+                    let hr = (iv.get_display_name)(item, SIGDN_FILESYSPATH, &mut name);
+                    let path = if hr < 0 || name.is_null() {
+                        Err(format!("the folder chosen has no path on disk ({hr:#x})"))
+                    } else {
+                        let mut n = 0;
+                        while *name.add(n) != 0 {
+                            n += 1;
+                        }
+                        let s = String::from_utf16_lossy(std::slice::from_raw_parts(name, n));
+                        CoTaskMemFree(name as *const c_void);
+                        Ok(Some(PathBuf::from(s)))
+                    };
+                    (iv.release)(item);
+                    path
+                }
+            };
+            (vt.release)(dialog);
+            out
         }
     }
 }

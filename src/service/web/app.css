@@ -361,6 +361,10 @@ dialog.confirm { border: 1px solid var(--line); border-radius: 12px; padding: 20
 dialog.confirm::backdrop { background: var(--backdrop, rgba(28, 28, 26, .35)); }
 dialog.confirm h2 { font-size: 17px; }
 dialog.confirm.wide { max-width: 860px; max-height: calc(100vh - 64px); overflow: auto; }
+/* 014: an attached image, shown in the page (never a new window); a click or Escape closes it. */
+dialog.viewer { cursor: zoom-out; }
+dialog.viewer img { display: block; max-width: 100%; max-height: calc(100vh - 128px); margin: 0 auto; }
+.thumb-open { padding: 0; border: 0; background: none; cursor: zoom-in; }
 
 /* What Fallow verified (008 US1): one pill per story, one evidence panel at a time. */
 .verif .th { margin: 0 6px 0 0; }

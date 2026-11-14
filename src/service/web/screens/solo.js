@@ -38,7 +38,7 @@
         <div class="row wrap gap-8 mt-10">${done ? h`<a class="btn btn2 sm" href="#/p/${encodeURIComponent(s.project)}/f/${encodeURIComponent(done.feature)}">Started: ${done.feature}</a>` : ""}<button class="btn sm" data-act="solo-feature" data-n="${t.n}">Make this a feature</button></div></div>`;
     };
     const sid = s && s.id;
-    const shots = (t) => (t.attachments || []).length ? h`<div class="row wrap gap-8 you-shots">${t.attachments.map((a) => h`<a href="/api/sessions/${encodeURIComponent(sid)}/attachments/${a.sha}" target="_blank" rel="noopener"><img class="thumb" src="/api/sessions/${encodeURIComponent(sid)}/attachments/${a.sha}" alt="${a.name}"></a>`)}</div>` : "";
+    const shots = (t) => (t.attachments || []).length ? h`<div class="row wrap gap-8 you-shots">${t.attachments.map((a) => h`<button type="button" class="thumb-open" data-src="/api/sessions/${encodeURIComponent(sid)}/attachments/${a.sha}" data-name="${a.name}" aria-label="${`Show ${a.name}`}"><img class="thumb" src="/api/sessions/${encodeURIComponent(sid)}/attachments/${a.sha}" alt="${a.name}"></button>`)}</div>` : "";
     c.saidExtra = shots;
     c.turnExtra = (t) => h`${card(t)}${moved(t)}${quiet || t.reply === null || t.reply === undefined ? "" : h`<div class="row gap-8 mt-6"><button class="undo-link tiny" data-act="solo-undo" data-turn="${t.n}" aria-label="${`Undo turn ${t.n} and every turn after it`}">Undo back to before this turn</button></div>`}`;
     return c;
@@ -184,6 +184,39 @@
     if (!files.length) return;
     e.preventDefault();
     upload(form.dataset.session, files);
+  });
+  // 014 (research R-5): images dropped on a session's message box are attached as picked ones;
+  // any other drop is cancelled, so a dropped file never takes the window away from the Studio.
+  const dropForm = (e) => {
+    const form = e.target && e.target.closest ? e.target.closest("form[data-session]") : null;
+    return form && form.dataset.images === "true" ? form : null;
+  };
+  document.addEventListener("dragover", (e) => {
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = dropForm(e) ? "copy" : "none";
+  });
+  document.addEventListener("drop", (e) => {
+    e.preventDefault();
+    const form = dropForm(e);
+    if (!form) return;
+    const files = [...((e.dataTransfer && e.dataTransfer.files) || [])].filter((f) => f.type.startsWith("image/"));
+    if (files.length) upload(form.dataset.session, files);
+  });
+  // 014 (research R-4): an attached image opens in the page itself, never in a new window.
+  document.addEventListener("click", (e) => {
+    const b = e.target && e.target.closest ? e.target.closest(".thumb-open") : null;
+    if (!b) return;
+    e.preventDefault();
+    let d = document.getElementById("viewer");
+    if (!d) {
+      d = document.createElement("dialog");
+      d.id = "viewer";
+      d.className = "confirm wide viewer";
+      d.addEventListener("click", () => d.close());
+      document.body.appendChild(d);
+    }
+    d.innerHTML = h`<img alt="${b.dataset.name || "image"}" src="${b.dataset.src}">`.s;
+    d.showModal();
   });
   document.addEventListener("change", (e) => {
     if (!e.target || e.target.id !== "solo-file") return;
