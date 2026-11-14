@@ -212,31 +212,39 @@ jobs:
       - name: "Gate: install and uninstall as a standard user, without elevation (VI)"
         shell: pwsh
         run: |
-          $setup = Get-ChildItem target/installer/*-setup.exe | Select-Object -First 1
+          $setup = (Get-ChildItem target/installer/*-setup.exe | Select-Object -First 1).FullName
           $pw = -join ((48..57) + (65..90) + (97..122) | Get-Random -Count 20 | ForEach-Object {[char]$_}) + "!a1"
           $secure = ConvertTo-SecureString $pw -AsPlainText -Force
           New-LocalUser -Name fallowci -Password $secure -AccountNeverExpires | Out-Null
+          # A standard user; "Performance Log Users" only gives it the right to run as a batch job
+          # (Windows Server's default), so a scheduled task can run as it with its own profile.
           Add-LocalGroupMember -Group Users -Member fallowci
-          $cred = New-Object System.Management.Automation.PSCredential ("$env:COMPUTERNAME\fallowci", $secure)
-          # The processes started as fallowci inherit this environment: their TEMP must be one
-          # fallowci can write (the runner's is not), or Setup cannot unpack itself.
-          $tmp = "$env:PUBLIC\fallow-tmp"
-          New-Item -ItemType Directory -Force $tmp | Out-Null
-          icacls $tmp /grant "fallowci:(OI)(CI)F" | Out-Null
-          $env:TEMP = $tmp
-          $env:TMP = $tmp
+          Add-LocalGroupMember -Group "Performance Log Users" -Member fallowci
+          if (Get-LocalGroupMember -Group Administrators | Where-Object { $_.Name -like '*\fallowci' }) { throw "fallowci is an administrator" }
           $log = "$env:PUBLIC\fallow-install.log"
-          $p = Start-Process -FilePath $setup.FullName -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',"/LOG=$log" -Credential $cred -LoadUserProfile -WorkingDirectory $env:RUNNER_TEMP -Wait -PassThru
-          if ($p.ExitCode -ne 0) { Get-Content $log -ErrorAction SilentlyContinue; throw "install exited $($p.ExitCode)" }
+          # Runs `exe args` as fallowci, with its own profile and without elevation; its exit code.
+          function As-Fallowci($exe, $arguments) {
+            $name = "fallowci-" + [guid]::NewGuid().ToString("N").Substring(0, 8)
+            $action = New-ScheduledTaskAction -Execute $exe -Argument $arguments
+            Register-ScheduledTask -TaskName $name -Action $action -User "$env:COMPUTERNAME\fallowci" -Password $pw -RunLevel Limited | Out-Null
+            Start-ScheduledTask -TaskName $name
+            $end = (Get-Date).AddMinutes(5)
+            do { Start-Sleep -Seconds 2; $info = Get-ScheduledTaskInfo -TaskName $name } while (((Get-ScheduledTask -TaskName $name).State -eq 'Running' -or $info.LastRunTime.Year -lt 2000) -and (Get-Date) -lt $end)
+            $code = $info.LastTaskResult
+            Unregister-ScheduledTask -TaskName $name -Confirm:$false
+            return $code
+          }
+          $code = As-Fallowci $setup "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG=`"$log`""
+          if ($code -ne 0) { Get-Content $log -ErrorAction SilentlyContinue; throw "install exited $code" }
           $installed = "C:\Users\fallowci\AppData\Local\Programs\Fallow"
           foreach ($f in 'fallow.exe','fallow-app.exe') {
             if (-not (Test-Path "$installed\$f")) { Get-Content $log; throw "$f is not in $installed" }
           }
           if (Test-Path "${env:ProgramFiles}\Fallow") { throw "installed for all users" }
-          $u = Start-Process -FilePath "$installed\unins000.exe" -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -Credential $cred -LoadUserProfile -WorkingDirectory $env:RUNNER_TEMP -Wait -PassThru
-          if ($u.ExitCode -ne 0) { throw "uninstall exited $($u.ExitCode)" }
+          $code = As-Fallowci "$installed\unins000.exe" "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART"
+          if ($code -ne 0) { throw "uninstall exited $code" }
           # The uninstaller runs again from a copy of itself: wait for the files to go.
           $end = (Get-Date).AddSeconds(60)
           while ((Test-Path "$installed\fallow.exe") -and (Get-Date) -lt $end) { Start-Sleep -Seconds 1 }
           if (Test-Path "$installed\fallow.exe") { throw "fallow.exe is still installed" }
-          "installed and uninstalled as fallowci, under its own profile"
+          "installed and uninstalled as fallowci, a standard user, under its own profile"
