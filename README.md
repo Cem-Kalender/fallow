@@ -62,16 +62,14 @@ the project's principles are in [`.specify/memory/constitution.md`](.specify/mem
 
 ### Install
 
-There is no published release yet. Until there is, either:
-
-- **take the installer CI builds**: on GitHub, open *Actions*, pick the latest green run of `ci` on
-  `main`, and download the `fallow-windows-x64` artifact (you need to be signed in to GitHub; it is
-  kept 90 days). Unzip it, check the file against its `.sha256`, and run
-  `Fallow-<version>-x64-setup.exe`. It installs for you only, with no administrator rights, and
-  adds Fallow to the Start menu. It is not signed yet, so Windows SmartScreen warns about it: choose
-  *More info*, then *Run anyway*. Uninstall from Windows' *Installed apps*; your projects are never
-  touched, and you choose whether Fallow's own data goes too.
-- **or build it** with Rust (`rustup` installs the toolchain the repository names):
+- **Download it**: from the repository's
+  [Releases](https://github.com/Cem-Kalender/fallow/releases), download
+  `Fallow-<version>-x64-setup.exe` (its SHA-256 is beside it) and run it. It installs for you only,
+  with no administrator rights, and adds Fallow to the Start menu. It is not signed (Fallow is open
+  source, with no paid certificate), so Windows SmartScreen warns about it: choose *More info*, then
+  *Run anyway*. Uninstall from Windows' *Installed apps*; your projects are never touched, and you
+  choose whether Fallow's own data goes too.
+- **Or build it** with Rust (`rustup` installs the toolchain the repository names):
 
   ```sh
   git clone https://github.com/Cem-Kalender/fallow
@@ -139,6 +137,13 @@ What the window's web view (Microsoft Edge WebView2) does that Fallow cannot swi
 required diagnostic data from the runtime (optional data follows Windows' own setting), and
 updates of the WebView2 runtime through Microsoft Edge Update. Fallow switches off SmartScreen
 lookups and keeps the web view's crash reports on the machine.
+
+## Releasing
+
+A release is built by CI from a tagged commit on `main` (`.github/workflows/release.yml`): set the
+version in `Cargo.toml`, commit it on `main`, then `git tag v<version>` and push the tag. CI builds
+the installer and its SHA-256 and publishes them as a GitHub release. Fallow does not update itself:
+a new version is downloaded and installed over the old one, which quits Fallow first.
 
 ## Development
 

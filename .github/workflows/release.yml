@@ -1,0 +1,92 @@
+# A release (constitution, Development Workflow): built by CI from a tagged commit on `main`, with
+# a published checksum for every download; Fallow does not update itself. Push a tag `v<version>`,
+# with <version> the one in Cargo.toml, on a commit of `main`:
+#   git tag v0.1.0 && git push origin v0.1.0
+# The installer is not signed (an open-source tool, no paid certificate): Windows SmartScreen warns
+# about it, as the README says.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: release
+    runs-on: windows-2025
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: The tag is on main and names Cargo.toml's version
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          if [ "$tag" != "v$version" ]; then
+            echo "the tag $tag does not name Cargo.toml's version $version"; exit 1
+          fi
+          git fetch origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "the tagged commit is not on main"; exit 1
+          fi
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+
+      - name: Rust toolchain (from rust-toolchain.toml)
+        run: rustup toolchain install
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release
+
+      - name: Release build
+        run: cargo build --release --locked --bins
+
+      - name: "Gate: the release has no automation test page"
+        run: |
+          if grep -c "automation build: the Studio's test page" target/release/fallow.exe; then
+            echo "the release carries the automation build's page"; exit 1
+          fi
+
+      - name: Inno Setup
+        shell: pwsh
+        run: choco upgrade innosetup -y --no-progress
+
+      - name: The installer and its checksum
+        run: |
+          "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" "//DAppVersion=$VERSION" installer/fallow.iss
+          cd target/installer
+          sha256sum "Fallow-$VERSION-x64-setup.exe" > "Fallow-$VERSION-x64-setup.exe.sha256"
+          cat "Fallow-$VERSION-x64-setup.exe.sha256"
+
+      - name: The GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sum=$(cut -d' ' -f1 "target/installer/Fallow-$VERSION-x64-setup.exe.sha256")
+          cat > notes.md <<EOF
+          Fallow $VERSION for Windows 10 and 11 (x64).
+
+          **Install**: download \`Fallow-$VERSION-x64-setup.exe\` and run it. It installs for you only,
+          with no administrator rights. It is not signed, so Windows SmartScreen warns about it:
+          choose *More info*, then *Run anyway*. Then install and sign in to Claude Code
+          (see the README).
+
+          SHA-256: \`$sum\`
+
+          The web view of Fallow's window (Microsoft Edge WebView2) sends Windows' required diagnostic
+          data and is updated by Microsoft Edge Update; Fallow cannot switch these off. Fallow itself
+          makes no network requests.
+          EOF
+          sed -i 's/^          //' notes.md
+          gh release create "$GITHUB_REF_NAME" \
+            "target/installer/Fallow-$VERSION-x64-setup.exe" \
+            "target/installer/Fallow-$VERSION-x64-setup.exe.sha256" \
+            --title "Fallow $VERSION" --notes-file notes.md --verify-tag
