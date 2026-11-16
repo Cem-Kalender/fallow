@@ -53,19 +53,63 @@ the project's principles are in [`.specify/memory/constitution.md`](.specify/mem
 
 ## Getting started
 
-Fallow needs Windows 10 or 11 with the Microsoft Edge WebView2 Runtime (part of Windows 11), `git`,
-and `claude` signed in for real agents.
+### What you need
 
-```sh
-cargo build
-target/debug/fallow            # starts the service if needed and opens Fallow's window
-target/debug/fallow quit       # quits, asking first when loops or sessions are working
-target/debug/fallow status     # lists the loops
-target/debug/fallow stop       # stops the service at once; loops resume at the next start
+- Windows 10 or 11 (x64), with the Microsoft Edge WebView2 Runtime. Windows 11 has it; on Windows
+  10 Fallow tells you if it is missing and offers Microsoft's download page.
+- [Git](https://git-scm.com/download/win).
+- [Claude Code](https://docs.anthropic.com/en/docs/claude-code), for the agents (below).
+
+### Install
+
+There is no published release yet. Until there is, either:
+
+- **take the installer CI builds**: on GitHub, open *Actions*, pick the latest green run of `ci` on
+  `main`, and download the `fallow-windows-x64` artifact (you need to be signed in to GitHub; it is
+  kept 90 days). Unzip it, check the file against its `.sha256`, and run
+  `Fallow-<version>-x64-setup.exe`. It installs for you only, with no administrator rights, and
+  adds Fallow to the Start menu. It is not signed yet, so Windows SmartScreen warns about it: choose
+  *More info*, then *Run anyway*. Uninstall from Windows' *Installed apps*; your projects are never
+  touched, and you choose whether Fallow's own data goes too.
+- **or build it** with Rust (`rustup` installs the toolchain the repository names):
+
+  ```sh
+  git clone https://github.com/Cem-Kalender/fallow
+  cd fallow
+  cargo build --release
+  target/release/fallow          # starts Fallow and opens its window
+  ```
+
+### Connect Claude Code
+
+There is nothing to link: Fallow runs the `claude` command itself, as you, whenever an agent works,
+and uses the sign-in Claude Code already has. So:
+
+1. Install Claude Code, so that `claude` runs in a terminal.
+2. Sign in once, in a terminal: run `claude` and log in as it asks. Fallow never sees your password
+   or keys.
+3. Open Fallow. It finds `claude` on your `PATH`; where it is missing or not signed in, Fallow says
+   so before any work starts.
+
+To use another `claude` (one not on your `PATH`), set it in Fallow's `settings.toml`, in its
+config folder (`%APPDATA%\fallow`):
+
+```toml
+[agents.claude]
+command = "C:/path/to/claude.exe"
 ```
 
-CI also builds a per-user installer (`Fallow-<version>-x64-setup.exe`, with its SHA-256): it needs
-no administrator rights and adds Fallow to the Start menu.
+### Use it
+
+Open Fallow from the Start menu, or with `fallow` in a terminal. Add a project folder with **+**,
+work out a feature with the lead, lock it, and let its loop build it.
+
+```sh
+fallow            # opens Fallow's window (starts it if needed)
+fallow quit       # quits, asking first when loops or sessions are working
+fallow status     # lists the loops
+fallow stop       # stops Fallow at once; loops resume at the next start
+```
 
 The Studio is shown only in Fallow's own window, through the system's web view; nothing listens on
 any port, and no browser can reach it. Closing the window keeps Fallow and its loops running in
