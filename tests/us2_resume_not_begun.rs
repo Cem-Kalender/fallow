@@ -2,6 +2,8 @@
 //! updating itself: npm's shim there, its `.exe` not yet). The agent never began: when Fallow
 //! starts again, the step is given its own instruction, not "you were interrupted, go on".
 
+#![cfg(windows)]
+
 mod common;
 
 use common::*;
@@ -34,7 +36,6 @@ fn restart(
     start_studio(root, &root.join("scenario.toml"), None)
 }
 
-#[cfg(windows)]
 #[test]
 fn a_step_whose_agent_never_began_is_given_its_instruction_after_a_restart() {
     let root = scratch("not-begun");

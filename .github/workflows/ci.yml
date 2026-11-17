@@ -84,6 +84,28 @@ jobs:
       - name: Tests (agents are the scripted fake agent; no network, no cost)
         run: cargo test --workspace --locked --features automation
 
+  macos:
+    name: macos
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust toolchain (from rust-toolchain.toml)
+        run: rustup toolchain install
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Clippy
+        run: |
+          cargo clippy --workspace --all-targets -- -D warnings
+          cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+      - name: Build
+        run: cargo build --locked
+
+      - name: Tests (agents are the scripted fake agent; no network, no cost)
+        run: cargo test --workspace --locked --features automation
 
   # 014 (T032): the benchmarks in a job of their own (constitution VIII), with the window; they
   # drive the Studio over the `automation` build's page (research R-15).

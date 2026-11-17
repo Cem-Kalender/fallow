@@ -35,12 +35,17 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
+#[cfg(windows)]
 const WARMUPS: usize = 3;
+#[cfg(windows)]
 const RUNS: usize = 30;
 // 014 (constitution 8.0.0, research R-15): the window counts; memory is each process's own
 // (private working set), summed over Fallow and its window's web view processes.
+#[cfg(windows)]
 const WINDOW_READY_MS: f64 = 1000.0;
+#[cfg(windows)]
 const IDLE_OPEN_MB: f64 = 250.0;
+#[cfg(windows)]
 const IDLE_CLOSED_MB: f64 = 60.0;
 const RUNNING_MB: f64 = 400.0;
 const SOLO_START_MS: f64 = 5000.0;
@@ -161,6 +166,7 @@ struct Service {
     port: u16,
     dir: PathBuf,
     /// The service's other log lines (`window ready <ms>`, 014).
+    #[cfg_attr(not(windows), allow(dead_code))]
     log: std::sync::Mutex<std::sync::mpsc::Receiver<String>>,
 }
 

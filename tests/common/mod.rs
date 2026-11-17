@@ -38,6 +38,9 @@ pub fn repo(root: &Path) -> PathBuf {
     repo_named(root, "repo")
 }
 
+/// PEP 394 lets `python` be missing outside Windows.
+pub const PYTHON: &str = if cfg!(windows) { "python" } else { "python3" };
+
 /// `repo` in the folder `name` (a project is named after its folder).
 pub fn repo_named(root: &Path, name: &str) -> PathBuf {
     let r = root.join(name);
@@ -49,7 +52,9 @@ pub fn repo_named(root: &Path, name: &str) -> PathBuf {
     git(&r, &["config", "core.autocrlf", "false"]);
     std::fs::write(
         r.join(".fallow/squad.toml"),
-        "repair_cap = 2\n[[gate]]\nname = \"tests\"\ncommand = \"python -m unittest\"\nbaseline = true\n",
+        format!(
+            "repair_cap = 2\n[[gate]]\nname = \"tests\"\ncommand = \"{PYTHON} -m unittest\"\nbaseline = true\n"
+        ),
     )
     .unwrap();
     std::fs::write(r.join("README.md"), "calc\n").unwrap();

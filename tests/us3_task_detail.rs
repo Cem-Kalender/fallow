@@ -12,7 +12,7 @@ fn a_tasks_story_is_one_request_away_even_after_a_restart() {
     let root = scratch("task-detail");
     let steps = calc_loop_ok().replacen(
         "part = \"T003\"\n",
-        "part = \"T003\"\nrun = [{ command = \"python -m unittest\", output = \"Ran 2 tests\\nOK\" }]\n",
+        &format!("part = \"T003\"\nrun = [{{ command = \"{PYTHON} -m unittest\", output = \"Ran 2 tests\\nOK\" }}]\n"),
         1,
     );
     let (e, _repo, id) = locked_calc(&root, &steps, None);
@@ -59,7 +59,7 @@ fn a_tasks_story_is_one_request_away_even_after_a_restart() {
     );
     let cmds = d["commands"].as_array().unwrap();
     assert_eq!(cmds.len(), 1);
-    assert_eq!(cmds[0]["text"], "python -m unittest");
+    assert_eq!(cmds[0]["text"], format!("{PYTHON} -m unittest"));
     assert_eq!(cmds[0]["result"], "ok");
     let gates = d["gates"].as_array().unwrap();
     assert_eq!(gates.len(), 1);

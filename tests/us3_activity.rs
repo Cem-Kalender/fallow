@@ -30,7 +30,7 @@ fn the_feed_shows_each_agents_work_and_fallows_checks() {
     let t2 = task_step("T002", &[("calc/__init__.py", CALC_INIT)], "")
         .replacen(
             "part = \"T002\"\n",
-            "part = \"T002\"\nsay = \"I'll write add() with its type checks.\"\nthink = \"SECRET-THOUGHT\"\nrun = [{ command = \"python -m unittest\", output = \"Ran 2 tests\\nOK\" }, { command = \"python -m unittest tests.test_none\", output = \"FAILED (errors=1)\", ok = false }, { command = \"curl http://example.invalid\" }]\n",
+            &format!("part = \"T002\"\nsay = \"I'll write add() with its type checks.\"\nthink = \"SECRET-THOUGHT\"\nrun = [{{ command = \"{PYTHON} -m unittest\", output = \"Ran 2 tests\\nOK\" }}, {{ command = \"{PYTHON} -m unittest tests.test_none\", output = \"FAILED (errors=1)\", ok = false }}, {{ command = \"curl http://example.invalid\" }}]\n"),
             1,
         );
     let mut steps = calc_loop_ok();
@@ -119,8 +119,8 @@ fn the_feed_shows_each_agents_work_and_fallows_checks() {
         write["detail"].as_str().unwrap().contains("def add"),
         "{write}"
     );
-    let ok =
-        find(&|e| e["kind"] == "run" && e["text"] == "python -m unittest").expect("the test run");
+    let ok = find(&|e| e["kind"] == "run" && e["text"] == format!("{PYTHON} -m unittest"))
+        .expect("the test run");
     assert_eq!(ok["result"], "ok");
     assert!(ok["output"].as_str().unwrap().contains("Ran 2 tests"));
     let failed =

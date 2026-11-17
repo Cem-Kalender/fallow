@@ -758,6 +758,7 @@ impl Engine {
 
     /// Runs the engine until `Shutdown`.
     pub fn serve(mut self, rx: Receiver<Msg>) {
+        self.refresh_slots();
         // 012 (R-10): the ref watcher, every 2 s.
         self.refresh_watch_list();
         crate::run::gitwatch::spawn(self.ctx.tx.clone(), std::sync::Arc::clone(&self.watch_list));
