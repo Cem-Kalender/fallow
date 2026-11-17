@@ -8,7 +8,8 @@ each task, runs your gates against a baseline, and has a reviewer check every ac
 by running something. You merge once, for the whole feature.
 
 **Status: pre-release.** It builds from source on Windows, its release target, and passes its CI
-gates there; there are no release binaries yet. The specifications, plans and research are in
+gates there; there are no release binaries yet. It also builds and passes its tests on macOS, for
+development only (see [Development](#development)). The specifications, plans and research are in
 [`specs/`](specs/) (this version is [`specs/007-fallow-studio/`](specs/007-fallow-studio/)), and
 the project's principles are in [`.specify/memory/constitution.md`](.specify/memory/constitution.md).
 
@@ -153,5 +154,11 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace --features automation   # the fake agent: no network, no cost
 cargo build --features automation && cargo xtask bench   # the budgets above
 ```
+
+On macOS, on Apple silicon or Intel, the commands above work except `cargo xtask bench`, which
+measures memory only on Windows and Linux. The tests need `git` and `python3`, and the Xcode
+Command Line Tools have both. On macOS, `fallow` opens the Studio in your browser as a page on
+`127.0.0.1` with a secret for each launch. macOS has no window, notification icon, folder picker
+or installer yet.
 
 Licensed under MIT or Apache-2.0, at your option.
