@@ -205,16 +205,18 @@ fn the_gates_run_unasked_and_a_branch_deletion_is_asked_with_its_reason() {
     let root = scratch("us12-ask");
     let repo = repo(&root);
     let scenario = root.join("scenario.toml");
-    // The gate (`python -m unittest`, from the repository's squad file) and then a deletion of
+    // The gate (`PYTHON -m unittest`, from the repository's squad file) and then a deletion of
     // the engineer's branch, both through Claude's permission rules as the fake plays them.
     std::fs::write(
         &scenario,
-        r#"
+        format!(
+            r#"
 [[step]]
 kind = "assistant_turn"
-exec = ["python -m unittest", "git branch -D main"]
-output = { reply = "done" }
-"#,
+exec = ["{PYTHON} -m unittest", "git branch -D main"]
+output = {{ reply = "done" }}
+"#
+        ),
     )
     .unwrap();
     let e = start_studio(&root, &scenario, None);
