@@ -334,3 +334,103 @@ output = {{ reply = "$APPROVED", step = "none" }}
     drop(e);
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// 015 US3 (FR-007): in Manual, each chat's request card offers "Switch to Auto": the request
+/// is allowed once, as the engineer's answer, and the chat is in Auto from then on.
+#[test]
+fn manual_offers_auto() {
+    let root = scratch("us15-manual-auto");
+    let repo = repo(&root);
+    let scenario = root.join("scenario.toml");
+    std::fs::write(
+        &scenario,
+        r#"[[step]]
+kind = "assistant_turn"
+exec = ["echo via-the-card"]
+output = { reply = "ran" }
+
+[[step]]
+kind = "lead_turn"
+approve = "python3 -c 1"
+output = { reply = "$APPROVED", step = "none" }
+"#,
+    )
+    .unwrap();
+    let e = start_studio(&root, &scenario, None);
+    let tx = &e.tx;
+    let project = sreq(tx, Req::AddProject { path: repo.clone() }).unwrap()["project"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    git(&repo, &["add", "."]);
+    git(&repo, &["commit", "-q", "-m", "spec kit"]);
+    // The assistant: through the page's route.
+    let s = start_session(tx, &project, "run it");
+    let w = wait_conv(tx, &s, "a card", |v| !v["pending_approval"].is_null());
+    let id = w["pending_approval"]["id"].as_str().unwrap().to_string();
+    let r = post(
+        tx,
+        &format!("/api/sessions/{s}/approve"),
+        json!({ "id": id, "answer": "auto" }),
+    );
+    assert_eq!(r.status, 200, "{}", String::from_utf8_lossy(&r.body));
+    let v = wait_turn(tx, &s, 1);
+    assert_eq!(
+        v["turns"][0]["approvals"][0]["answer"], "once",
+        "{}",
+        v["turns"][0]
+    );
+    assert!(v["activity"].to_string().contains("via-the-card"));
+    assert_eq!(v["session"]["mode"], "auto");
+    assert_ne!(
+        v["turns"][0]["approvals"][0]["auto"], true,
+        "the engineer's own answer"
+    );
+    assert_eq!(v["mode_changes"][0]["mode"], "auto", "noted");
+    // The lead.
+    let lead = sreq(
+        tx,
+        Req::NewFeature {
+            project,
+            title: "Card".into(),
+            lead: None,
+        },
+    )
+    .unwrap()["conversation"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    sreq(
+        tx,
+        Req::Say {
+            conv: lead.clone(),
+            text: "go".into(),
+        },
+    )
+    .unwrap();
+    let w = wait_conv(tx, &lead, "a card", |v| !v["pending_approval"].is_null());
+    let id = w["pending_approval"]["id"].as_str().unwrap().to_string();
+    sreq(
+        tx,
+        Req::ApproveAuto {
+            conv: lead.clone(),
+            id,
+        },
+    )
+    .unwrap();
+    let l = turn_ended(tx, &lead, 1);
+    assert_eq!(l["turns"][0]["reply"], "allow", "{}", l["turns"][0]);
+    assert_eq!(l["turns"][0]["approvals"][0]["answer"], "once");
+    assert_ne!(l["turns"][0]["approvals"][0]["auto"], true);
+    assert_eq!(l["mode"], "auto");
+    assert_eq!(l["mode_changes"][0]["mode"], "auto");
+    // Both cards offer it.
+    for page in [
+        include_str!("../src/service/web/app.js"),
+        include_str!("../src/service/web/screens/solo.js"),
+    ] {
+        assert!(page.contains("data-answer=\"auto\"") && page.contains("Switch to Auto"));
+    }
+    drop(e);
+    let _ = std::fs::remove_dir_all(&root);
+}

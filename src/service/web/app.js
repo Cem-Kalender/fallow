@@ -634,11 +634,13 @@ const Fallow = (() => {
     if (c.pending_approval) {
       const a = c.pending_approval;
       out.push(h`<div class="card approval"><div class="b">The lead asks to run a command</div>
+        <div class="tiny muted">This chat is in Manual: Fallow asks you before commands that are not approved.</div>
         <div class="term">${a.command}</div>
         <div class="row wrap gap-8 mt-10">
           <button class="btn" data-act="approve" data-id="${a.id}" data-answer="once">Allow once</button>
           ${a.always ? h`<button class="btn btn2" data-act="approve" data-id="${a.id}" data-answer="always" data-command="${a.always}">Always in this project</button>` : ""}
           <button class="btn btn2" data-act="approve" data-id="${a.id}" data-answer="deny">Deny</button>
+          <button class="btn btn2" data-act="approve" data-id="${a.id}" data-answer="auto" title="Allow this, and run every action without asking from now on (Auto; it still refuses, visibly, what is outside the agent's limits)">Switch to Auto</button>
         </div>
         ${a.always_not ? h`<div class="tiny muted mt-6">Not offered for always: ${a.always_not}.</div>` : a.always !== a.command ? h`<div class="tiny muted mt-6">"Always" would allow <span class="mono">${a.always}</span>, the plain command before the rest.</div>` : ""}</div>`);
     }

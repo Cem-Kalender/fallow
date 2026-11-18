@@ -133,6 +133,7 @@
     const reasons = (asked && asked.reasons) || [];
     const read = a.kind === "read";
     return h`<div class="card approval"><div class="b">${read ? "The assistant asks to read" : "The assistant asks to run a command"}</div>
+      <div class="tiny muted">This session is in Manual: Fallow asks you first.</div>
       <div class="term">${a.command}</div>
       ${reasons.length ? h`<ul class="small mt-6">${reasons.map((r) => h`<li>${r}</li>`)}</ul>` : ""}
       ${facts(a.facts)}
@@ -141,6 +142,7 @@
         <button class="btn" data-act="approve" data-id="${a.id}" data-answer="once">Allow once</button>
         ${a.always ? h`<button class="btn btn2" data-act="approve" data-id="${a.id}" data-answer="always" data-command="${a.always}">Always in this project</button>` : ""}
         <button class="btn btn2" data-act="approve" data-id="${a.id}" data-answer="deny">Deny</button>
+        <button class="btn btn2" data-act="approve" data-id="${a.id}" data-answer="auto" title="Allow this, and run every action without asking from now on (Auto; it still refuses, visibly, what is outside the agent's limits)">Switch to Auto</button>
       </div></div>`;
   }
 

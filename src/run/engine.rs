@@ -4039,6 +4039,7 @@ impl Engine {
             | Req::SetMode { conv: c, .. }
             | Req::Approve { conv: c, .. }
             | Req::Refusal { conv: c, .. }
+            | Req::ApproveAuto { conv: c, .. }
             | Req::SetLead { conv: c, .. } => conv(c),
             Req::SessionMode { session, .. }
             | Req::RenameSession { session, .. }
@@ -4308,6 +4309,7 @@ impl Engine {
                 answer,
                 prefix,
             } => self.studio.approve(&conv, &id, answer, prefix),
+            Req::ApproveAuto { conv, id } => self.studio.approve_and_auto(&conv, &id),
             Req::NewFeature {
                 project,
                 title,

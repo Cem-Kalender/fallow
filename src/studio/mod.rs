@@ -284,6 +284,11 @@ pub enum Req {
         answer: ApprovalAnswer,
         prefix: Option<String>,
     },
+    /// 015 (FR-007): "Switch to Auto" on a request card: allowed once, then the chat in Auto.
+    ApproveAuto {
+        conv: String,
+        id: String,
+    },
     /// 015 (R-5): the engineer's answer to a refusal: `allow_once` or `dismiss`.
     Refusal {
         conv: String,
@@ -2362,6 +2367,15 @@ impl Studio {
             decision,
             None,
         )
+    }
+
+    /// 015 (FR-007): "Switch to Auto" on Manual's request card, in either chat: the waiting
+    /// request is allowed once, as the engineer's own answer, and the chat goes to Auto.
+    /// When the request no longer waits (answered, timed out), nothing changes: the mode stays,
+    /// and the page says why.
+    pub fn approve_and_auto(&mut self, conv: &str, id: &str) -> Result<Value, String> {
+        self.approve(conv, id, ApprovalAnswer::Once, None)?;
+        self.set_mode(conv, mode::ChatMode::Auto)
     }
 
     /// The engineer's answer to a command the lead asked to run.

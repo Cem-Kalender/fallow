@@ -534,7 +534,17 @@ fn studio_route(
                 Some("once") => ApprovalAnswer::Once,
                 Some("always") => ApprovalAnswer::Always,
                 Some("deny") => ApprovalAnswer::Deny,
-                _ => return Some(Err("answer: once, always or deny".into())),
+                // 015 (FR-007): "Switch to Auto": this request allowed, then the chat in Auto.
+                Some("auto") => {
+                    return match need("id") {
+                        Ok(id) => r(Req::ApproveAuto {
+                            conv: c.to_string(),
+                            id,
+                        }),
+                        Err(e) => Some(Err(e)),
+                    };
+                }
+                _ => return Some(Err("answer: once, always, deny or auto".into())),
             };
             match need("id") {
                 Ok(id) => r(Req::Approve {

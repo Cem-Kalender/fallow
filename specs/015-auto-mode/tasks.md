@@ -167,10 +167,10 @@ description: "Task list for 015 Manual and Auto mode, the same for the lead and 
 
 **Independent test**: quickstart Q5.
 
-- [ ] T024 [US3] "Switch to Auto" (FR-007, contracts):
+- [X] T024 [US3] "Switch to Auto" (FR-007, contracts):
   - the approve route accepts `answer: "auto"`, which allows the request once and sets the chat to Auto (with the note), in `src/studio/mod.rs` and `src/service/answer.rs`;
   - the button is added to the lead's card (`app.js:564-571`) and the assistant's (`screens/solo.js` `approval`).
-- [ ] T025 [US3] Test `tests/us15_modes.rs::manual_offers_auto`: in Manual, a card for each agent, and `answer: "auto"` runs the command and leaves the chat in Auto. A refusal in Manual has the same record and card as in Auto (covered by T022).
+- [X] T025 [US3] Test `tests/us15_modes.rs::manual_offers_auto`: in Manual, a card for each agent, and `answer: "auto"` runs the command and leaves the chat in Auto. A refusal in Manual has the same record and card as in Auto (covered by T022).
 
 ---
 
