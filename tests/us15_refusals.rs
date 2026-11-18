@@ -61,10 +61,11 @@ fn auto_asks_nothing_refuses_at_the_limits_visibly_and_hides_secrets() {
 kind = "assistant_turn"
 edit = [{{ path = {in_folder}, text = "x" }}, {{ path = ".claude/settings.json", text = "{{}}" }}, {{ path = "notes.txt", text = "fine" }}]
 read = [".env"]
-exec = ["FALLOW_FLAG=1 env", "echo plain-output", "git push origin HEAD:main"]
+exec = ["FALLOW_FLAG=1 env", "echo plain-output", "git push origin HEAD:main", {shell_folder}, "echo '{{}}' > .claude/settings.local.json"]
 output = {{ reply = "done" }}
 "#,
-            in_folder = lit(&in_folder)
+            in_folder = lit(&in_folder),
+            shell_folder = lit(&format!("echo from-auto > {}", repo.join("shell.txt").display()))
         ),
     )
     .unwrap();
@@ -92,7 +93,7 @@ output = {{ reply = "done" }}
     l.sort();
     assert_eq!(
         l,
-        ["control", "edit", "target"],
+        ["control", "control", "edit", "edit", "target"],
         "{}",
         v["turns"][0]["refusals"]
     );
@@ -100,6 +101,10 @@ output = {{ reply = "done" }}
         assert_eq!(r["state"], "refused", "{r}");
         assert!(!r["reason"].as_str().unwrap_or_default().is_empty(), "{r}");
     }
+    assert!(
+        !repo.join("shell.txt").exists(),
+        "the shell write did not happen"
+    );
     assert!(
         !std::path::Path::new(&in_folder).exists(),
         "the folder is untouched"

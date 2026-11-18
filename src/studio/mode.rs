@@ -234,6 +234,16 @@ pub fn assistant(
             if let Some(r) = target_refusal(&command, cx.target) {
                 return r;
             }
+            // The fixed limits, read from the command as written (final review, 1): a runtime
+            // settings file in either mode; the rest in Auto (Manual asks, with 012's facts).
+            let limit = judge::limit_problem(&command, ctx, cx.control_files);
+            if let Some((true, why)) = &limit {
+                return Decision::Refuse {
+                    limit: Limit::Control,
+                    reason: format!("it changes the runtime's own settings: {why}"),
+                    facts: None,
+                };
+            }
             if judge::runs_unasked(&command, cx.gates, cx.approved, ctx) {
                 return Decision::Allow;
             }
@@ -244,6 +254,14 @@ pub fn assistant(
                     reason: "it changes your project folder, outside the session's working copy"
                         .into(),
                     facts: folder_facts(&command),
+                },
+                ChatMode::Auto if limit.is_some() => Decision::Refuse {
+                    limit: Limit::Edit,
+                    reason: match limit.map(|(_, w)| w).unwrap_or_default() {
+                        w if w.starts_with("it ") => w,
+                        w => format!("it reaches outside the session's working copy: {w}"),
+                    },
+                    facts: None,
                 },
                 ChatMode::Auto => Decision::Allow,
                 ChatMode::Manual => match judge::assess(&command, ctx) {
@@ -279,6 +297,7 @@ pub fn lead(
     workdir: &Path,
     control_files: &[String],
     target: Option<&Target>,
+    folder: &Path,
 ) -> Decision {
     match req.kind {
         RequestKind::Read | RequestKind::Web => Decision::Allow,
@@ -315,9 +334,31 @@ pub fn lead(
             if let Some(r) = target_refusal(&command, target) {
                 return r;
             }
-            match mode {
-                ChatMode::Auto => Decision::Allow,
-                ChatMode::Manual => Decision::Ask(Vec::new()),
+            // The lead's copy is its working copy; what a command writes there outside the spec
+            // documents is thrown away at the turn's end and listed in the chat (research R-3).
+            // What it writes beyond that copy, or in the runtime's settings, is refused.
+            let protect: Vec<String> = control_files.to_vec();
+            let ctx = judge::Ctx {
+                wt: workdir,
+                branch: "",
+                folder,
+                protect: &protect,
+            };
+            match judge::limit_problem(&command, &ctx, control_files) {
+                Some((true, why)) => Decision::Refuse {
+                    limit: Limit::Control,
+                    reason: format!("it changes the runtime's own settings: {why}"),
+                    facts: None,
+                },
+                Some((false, why)) if mode == ChatMode::Auto => Decision::Refuse {
+                    limit: Limit::Edit,
+                    reason: format!("it reaches outside the lead's working copy: {why}"),
+                    facts: None,
+                },
+                _ => match mode {
+                    ChatMode::Auto => Decision::Allow,
+                    ChatMode::Manual => Decision::Ask(Vec::new()),
+                },
             }
         }
     }
@@ -988,6 +1029,85 @@ mod tests {
                 None
             );
         }
+        // Shell commands that reach beyond the copy, read as written (final review, 1).
+        let f = d.folder.display().to_string();
+        for cmd in [
+            format!("echo x > {f}/README.md"),
+            format!("rm -rf {f}/src"),
+            format!("cp a.txt {f}/src/a.txt"),
+            "echo x > ../../elsewhere.txt".to_string(),
+            "rm -rf .git".to_string(),
+            format!("mv notes.txt {}/away.txt", d.root.display()),
+        ] {
+            assert_eq!(
+                limit_of(&assistant_decides(ChatMode::Auto, &run(&cmd), &d, None)),
+                Some(Limit::Edit),
+                "{cmd}"
+            );
+            assert!(
+                matches!(
+                    assistant_decides(ChatMode::Manual, &run(&cmd), &d, None),
+                    Decision::Ask(_)
+                ),
+                "{cmd}: Manual asks, as 012 does"
+            );
+        }
+        for cmd in [
+            "echo '{}' > .claude/settings.local.json",
+            "cp x .claude/settings.json",
+            // Final review, round 2: in either order, behind another protected file; and the
+            // shapes the judge does not read as paths.
+            "cp x .fallow/squad.toml && echo '{}' > .claude/settings.json",
+            "echo '{}' > .claude/settings.json; cp x .fallow/squad.toml",
+            "sed -i s/a/b/ .claude/settings.json",
+            "rm -rf .claude",
+            "mv .claude .claude2",
+            "git mv .claude/settings.json x.json",
+            // Final review, round 3: after a `cd`, through `of=`, behind a wrapper or a shell.
+            "cd .claude && echo '{}' > settings.json",
+            "cd .claude && rm settings.json",
+            "cd .claude && cp ../x settings.local.json",
+            "cd src && echo x > ../.claude/settings.json",
+            "dd if=x of=.claude/settings.json",
+            "timeout 5 cp x .claude/settings.json",
+            "env cp x .claude/settings.json",
+            "bash -c \"echo '{}' > .claude/settings.json\"",
+        ] {
+            for mode in [ChatMode::Manual, ChatMode::Auto] {
+                assert_eq!(
+                    limit_of(&assistant_decides(mode, &run(cmd), &d, None)),
+                    Some(Limit::Control),
+                    "{cmd} {mode:?}"
+                );
+            }
+        }
+        // Reading a settings file is not a limit (Manual asks, as 012 does; Auto runs it).
+        assert_eq!(
+            assistant_decides(ChatMode::Auto, &run("cat .claude/settings.json"), &d, None),
+            Decision::Allow
+        );
+        // A protected file of Fallow's, written: refused in Auto, named as such.
+        match assistant_decides(ChatMode::Auto, &run("cp x .fallow/squad.toml"), &d, None) {
+            Decision::Refuse {
+                limit: Limit::Edit,
+                reason,
+                ..
+            } => assert!(reason.contains("may not change"), "{reason}"),
+            other => panic!("{other:?}"),
+        }
+        // Reads outside the copy, and what Fallow cannot read, still run in Auto.
+        for cmd in [
+            "ls ~".to_string(),
+            "cat /etc/hosts".to_string(),
+            format!("ls {}", d.root.display()),
+            "python -c \"open('/tmp/x','w')\"".to_string(),
+        ] {
+            assert_eq!(
+                assistant_decides(ChatMode::Auto, &run(&cmd), &d, None),
+                Decision::Allow,
+                "{cmd}"
+            );
+        }
         // The engineer's folder: asked in Manual (012), refused in Auto, with 012's facts.
         let cmd = format!("git -C {} checkout -b x", d.folder.display());
         assert!(matches!(
@@ -1035,29 +1155,44 @@ mod tests {
     fn the_lead_gets_the_same_two_modes() {
         let wd = PathBuf::from("/w/spec");
         let cf = vec![".claude/settings.json".to_string()];
+        let fold = PathBuf::from("/w/folder");
         let target = Target {
             name: "main".into(),
             protected: true,
         };
         assert_eq!(
-            lead(ChatMode::Auto, &run("cargo test"), &wd, &cf, None),
+            lead(ChatMode::Auto, &run("cargo test"), &wd, &cf, None, &fold),
             Decision::Allow
         );
         assert_eq!(
-            lead(ChatMode::Manual, &run("cargo test"), &wd, &cf, None),
+            lead(ChatMode::Manual, &run("cargo test"), &wd, &cf, None, &fold),
             Decision::Ask(Vec::new())
         );
         for m in [ChatMode::Manual, ChatMode::Auto] {
             assert_eq!(
-                lead(m, &edit("/w/spec/specs/015-x/spec.md"), &wd, &cf, None),
+                lead(
+                    m,
+                    &edit("/w/spec/specs/015-x/spec.md"),
+                    &wd,
+                    &cf,
+                    None,
+                    &fold
+                ),
                 Decision::Allow
             );
             assert_eq!(
-                lead(m, &edit("specs/015-x/plan.md"), &wd, &cf, None),
+                lead(m, &edit("specs/015-x/plan.md"), &wd, &cf, None, &fold),
                 Decision::Allow
             );
             assert_eq!(
-                limit_of(&lead(m, &edit("/w/spec/src/main.rs"), &wd, &cf, None)),
+                limit_of(&lead(
+                    m,
+                    &edit("/w/spec/src/main.rs"),
+                    &wd,
+                    &cf,
+                    None,
+                    &fold
+                )),
                 Some(Limit::Edit)
             );
             assert_eq!(
@@ -1066,7 +1201,8 @@ mod tests {
                     &edit("/w/spec/specs/../src/main.rs"),
                     &wd,
                     &cf,
-                    None
+                    None,
+                    &fold
                 )),
                 Some(Limit::Edit)
             );
@@ -1076,7 +1212,8 @@ mod tests {
                     &edit("/w/spec/specs/../.claude/settings.json"),
                     &wd,
                     &cf,
-                    None
+                    None,
+                    &fold
                 )),
                 Some(Limit::Control)
             );
@@ -1086,7 +1223,8 @@ mod tests {
                     &edit("/w/spec/.claude/settings.json"),
                     &wd,
                     &cf,
-                    None
+                    None,
+                    &fold
                 )),
                 Some(Limit::Control)
             );
@@ -1096,18 +1234,49 @@ mod tests {
                     &run("git push origin main"),
                     &wd,
                     &cf,
-                    Some(&target)
+                    Some(&target),
+                    &fold
                 )),
                 Some(Limit::Target)
             );
+            // A command writing the runtime's settings: never, in either mode.
+            for cmd in ["sed -i s/a/b/ .claude/settings.json", "rm -rf .claude"] {
+                assert_eq!(
+                    limit_of(&lead(m, &run(cmd), &wd, &cf, None, &fold)),
+                    Some(Limit::Control),
+                    "{cmd}"
+                );
+            }
+            assert_eq!(
+                limit_of(&lead(
+                    m,
+                    &run("echo '{}' > .claude/settings.json"),
+                    &wd,
+                    &cf,
+                    None,
+                    &fold
+                )),
+                Some(Limit::Control)
+            );
         }
+        // Beyond its copy, in Auto: refused; in Manual: asked.
+        let far = run("echo x > /w/folder/README.md");
+        assert_eq!(
+            limit_of(&lead(ChatMode::Auto, &far, &wd, &cf, None, &fold)),
+            Some(Limit::Edit)
+        );
+        assert!(matches!(
+            lead(ChatMode::Manual, &far, &wd, &cf, None, &fold),
+            Decision::Ask(_)
+        ));
         assert_eq!(
             lead(
                 ChatMode::Auto,
                 &req(RequestKind::Other, "mcp__x__y"),
                 &wd,
                 &cf,
-                None
+                None,
+                &fold
             ),
             Decision::Allow
         );
@@ -1117,7 +1286,8 @@ mod tests {
                 &req(RequestKind::Other, "mcp__x__y"),
                 &wd,
                 &cf,
-                None
+                None,
+                &fold
             )),
             Some(Limit::Tool)
         );

@@ -148,7 +148,7 @@ Manual asks before commands that are not the gates or the project's approved com
 - **FR-008**: The activity MUST show every action in Auto as it does today. Fallow MUST keep showing the changes to branches and remotes it observes (II).
 - **FR-009**: Each agent's fixed limits MUST hold in both modes:
   - the assistant edits only inside its session's working copy (012 FR-008);
-  - the lead edits only spec documents (`specs/`, the constitution, `.fallow/`);
+  - the lead edits only spec documents (`specs/`, the constitution in `.specify/memory/`, `.fallow/drafts/`);
   - neither pushes onto a protected target branch (II). "Protected" includes a target whose protection Fallow could not read, or is still reading: only a target known to be unprotected is not a limit;
   - in Manual only, a tool Fallow cannot judge (for example an MCP tool) is refused. Auto allows it.
 

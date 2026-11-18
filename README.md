@@ -37,7 +37,18 @@ the project's principles are in [`.specify/memory/constitution.md`](.specify/mem
   spec session settles it, the lead answers, Fallow commits the answer to the spec, and the agent
   goes on; you can overrule it. Otherwise the lead relays the question to you with options and a
   recommendation, and the loop waits for your answer.
-- **The dashboard.** A "Needs you" inbox (questions, features ready to merge, stopped loops), the
+- **Manual and Auto.** The assistant's chat and the lead's spec session have the same switch,
+  **Manual | Auto**, left of the send button (Shift+Tab switches it). In Manual, Fallow asks you
+  before commands that are not approved; every request card also offers **Switch to Auto**. In
+  Auto, nothing is asked: every action runs, apart from each agent's fixed limits (the assistant
+  changes only its own copy of the project, the lead only the spec documents, and neither pushes
+  onto a protected target branch). What Fallow refuses at a limit is never silent: the agent is
+  told why, and you see it in the chat and in "Needs you", with **Allow this once** to let exactly
+  that request through. An agent never edits its own runtime's settings files, in any mode, and
+  output that may show environment or secret values is hidden from the activity. New chats, and
+  every chat after a restart, start in `chat_mode` from `settings.toml` (Manual unless set).
+- **The dashboard.** A "Needs you" inbox (questions, features ready to merge, stopped loops,
+  refused requests in a chat), the
   running loops with their phase progress, and desktop notifications from Fallow's tray icon,
   which name the project, the feature and what is needed, and never code or output.
 - **Agents and pipelines.** Agents are markdown files with frontmatter in `~/.fallow/agents/`,
@@ -102,6 +113,13 @@ command = "C:/path/to/claude.exe"
 
 Open Fallow from the Start menu, or with `fallow` in a terminal. Add a project folder with **+**,
 work out a feature with the lead, lock it, and let its loop build it.
+
+To start every chat in Auto, set it in `settings.toml` (in `%APPDATA%\fallow`):
+
+```toml
+[defaults]
+chat_mode = "auto"   # or "manual", the default
+```
 
 ```sh
 fallow            # opens Fallow's window (starts it if needed)

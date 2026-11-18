@@ -2356,7 +2356,7 @@ impl Studio {
         let control_files = agent::registry::capabilities(runtime, &self.settings).control_files;
         // Spec Kit runs from the project's spec root (012 R-18), where the lead's paths start.
         let cwd = c.state.workdir.join(&p.spec_root);
-        let decision = mode::lead(c.mode, req, &cwd, &control_files, target.as_ref());
+        let decision = mode::lead(c.mode, req, &cwd, &control_files, target.as_ref(), &p.path);
         self.answer_request(
             conv,
             runtime,

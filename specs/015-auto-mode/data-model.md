@@ -37,6 +37,7 @@ Any other value is a settings error, named the way the other `[defaults]` keys a
 | `refusal_allowed` | `id` | The engineer chose "Allow this once". |
 | `refusal_used` | `id` | The agent's request used the grant. |
 | `refusal_dismissed` | `id` | The engineer chose "Dismiss". |
+| `refusal_reopened` | `id`, `why` | An allowed refusal whose agent could not be told: refused again, with the reason shown on the card. |
 | `chat_mode` | `mode` | The engineer changed the mode, for the chat's one-line notes. It is never used to restore the mode. |
 | `mode_set` (old) | `mode` | The lead's old event. Read and ignored. |
 
@@ -58,4 +59,5 @@ In the conversation view of both chats:
 - `mode`: `"manual"` or `"auto"`. For the lead it was `read_only`, `approved`, `ask` or `run_anything`; for the assistant, `ask` or `until_switch`.
 - `mode_note`: a string or null. It replaces `mode_reset`.
 - `default_mode`: `"manual"` or `"auto"`.
-- `refusals`: per turn, `[{ id, kind, what, reason, limit, facts?, state }]`.
+- `refusals`: per turn, `[{ id, kind, what, reason, limit, facts?, state, note?, told? }]` (`told: "waiting"` while the agent's note waits).
+- `mode_changes`: `[{ after, mode, at }]`, the engineer's mode changes, for the chat's notes.

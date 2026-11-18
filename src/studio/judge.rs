@@ -1699,6 +1699,252 @@ pub fn edit_problem(path: &str, ctx: &Ctx) -> Option<String> {
     path_reason(ctx, &canon(ctx.wt), path, true)
 }
 
+/// 015 (research R-3; final review, 1): what a command, read as written, does beyond an agent's
+/// fixed limits. `Some((true, why))`: it writes one of the runtime's own settings files
+/// (`control_files`), never allowed. `Some((false, why))`: it writes or uses the engineer's
+/// folder, git's own record, another folder or repository, or (a write, or a program that
+/// changes files) a path outside the working copy. Reads outside the copy are not limits (R-2).
+/// What Fallow cannot read as written is not judged here (Auto allows it, spec FR-003).
+pub fn limit_problem(cmd: &str, ctx: &Ctx, control_files: &[String]) -> Option<(bool, String)> {
+    // A runtime settings file, or a folder holding one, named by a command that writes or
+    // changes files: found from the words themselves, whatever else the judge says (final
+    // review, round 2).
+    if let Some(why) = control_write(cmd, ctx, control_files) {
+        return Some((true, why));
+    }
+    let Verdict::Ask(reasons) = assess(cmd, ctx) else {
+        return None;
+    };
+    let parts = split(cmd).ok();
+    let changes = parts.as_ref().is_some_and(|parts| {
+        parts
+            .iter()
+            .any(|p| MODIFIES.contains(&part_program(p).as_str()) || !p.redirects.is_empty())
+    });
+    let writes = |w: &str| w.starts_with("writes") || changes;
+    // A runtime settings file the judge names (after a `cd`, say), written: never allowed, in
+    // whatever order the command names it (final review, round 3).
+    for w in reasons.iter().filter(|w| writes(w)) {
+        if let Some(rel) = w
+            .split("names ")
+            .nth(1)
+            .and_then(|r| r.split_once(", which the assistant may not change"))
+            .map(|(rel, _)| rel)
+        {
+            if control_files.iter().any(|f| {
+                if cfg!(windows) {
+                    f.eq_ignore_ascii_case(rel)
+                } else {
+                    f == rel
+                }
+            }) {
+                return Some((
+                    true,
+                    format!("it changes {rel}, the runtime's own settings"),
+                ));
+            }
+        }
+    }
+    // A file the agent may not change, inside its copy: a limit when it is written.
+    if let Some(w) = reasons
+        .iter()
+        .find(|w| w.contains("which the assistant may not change") && writes(w))
+    {
+        return Some((
+            false,
+            format!("it changes a file the agent may not change ({w})"),
+        ));
+    }
+    reasons
+        .iter()
+        .find(|w| {
+            w.contains("your project folder")
+                || w.contains("git's own record")
+                || w.contains("works in another folder")
+                || w.contains("works on another repository")
+                || w.contains("moves out of the session's working copy")
+                || (w.contains("outside the session's working copy") || w.contains("home folder"))
+                    && writes(w)
+        })
+        .map(|w| (false, w.clone()))
+}
+
+/// The program a part runs, after any `X=1` assignments before it.
+fn part_program(p: &Part) -> String {
+    p.words
+        .iter()
+        .find(|w| !w.contains('=') || w.starts_with('-'))
+        .map(|w| program(w))
+        .unwrap_or_default()
+}
+
+/// 015: whether `cmd` may write a runtime settings file, or change a folder holding one, read
+/// conservatively because such a refusal can never be allowed (final review, round 3): any word
+/// of any part, split at `=` and, for a string handed to a shell, `eval` or a wrapper, at
+/// spaces and operators, that resolves (after the parts' `cd`s) to a control file or a folder
+/// holding one counts, unless the part only reads (`READS`) and redirects nothing to it.
+fn control_write(cmd: &str, ctx: &Ctx, control_files: &[String]) -> Option<String> {
+    if control_files.is_empty() {
+        return None;
+    }
+    let same = |a: &str, b: &str| {
+        if cfg!(windows) {
+            a.eq_ignore_ascii_case(b)
+        } else {
+            a == b
+        }
+    };
+    let hits = |base: &Path, w: &str| -> Option<String> {
+        let w = w.trim_matches(|c| c == '"' || c == '\'' || c == '`');
+        if w.is_empty() {
+            return None;
+        }
+        let abs = if Path::new(w).is_absolute() {
+            PathBuf::from(w)
+        } else {
+            base.join(w)
+        };
+        let rel = rel_inside(ctx.wt, &abs.display().to_string())?;
+        let rel = rel.trim_end_matches('/');
+        control_files
+            .iter()
+            .find(|f| {
+                same(f, rel)
+                    || (!rel.is_empty()
+                        && f.get(..rel.len()).is_some_and(|x| same(x, rel))
+                        && f.as_bytes().get(rel.len()) == Some(&b'/'))
+            })
+            .cloned()
+    };
+    // The words a part may name a file by: each word, its pieces at `=`, and the pieces of a
+    // string given to another program.
+    let pieces = |w: &str| -> Vec<String> {
+        w.split(|c: char| {
+            c.is_whitespace() || matches!(c, ';' | '&' | '|' | '(' | ')' | '>' | '<' | '=' | ',')
+        })
+        .filter(|x| !x.is_empty())
+        .map(str::to_string)
+        .collect()
+    };
+    let Ok(parts) = split(cmd) else {
+        // Unreadable as written: any word naming a control file or its folder counts.
+        return pieces(cmd).iter().find_map(|w| hits(ctx.wt, w)).map(|f| {
+            format!("it names {f}, the runtime's own settings, in a command Fallow cannot read")
+        });
+    };
+    let mut base = canon(ctx.wt);
+    for p in &parts {
+        for t in &p.redirects {
+            if let Some(f) = hits(&base, t) {
+                return Some(format!("it writes {f}, the runtime's own settings"));
+            }
+        }
+        let prog = part_program(p);
+        if matches!(
+            prog.as_str(),
+            "cd" | "pushd" | "set-location" | "sl" | "chdir"
+        ) {
+            if let Some(t) = p.words.iter().skip(1).find(|w| !w.starts_with('-')) {
+                base = normalize(&base.join(t));
+            }
+            continue;
+        }
+        if READS.contains(&prog.as_str()) {
+            continue;
+        }
+        if let Some(f) = p
+            .words
+            .iter()
+            .skip(1)
+            .flat_map(|w| pieces(w))
+            .find_map(|w| hits(&base, &w))
+        {
+            return Some(format!("it may change {f}, the runtime's own settings"));
+        }
+    }
+    None
+}
+
+/// Programs that only read the files they name (015, `control_write`).
+const READS: &[&str] = &[
+    "cat",
+    "ls",
+    "dir",
+    "head",
+    "tail",
+    "grep",
+    "rg",
+    "wc",
+    "diff",
+    "stat",
+    "less",
+    "more",
+    "file",
+    "test",
+    "[",
+    "get-content",
+    "gc",
+    "type",
+    "get-item",
+    "gi",
+    "get-childitem",
+    "gci",
+    "select-string",
+    "sls",
+    "jq",
+    "md5sum",
+    "sha256sum",
+    "cmp",
+    "readlink",
+    "realpath",
+];
+
+/// Programs that change the files they name (015, `limit_problem`).
+const MODIFIES: &[&str] = &[
+    "rm",
+    "rmdir",
+    "mv",
+    "cp",
+    "ln",
+    "mkdir",
+    "touch",
+    "chmod",
+    "chown",
+    "chgrp",
+    "tee",
+    "truncate",
+    "install",
+    "rsync",
+    "dd",
+    "shred",
+    "unlink",
+    "sed",
+    "perl",
+    "patch",
+    "tar",
+    "unzip",
+    "remove-item",
+    "ri",
+    "del",
+    "erase",
+    "rd",
+    "move-item",
+    "mi",
+    "copy-item",
+    "cpi",
+    "new-item",
+    "ni",
+    "set-content",
+    "sc",
+    "add-content",
+    "ac",
+    "out-file",
+    "rename-item",
+    "rni",
+    "clear-content",
+    "clc",
+];
+
 /// 015 (research R-10, spec FR-010, constitution V): whether a tool call's output may show
 /// environment variable values or a secrets file's contents, so the activity and Fallow's
 /// records hide it: a command the judge reads as showing the environment, reading a file that

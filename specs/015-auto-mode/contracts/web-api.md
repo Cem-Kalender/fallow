@@ -44,8 +44,9 @@ As data-model.md "Views": `mode`, `mode_note`, `default_mode`, and `refusals` pe
 `needs_you` items gain `kind: "refused"`:
 
 ```json
-{ "kind": "refused", "key": "<s>:refused:<id>", "project": "<project id>",
-  "conv": "<c>", "text": "<chat name> — Fallow refused: <what, ≤ 80 chars>", "at": "<time>" }
+{ "kind": "refused", "key": "<c>:refused:<id>", "project": "<project id>", "project_name": "<name>",
+  "conv": "<c>", "solo": true, "feature": "<feature or null>", "chat": "<chat name>", "refusal": "<id>",
+  "text": "<chat name> — Fallow refused: <what, ≤ 80 chars>", "at": "<time>" }
 ```
 
 Clicking it opens the chat at the refusal.

@@ -176,14 +176,14 @@ description: "Task list for 015 Manual and Auto mode, the same for the lead and 
 
 ## Phase 6: Polish & cross-cutting
 
-- [ ] T026 Update the tests of the old modes:
+- [X] T026 Update the tests of the old modes:
   - `tests/us1_modes.rs` (007's four modes): rewrite it for Manual and Auto, keeping its once, always, deny and time-out cases under Manual;
   - `tests/us12_many.rs:239-278` (`until_switch` and `mode_reset`): replace it with the default-mode restart;
   - any other test that names `Mode::`, `until_switch`, `run_anything` or `mode_reset` (`grep -rn` over `tests/`).
-- [ ] T027 [P] README (`README.md`, "What it does" and "Use it"): name the two modes, Auto's limits and the refusal card, and `chat_mode` in settings.toml.
-- [ ] T028 [P] Earlier specs, with notes only and no rewrites: add "superseded by 015" notes at 012 FR-008's "until I switch back" and at 007/009 FR-007a's four modes, in `specs/012-solo-session/spec.md` and `specs/007-fallow-studio/spec.md`.
+- [X] T027 [P] README (`README.md`, "What it does" and "Use it"): name the two modes, Auto's limits and the refusal card, and `chat_mode` in settings.toml.
+- [X] T028 [P] Earlier specs, with notes only and no rewrites: add "superseded by 015" notes at 012 FR-008's "until I switch back" and at 007/009 FR-007a's four modes, in `specs/012-solo-session/spec.md` and `specs/007-fallow-studio/spec.md`.
 - [ ] T029 Check SC-001 by hand: at least 3 people new to Fallow (the person who gave the feedback among them, if willing) are asked to "let it run without asking" in both chats. Record the time taken and whether help was needed in `specs/015-auto-mode/checks/usability.md`. This is for the engineer to arrange.
-- [ ] T030 Run quickstart Q1 to Q7 with the `automation` build. Record the results in `specs/015-auto-mode/checks/quickstart.md`. Q8 (Claude Code) is run by the engineer, or on the Windows machine.
+- [X] T030 Run quickstart Q1 to Q7 with the `automation` build. Record the results in `specs/015-auto-mode/checks/quickstart.md`. Q8 (Claude Code) is run by the engineer, or on the Windows machine.
 - [ ] T031 `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`, and the whole test suite. Push, and check that CI on Windows and macOS is green apart from the known benchmark lines.
 
 ---

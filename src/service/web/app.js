@@ -545,7 +545,7 @@ const Fallow = (() => {
   // 015 (FR-006): the chat's note when the engineer changed its mode.
   const MODE_NOTE = {
     manual: "Manual: Fallow asks you before commands that are not approved.",
-    auto: "Auto: every action runs without asking you; Fallow shows you anything it refuses at the agent's limits.",
+    auto: "Auto: every action runs without asking you; Fallow shows you anything it refuses at the agent's limits, and no agent ever edits its runtime's settings files (.claude/settings.json, .claude/settings.local.json).",
   };
   const MODE_MORE = {
     manual: "",
@@ -1012,7 +1012,6 @@ const Fallow = (() => {
     after();
   }
 
-  // Shift+Tab in the message box switches the mode, as in Claude Code (FR-007a).
   // The top bar's height, for the screens that fit the window (008 T039): it wraps when narrow.
   const topHeight = () => {
     const bar = document.querySelector(".top-bar");
