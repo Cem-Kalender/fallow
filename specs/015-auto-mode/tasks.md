@@ -22,11 +22,11 @@ description: "Task list for 015 Manual and Auto mode, the same for the lead and 
 
 ## Phase 1: Setup
 
-- [ ] T001 [P] The default mode setting (research R-6), in `src/config/settings.rs`:
+- [X] T001 [P] The default mode setting (research R-6), in `src/config/settings.rs`:
   - add `chat_mode: ChatModeSetting` (`manual` | `auto`, default `manual`) to `Defaults`;
   - an unknown value is a settings error naming `defaults.chat_mode`;
   - add unit tests: the default, `auto`, and `"sometimes"` refused.
-- [ ] T002 [P] `judge::pushes_onto(cmd, target) -> bool` (R-3) in `src/studio/judge.rs`. It covers:
+- [X] T002 [P] `judge::pushes_onto(cmd, target) -> bool` (R-3) in `src/studio/judge.rs`. It covers:
   - `git push <remote> <target>`;
   - `…:<target>`, `HEAD:<target>` and `refs/heads/<target>`;
   - `--all` and `--mirror`;
@@ -41,26 +41,26 @@ description: "Task list for 015 Manual and Auto mode, the same for the lead and 
 
 **⚠️ No user story can start before this phase is done.**
 
-- [ ] T003 `ChatMode` and the decision table (R-1, R-2), in the new `src/studio/mode.rs`:
+- [X] T003 `ChatMode` and the decision table (R-1, R-2), in the new `src/studio/mode.rs`:
   - `enum ChatMode { Manual, Auto }`, with serde `manual` and `auto`, and `parse` refusing old values with `no mode "<v>": manual or auto`;
   - `enum Agent { Lead, Assistant }`;
   - `fn decide(agent, mode, req, facts) -> Decision`, where `Decision` is `Allow`, `Ask(reasons)` or `Refuse { limit, reason, facts }`. It implements R-2's table exactly. The judge's reasons are consulted only in Manual. In both modes, the limits come from `edit_problem` and `refwatch::in_folder` (assistant), `SPEC_GLOBS` (lead), and `pushes_onto` with `publish::Remote` (protected `yes`, `unknown` or `checking`);
   - unit tests for every row of the R-2 table, for both agents and both modes.
-- [ ] T004 Events (data-model), in `src/conversation/events.rs`:
+- [X] T004 Events (data-model), in `src/conversation/events.rs`:
   - `Refused { id, kind, what, reason, limit, facts }`, `RefusalAllowed { id }`, `RefusalDismissed { id }` and `ChatMode { mode }`;
   - `State` keeps the refusals per turn, with their state (refused, allowed, dismissed or expired);
   - the old `ModeSet` with the lead's values is read and ignored (a test loads a `run_anything` log);
   - `State.mode` is removed, because the mode is not restored from events. Its use in `src/studio/solo.rs:678` moves to `Conv::mode` (T006).
-- [ ] T005 Rights (R-1, data-model "Agent rights"), in `src/agent/rights.rs` and `src/agent/claude.rs`:
+- [X] T005 Rights (R-1, data-model "Agent rights"), in `src/agent/rights.rs` and `src/agent/claude.rs`:
   - remove `Mode`, `Mode::next`, `Mode::label` and `Rights::any_command`;
   - `lead(approved)` always sets `prompt_tool`;
   - `lead_in_loop` stays approved-only, without a prompt tool;
   - update `claude.rs`'s tests (lines 923 and 1068-1082): no rights set allows plain `Bash` or `PowerShell` (FR-004).
-- [ ] T006 Conversation state (data-model), in `src/studio/conv.rs`:
+- [X] T006 Conversation state (data-model), in `src/studio/conv.rs`:
   - `mode: ChatMode`, `mode_note: Option<String>`, `grants: Vec<Grant>`, and a `waiting` queue of Fallow's messages for the lead;
   - remove `allow_until_switch` and `mode_reset`;
   - the `<conv dir>/mode` mark (R-6) replaces the `until_switch` mark.
-- [ ] T007 One request path (R-1, R-4), in `src/studio/mod.rs` and `src/studio/solo.rs`:
+- [X] T007 One request path (R-1, R-4), in `src/studio/mod.rs` and `src/studio/solo.rs`:
   - `tool_call` sends the lead's requests to a new `lead_tool_call` and the assistant's to `solo_tool_call`. Both call `mode::decide`, use up a matching grant first (R-5), and act on the decision:
     - `Allow`: the runtime's allow reply, and for a Run request `open_call` (`solo.rs:1221`), so 012's ref watch still attributes branch changes to the command (II, FR-008);
     - `Ask`: today's `ask_engineer` path (the lead's ask is moved from `tool_call` unchanged);
@@ -68,11 +68,11 @@ description: "Task list for 015 Manual and Auto mode, the same for the lead and 
   - a grant matches only the exact same kind and command or path;
   - remove the old "Only Ask mode asks the engineer" and "the lead changes only spec documents" silent denials;
   - the lead's turn start (`mod.rs:1233`, `1369`) uses `rights::lead(approved)`.
-- [ ] T008 The runtime's own refusals (research R-3, spec FR-009), in `src/run/engine.rs` and `src/studio/mode.rs`. A `ToolResult { refused: true }` for an edit of a control file (`CONTROL_FILES` and `CONTROL_GLOBS`, matched on the `ToolCall`'s path) appends `Refused { limit: "control" }`, which has no "Allow this once". Add a unit test with the fake runtime's refused result.
-- [ ] T009 Hidden output (research R-10, spec FR-010), in `src/run/engine.rs` where a `ToolResult` becomes an activity line:
+- [X] T008 The runtime's own refusals (research R-3, spec FR-009), in `src/run/engine.rs` and `src/studio/mode.rs`. A `ToolResult { refused: true }` for an edit of a control file (`CONTROL_FILES` and `CONTROL_GLOBS`, matched on the `ToolCall`'s path) appends `Refused { limit: "control" }`, which has no "Allow this once". Add a unit test with the fake runtime's refused result.
+- [X] T009 Hidden output (research R-10, spec FR-010), in `src/run/engine.rs` where a `ToolResult` becomes an activity line:
   - for a call whose command `judge::assess` flags as showing the environment, or a read `judge::read_problem` flags as a possible secrets file, the output becomes "Output hidden: it may hold secret values" before it is shown or written;
   - add unit tests for `env`, `printenv`, `cat .env` and a harmless `ls`.
-- [ ] T010 The conversation views of both chats, in `src/studio/solo.rs` (`solo_view`) and `src/studio/mod.rs` (the lead's view): `mode`, `mode_note`, `default_mode`, and `refusals` per turn, as data-model "Views".
+- [X] T010 The conversation views of both chats, in `src/studio/solo.rs` (`solo_view`) and `src/studio/mod.rs` (the lead's view): `mode`, `mode_note`, `default_mode`, and `refusals` per turn, as data-model "Views".
 
 **Checkpoint**: both agents' requests are decided in one place. The existing tests still compile, with the old mode tests marked for T026.
 

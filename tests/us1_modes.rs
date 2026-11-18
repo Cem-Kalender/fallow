@@ -1,17 +1,17 @@
-//! 007 US1 (T024; FR-007a; research S-7): each chat mode gives the lead its rights; in Ask mode a
-//! command outside the rules reaches the engineer through Fallow's `approve` tool, over the MCP
-//! bridge, checked against the turn's own processes; once, always (the prefix joins the
-//! project's approved commands, which then run without asking), deny, and the time-out; a new
-//! conversation starts in Ask.
+//! 007 US1 (T024; FR-007a; research S-7), 015 (FR-001, R-2): in Manual a command outside the
+//! rules reaches the engineer through Fallow's `approve` tool, over the MCP bridge, checked
+//! against the turn's own processes; once, always (the prefix joins the project's approved
+//! commands, which then run without asking), deny, and the time-out; in Auto it runs without
+//! asking; a new conversation starts in the default mode, Manual.
 
 mod common;
 
 use std::time::Duration;
 
 use common::*;
-use fallow::agent::rights::Mode;
 use fallow::conversation::events::ApprovalAnswer;
 use fallow::studio::Req;
+use fallow::studio::mode::ChatMode;
 
 fn turn(cmd: &str) -> String {
     format!(
@@ -20,7 +20,7 @@ fn turn(cmd: &str) -> String {
 }
 
 #[test]
-fn ask_mode_asks_the_engineer_and_the_other_modes_do_not() {
+fn manual_asks_the_engineer_and_auto_does_not() {
     let root = scratch("modes");
     let repo = repo(&root);
     let scenario = root.join("scenario.toml");
@@ -30,9 +30,8 @@ fn ask_mode_asks_the_engineer_and_the_other_modes_do_not() {
         turn("pip list --format json"), // 3 Ask: now approved, runs without asking
         turn("python -c 1"),            // 4 Ask: denied
         turn("python -c 2"),            // 5 Ask: nobody answers
-        turn("python -c 3"),            // 6 Read only: refused without asking
-        turn("python -c 4"),            // 7 Run anything: runs without asking
-        turn("python -c 5"),            // 8 Approved commands: refused without asking
+        turn("python -c 3"),            // 6 Auto: runs without asking
+        turn("python -c 4"),            // 7 Manual again: asked
     ];
     std::fs::write(&scenario, steps.concat()).unwrap();
     let e = start_studio(&root, &scenario, Some(Duration::from_secs(3)));
@@ -55,7 +54,8 @@ fn ask_mode_asks_the_engineer_and_the_other_modes_do_not() {
         .unwrap()
         .to_string();
     let v = sreq(tx, Req::Conversation { id: conv.clone() }).unwrap();
-    assert_eq!(v["mode"], "ask", "a new conversation starts in Ask");
+    assert_eq!(v["mode"], "manual", "a new conversation starts in Manual");
+    assert_eq!(v["default_mode"], "manual");
 
     let say = |n: usize| {
         sreq(
@@ -147,47 +147,38 @@ fn ask_mode_asks_the_engineer_and_the_other_modes_do_not() {
     assert_eq!(v["turns"][4]["reply"], "deny");
     assert_eq!(v["turns"][4]["approvals"][0]["answer"], "deny");
 
-    // 6: Read only refuses without asking.
+    // 6: Auto runs it without asking (015).
     sreq(
         tx,
         Req::SetMode {
             conv: conv.clone(),
-            mode: Mode::ReadOnly,
+            mode: ChatMode::Auto,
         },
     )
     .unwrap();
     say(6);
     let v = turn_ended(tx, &conv, 6);
-    assert_eq!(v["turns"][5]["reply"], "deny");
+    assert_eq!(v["turns"][5]["reply"], "allow", "{v}");
     assert!(v["turns"][5]["approvals"].as_array().unwrap().is_empty());
+    assert_eq!(v["mode"], "auto");
+    assert_eq!(v["mode_changes"][0]["mode"], "auto");
 
-    // 7: Run anything runs without asking.
+    // 7: back in Manual, it is asked again.
     sreq(
         tx,
         Req::SetMode {
             conv: conv.clone(),
-            mode: Mode::RunAnything,
+            mode: ChatMode::Manual,
         },
     )
     .unwrap();
     say(7);
+    let w = waiting();
+    let id = w["pending_approval"]["id"].as_str().unwrap().to_string();
+    answer(&id, ApprovalAnswer::Once, None).unwrap();
     let v = turn_ended(tx, &conv, 7);
     assert_eq!(v["turns"][6]["reply"], "allow");
-
-    // 8: Approved commands refuses what is not approved, without asking.
-    sreq(
-        tx,
-        Req::SetMode {
-            conv: conv.clone(),
-            mode: Mode::Approved,
-        },
-    )
-    .unwrap();
-    say(8);
-    let v = turn_ended(tx, &conv, 8);
-    assert_eq!(v["turns"][7]["reply"], "deny");
-    assert!(v["turns"][7]["approvals"].as_array().unwrap().is_empty());
-    assert_eq!(v["mode"], "approved");
+    assert_eq!(v["mode"], "manual");
 
     // A token from no running turn is refused at the door.
     let open = sreq(

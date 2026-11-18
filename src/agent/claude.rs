@@ -147,19 +147,12 @@ pub fn rules(r: &Rights) -> (Vec<String>, Vec<String>, &'static str) {
     for p in &r.protect {
         push(&mut deny, [format!("Edit({p})"), format!("Write({p})")]);
     }
-    if r.no_commands {
-        push(&mut deny, ["Bash", "PowerShell"].map(String::from));
-    } else {
-        // Reading commands are Claude Code's own read-only allowance (T001), which judges each
-        // command; a prefix rule would allow `sort -o FILE` or `git diff --output=FILE` too
-        // (Phase 2 review). Moving around the worktree is allowed.
-        push(&mut allow, shell_rules("cd"));
-        for c in &r.commands {
-            push(&mut allow, shell_rules(c.trim()));
-        }
-        if r.any_command {
-            push(&mut allow, ["Bash", "PowerShell"].map(String::from));
-        }
+    // Reading commands are Claude Code's own read-only allowance (T001), which judges each
+    // command; a prefix rule would allow `sort -o FILE` or `git diff --output=FILE` too (Phase 2
+    // review). Moving around the worktree is allowed.
+    push(&mut allow, shell_rules("cd"));
+    for c in &r.commands {
+        push(&mut allow, shell_rules(c.trim()));
     }
     // The prompt tool is called only in the default mode; dontAsk denies without asking (T001).
     let mode = if r.prompt_tool.is_some() {
@@ -480,10 +473,15 @@ fn tool_call(b: &Value) -> Event {
             let cmd = input["command"].as_str().unwrap_or_default().to_string();
             (ToolKind::Run, cmd.clone(), cmd)
         }
+        // 015 (FR-010): where it searched, so output from a secrets file can be hidden.
         "Grep" | "Glob" => (
             ToolKind::Search,
             input["pattern"].as_str().unwrap_or_default().to_string(),
-            String::new(),
+            [("path", &input["path"]), ("glob", &input["glob"])]
+                .iter()
+                .filter_map(|(k, v)| v.as_str().map(|v| format!("{k}: {v}")))
+                .collect::<Vec<_>>()
+                .join("\n"),
         ),
         // 012 (research R-8): web requests made as tool calls.
         "WebFetch" => (
@@ -535,6 +533,7 @@ fn refusal(text: &str) -> bool {
         || text.contains("has been denied")
         || text.contains("requires approval")
         || text.starts_with("The engineer refused")
+        || text.starts_with("Fallow refused this")
 }
 
 /// The events one stream-json line becomes. Thinking is dropped (research S-5): `thinking`
@@ -908,7 +907,7 @@ pub fn run(agent: &Agent, c: &Call, sink: &mut dyn FnMut(Event), stop: &AtomicBo
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agent::rights::{self, Mode};
+    use crate::agent::rights;
     use serde_json::json;
 
     #[test]
@@ -920,7 +919,7 @@ mod tests {
         let c = Call {
             instruction: "x".into(),
             schema: None,
-            rights: rights::lead(Mode::ReadOnly, Vec::new()),
+            rights: rights::lead_in_loop(Vec::new()),
             mcp_config: None,
             session: Session::New("s".into()),
             model: None,
@@ -1063,30 +1062,24 @@ mod tests {
     }
 
     #[test]
-    fn chat_modes_become_claude_options() {
+    fn chat_rights_become_claude_options_and_never_allow_everything() {
         let mut c = call();
-        c.rights = rights::lead(Mode::ReadOnly, vec!["python -m shop".into()]);
+        c.rights = rights::lead(vec!["python -m shop".into()]);
         let a = args(&c);
         let s = a.join(" ");
-        assert!(s.contains("--permission-mode dontAsk"));
-        let (_, deny, _) = rules(&c.rights);
-        assert!(has(&deny, "Bash") && has(&deny, "PowerShell"), "{deny:?}");
-        assert!(has(&deny, "Write(.fallow/squad.toml)"));
-        assert!(has(&a, "Edit(specs/**)") && !has(&a, "Edit"));
-        assert!(!s.contains("python -m shop"));
-        c.rights = rights::lead(Mode::Ask, vec!["python -m shop".into()]);
-        let s = args(&c).join(" ");
         assert!(s.contains("--permission-mode default"));
         assert!(s.contains("--permission-prompt-tool mcp__fallow__approve"));
         assert!(s.contains("Bash(python -m shop:*)"));
-        c.rights = rights::lead(Mode::RunAnything, Vec::new());
-        let a = args(&c);
-        assert!(has(&a, "Bash") && has(&a, "PowerShell"));
-        assert!(
-            !has(&a, "Edit")
-                && has(&a, "Write(.fallow/drafts/**)")
-                && has(&a, "Edit(.fallow/pipelines/**)")
-        );
+        let (_, deny, _) = rules(&c.rights);
+        assert!(has(&deny, "Write(.fallow/squad.toml)"));
+        assert!(has(&a, "Edit(specs/**)") && !has(&a, "Edit"));
+        // 015 (FR-004): no rule allows every command, and no bypass option.
+        assert!(!has(&a, "Bash") && !has(&a, "PowerShell"), "{a:?}");
+        assert!(!s.contains("bypassPermissions") && !s.contains("dangerously"));
+        c.rights = rights::lead_in_loop(vec!["python -m shop".into()]);
+        let s = args(&c).join(" ");
+        assert!(s.contains("--permission-mode dontAsk"));
+        assert!(s.contains("Bash(python -m shop:*)"));
         c.rights = rights::checker(vec!["python -m unittest".into()]);
         let a = args(&c);
         assert!(!has(&a, "Edit") && !has(&a, "Write"));

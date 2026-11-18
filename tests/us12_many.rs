@@ -232,16 +232,17 @@ output = { reply = "ok" }
         wait_conv(tx, &s_wait, "a command waiting", |v| {
             !v["pending_approval"].is_null()
         });
+        s_gone = start_session(tx, &project, "short one");
+        wait_turn(tx, &s_gone, 1);
+        // 015 (R-6): a session in Auto when Fallow stops.
         sreq(
             tx,
             Req::SessionMode {
-                session: s_wait.clone(),
-                mode: "until_switch".into(),
+                session: s_gone.clone(),
+                mode: "auto".into(),
             },
         )
         .unwrap();
-        s_gone = start_session(tx, &project, "short one");
-        wait_turn(tx, &s_gone, 1);
         s_half = start_session(tx, &project, "half made");
         wait_turn(tx, &s_half, 1);
         drop(e);
@@ -273,10 +274,17 @@ output = { reply = "ok" }
     let t = &v["turns"][0];
     assert_eq!(t["cut"], true, "{t}");
     assert_eq!(t["approvals"][0]["answer"], "deny", "{t}");
-    assert_eq!(v["session"]["mode"], "ask", "{}", v["session"]);
-    assert_eq!(
-        v["session"]["mode_reset"], true,
-        "the session says it is asking again"
+    assert_eq!(v["session"]["mode"], "manual", "{}", v["session"]);
+    assert!(v["session"]["mode_note"].is_null(), "it was in Manual");
+    // 015 (R-6): the session that was in Auto is in the default mode, and says so.
+    let g = sreq(tx, Req::Conversation { id: s_gone.clone() }).unwrap();
+    assert_eq!(g["session"]["mode"], "manual", "{}", g["session"]);
+    assert!(
+        g["session"]["mode_note"]
+            .as_str()
+            .is_some_and(|n| n.contains("Manual, your default")),
+        "the session says it is in Manual again: {}",
+        g["session"]
     );
     assert_eq!(
         v["turns"].as_array().unwrap().len(),

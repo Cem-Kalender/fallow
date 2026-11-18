@@ -56,6 +56,12 @@
 //! read = ["notes.txt"]           # 012: Read tool calls through the same rules as `exec`: a
 //!                                # `Read` ask rule sends each to the prompt tool; an allowed
 //!                                # read returns the file's text
+//! edit = [{ path = "x", text = "y" }]
+//!                                # 015: Write tool calls through the rules as Claude Code
+//!                                # applies them: a deny rule `Write(glob)` / `Edit(glob)`
+//!                                # refuses with no prompt; an ask rule sends it to the prompt
+//!                                # tool; an allow rule writes it; the rest is asked (default)
+//!                                # or refused (dontAsk)
 //! ```
 //!
 //! 012: with `FALLOW_FAKE_ARGS_LOG` set, each invocation appends its arguments to that file, one
@@ -124,6 +130,8 @@ struct Step {
     before_ms: u64,
     #[serde(default)]
     read: Vec<String>,
+    #[serde(default)]
+    edit: Vec<File>,
     #[serde(default)]
     lock_index: bool,
 }
@@ -675,6 +683,83 @@ fn main() -> ExitCode {
         } else {
             prompt_denials
                 .push(json!({"tool_name": "Read", "tool_use_id": id, "tool_input": input}));
+            (
+                true,
+                verdict["message"].as_str().unwrap_or("denied").to_string(),
+            )
+        };
+        emit(json!({"type": "user", "message": {"content": [
+            {"type": "tool_result", "tool_use_id": id, "is_error": bad, "content": text}]}}));
+    }
+    // 015: files written through the rules, as Claude Code applies them to Write.
+    for f in &step.edit {
+        let id = tool_id();
+        let input = json!({"file_path": f.path, "content": f.text});
+        emit(json!({"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "id": id, "name": "Write", "input": input}]}}));
+        let rel = {
+            let p = f.path.replace('\\', "/");
+            let c = cwd.display().to_string().replace('\\', "/");
+            p.strip_prefix(&format!("{}/", c.trim_end_matches('/')))
+                .map(str::to_string)
+                .unwrap_or(p)
+        };
+        let covers = |rules: &[String]| {
+            rules.iter().any(|r| {
+                r == "Write"
+                    || r == "Edit"
+                    || ["Write(", "Edit("].iter().any(|t| {
+                        r.strip_prefix(t)
+                            .and_then(|x| x.strip_suffix(')'))
+                            .is_some_and(|g| {
+                                globset::Glob::new(g)
+                                    .map(|g| g.compile_matcher().is_match(&rel))
+                                    .unwrap_or(false)
+                            })
+                    })
+            })
+        };
+        let ask = || -> Value {
+            match (&prompt_tool, mode.as_str(), &mcp_config) {
+                (Some(t), "default", Some(c)) => {
+                    let tool = t.trim_start_matches("mcp__fallow__");
+                    mcp_call(
+                        c,
+                        tool,
+                        json!({"tool_name": "Write", "input": input, "tool_use_id": id}),
+                    )
+                    .ok()
+                    .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+                    .unwrap_or_else(
+                        || json!({"behavior": "deny", "message": "the prompt tool failed"}),
+                    )
+                }
+                _ => {
+                    json!({"behavior": "deny", "message": "Permission to use Write has been denied."})
+                }
+            }
+        };
+        let verdict = if !tool_on("Write") || covers(&disallowed) {
+            json!({"behavior": "deny", "message": "Permission to use Write has been denied."})
+        } else if asked.iter().any(|r| r == "Write" || r == "Edit") {
+            ask()
+        } else if covers(&allowed) {
+            json!({"behavior": "allow"})
+        } else {
+            ask()
+        };
+        let (bad, text) = if verdict["behavior"] == "allow" {
+            let p = cwd.join(&rel);
+            if let Some(d) = p.parent() {
+                let _ = std::fs::create_dir_all(d);
+            }
+            match std::fs::write(&p, &f.text) {
+                Ok(()) => (false, "written".to_string()),
+                Err(e) => (true, e.to_string()),
+            }
+        } else {
+            prompt_denials
+                .push(json!({"tool_name": "Write", "tool_use_id": id, "tool_input": input}));
             (
                 true,
                 verdict["message"].as_str().unwrap_or("denied").to_string(),

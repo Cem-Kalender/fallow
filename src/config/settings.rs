@@ -39,6 +39,51 @@ impl Autonomy {
     }
 }
 
+/// 015 (research R-6): the mode of the lead's and the assistant's chats: Manual asks before
+/// commands that are not approved; Auto asks nothing within the agent's fixed limits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum ChatMode {
+    #[default]
+    Manual,
+    Auto,
+}
+
+impl<'de> Deserialize<'de> for ChatMode {
+    /// A settings error names the key, as the other `[defaults]` errors do.
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<ChatMode, D::Error> {
+        let s = String::deserialize(d)?;
+        ChatMode::parse(&s)
+            .map_err(|e| serde::de::Error::custom(format!("defaults.chat_mode: {e}")))
+    }
+}
+
+impl ChatMode {
+    /// The mode named `s`; the old names of 007, 009 and 012 are not modes any more.
+    pub fn parse(s: &str) -> Result<ChatMode, String> {
+        match s {
+            "manual" => Ok(ChatMode::Manual),
+            "auto" => Ok(ChatMode::Auto),
+            other => Err(format!("no mode {other:?}: manual or auto")),
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            ChatMode::Manual => "manual",
+            ChatMode::Auto => "auto",
+        }
+    }
+
+    /// As the page and the notes write it.
+    pub fn label(self) -> &'static str {
+        match self {
+            ChatMode::Manual => "Manual",
+            ChatMode::Auto => "Auto",
+        }
+    }
+}
+
 /// Defaults for every run.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields, default)]
@@ -53,6 +98,8 @@ pub struct Defaults {
     /// 007: how long the lead may take to answer an agent's question before it is relayed to
     /// the engineer (research S-10).
     pub lead_answer_sec: u64,
+    /// 015 (FR-005): the mode of new chats, and of every chat after a restart.
+    pub chat_mode: ChatMode,
 }
 
 impl Default for Defaults {
@@ -66,6 +113,7 @@ impl Default for Defaults {
             max_parallel: 4,
             memory_budget_mb: 0,
             lead_answer_sec: 180,
+            chat_mode: ChatMode::Manual,
         }
     }
 }
@@ -332,6 +380,32 @@ command = \"glab\"
         assert_eq!(s.defaults.repair_cap, 2);
         assert_eq!(s.roles["reviewer"].agent, "claude");
         assert!(s.roles["reviewer"].model.is_empty());
+    }
+
+    #[test]
+    fn the_chat_mode_is_manual_unless_set() {
+        let mut n = Vec::new();
+        assert_eq!(
+            Settings::parse("s.toml", "", &mut n).defaults.chat_mode,
+            ChatMode::Manual
+        );
+        let s = Settings::parse("s.toml", "[defaults]\nchat_mode = \"auto\"\n", &mut n);
+        assert_eq!(s.defaults.chat_mode, ChatMode::Auto);
+        assert!(n.is_empty(), "{n:?}");
+        let s = Settings::parse("s.toml", "[defaults]\nchat_mode = \"sometimes\"\n", &mut n);
+        assert_eq!(s.defaults.chat_mode, ChatMode::Manual);
+        assert!(
+            n.iter()
+                .any(|x| x.level == Level::Error && x.message.contains("chat_mode")),
+            "{n:?}"
+        );
+        assert_eq!(ChatMode::parse("auto"), Ok(ChatMode::Auto));
+        assert!(
+            ChatMode::parse("until_switch")
+                .unwrap_err()
+                .contains("manual or auto")
+        );
+        assert!(ChatMode::parse("run_anything").is_err());
     }
 
     #[test]

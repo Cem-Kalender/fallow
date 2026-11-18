@@ -39,53 +39,8 @@ pub struct Rights {
     pub protect: Vec<String>,
     /// Command prefixes allowed with any arguments after them (`python -m unittest`).
     pub commands: Vec<String>,
-    /// Any command at all ("Run anything", FR-007a).
-    pub any_command: bool,
-    /// Not even the read-only commands a runtime allows by itself ("Read only", research S-7).
-    pub no_commands: bool,
     /// The tool that answers permission prompts ("Ask", research S-7).
     pub prompt_tool: Option<String>,
-}
-
-/// The chat modes of the lead's conversations (FR-007a), in Shift+Tab order.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Mode {
-    ReadOnly,
-    Approved,
-    Ask,
-    RunAnything,
-}
-
-impl Mode {
-    /// The mode Shift+Tab moves to.
-    pub fn next(self) -> Mode {
-        match self {
-            Mode::Ask => Mode::RunAnything,
-            Mode::RunAnything => Mode::ReadOnly,
-            Mode::ReadOnly => Mode::Approved,
-            Mode::Approved => Mode::Ask,
-        }
-    }
-
-    pub fn parse(s: &str) -> Option<Mode> {
-        Some(match s {
-            "read_only" => Mode::ReadOnly,
-            "approved" => Mode::Approved,
-            "ask" => Mode::Ask,
-            "run_anything" => Mode::RunAnything,
-            _ => return None,
-        })
-    }
-
-    pub fn label(self) -> &'static str {
-        match self {
-            Mode::ReadOnly => "Read only",
-            Mode::Approved => "Approved commands",
-            Mode::Ask => "Ask",
-            Mode::RunAnything => "Run anything",
-        }
-    }
 }
 
 /// The MCP tool Fallow serves for permission prompts.
@@ -124,8 +79,6 @@ pub fn maker(commands: Vec<String>, protect: Vec<String>) -> Rights {
         edits: Edits::Anywhere,
         protect,
         commands,
-        any_command: false,
-        no_commands: false,
         prompt_tool: None,
     }
 }
@@ -136,36 +89,22 @@ pub fn checker(commands: Vec<String>) -> Rights {
         edits: Edits::None,
         protect: Vec::new(),
         commands,
-        any_command: false,
-        no_commands: false,
         prompt_tool: None,
     }
 }
 
 /// The lead in a chat: writes only spec documents; what it runs follows the mode. `approved` is
 /// the project's approved commands with its gates.
-pub fn lead(mode: Mode, approved: Vec<String>) -> Rights {
-    let mut r = Rights {
+pub fn lead(approved: Vec<String>) -> Rights {
+    // 015 (research R-1): in either chat mode every command outside the approved ones, and
+    // every edit outside the spec documents, comes to Fallow's permission prompt, which
+    // applies the mode; no rule lets the runtime allow everything.
+    Rights {
         edits: Edits::Only(SPEC_GLOBS.iter().map(|s| s.to_string()).collect()),
         protect: CONTROL_GLOBS.iter().map(|s| s.to_string()).collect(),
-        commands: Vec::new(),
-        any_command: false,
-        no_commands: false,
-        prompt_tool: None,
-    };
-    match mode {
-        Mode::ReadOnly => r.no_commands = true,
-        Mode::Approved => r.commands = approved,
-        Mode::Ask => {
-            r.commands = approved;
-            r.prompt_tool = Some(APPROVE_TOOL.into());
-        }
-        Mode::RunAnything => {
-            r.commands = approved;
-            r.any_command = true;
-        }
+        commands: approved,
+        prompt_tool: Some(APPROVE_TOOL.into()),
     }
-    r
 }
 
 /// 012 (FR-008, research R-6): the assistant of a solo session. It edits its working copy,
@@ -177,16 +116,17 @@ pub fn assistant(commands: Vec<String>, protect: Vec<String>) -> Rights {
         edits: Edits::Anywhere,
         protect,
         commands,
-        any_command: false,
-        no_commands: false,
         prompt_tool: Some(APPROVE_TOOL.into()),
     }
 }
 
 /// The lead answering an agent's question during a loop: approved commands only, whatever its
-/// chat's mode (FR-007a).
+/// chat's mode (FR-007a), and nothing asked: no one is in the chat.
 pub fn lead_in_loop(approved: Vec<String>) -> Rights {
-    lead(Mode::Approved, approved)
+    Rights {
+        prompt_tool: None,
+        ..lead(approved)
+    }
 }
 
 /// The prefix of a 006 rule (`Bash(npm run lint:*)` gives `npm run lint`), for the squad file's
@@ -233,53 +173,23 @@ mod tests {
         assert_eq!(m.protect, ["specs/007-x/spec.md"]);
         let c = checker(vec!["python -m unittest".into()]);
         assert_eq!(c.edits, Edits::None);
-        assert!(!c.any_command && c.prompt_tool.is_none());
+        assert!(c.prompt_tool.is_none());
     }
 
     #[test]
-    fn chat_modes_give_their_rights() {
+    fn the_lead_always_asks_fallow_and_never_runs_everything() {
         let approved = vec!["python -m shop".to_string()];
-        let r = lead(Mode::ReadOnly, approved.clone());
-        assert!(r.no_commands && r.commands.is_empty());
-        let r = lead(Mode::Approved, approved.clone());
-        assert_eq!(r.commands, approved);
-        assert!(r.prompt_tool.is_none() && !r.any_command);
-        let r = lead(Mode::Ask, approved.clone());
+        let r = lead(approved.clone());
         assert_eq!(r.prompt_tool.as_deref(), Some(APPROVE_TOOL));
-        let r = lead(Mode::RunAnything, approved.clone());
-        assert!(r.any_command);
-        for m in [Mode::ReadOnly, Mode::Approved, Mode::Ask, Mode::RunAnything] {
-            let r = lead(m, approved.clone());
-            assert_eq!(
-                r.edits,
-                Edits::Only(SPEC_GLOBS.iter().map(|s| s.to_string()).collect()),
-                "{m:?}: the lead writes only spec documents"
-            );
-        }
+        assert_eq!(r.commands, approved);
         assert_eq!(
-            lead_in_loop(approved.clone()),
-            lead(Mode::Approved, approved)
+            r.edits,
+            Edits::Only(SPEC_GLOBS.iter().map(|s| s.to_string()).collect()),
+            "the lead writes only spec documents"
         );
-    }
-
-    #[test]
-    fn shift_tab_cycles_from_ask() {
-        let mut m = Mode::Ask;
-        let mut seen = vec![m];
-        for _ in 0..4 {
-            m = m.next();
-            seen.push(m);
-        }
-        assert_eq!(
-            seen,
-            [
-                Mode::Ask,
-                Mode::RunAnything,
-                Mode::ReadOnly,
-                Mode::Approved,
-                Mode::Ask
-            ]
-        );
+        let l = lead_in_loop(approved.clone());
+        assert_eq!(l.commands, approved);
+        assert!(l.prompt_tool.is_none());
     }
 
     #[test]

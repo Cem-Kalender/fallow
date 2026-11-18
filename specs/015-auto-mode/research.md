@@ -46,7 +46,7 @@ The lead answering an agent's question during a loop keeps its approved-commands
 | Edit outside the limit (including `.git`, Fallow's and the runtime's control files) | **Refused, visible, can be allowed once** (R-4). Today it is refused silently. | The same. |
 | Run: gates and approved commands | Allowed. | Allowed. |
 | Run: a command that changes the engineer's folder (`refwatch::in_folder`), assistant only | Asked, as today, with 012's folder facts. | Refused at the copy limit, visible, can be allowed once. |
-| Run: a push onto the protected target (R-3) | Asked, with the reason "pushes onto the protected target". | Refused at the target limit, visible, can be allowed once. |
+| Run: a push onto the protected target (R-3) | Refused at the target limit, visible, can be allowed once (a fixed limit holds in both modes, spec FR-009, US3 AS3). | The same. |
 | Run: any other command | Asked. For the assistant, with the judge's reasons (012). | **Allowed**, including the commands the judge "cannot tell", force-pushes of the session's own branch, and `gh`. |
 | Web (assistant) | Allowed when the web switch is on. When it is off, the agent has no web tools (`--tools` leaves them out, `claude.rs`), so there is no request and no refusal. | The same. The web switch stays the engineer's own setting, beside the mode switch (spec FR-003). |
 | Other (a tool Fallow cannot judge, such as an MCP tool) | Refused (visible). | Allowed. |
@@ -64,10 +64,10 @@ When Auto allows a request, the runtime gets its ordinary allow reply (`permissi
    - For the lead: an Edit request outside `SPEC_GLOBS`.
 
    The runtime's own permission and settings files stay denied at the runtime, in every mode, because an agent that can edit them could switch Fallow's checks off (constitution VI, 10.1.0). These are Claude Code's `CONTROL_FILES` and `CONTROL_GLOBS`. Fallow does not receive these requests, but it sees their result: the runtime reports the call as `ToolResult { refused: true }` (`src/agent/mod.rs:172`). On such a result for an edit of a control file, Fallow appends the same `Refused` record, with `limit: "control"` and no "Allow this once" (spec FR-009). The note on switching to Auto names these files.
-2. **The protected-target limit**, for both agents: a Run request that pushes onto the project's target branch on its remote, when 010's record of the remote (`publish::Remote`) says `protected` is `yes`, `unknown` or `checking`.
+2. **The protected-target limit**, for both agents: a Run request that pushes onto the project's target branch on its remote, when 010's record of the remote (`publish::Remote`) says `protected` is `yes`, `unknown` or `checking`. Without a record (not read yet), or with a remote but no target read, the folder's checked-out branch counts as a protected target; only a project known to have no remote has none (review of phase 2).
    - A new judge function, `pushes_onto(cmd, target) -> bool`, reads the push forms: `git push <remote> <target>`, `…:<target>`, `HEAD:<target>`, `refs/heads/<target>`, `--all` and `--mirror`.
    - A plain `git push`, or a push of the session's own branch, is not onto the target.
-   - A command the judge cannot split (`judge::split` fails) that contains `push` and the target's name counts as onto the target.
+   - Read conservatively (review of phase 2): a destination holding a variable, a substitution or a wildcard, `heads/<target>`, a git alias or unknown subcommand naming the target, and a command string given to a shell, `eval` or PowerShell (read the same way) all count as onto the target. A command the judge cannot split (`judge::split` fails) counts when it contains `push`.
 
 **Not limits, by decision**: `gh pr merge`, because the remote's protection applies and II counts the agent's merge on the engineer's word as theirs.
 
@@ -89,13 +89,13 @@ The page shows a refusal card in the turn, with the reason, "Allow this once" an
 
 ## R-5 "Allow this once"
 
-**Decision**: "Allow this once" records `RefusalAllowed { id }` and puts a one-shot grant on the chat, in memory, for the same kind and the same command or path, exactly. Then Fallow tells the agent:
+**Decision**: "Allow this once" records `RefusalAllowed { id }` (and `RefusalUsed { id }` when the grant is used) and puts a one-shot grant on the chat, in memory, for the same kind and the same command or path, exactly. Then Fallow tells the agent:
 - If a turn is running, the message waits and is sent when the turn ends. The assistant's waiting messages already work this way (012); the lead gets the same queue.
 - If the chat is idle, the message is sent now.
 
 The message is: "The engineer allowed, once, exactly: `<what>`. Run exactly that again if it is still needed; anything else is decided as before."
 
-The next request that matches the grant uses it up and is allowed, whatever the limit, including a push onto a protected target (II, 10.1.0). Whether the remote accepts the push is up to the remote.
+The next request that matches the grant uses it up and is allowed, whatever the limit except `control`, including a push onto a protected target (II, 10.1.0). Whether the remote accepts the push is up to the remote.
 
 Grants do not survive a restart: the card then says "Fallow restarted; ask the agent to try again". "Dismiss" records `RefusalDismissed { id }`.
 
@@ -143,7 +143,7 @@ Switching to Manual leaves nothing waiting.
 
 **Decision**: the activity line of a tool result is built in `run/engine.rs` from `agent::Event::ToolResult`. For a call whose command `judge::assess` flags with "shows the environment's values" (or "sets environment variables" with no command after it), or a read that `judge::read_problem` flags as a file that may hold secrets, the line's output becomes "Output hidden: it may hold secret values". This happens before the activity is shown or written. The check uses the call's own command or path, kept from its `ToolCall` by `id`.
 
-In Manual this applies to the calls the engineer allowed. In Auto it applies to every such call. The runtime's own transcript is the runtime's, not Fallow's (constitution V concerns what Fallow displays and stores).
+In Manual this applies to the calls the engineer allowed. In Auto it applies to every such call. A search is decided from its path and glob, which the runtime adapter puts in the call's detail (`path: …`, `glob: …`), with `judge::search_problem`; the assistant's reads and searches are also marked when Fallow decides them (`Conv::hidden`). A refused call's text is Fallow's reason and stays. The runtime's own transcript is the runtime's, not Fallow's (constitution V concerns what Fallow displays and stores).
 
 **Alternatives rejected**:
 - *Keep asking for these commands in Auto*: Auto asks nothing.

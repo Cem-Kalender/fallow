@@ -427,6 +427,15 @@ fn place(ctx: &Ctx, base: &Path, arg: &str) -> Place {
     Place::Outside
 }
 
+/// 015: `path` relative to `base` as it resolves (symlinks, `..`, absolute spellings), when it
+/// is inside `base`; with `/` separators.
+pub fn rel_inside(base: &Path, path: &str) -> Option<String> {
+    let real = resolve(&canon(base), path.trim());
+    real.strip_prefix(canon(base))
+        .ok()
+        .map(|r| r.to_string_lossy().replace('\\', "/"))
+}
+
 /// Whether a word is used as a path: it names a folder or a file by its form (a URL is not).
 fn looks_like_path(w: &str) -> bool {
     if w.contains("://") {
@@ -1690,6 +1699,230 @@ pub fn edit_problem(path: &str, ctx: &Ctx) -> Option<String> {
     path_reason(ctx, &canon(ctx.wt), path, true)
 }
 
+/// 015 (research R-10, spec FR-010, constitution V): whether a tool call's output may show
+/// environment variable values or a secrets file's contents, so the activity and Fallow's
+/// records hide it: a command the judge reads as showing the environment, reading a file that
+/// may hold secrets, or printing a variable (`echo $TOKEN`); a read or search of such a file, or
+/// a search over a folder holding one. `detail` is the call's detail (a search's `path:` and
+/// `glob:` lines); `cwd` is where the agent runs.
+pub fn output_may_hold_secrets(kind: &str, summary: &str, detail: &str, cwd: &Path) -> bool {
+    let secret_path = |w: &str| {
+        let w = w.trim_matches(|c| c == '"' || c == '\'' || c == '`');
+        !w.is_empty() && super::files::is_secret(&w.replace('\\', "/"))
+    };
+    let protect: Vec<String> = Vec::new();
+    let ctx = Ctx {
+        wt: cwd,
+        branch: "",
+        folder: cwd,
+        protect: &protect,
+    };
+    match kind {
+        "read" => summary.split_whitespace().any(secret_path),
+        "search" => {
+            let field = |k: &str| {
+                detail
+                    .lines()
+                    .find_map(|l| l.strip_prefix(&format!("{k}: ")))
+                    .map(str::to_string)
+            };
+            let (path, glob) = (field("path"), field("glob"));
+            path.as_deref().is_some_and(secret_path)
+                || glob.as_deref().is_some_and(secret_path)
+                || search_problem(path.as_deref(), glob.as_deref(), &ctx)
+                    .is_some_and(|w| w.contains("secrets") || w.contains("could not list"))
+        }
+        "run" => {
+            if let Verdict::Ask(why) = assess(summary, &ctx) {
+                if why.iter().any(|w| {
+                    w.contains("shows the environment's values") || w.contains("may hold secrets")
+                }) {
+                    return true;
+                }
+            }
+            let lower = summary.to_ascii_lowercase();
+            if lower.contains("/proc/") && lower.contains("environ") {
+                return true;
+            }
+            let Ok(parts) = split(summary) else {
+                // Unreadable as written: hidden when it names a variable, the environment or a
+                // secrets file.
+                return summary.contains('$')
+                    || lower.contains("env")
+                    || summary.split_whitespace().any(secret_path);
+            };
+            let assignment = |w: &str| {
+                w.split_once('=').is_some_and(|(k, _)| {
+                    !k.is_empty() && k.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+                })
+            };
+            parts.iter().any(|p| {
+                // `X=1 env`, `env -i`, `env X=1`: what runs after the assignments.
+                let words: Vec<&String> = p.words.iter().skip_while(|w| assignment(w)).collect();
+                let prog = words.first().map(|w| program(w)).unwrap_or_default();
+                if prog == "printenv"
+                    || (prog == "env"
+                        && words[1..]
+                            .iter()
+                            .all(|w| w.starts_with('-') || assignment(w)))
+                {
+                    return true;
+                }
+                let prints = matches!(
+                    prog.as_str(),
+                    "echo" | "printf" | "write-output" | "write-host" | "print" | "env" | "export"
+                );
+                // `declare -x`, `typeset -p`, `export -p`: listings of the environment.
+                let lists = matches!(prog.as_str(), "declare" | "typeset" | "export")
+                    && p.words[1..].iter().all(|w| w.starts_with('-'));
+                // A command string for a shell or PowerShell: read as a command too.
+                let runs_string = SHELLS.contains(&prog.as_str())
+                    || matches!(
+                        prog.as_str(),
+                        "eval" | "iex" | "invoke-expression" | "cmd" | "pwsh" | "powershell"
+                    );
+                (runs_string
+                    && p.words[1..]
+                        .iter()
+                        .any(|w| output_may_hold_secrets("run", w, "", cwd)))
+                    || lists
+                    || (prints && p.words[1..].iter().any(|w| uses_variable(w)))
+                    || p.words
+                        .iter()
+                        .any(|w| w.to_ascii_lowercase().starts_with("$env:"))
+                    || p.words.iter().skip(1).any(|w| secret_path(w))
+                    || p.redirects.iter().any(|w| secret_path(w))
+            })
+        }
+        _ => false,
+    }
+}
+
+/// 015 (research R-3): whether `cmd` may push onto the remote's `target` branch, read
+/// conservatively: `git push <remote> <target>`, a refspec whose destination is the target
+/// (`HEAD:<target>`, `x:refs/heads/<target>`, `heads/<target>`, `+<target>`), or one Fallow
+/// cannot pin down (a variable, a substitution, a wildcard), `--all` / `--mirror`; a git alias
+/// or unknown subcommand naming the target; a shell, `eval` or PowerShell given a command
+/// string, read the same way. A plain `git push`, or a push of another named branch, is not onto
+/// the target. A command that cannot be read as written counts when it names `push`. Each part
+/// is read as PowerShell and as Bash would read it (`g\it push`).
+pub fn pushes_onto(cmd: &str, target: &str) -> bool {
+    pushes_onto_at(cmd, target, 0)
+}
+
+fn pushes_onto_at(cmd: &str, target: &str, depth: usize) -> bool {
+    if target.is_empty() {
+        return false;
+    }
+    let Ok(parts) = split(cmd) else {
+        return names_git_push(cmd);
+    };
+    parts.iter().any(|p| {
+        if part_pushes_onto(&p.words, target, depth) {
+            return true;
+        }
+        p.escaped.iter().any(|e| *e) && {
+            let bash: Vec<String> = p
+                .words
+                .iter()
+                .zip(&p.escaped)
+                .map(|(w, e)| if *e { bash_unescape(w) } else { w.clone() })
+                .collect();
+            part_pushes_onto(&bash, target, depth)
+        }
+    })
+}
+
+/// Whether text names `git` and `push` as words: what an unreadable command must name to count
+/// as a push.
+fn names_git_push(text: &str) -> bool {
+    let words: Vec<&str> = text
+        .split(|c: char| !(c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.'))
+        .collect();
+    words.iter().any(|w| program(w) == "git") && words.contains(&"push")
+}
+
+/// Git subcommands that never push, besides the ones the judge knows (`GIT_KNOWN`).
+const GIT_NO_PUSH: &[&str] = &[
+    "ls-remote",
+    "cherry",
+    "range-diff",
+    "whatchanged",
+    "reflog",
+    "bisect",
+    "notes",
+    "count-objects",
+    "fsck",
+    "gc",
+    "var",
+];
+
+/// A refspec destination Fallow cannot pin down, or one that is the target.
+fn onto(spec: &str, target: &str) -> bool {
+    let spec = spec.trim_start_matches('+');
+    let dst = spec.rsplit_once(':').map_or(spec, |(_, d)| d);
+    if dst.contains(['$', '`', '*', '?', '[', '{', '%']) {
+        return true;
+    }
+    let dst = dst.trim_start_matches("refs/").trim_start_matches("heads/");
+    dst == target
+}
+
+/// One simple command of `pushes_onto`.
+fn part_pushes_onto(words: &[String], target: &str, depth: usize) -> bool {
+    // A command string handed to a shell, `eval` or PowerShell, at any place (after `timeout`,
+    // `env`, `sudo`, …), is read as a command too; a string that cannot be read counts when it
+    // names `git push`.
+    let runs_string = |w: &String| {
+        let prog = program(w);
+        SHELLS.contains(&prog.as_str())
+            || matches!(
+                prog.as_str(),
+                "eval" | "iex" | "invoke-expression" | "cmd" | "pwsh" | "powershell" | "xargs"
+            )
+    };
+    if let Some(sh) = words.iter().position(runs_string) {
+        let rest = &words[sh + 1..];
+        if depth < 3 && rest.iter().any(|w| pushes_onto_at(w, target, depth + 1)) {
+            return true;
+        }
+        if names_git_push(&rest.join(" ")) {
+            return true;
+        }
+    }
+    let Some(g) = words.iter().position(|w| program(w) == "git") else {
+        return false;
+    };
+    let args: Vec<&str> = words[g + 1..].iter().map(String::as_str).collect();
+    let mut i = 0;
+    while i < args.len() && args[i].starts_with('-') {
+        let takes_value = matches!(args[i], "-C" | "-c")
+            || ((args[i] == "--git-dir" || args[i] == "--work-tree" || args[i] == "--namespace")
+                && !args[i].contains('='));
+        i += if takes_value { 2 } else { 1 };
+    }
+    let Some(sub) = args.get(i) else {
+        return false;
+    };
+    let rest = &args[i + 1..];
+    let positional: Vec<&str> = rest
+        .iter()
+        .copied()
+        .filter(|a| !a.starts_with('-'))
+        .collect();
+    if *sub != "push" {
+        // An alias (`git p origin main`) or a command Fallow does not know: it may push.
+        return !GIT_KNOWN.contains(sub)
+            && !GIT_NO_PUSH.contains(sub)
+            && (positional.iter().any(|w| onto(w, target)) || sub.contains('$'));
+    }
+    let opts = options(rest);
+    if has_opt(&opts, "--all") || has_opt(&opts, "--mirror") || has_opt(&opts, "--branches") {
+        return true;
+    }
+    positional.iter().skip(1).any(|spec| onto(spec, target))
+}
+
 /// Whether an approved prefix may be allowed as a whole: never one starting with git or with a
 /// program that runs other code, nor one the judge would ask about itself.
 pub fn prefix_safe(prefix: &str, ctx: &Ctx) -> bool {
@@ -2192,5 +2425,129 @@ EOF
         assert!(search_problem(None, Some("*"), &ctx).is_some_and(|w| w.contains("build/.env")));
         assert_eq!(search_problem(None, Some("*.rs"), &ctx), None);
         let _ = std::fs::remove_dir_all(&root);
+    }
+    #[test]
+    fn a_push_onto_the_target_is_told_from_one_that_is_not() {
+        let onto = [
+            "git push origin main",
+            "git push origin HEAD:main",
+            "git push origin fallow/solo/fix:main",
+            "git push origin HEAD:refs/heads/main",
+            "git push -f origin +main",
+            "git push --force-with-lease origin x:main",
+            "git push --all",
+            "git push --mirror origin",
+            "git -C . push origin main",
+            "timeout 60 git push origin main",
+            "cd src && git push origin HEAD:main",
+            "git.exe push origin 'HEAD:main'",
+            "g\\it push origin main",
+            "git push origin \"$(echo main)\"",
+            "bash -c 'git push origin main'",
+            "sh -c \"git push origin HEAD:main\"",
+            "powershell -Command \"git push origin main\"",
+            "B=main; git push origin HEAD:$B",
+            "git push origin HEAD:$(git symbolic-ref --short HEAD)",
+            "git push origin 'refs/heads/*:refs/heads/*'",
+            "git push origin HEAD:heads/main",
+            "git config alias.p push && git p origin main",
+            "eval \"git push origin main\"",
+            "timeout 60 bash -c 'git push origin main'",
+            "env X=1 sh -c 'git push origin main'",
+            "sudo -u me bash -lc 'git push origin main'",
+        ];
+        for c in onto {
+            assert!(pushes_onto(c, "main"), "{c}");
+        }
+        let not = [
+            "git push",
+            "git push origin",
+            "git push origin HEAD",
+            "git push origin fallow/solo/fix",
+            "git push origin main-2",
+            "git push origin HEAD:release/main",
+            "git status",
+            "echo push main",
+            "git log main",
+            "git ls-remote origin main",
+            "git cherry main",
+            "git range-diff main a b",
+            "bash -c 'pushd src && ls'",
+            "bash scripts/push_metrics_test.sh",
+            "xargs grep push",
+            "echo \"$(date) push\"",
+        ];
+        for c in not {
+            assert!(!pushes_onto(c, "main"), "{c}");
+        }
+        assert!(!pushes_onto("git push origin main", ""));
+    }
+
+    #[test]
+    fn output_that_may_hold_secrets_is_told() {
+        let cwd = std::env::temp_dir();
+        for c in [
+            "env",
+            "printenv",
+            "printenv HOME",
+            "set",
+            "export",
+            "cat .env",
+            "type .env",
+            "Get-Content .env",
+            "Get-ChildItem env:",
+            "echo $API_TOKEN",
+            "echo \"key: $env:API_KEY\"",
+            "grep TOKEN .env",
+            "cat ~/.aws/credentials",
+            "cat \"$(cat .env)\"",
+            "bash -c env",
+            "sh -c 'cat .env'",
+            "powershell -Command \"Get-ChildItem env:\"",
+            "echo $env:PATH",
+            "cat /proc/self/environ",
+            "declare -x",
+            "FALLOW_X=1 env",
+            "env -i FOO=1",
+        ] {
+            assert!(output_may_hold_secrets("run", c, "", &cwd), "{c}");
+        }
+        for c in [
+            "ls",
+            "cargo test",
+            "echo hello",
+            "git status",
+            "cat src/main.rs",
+        ] {
+            assert!(!output_may_hold_secrets("run", c, "", &cwd), "{c}");
+        }
+        assert!(output_may_hold_secrets("read", ".env", "", &cwd));
+        assert!(output_may_hold_secrets(
+            "read",
+            "/home/x/.ssh/id_rsa",
+            "",
+            &cwd
+        ));
+        assert!(!output_may_hold_secrets("read", "src/main.rs", "", &cwd));
+        assert!(!output_may_hold_secrets("edit", ".env", "", &cwd));
+        // A search: its path or glob, or a folder holding a secrets file.
+        assert!(output_may_hold_secrets("search", "KEY", "path: .env", &cwd));
+        let d = cwd.join(format!("fallow-secret-search-{}", std::process::id()));
+        std::fs::create_dir_all(d.join("src")).unwrap();
+        std::fs::write(d.join(".env"), "TOKEN=x").unwrap();
+        std::fs::write(d.join("src/a.rs"), "").unwrap();
+        // Not a repository Fallow can list: hidden.
+        assert!(output_may_hold_secrets("search", "TOKEN", "", &d));
+        let git = |a: &[&str]| {
+            std::process::Command::new("git")
+                .args(a)
+                .current_dir(&d)
+                .output()
+                .unwrap()
+        };
+        git(&["init", "-q"]);
+        assert!(output_may_hold_secrets("search", "TOKEN", "", &d));
+        assert!(!output_may_hold_secrets("search", "TOKEN", "path: src", &d));
+        let _ = std::fs::remove_dir_all(&d);
     }
 }

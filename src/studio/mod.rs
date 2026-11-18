@@ -10,6 +10,7 @@ pub mod extras;
 pub mod files;
 pub mod handover;
 pub mod judge;
+pub mod mode;
 pub mod refwatch;
 pub mod repo;
 pub mod solo;
@@ -24,7 +25,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
-use crate::agent::rights::{self, Mode};
+use crate::agent::rights;
 use crate::agent::{self, Call, Session, prompts};
 use crate::conversation::events::{ApprovalAnswer, DocEdit, Event as CEvent, KeptDoc, Kind, State};
 use crate::defs::Library;
@@ -151,7 +152,7 @@ pub enum Req {
         agent: Option<String>,
         text: String,
     },
-    /// 012: a session's mode, `ask` or `until_switch` (FR-008).
+    /// 012, 015: a session's mode, `manual` or `auto`.
     SessionMode {
         session: String,
         mode: String,
@@ -272,9 +273,10 @@ pub enum Req {
     Commands {
         conv: String,
     },
+    /// 015: a spec session's mode, `manual` or `auto`.
     SetMode {
         conv: String,
-        mode: Mode,
+        mode: mode::ChatMode,
     },
     Approve {
         conv: String,
@@ -437,6 +439,7 @@ pub fn version_of(text: &str) -> String {
 /// Runs one turn's call on a thread of its own: each event is kept in the turn's activity file
 /// and reported as a `Note::Turn`, its end as a `Note::TurnDone`. For the lead and for a solo
 /// session alike.
+#[allow(clippy::too_many_arguments)]
 fn spawn_turn(
     tx: Sender<Msg>,
     id: String,
@@ -445,6 +448,7 @@ fn spawn_turn(
     call: Call,
     stop: Arc<AtomicBool>,
     turn_file: PathBuf,
+    hidden: Arc<std::sync::Mutex<Vec<String>>>,
 ) -> Result<(), String> {
     std::thread::Builder::new()
         .name(format!("turn-{id}-{n}"))
@@ -457,7 +461,31 @@ fn spawn_turn(
                 .ok();
             let tx2 = tx.clone();
             let id2 = id.clone();
-            let mut sink = |event: agent::Event| {
+            let cwd = call.cwd.clone();
+            let hidden_ids = hidden.clone();
+            // 015 (R-10, FR-010): the calls whose output may hold secret values, by id.
+            let mut hide: Vec<String> = Vec::new();
+            let mut sink = |mut event: agent::Event| {
+                match &mut event {
+                    agent::Event::ToolCall {
+                        id,
+                        kind,
+                        summary,
+                        detail,
+                    } if judge::output_may_hold_secrets(kind.as_str(), summary, detail, &cwd) => {
+                        hide.push(id.clone());
+                    }
+                    // A refusal's reason is Fallow's own text, shown as it is.
+                    agent::Event::ToolResult {
+                        id,
+                        output,
+                        refused: false,
+                        ..
+                    } if hide.contains(id) || hidden_ids.lock().is_ok_and(|h| h.contains(id)) => {
+                        *output = mode::HIDDEN_OUTPUT.to_string();
+                    }
+                    _ => {}
+                }
                 let t = started.elapsed().as_millis() as u64;
                 if let (Some(f), Some(a)) = (file.as_mut(), agent::activity_of(&event, t)) {
                     use std::io::Write;
@@ -580,6 +608,8 @@ impl Studio {
                 Ok((log, state, notes)) => {
                     s.console.extend(notes);
                     let mut c = Conv::new(e.path(), log, state);
+                    // 015 (R-6): every chat starts in the default mode after a restart.
+                    mode::at_load(&mut c, s.settings.defaults.chat_mode);
                     // 012 (R-9): after a restart, waiting messages wait for the engineer.
                     c.queue_hold = c.state.solo.as_ref().is_some_and(|s| !s.queue.is_empty());
                     if c.state.kind == Kind::Solo && c.state.busy {
@@ -753,7 +783,7 @@ impl Studio {
             forked_from: forked_from.clone(),
             workdir: workdir.clone(),
             session: None,
-            mode: Mode::Ask,
+            mode_changes: Vec::new(),
             step: None,
             turns: Vec::new(),
             busy: false,
@@ -769,6 +799,9 @@ impl Studio {
             solo: (kind == Kind::Solo).then(crate::conversation::solo::Solo::default),
         };
         let mut c = Conv::new(dir, log, state);
+        // 015 (FR-005): a new chat starts in the default mode.
+        c.mode = self.settings.defaults.chat_mode;
+        let _ = std::fs::write(c.dir.join("mode"), c.mode.name());
         c.append(CEvent::ConversationCreated {
             kind,
             project: project.to_string(),
@@ -931,6 +964,7 @@ impl Studio {
     pub fn conv_view(&self, id: &str) -> Option<Value> {
         let c = self.convs.get(id)?;
         let mut v = c.view();
+        v["default_mode"] = json!(self.settings.defaults.chat_mode.name());
         if c.state.kind == Kind::Solo {
             self.solo_view(c, &mut v);
             return Some(v);
@@ -1046,10 +1080,28 @@ impl Studio {
         Ok(json!({ "commands": list }))
     }
 
-    pub fn set_mode(&mut self, conv: &str, mode: Mode) -> Result<Value, String> {
+    /// 015 (FR-001, FR-006, research R-6, R-8): a chat's mode, for the lead's spec sessions and
+    /// the assistant's solo sessions alike: recorded for the chat's note, kept in memory and in
+    /// the mark that words the note after a restart; a request waiting for the engineer is
+    /// answered as Auto would answer it.
+    pub fn set_mode(&mut self, conv: &str, mode: mode::ChatMode) -> Result<Value, String> {
         let c = self.conv_mut(conv)?;
-        c.append(CEvent::ModeSet { mode })?;
-        Ok(json!({ "mode": mode, "label": mode.label() }))
+        if c.state.solo.as_ref().is_some_and(|s| s.closed.is_some()) {
+            return Err("this session is closed".into());
+        }
+        let changed = c.mode != mode;
+        c.mode = mode;
+        c.mode_note = None;
+        let _ = std::fs::write(c.dir.join("mode"), mode.name());
+        if changed {
+            c.append(CEvent::ChatMode { mode })?;
+        } else {
+            c.tick();
+        }
+        if mode == mode::ChatMode::Auto {
+            self.pending_under_auto(conv);
+        }
+        Ok(json!({ "mode": mode.name(), "label": mode.label() }))
     }
 
     /// Starts a turn of the lead (research S-5): one resumable call, its reply streamed.
@@ -1230,7 +1282,6 @@ impl Studio {
             }
         }
         let c = self.convs.get(conv).expect("checked");
-        let mode = c.state.mode;
         let first = c.state.turns.iter().all(|t| t.withdrawn) && c.state.session.is_none();
         // The messages the engineer withdrew since the lead last answered (008 T047): a resumed
         // session may still hold them.
@@ -1366,7 +1417,7 @@ impl Studio {
         let call = Call {
             instruction,
             schema: Some(agent::schemas::reply()),
-            rights: rights::lead(mode, approved),
+            rights: rights::lead(approved),
             mcp_config: Some(mcp),
             session: session.clone(),
             model: Some(def.model.clone()).filter(|m| !m.is_empty()),
@@ -1385,7 +1436,7 @@ impl Studio {
             n,
             said: text.to_string(),
             edits,
-            mode,
+            mode: c.mode.name().to_string(),
             session: session.id().to_string(),
             runtime: Some(def.runtime.clone()),
             model: Some(def.model.clone()).filter(|m| !m.is_empty()),
@@ -1397,6 +1448,10 @@ impl Studio {
             head: None,
         })?;
         c.live.clear();
+        c.answered.clear();
+        if let Ok(mut h) = c.hidden.lock() {
+            h.clear();
+        }
         c.head_before = if own_copy(&c.state.workdir) {
             git::head(&c.state.workdir).ok()
         } else {
@@ -1432,6 +1487,10 @@ impl Studio {
             call,
             stop,
             turn_file,
+            self.convs
+                .get(conv)
+                .map(|c| c.hidden.clone())
+                .unwrap_or_default(),
         )?;
         Ok(json!({ "turn": n }))
     }
@@ -1477,6 +1536,14 @@ impl Studio {
                                 c.activity.push(a);
                             }
                         }
+                    }
+                    // 015 (R-3): an edit the runtime refused by its own rule (its settings
+                    // files), which Fallow never answered: shown as a refusal, never allowed.
+                    if let agent::Event::ToolResult {
+                        id, refused: true, ..
+                    } = &event
+                    {
+                        mode::runtime_refused(c, id);
                     }
                     c.tick();
                 }
@@ -1650,6 +1717,10 @@ impl Studio {
             folded_into: None,
         })?;
         c.live.clear();
+        c.answered.clear();
+        if let Ok(mut h) = c.hidden.lock() {
+            h.clear();
+        }
         Ok(())
     }
 
@@ -1686,6 +1757,10 @@ impl Studio {
             folded_into: None,
         })?;
         c.live.clear();
+        c.answered.clear();
+        if let Ok(mut h) = c.hidden.lock() {
+            h.clear();
+        }
         Ok(())
     }
 
@@ -2214,11 +2289,15 @@ impl Studio {
         }
         // 012 (IX): judged in the contract's terms, never by a runtime's tool names.
         let req = agent::registry::permission_request(&runtime, &args);
-        let tool = req.tool.clone();
         let Some(c) = self.convs.get_mut(&conv) else {
             let _ = reply.send(deny("the conversation is gone"));
             return;
         };
+        // 015 (R-3): Fallow answers this call, whatever the answer: a refusal the runtime then
+        // reports is Fallow's, not the runtime's own.
+        if let Some(id) = args["tool_use_id"].as_str().filter(|i| !i.is_empty()) {
+            c.answered.push(id.to_string());
+        }
         if c.state.cancelling().is_some() {
             // Stopping: nothing more runs for a withdrawn message (008 T047 review).
             let _ = reply.send(deny("The engineer cancelled this turn."));
@@ -2234,53 +2313,40 @@ impl Studio {
             }
             return;
         }
-        if c.state.mode != Mode::Ask {
-            let _ = reply.send(deny("Only Ask mode asks the engineer."));
-            return;
+        let reply2 = reply.clone();
+        if let Err(why) = self.lead_tool_call(&conv, &runtime, &req, &args, reply) {
+            let _ = reply2.send(deny(&why));
         }
-        if req.kind != agent::RequestKind::Run {
-            // Edits outside the spec documents and other tools are never asked about.
-            let _ = reply.send(deny(&format!(
-                "{tool} is not allowed here: the lead changes only spec documents."
-            )));
-            return;
-        }
-        if c.pending.is_some() {
-            let _ = reply.send(deny("Another command is waiting for the engineer."));
-            return;
-        }
-        let command = req.command.clone().unwrap_or_default();
-        let id = format!(
-            "a{}",
-            c.state
-                .turns
-                .iter()
-                .map(|t| t.approvals.len())
-                .sum::<usize>()
-                + 1
-        );
-        if c.append(CEvent::ApprovalAsked {
-            id: id.clone(),
-            command: command.clone(),
-            reasons: Vec::new(),
-            merge: None,
-        })
-        .is_err()
-        {
-            let _ = reply.send(deny("Fallow could not record the question."));
-            return;
-        }
-        c.pending = Some(Pending {
-            id,
-            tool,
-            read: false,
-            facts: None,
-            command,
-            raw: args,
+    }
+
+    /// 015 (research R-1, R-2): a permission prompt from a spec session's lead, decided by
+    /// `mode::lead`: its commands under the chat's mode, its edits outside the spec documents
+    /// refused visibly.
+    fn lead_tool_call(
+        &mut self,
+        conv: &str,
+        runtime: &str,
+        req: &agent::PermissionRequest,
+        raw: &Value,
+        reply: Sender<Reply>,
+    ) -> Result<(), String> {
+        let c = self.convs.get(conv).ok_or("the conversation is gone")?;
+        let p = self.project(&c.state.project)?;
+        let target = mode::Target::resolve(p.remote_seen.as_ref(), || git::branch(&p.path));
+        let control_files = agent::registry::capabilities(runtime, &self.settings).control_files;
+        // Spec Kit runs from the project's spec root (012 R-18), where the lead's paths start.
+        let cwd = c.state.workdir.join(&p.spec_root);
+        let decision = mode::lead(c.mode, req, &cwd, &control_files, target.as_ref());
+        self.answer_request(
+            conv,
             runtime,
+            mode::Agent::Lead,
+            req,
+            raw,
             reply,
-            deadline: Instant::now() + self.approval_wait,
-        });
+            decision,
+            None,
+        )
     }
 
     /// The engineer's answer to a command the lead asked to run.

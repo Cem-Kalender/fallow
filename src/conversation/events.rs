@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::agent::rights::Mode;
+use crate::config::settings::ChatMode;
 use crate::run::events::{Log, Logged};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -74,7 +74,10 @@ pub enum Event {
         n: u32,
         said: String,
         edits: Vec<DocEdit>,
-        mode: Mode,
+        /// The chat's mode when the turn began: `manual` or `auto` (015); older logs hold the
+        /// modes of 007 and 012 (`ask`, `run_anything`, …), kept as written.
+        #[serde(default)]
+        mode: String,
         /// The session given to the call: new, resumed, or forked from.
         session: String,
         /// What the lead's call ran on (009), and whether it began an agent session of its own
@@ -161,13 +164,35 @@ pub enum Event {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         why: Option<String>,
     },
+    /// 007's mode of a lead's chat (`read_only`, `approved`, `ask`, `run_anything`): read and
+    /// ignored since 015, which starts every chat in the default mode (research R-6).
     ModeSet {
-        mode: Mode,
+        #[serde(default)]
+        mode: String,
     },
+    /// 015: the engineer changed the chat's mode; for the chat's notes, never to restore it.
+    ChatMode { mode: ChatMode },
+    /// 015 (research R-4): Fallow refused an agent's request at a fixed limit, in either mode.
+    Refused {
+        id: String,
+        /// `edit`, `run` or `tool`.
+        kind: String,
+        /// The path, command or tool name.
+        what: String,
+        reason: String,
+        /// `edit`, `target`, `tool` or `control` (never allowed once).
+        limit: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        facts: Option<Value>,
+    },
+    /// 015 (R-5): the engineer allowed a refusal once.
+    RefusalAllowed { id: String },
+    /// 015 (R-5): the grant of an allowed refusal was used by the agent's request.
+    RefusalUsed { id: String },
+    /// 015: the engineer dismissed a refusal.
+    RefusalDismissed { id: String },
     /// The Spec Kit step a spec session is at (FR-006).
-    StepSet {
-        step: String,
-    },
+    StepSet { step: String },
     DocEdited {
         path: String,
         version: u64,
@@ -177,13 +202,9 @@ pub enum Event {
         diff: String,
     },
     /// The lead works in another place from now on (a plain folder that got git).
-    WorkdirSet {
-        workdir: PathBuf,
-    },
+    WorkdirSet { workdir: PathBuf },
     /// The engineer picked another lead before the session's first message (009).
-    LeadSet {
-        lead: String,
-    },
+    LeadSet { lead: String },
     /// 012: a solo session's own events (conversation/solo.rs), each with its own `type`.
     #[serde(untagged)]
     Solo(super::solo::SoloEvent),
@@ -195,7 +216,7 @@ pub struct Turn {
     pub n: u32,
     pub said: String,
     pub edits: Vec<DocEdit>,
-    pub mode: Mode,
+    pub mode: String,
     pub started: String,
     pub reply: Option<String>,
     pub result: Option<Value>,
@@ -205,6 +226,8 @@ pub struct Turn {
     pub cost_usd: Option<f64>,
     pub failure: Option<String>,
     pub approvals: Vec<Approval>,
+    /// 015: the requests Fallow refused at a fixed limit during the turn.
+    pub refusals: Vec<Refusal>,
     /// 012: the instruction files handed with this turn (none when unchanged).
     pub instructions: Vec<InstructionRec>,
     /// 012: the images sent with the message.
@@ -245,6 +268,37 @@ pub struct Approval {
     pub reasons: Vec<String>,
 }
 
+/// 015 (FR-006): the engineer changed the chat's mode after turn `after`, for the chat's notes.
+#[derive(Debug, Clone, Serialize)]
+pub struct ModeChange {
+    pub after: u32,
+    pub mode: ChatMode,
+    pub at: String,
+}
+
+/// 015 (data-model "Refusal states").
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RefusalState {
+    Refused,
+    /// Allowed once; the grant waits for the agent's request (in memory: a restart expires it).
+    Allowed,
+    Used,
+    Dismissed,
+}
+
+/// 015 (R-4): a request Fallow refused at a fixed limit.
+#[derive(Debug, Clone, Serialize)]
+pub struct Refusal {
+    pub id: String,
+    pub kind: String,
+    pub what: String,
+    pub reason: String,
+    pub limit: String,
+    pub facts: Option<Value>,
+    pub state: RefusalState,
+}
+
 /// A conversation, folded from its events.
 #[derive(Debug, Clone, Serialize)]
 pub struct State {
@@ -256,7 +310,8 @@ pub struct State {
     pub workdir: PathBuf,
     /// The session the next turn resumes; none before the first turn.
     pub session: Option<String>,
-    pub mode: Mode,
+    /// 015: the engineer's mode changes, in order.
+    pub mode_changes: Vec<ModeChange>,
     pub step: Option<String>,
     pub turns: Vec<Turn>,
     /// A turn is running (started, not finished).
@@ -309,7 +364,7 @@ impl State {
             forked_from: forked_from.clone(),
             workdir: workdir.clone(),
             session: None,
-            mode: Mode::Ask,
+            mode_changes: Vec::new(),
             step: None,
             turns: Vec::new(),
             busy: false,
@@ -354,7 +409,7 @@ impl State {
                     n: *n,
                     said: said.clone(),
                     edits: edits.clone(),
-                    mode: *mode,
+                    mode: mode.clone(),
                     started: l.at.clone(),
                     reply: None,
                     result: None,
@@ -364,6 +419,7 @@ impl State {
                     cost_usd: None,
                     failure: None,
                     approvals: Vec::new(),
+                    refusals: Vec::new(),
                     instructions: instructions.clone(),
                     attachments: attachments.clone(),
                     cut: false,
@@ -480,7 +536,35 @@ impl State {
                     a.prefix = prefix.clone();
                 }
             }
-            Event::ModeSet { mode } => self.mode = *mode,
+            Event::ModeSet { .. } => {}
+            Event::ChatMode { mode } => self.mode_changes.push(ModeChange {
+                after: self.turns.len() as u32,
+                mode: *mode,
+                at: l.at.clone(),
+            }),
+            Event::Refused {
+                id,
+                kind,
+                what,
+                reason,
+                limit,
+                facts,
+            } => {
+                if let Some(t) = self.turns.last_mut() {
+                    t.refusals.push(Refusal {
+                        id: id.clone(),
+                        kind: kind.clone(),
+                        what: what.clone(),
+                        reason: reason.clone(),
+                        limit: limit.clone(),
+                        facts: facts.clone(),
+                        state: RefusalState::Refused,
+                    });
+                }
+            }
+            Event::RefusalAllowed { id } => self.refusal_to(id, RefusalState::Allowed),
+            Event::RefusalUsed { id } => self.refusal_to(id, RefusalState::Used),
+            Event::RefusalDismissed { id } => self.refusal_to(id, RefusalState::Dismissed),
             Event::StepSet { step } => self.step = Some(step.clone()),
             Event::DocEdited { path, diff, .. } => {
                 if !diff.is_empty() {
@@ -500,6 +584,31 @@ impl State {
                 // A suggestion is also the turn's (FR-030).
             }
         }
+    }
+
+    fn refusal_to(&mut self, id: &str, to: RefusalState) {
+        if let Some(r) = self
+            .turns
+            .iter_mut()
+            .flat_map(|t| t.refusals.iter_mut())
+            .find(|r| r.id == id)
+        {
+            r.state = to;
+        }
+    }
+
+    /// 015: a refusal by its id.
+    pub fn refusal(&self, id: &str) -> Option<&Refusal> {
+        self.turns
+            .iter()
+            .flat_map(|t| t.refusals.iter())
+            .find(|r| r.id == id)
+    }
+
+    /// 015: the next refusal's id (`r1`, `r2`, …).
+    pub fn next_refusal_id(&self) -> String {
+        let n: usize = self.turns.iter().map(|t| t.refusals.len()).sum();
+        format!("r{}", n + 1)
     }
 
     /// The lead agent's name (009): `lead` for a session that never named one.
@@ -618,7 +727,7 @@ mod tests {
                     n: 1,
                     said: "checkout".into(),
                     edits: vec![],
-                    mode: Mode::Ask,
+                    mode: "ask".into(),
                     session: "s0".into(),
                     runtime: None,
                     model: None,
@@ -671,7 +780,7 @@ mod tests {
             logged(
                 6,
                 Event::ModeSet {
-                    mode: Mode::ReadOnly,
+                    mode: "read_only".into(),
                 },
             ),
             logged(
@@ -684,7 +793,6 @@ mod tests {
         let s = State::fold("c2", &events).unwrap();
         assert_eq!(s.kind, Kind::Spec);
         assert_eq!(s.session.as_deref(), Some("s1"));
-        assert_eq!(s.mode, Mode::ReadOnly);
         assert_eq!(s.step.as_deref(), Some("clarify"));
         assert!(!s.busy);
         assert_eq!(s.turns.len(), 1);
@@ -712,14 +820,15 @@ mod tests {
         })
         .unwrap();
         log.append(Event::ModeSet {
-            mode: Mode::RunAnything,
+            mode: "run_anything".into(),
         })
         .unwrap();
         drop(log);
         let (_, events, notes) = ConversationLog::open(&d).unwrap();
         assert!(notes.is_empty());
+        // 015: an old chat's mode is read and ignored (research R-6).
         let s = State::fold("c1", &events).unwrap();
-        assert_eq!(s.mode, Mode::RunAnything);
+        assert_eq!(s.turns.len(), 0);
         let _ = std::fs::remove_dir_all(&d);
     }
 
@@ -730,7 +839,7 @@ mod tests {
                 n,
                 said: "x".into(),
                 edits: vec![],
-                mode: Mode::Ask,
+                mode: "ask".into(),
                 session: "s".into(),
                 runtime: Some("claude".into()),
                 model: Some(model.into()),

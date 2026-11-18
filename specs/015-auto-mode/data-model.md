@@ -35,6 +35,7 @@ Any other value is a settings error, named the way the other `[defaults]` keys a
 |---|---|---|
 | `refused` | `id` (`r1`, `r2`, … per chat), `kind` (`edit`, `run`, `tool`), `what` (path, command, URL or tool name), `reason` (plain words), `limit` (`edit`, `target`, `tool`, `control`), `facts` (optional: 012's folder facts) | Fallow refused a request (research R-4), in either chat and either mode. |
 | `refusal_allowed` | `id` | The engineer chose "Allow this once". |
+| `refusal_used` | `id` | The agent's request used the grant. |
 | `refusal_dismissed` | `id` | The engineer chose "Dismiss". |
 | `chat_mode` | `mode` | The engineer changed the mode, for the chat's one-line notes. It is never used to restore the mode. |
 | `mode_set` (old) | `mode` | The lead's old event. Read and ignored. |

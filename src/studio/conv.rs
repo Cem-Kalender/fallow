@@ -67,8 +67,21 @@ pub struct Conv {
     /// The engineer's edited documents as the turn began, put back if it is withdrawn: they
     /// are not committed until a turn ends.
     pub kept: Vec<crate::conversation::events::KeptDoc>,
-    /// 012 (R-6): "until I switch back", in memory only: a restart reads as "Ask".
-    pub allow_until_switch: bool,
+    /// 015 (research R-1, R-6): Manual or Auto, in memory: at load it is the default mode.
+    pub mode: super::mode::ChatMode,
+    /// 015 (R-6): said once after a restart, when the chat was in another mode before.
+    pub mode_note: Option<String>,
+    /// 015 (R-5): one-shot grants from "Allow this once", in memory only.
+    pub grants: Vec<super::mode::Grant>,
+    /// 015 (R-5): Fallow's messages to the lead, sent when its turn ends (or at once when idle).
+    pub lead_notes: Vec<String>,
+    /// 015 (R-3): the tool calls of the running turn that Fallow answered itself, so a runtime's
+    /// own refusal is told from Fallow's.
+    pub answered: Vec<String>,
+    /// 015 (FR-010): the running turn's tool calls whose output Fallow hides (a read or search
+    /// of a file that may hold secrets, as decided when the request came), shared with the
+    /// turn's thread.
+    pub hidden: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
     /// 012 (R-9): after a restart, waiting messages wait for the engineer.
     pub queue_hold: bool,
     /// 012 (R-9): the engineer said something since the last failed turn: waiting messages go.
@@ -77,8 +90,6 @@ pub struct Conv {
     pub slot_wait: Option<String>,
     /// 012 (R-19): the session's working copy or branch is gone: it can only be closed.
     pub gone: Option<String>,
-    /// 012 (FR-008): "until I switch back" was on when Fallow stopped; it is off now.
-    pub mode_reset: bool,
     /// 012 (R-19): set when the turn ends, so the thread recording its process group never
     /// leaves `turn-<n>.pid` behind it (fourth review, 6).
     pub turn_ended: Arc<AtomicBool>,
@@ -134,14 +145,18 @@ impl Conv {
             head_before: None,
             token: None,
             kept: Vec::new(),
-            allow_until_switch: false,
+            mode: super::mode::ChatMode::Manual,
+            mode_note: None,
+            grants: Vec::new(),
+            lead_notes: Vec::new(),
+            answered: Vec::new(),
+            hidden: Default::default(),
             queue_hold: false,
             queue_go: false,
             slot_wait: None,
             fresh: None,
             primed: None,
             gone: None,
-            mode_reset: false,
             turn_ended: Arc::new(AtomicBool::new(false)),
             gates_running: false,
             gates_error: None,
@@ -195,6 +210,22 @@ impl Conv {
     pub fn view(&self) -> Value {
         let mut v = serde_json::to_value(&self.state).unwrap_or(Value::Null);
         v["live"] = json!(self.live);
+        // 015: the chat's mode and its refusals' states as the page shows them (data-model
+        // "Views"); an allowed refusal whose grant is gone (a restart) is expired.
+        v["mode"] = json!(self.mode.name());
+        v["mode_note"] = json!(self.mode_note);
+        if let Some(turns) = v["turns"].as_array_mut() {
+            for t in turns {
+                if let Some(rs) = t["refusals"].as_array_mut() {
+                    for r in rs {
+                        let id = r["id"].as_str().unwrap_or_default();
+                        if r["state"] == "allowed" && !self.grants.iter().any(|g| g.refusal == id) {
+                            r["state"] = json!("expired");
+                        }
+                    }
+                }
+            }
+        }
         v["activity"] = json!(self.activity);
         v["mark"] = json!(self.mark());
         v["cancelling"] = json!(self.state.cancelling().is_some());

@@ -675,7 +675,7 @@ impl Studio {
             n,
             said: text.to_string(),
             edits: Vec::new(),
-            mode: c.state.mode,
+            mode: c.mode.name().to_string(),
             session: session.id().to_string(),
             runtime: Some(def.runtime.clone()),
             model: Some(def.model.clone()).filter(|m| !m.is_empty()),
@@ -686,6 +686,10 @@ impl Studio {
             head: head.clone(),
         })?;
         c.live.clear();
+        c.answered.clear();
+        if let Ok(mut h) = c.hidden.lock() {
+            h.clear();
+        }
         c.head_before = head;
         // Read now, never assumed: the engineer may commit on it while the copy is made (issue
         // #2 review).
@@ -720,6 +724,10 @@ impl Studio {
             call,
             stop,
             turn_file,
+            self.convs
+                .get(conv)
+                .map(|c| c.hidden.clone())
+                .unwrap_or_default(),
         );
         if spawned.is_ok() {
             // The agent's group, recorded once it is adopted, so a restart can stop it (R-19).
@@ -879,9 +887,9 @@ impl Studio {
         Ok(())
     }
 
-    /// 012 (FR-008, FR-009, R-6): a permission prompt from a session's assistant, judged in the
-    /// contract's terms. `Ok` when it was answered or is waiting for the engineer; `Err` with
-    /// why it is denied.
+    /// 012 (FR-008, FR-009), 015 (research R-1, R-2): a permission prompt from a session's
+    /// assistant, decided by `mode::assistant` in the contract's terms. `Ok` when it was
+    /// answered, refused (visibly) or is waiting for the engineer; `Err` with why it is denied.
     pub(super) fn solo_tool_call(
         &mut self,
         conv: &str,
@@ -893,135 +901,97 @@ impl Studio {
         let jc = self.judge_cx(conv, runtime)?;
         let c = self.convs.get(conv).ok_or("the session is gone")?;
         let solo = c.state.solo.as_ref().ok_or("not a session")?;
+        // Without web access the assistant has no web tools at all (012 R-8, 015 FR-003).
+        if req.kind == agent::RequestKind::Web && !solo.web {
+            return Err("Web access is off for this session.".into());
+        }
+        let p = self.project(&c.state.project)?;
         let ctxj = judge::Ctx {
             wt: &jc.wt,
             branch: &jc.branch,
             folder: &jc.folder,
             protect: &jc.protect,
         };
-        let allow = |reply: &Sender<Reply>| {
-            let _ = reply.send(Reply::Ok(agent::registry::permission_reply(
-                runtime, true, "", raw,
-            )));
+        let target = super::mode::Target::resolve(p.remote_seen.as_ref(), || git::branch(&p.path));
+        let control_files = agent::registry::capabilities(runtime, &self.settings).control_files;
+        let root = p.in_root("");
+        // What a request that changes the engineer's folder shows (FR-016, T037).
+        let facts_of = |command: &str| {
+            Some(super::refwatch::folder_facts(
+                &jc.folder, command, &jc.branch, &root, &jc.wt,
+            ))
         };
-        match req.kind {
-            agent::RequestKind::Web => {
-                if solo.web {
-                    allow(&reply);
-                    Ok(())
-                } else {
-                    Err("Web access is off for this session.".into())
+        // 015 (FR-010): a read or search of a file that may hold secrets: its output is hidden.
+        if req.kind == agent::RequestKind::Read {
+            let path = req.path.as_deref();
+            let why = match req.tool.as_str() {
+                "Grep" => judge::search_problem(path, req.query.as_deref(), &ctxj),
+                "Glob" => None,
+                _ => judge::read_problem(path, &ctxj),
+            };
+            let id = raw["tool_use_id"].as_str().unwrap_or_default();
+            if why.is_some_and(|w| w.contains("secrets")) && !id.is_empty() {
+                if let Ok(mut h) = c.hidden.lock() {
+                    h.push(id.to_string());
                 }
             }
-            agent::RequestKind::Edit => {
-                let path = req.path.clone().unwrap_or_default();
-                match judge::edit_problem(&path, &ctxj) {
-                    None => {
-                        allow(&reply);
-                        Ok(())
-                    }
-                    Some(why) => Err(format!("The assistant may not change {path}: {why}")),
-                }
-            }
-            // 012 (FR-043): a read in the working copy goes unasked; one outside it, or of a
-            // file that may hold secrets, is the engineer's, whatever the mode.
-            agent::RequestKind::Read => {
-                let path = req.path.as_deref();
-                let problem = match req.tool.as_str() {
-                    "Grep" => judge::search_problem(path, req.query.as_deref(), &ctxj),
-                    "Glob" => judge::listing_problem(path, req.query.as_deref(), &ctxj),
-                    _ => judge::read_problem(path, &ctxj),
-                };
-                let Some(why) = problem else {
-                    allow(&reply);
-                    return Ok(());
-                };
-                if c.pending.is_some() {
-                    return Err(
-                        "Another request is waiting for the engineer: ask for this read again once it is answered."
-                            .into(),
-                    );
-                }
-                let what = match (req.tool.as_str(), path, req.query.as_deref()) {
-                    ("Grep", p, g) => format!(
-                        "search in {}{}",
-                        p.unwrap_or("the working copy"),
-                        g.map(|g| format!(" (files {g})")).unwrap_or_default()
-                    ),
-                    ("Glob", p, g) => format!(
-                        "list {} in {}",
-                        g.unwrap_or("files"),
-                        p.unwrap_or("the working copy")
-                    ),
-                    (_, p, _) => format!("read {}", p.unwrap_or_default()),
-                };
-                let tool = req.tool.clone();
-                self.ask_engineer(
-                    conv,
-                    runtime,
-                    &tool,
-                    true,
-                    what,
-                    vec![why],
-                    raw,
-                    reply,
-                    None,
-                )
-            }
-            agent::RequestKind::Other => Err(format!(
-                "{} is not a tool Fallow can judge.",
-                if req.tool.is_empty() {
-                    "That"
-                } else {
-                    &req.tool
-                }
-            )),
-            agent::RequestKind::Run => {
+        }
+        let decision = super::mode::assistant(
+            c.mode,
+            req,
+            &super::mode::AssistantCx {
+                judge: &ctxj,
+                control_files: &control_files,
+                gates: &jc.gates,
+                approved: &p.approved_commands,
+                target: target.as_ref(),
+            },
+            facts_of,
+        );
+        // A command asked in Manual that changes the engineer's folder shows 012's facts.
+        let ask_facts = match (&decision, req.kind) {
+            (super::mode::Decision::Ask(_), agent::RequestKind::Run) => {
                 let command = req.command.clone().unwrap_or_default();
-                let p = self.project(&c.state.project)?;
-                if judge::runs_unasked(&command, &jc.gates, &p.approved_commands, &ctxj) {
-                    self.open_call(conv, raw, &command);
-                    allow(&reply);
-                    return Ok(());
-                }
-                let verdict = judge::assess(&command, &ctxj);
-                let until = c.allow_until_switch;
-                if until && verdict == judge::Verdict::Allow {
-                    self.open_call(conv, raw, &command);
-                    allow(&reply);
-                    return Ok(());
-                }
-                if c.pending.is_some() {
-                    return Err("Another command is waiting for the engineer.".into());
-                }
-                let reasons = match verdict {
-                    judge::Verdict::Ask(why) => why,
-                    judge::Verdict::Allow => Vec::new(),
-                };
-                let tool = req.tool.clone();
-                // What a request that changes the engineer's folder shows (FR-016, T037).
-                let facts = self.project(&c.state.project).ok().and_then(|p| {
-                    super::refwatch::in_folder(&command, &p.path, &jc.wt).then(|| {
-                        super::refwatch::folder_facts(
-                            &p.path,
-                            &command,
-                            &jc.branch,
-                            &p.in_root(""),
-                            &jc.wt,
-                        )
-                    })
-                });
-                self.ask_engineer(
-                    conv, runtime, &tool, false, command, reasons, raw, reply, facts,
-                )
+                super::refwatch::in_folder(&command, &jc.folder, &jc.wt)
+                    .then(|| facts_of(&command))
+                    .flatten()
             }
+            _ => None,
+        };
+        self.answer_request(
+            conv,
+            runtime,
+            super::mode::Agent::Assistant,
+            req,
+            raw,
+            reply,
+            decision,
+            ask_facts,
+        )
+    }
+
+    /// 012 (FR-043): how a read put to the engineer is named on its card.
+    pub(super) fn read_words(req: &agent::PermissionRequest) -> String {
+        let path = req.path.as_deref();
+        match (req.tool.as_str(), path, req.query.as_deref()) {
+            ("Grep", p, g) => format!(
+                "search in {}{}",
+                p.unwrap_or("the working copy"),
+                g.map(|g| format!(" (files {g})")).unwrap_or_default()
+            ),
+            ("Glob", p, g) => format!(
+                "list {} in {}",
+                g.unwrap_or("files"),
+                p.unwrap_or("the working copy")
+            ),
+            (_, p, _) => format!("read {}", p.unwrap_or_default()),
         }
     }
 
     /// 012 (FR-008, FR-043): a command or a read put to the engineer: recorded as asked, and
     /// answered when they answer (or the wait runs out).
     #[allow(clippy::too_many_arguments)]
-    fn ask_engineer(
+    pub(super) fn ask_engineer(
         &mut self,
         conv: &str,
         runtime: &str,
@@ -1177,11 +1147,6 @@ impl Studio {
             let Some(c) = self.convs.get_mut(&id) else {
                 continue;
             };
-            let mark = c.dir.join("until_switch");
-            if mark.exists() {
-                let _ = std::fs::remove_file(&mark);
-                c.mode_reset = true;
-            }
             let Some(s) = c.state.solo.clone() else {
                 continue;
             };
@@ -1288,27 +1253,13 @@ impl Studio {
         }
     }
 
-    /// 012 (FR-008): "Ask for commands" or "until I switch back" (in memory only).
+    /// 012, 015 (FR-001): a session's mode, `manual` or `auto`, as `set_mode` sets it.
     pub fn set_solo_mode(&mut self, conv: &str, mode: &str) -> Result<Value, String> {
-        let c = self.conv_mut(conv)?;
-        if c.state.solo.is_none() {
+        if self.conv_mut(conv)?.state.solo.is_none() {
             return Err("not a session".into());
         }
-        c.allow_until_switch = match mode {
-            "ask" => false,
-            "until_switch" => true,
-            other => return Err(format!("no mode {other:?}: ask or until_switch")),
-        };
-        // Never the mode after a restart (FR-008): only a mark that it was on, to say so.
-        let mark = c.dir.join("until_switch");
-        if c.allow_until_switch {
-            let _ = std::fs::write(&mark, "");
-        } else {
-            let _ = std::fs::remove_file(&mark);
-        }
-        c.mode_reset = false;
-        c.tick();
-        Ok(json!({}))
+        let mode = super::mode::ChatMode::parse(mode)?;
+        self.set_mode(conv, mode)
     }
 
     /// 012 (R-9, R-13): a waiting message is sent when the turn before it ended and a slot is
@@ -1496,7 +1447,9 @@ impl Studio {
             "worktree": s.worktree,
             "lfs": s.lfs,
             "web": { "on": s.web, "can_switch": caps.web_off },
-            "mode": if c.allow_until_switch { "until_switch" } else { "ask" },
+            "mode": c.mode.name(),
+            "mode_note": c.mode_note,
+            "default_mode": self.settings.defaults.chat_mode.name(),
             "base": base,
             "head": head,
             "pending_commit": s.pending_commit.map(|n| json!({
@@ -1507,7 +1460,6 @@ impl Studio {
             "queue": s.queue,
             "slot_wait": c.slot_wait,
             "gone": c.gone,
-            "mode_reset": c.mode_reset,
             "gates": {
                 "label": s.gates_label(&head, declared),
                 "running": c.gates_running,

@@ -512,15 +512,12 @@ fn studio_route(
             conv: c.to_string(),
         }),
         ("POST", ["api", "conversations", c, "mode"]) => {
-            match s("mode")
-                .as_deref()
-                .and_then(crate::agent::rights::Mode::parse)
-            {
-                Some(mode) => r(Req::SetMode {
+            match crate::studio::mode::ChatMode::parse(s("mode").as_deref().unwrap_or_default()) {
+                Ok(mode) => r(Req::SetMode {
                     conv: c.to_string(),
                     mode,
                 }),
-                None => Some(Err("mode: read_only, approved, ask or run_anything".into())),
+                Err(e) => Some(Err(e)),
             }
         }
         ("POST", ["api", "conversations" | "sessions", c, "approve"]) => {
