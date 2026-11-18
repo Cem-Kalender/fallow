@@ -94,7 +94,7 @@
     if (!x) return raw("");
     const out = [];
     if (x.gone) out.push(h`<div class="notice" role="alert">${x.gone}. The session can only be closed; its conversation stays readable.</div>`);
-    if (x.mode_reset) out.push(h`<div class="notice">Fallow restarted: "Until I switch back" is off, and commands are asked again.</div>`);
+    if (x.mode_note) out.push(h`<div class="notice">${x.mode_note}</div>`);
     if (x.start.dirty) out.push(h`<div class="notice">Your project folder had uncommitted changes when this session started: they are not in the session's copy.</div>`);
     if (x.lfs) out.push(h`<div class="notice">This project uses Git LFS: the session's copy holds LFS pointers, not the files. Ask the assistant to run <span class="mono">git lfs pull</span> if it needs them.</div>`);
     if ((x.features || []).length) out.push(h`<div class="small solo-note">Features started from this session: ${x.features.map((f, i) => h`${i ? ", " : ""}<a href="#/p/${encodeURIComponent(s.project)}/f/${encodeURIComponent(f.feature)}">${f.feature}</a>`)}</div>`);
@@ -107,7 +107,6 @@
       <div class="row wrap gap-8 mt-6"><button class="btn btn2 xs" data-act="solo-discard">Undo these changes…</button></div></div>`);
     if (x.start_moved) out.push(h`<div class="notice">${x.start.branch || "The starting branch"} moved by ${x.start_moved.commits} commit${x.start_moved.commits === 1 ? "" : "s"} since this session's base: ask the assistant to bring the branch up to date.</div>`);
     if (x.editor_during_turn) out.push(h`<div class="notice">You opened the session's copy in your editor while the assistant works: what you change now counts as this turn's.</div>`);
-    if (x.mode === "until_switch") out.push(h`<div class="notice">Until you switch back, commands run without asking, except the ones Fallow asks about one by one. Fallow judges a command as it is written; it cannot see what a script does inside.</div>`);
     return out;
   }
 
@@ -238,9 +237,8 @@
     return out;
   }
 
-  const MODES = { ask: "Ask for commands", until_switch: "Until I switch back" };
   function composer(s) {
-    const mode = (s && s.session && s.session.mode) || "ask";
+    const mode = (s && s.session && s.session.mode) || "manual";
     const busy = !!(s && s.busy);
     const x = s && s.session;
     const images = !!(x && x.images);
@@ -250,7 +248,7 @@
         <label for="say" class="sr">Message the assistant</label>
         <textarea id="say" rows="2" placeholder="${s && s.session ? "Message the assistant…" : "What should the assistant do?"}"></textarea>
         <div class="cbar">
-          ${s && s.session ? h`<button type="button" class="mode-chip" data-act="solo-mode" data-mode="${mode}" aria-label="${`Mode: ${MODES[mode]}. Click to switch.`}">${MODES[mode]}</button>` : ""}
+          ${s && s.session ? Fallow.modeSwitch(mode, s.default_mode || s.session.default_mode) : ""}
           ${images ? h`<label class="btn btn2 xs" title="Attach an image (png, jpeg, gif or webp, up to 5 MiB), or paste a screenshot into the message">Attach image<input id="solo-file" type="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden></label>` : ""}
           <span class="grow"></span>
           ${busy ? h`<button class="send-btn stop" type="button" data-act="solo-stop" aria-label="Stop the assistant" title="Stop the assistant"><svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><rect width="12" height="12" rx="2" fill="currentColor"/></svg></button>` : ""}
@@ -312,11 +310,6 @@
     try { await post(`/api/sessions/${encodeURIComponent(s.id)}/rename`, { name }); } catch (e) { alertLine(e.message); }
   }
 
-  async function setMode(s) {
-    const now = (s.session && s.session.mode) || "ask";
-    const next = now === "ask" ? "until_switch" : "ask";
-    try { await post(`/api/sessions/${encodeURIComponent(s.id)}/mode`, { mode: next }); } catch (e) { alertLine(e.message); }
-  }
 
   // ---- 012 US4: a ref's change in words (FR-017) ----------------------------------------------
   const refName = (r) => String(r || "").replace(/^refs\/heads\//, "").replace(/^refs\/remotes\//, "");
@@ -568,6 +561,6 @@
     try { await Fallow.api("DELETE", `/api/sessions/${encodeURIComponent(id)}`, { confirmed: true }); return true; } catch (e) { alertLine(e.message); return false; }
   }
 
-  Fallow.solo = { asConv, web, queueAct, unattach, closeSession, removeCopy, deleteRecord, HOW, makeFeature, makeFeatureFromEarlier, head, menu, notices, list, composer, say, setMode, stopTurn, openEditor, rename, changesPanel, gatesPanel, undo, pending, runGates, branchesPanel };
+  Fallow.solo = { asConv, web, queueAct, unattach, closeSession, removeCopy, deleteRecord, HOW, makeFeature, makeFeatureFromEarlier, head, menu, notices, list, composer, say, stopTurn, openEditor, rename, changesPanel, gatesPanel, undo, pending, runGates, branchesPanel };
   void esc;
 })();

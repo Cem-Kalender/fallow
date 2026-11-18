@@ -195,11 +195,14 @@
       const box = document.getElementById("say");
       const typed = box ? box.value : "";
       const focused = box && document.activeElement === box;
+      // 015 (review of US1, 1): a keyboard user on the mode switch keeps their place.
+      const onSwitch = !!document.activeElement && !!document.activeElement.closest && !!document.activeElement.closest("#solo-composer .mode-switch");
       comp.innerHTML = Fallow.solo.composer(s).s;
       comp.dataset.busy = String(busy);
       comp.dataset.mode = mode;
       const now = document.getElementById("say");
       if (now) { now.value = typed; if (focused) now.focus(); }
+      if (onSwitch) Fallow.focusMode();
     }
     if (Fallow.showWorking) Fallow.showWorking(busy, Fallow.solo.asConv(s));
   }
@@ -209,7 +212,7 @@
       return update();
     }
     const p = state;
-    const c = p.conversation || { turns: [], mode: "ask" };
+    const c = p.conversation || { turns: [], mode: "manual" };
     app.innerHTML = h`<div class="screen" id="project-screen" data-id="${p.id}">
       <div class="subbar">
         <div><div class="crumb"><a href="#/">Projects</a> ›</div><h1 class="page-title">${p.name}</h1></div>
@@ -820,10 +823,6 @@
         }
         if (name === "solo-rename") {
           if (state.session) await Fallow.solo.rename(state.session);
-          return again();
-        }
-        if (name === "solo-mode") {
-          if (state.session) await Fallow.solo.setMode(state.session);
           return again();
         }
         if (name === "solo-undo") {

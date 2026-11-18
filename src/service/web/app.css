@@ -444,11 +444,18 @@ dialog.confirm ul { margin: 10px 0 0; padding-left: 20px; color: var(--body); li
 .send-btn { flex: none; width: 32px; height: 32px; display: grid; place-items: center; border: 0; border-radius: 8px; background: var(--ink); color: var(--on-ink); cursor: pointer; }
 .send-btn:disabled { opacity: .35; cursor: default; }
 .send-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.mode-chip { flex: none; min-height: 30px; display: inline-flex; align-items: center; gap: 6px; padding: 0 8px; border: 0; border-radius: 8px; background: transparent; font: 600 12.5px var(--sans); color: var(--body); cursor: pointer; }
-.mode-chip:hover { background: var(--chip); }
-.mode-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.mode-chip svg { stroke: var(--accent); }
-.mode-chip .hint { font-weight: 500; color: var(--faint); }
+/* 015 (FR-002, R-7): the same Manual | Auto switch in both composers; the selected option has a
+   filled background and a check, never colour alone (013). */
+.mode-switch { flex: none; display: inline-flex; align-items: stretch; gap: 2px; padding: 2px; border: 1px solid var(--line); border-radius: 9px; background: var(--panel); }
+.mode-opt { min-height: 26px; display: inline-flex; align-items: center; gap: 4px; padding: 0 10px; border: 0; border-radius: 7px; background: transparent; font: 600 12.5px var(--sans); color: var(--body); cursor: pointer; }
+.mode-opt:hover { background: var(--chip); }
+.mode-opt.on { background: var(--accent-bg); color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.mode-opt:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.mode-opt .check { font-size: 11px; }
+.mode-note { margin: 6px 0; }
+.mode-wrap { flex: none; display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
+.mode-hint { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+@media (max-width: 520px) { .mode-hint { display: none; } }
 .question { padding: 16px; border-color: var(--accent-line); }
 .question .k { font-size: 12px; font-weight: 600; color: var(--accent); margin-bottom: 6px; }
 .opt { display: flex; gap: 10px; align-items: flex-start; width: 100%; text-align: left; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); font: 14px var(--sans); color: var(--ink); cursor: pointer; line-height: 1.4; }

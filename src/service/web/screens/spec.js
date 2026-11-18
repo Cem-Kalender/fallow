@@ -109,7 +109,7 @@
 
   function update() {
     const f = state;
-    const c = f.conversation || { turns: [], mode: "ask" };
+    const c = f.conversation || { turns: [], mode: "manual" };
     const chat = document.getElementById("chat");
     const wasAtEnd = atEnd(chat);
     document.getElementById("chat-list").innerHTML = h`${messages(c)}`.s;
@@ -125,7 +125,7 @@
     const f = state;
     const key = `${route.project}/${route.feature}`;
     if (document.getElementById("spec-screen") && document.getElementById("spec-screen").dataset.key === key) return update();
-    const c = f.conversation || { turns: [], mode: "ask" };
+    const c = f.conversation || { turns: [], mode: "manual" };
     app.innerHTML = h`<div class="screen" id="spec-screen" data-key="${key}">
       <div class="subbar">
         <div><div class="crumb"><a href="#/p/${encodeURIComponent(route.project)}">${f.project_name}</a> · <button class="linkish" data-act="delete-session">Delete this session…</button>${f.origin ? h` · <a href="#/p/${encodeURIComponent(route.project)}" data-act="origin-open" data-origin="${f.origin.id}">${f.origin.kind === "session" ? `from the session ${f.origin.name || ""}` : "from the earlier project conversation"}</a>` : ""}</div>

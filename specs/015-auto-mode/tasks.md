@@ -84,23 +84,23 @@ description: "Task list for 015 Manual and Auto mode, the same for the lead and 
 
 **Independent test**: quickstart Q1 and Q7.
 
-- [ ] T011 [US1] Mode requests (contracts/web-api.md), in `src/service/answer.rs` and `src/studio/mod.rs`. `POST /api/sessions/<s>/mode` and `POST /api/conversations/<c>/mode` both:
+- [X] T011 [US1] Mode requests (contracts/web-api.md), in `src/service/answer.rs` and `src/studio/mod.rs`. `POST /api/sessions/<s>/mode` and `POST /api/conversations/<c>/mode` both:
   - take `manual` or `auto`, and refuse the old values;
   - set `Conv::mode`, append `ChatMode`, add the chat note (FR-006), and write the mark.
 
   `Req::SessionMode` and `Req::SetMode` take `ChatMode`.
-- [ ] T012 [US1] The default mode and restarts (R-6), in `src/studio/solo.rs` (`solo_on_load`, `new_session`) and `src/studio/mod.rs` (new lead conversation, load):
+- [X] T012 [US1] The default mode and restarts (R-6), in `src/studio/solo.rs` (`solo_on_load`, `new_session`) and `src/studio/mod.rs` (new lead conversation, load):
   - new chats and loaded chats start in `settings.defaults.chat_mode`;
   - when the mark differs from the default, `mode_note` reads "Fallow restarted: this chat is in <Mode>, your default.";
   - grants are not restored, and allowed-but-unused refusals become expired.
-- [ ] T013 [P] [US1] The shared switch (R-7), in `src/service/web/app.js`:
+- [X] T013 [P] [US1] The shared switch (R-7), in `src/service/web/app.js`:
   - `Fallow.modeSwitch(mode)`: `role="radiogroup"` labelled "Mode", two `role="radio"` buttons with `data-act="chat-mode"` and the titles of R-7, and a check glyph on the selected one;
   - replace the lead's chip (`app.js:489-490`, `696-704`, `743`, `812`) with it;
   - Shift+Tab in either composer (`app.js:955`) toggles `[data-act=chat-mode]`;
   - the description line names the default: "New chats start in <Mode> (`chat_mode` in settings.toml)".
-- [ ] T014 [P] [US1] The assistant's composer uses it, in `src/service/web/screens/solo.js` (`composer`, `setMode`, the notices at lines 97 and 110) and `src/service/web/screens/project.js` (the `solo-mode` action becomes `chat-mode`). Remove `MODES`, "Until I switch back" and its notices; show `mode_note`.
-- [ ] T015 [P] [US1] Styles for the segmented switch in both themes (013): selected and unselected states with WCAG AA contrast, and not by colour alone. In `src/service/web/app.css`.
-- [ ] T016 [US1] Test `tests/us15_modes.rs::one_switch_in_both_chats`:
+- [X] T014 [P] [US1] The assistant's composer uses it, in `src/service/web/screens/solo.js` (`composer`, `setMode`, the notices at lines 97 and 110) and `src/service/web/screens/project.js` (the `solo-mode` action becomes `chat-mode`). Remove `MODES`, "Until I switch back" and its notices; show `mode_note`.
+- [X] T015 [P] [US1] Styles for the segmented switch in both themes (013): selected and unselected states with WCAG AA contrast, and not by colour alone. In `src/service/web/app.css`.
+- [X] T016 [US1] Test `tests/us15_modes.rs::one_switch_in_both_chats`:
   - for the lead and the assistant, the mode route sets Manual and Auto, adds the notes, and refuses `until_switch` and `run_anything`;
   - a new chat starts in the default;
   - after a restart with `chat_mode = "auto"`, a chat that was in Manual is in Auto with the note;

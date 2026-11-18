@@ -486,9 +486,33 @@ const Fallow = (() => {
   }
 
   // ---- The chat with the lead (screens 2 and 5) ---------------------------------------------
-  const MODES = ["ask", "run_anything", "read_only", "approved"];
-  const MODE_LABEL = { ask: "Ask", run_anything: "Run anything", read_only: "Read only", approved: "Approved commands" };
-  const nextMode = (m) => MODES[(MODES.indexOf(m) + 1) % MODES.length];
+  // 015 (FR-001, FR-002, research R-7): the same two modes in the lead's and the assistant's
+  // chats, shown by one switch in the composer's bar.
+  const CHAT_MODES = {
+    manual: { label: "Manual", title: "Manual: Fallow asks you before commands" },
+    auto: { label: "Auto", title: "Auto: every action runs without asking you" },
+  };
+  const MODE_LABEL = { manual: "Manual", auto: "Auto" };
+  const modeName = (m) => (m === "auto" ? "auto" : "manual");
+  function modeSwitch(mode, def) {
+    const now = modeName(mode);
+    const d = CHAT_MODES[modeName(def)].label;
+    // A radio group: one tab stop (the checked option), arrows move to the other (R-7).
+    const opt = (m) => h`<button type="button" role="radio" class="mode-opt${m === now ? " on" : ""}" aria-checked="${m === now ? "true" : "false"}" tabindex="${m === now ? "0" : "-1"}" data-act="chat-mode" data-mode="${m}" title="${CHAT_MODES[m].title}">${m === now ? h`<span class="check" aria-hidden="true">✓</span>` : ""}${CHAT_MODES[m].label}</button>`;
+    return h`<span class="mode-wrap" data-mode="${now}"><span class="mode-switch" role="radiogroup" aria-label="Mode" aria-describedby="mode-hint" data-mode="${now}">${opt("manual")}${opt("auto")}</span><span class="tiny muted mode-hint" id="mode-hint" title="${`New chats start in ${d}: chat_mode in settings.toml`}">Shift+Tab · new chats: ${d} (chat_mode)</span></span>`;
+  }
+  // 015 (FR-006): the chat's note when the engineer changed its mode.
+  const MODE_NOTE = {
+    manual: "Manual: Fallow asks you before commands that are not approved.",
+    auto: "Auto: every action runs without asking you; Fallow shows you anything it refuses at the agent's limits.",
+  };
+  const MODE_MORE = {
+    manual: "",
+    auto: "Fallow judges a command as it is written and cannot see what a script does inside. An agent never edits its own runtime's settings files, in any mode.",
+  };
+  const modeNotes = (c, after) => ((c && c.mode_changes) || [])
+    .filter((m) => m.after === after)
+    .map((m) => h`<div class="tiny muted mode-note" title="${MODE_MORE[modeName(m.mode)]}">${MODE_NOTE[modeName(m.mode)]}</div>`);
 
   // The files the lead read in a turn's activity.
   // A read the engineer refused is not a read (012 T055: "Read .env" was shown after a deny).
@@ -526,6 +550,7 @@ const Fallow = (() => {
     let asked = -1;
     turns.forEach((t, i) => { if (!t.withdrawn && t.reply !== null && t.reply !== undefined) asked = i; });
     turns.forEach((t, i) => {
+      out.push(...modeNotes(c, i));
       if (t.withdrawn) {
         out.push(h`<div class="you withdrawn" title="You cancelled the lead's answer">${t.said}</div>`);
         out.push(h`<div class="tiny muted withdrawn-note">Withdrawn: you cancelled the answer${t.failure ? h`. ${t.failure}` : ", and what the lead changed for it was undone."}</div>`);
@@ -561,6 +586,7 @@ const Fallow = (() => {
       if (r.proposed_pipeline) extras.push(h`<div class="card pad-12 mt-8"><div class="row between"><span class="pill blue">proposed pipeline</span><button class="btn btn2 sm" data-draft="${r.proposed_pipeline}">Open in the designer</button></div><pre class="term">${r.proposed_pipeline}</pre></div>`);
       out.push(leadMsg(meta, md(t.reply), extras, c.avatar));
     });
+    out.push(...modeNotes(c, turns.length));
     if (c.pending_approval) {
       const a = c.pending_approval;
       out.push(h`<div class="card approval"><div class="b">The lead asks to run a command</div>
@@ -589,6 +615,11 @@ const Fallow = (() => {
     return h`<span class="small">Lead: ${name}${meta ? h` <span class="muted">· ${meta}</span>` : ""}</span>`;
   }
   function leadNotice(c) {
+    // 015 (R-6): after a restart the chat is in the default mode, whatever else is said.
+    const note = c && c.mode_note ? h`<div class="notice">${c.mode_note}</div>` : raw("");
+    return h`${note}${leadProblem(c)}`;
+  }
+  function leadProblem(c) {
     const l = c && c.lead;
     if (!l) return raw("");
     if (l.problem) return h`<div class="notice" role="alert">${l.problem}. This session cannot go on with it; start a new feature or session to use another lead.</div>`;
@@ -693,15 +724,19 @@ const Fallow = (() => {
     }
   }
 
-  const chipInner = (mode) => h`${icon.shield}${MODE_LABEL[mode]}<span class="hint">· Shift+Tab</span>`;
+  // 015: focus on the switch's checked option, after it was drawn again.
+  function focusMode() {
+    const on = document.querySelector('.composer .mode-switch [aria-checked="true"]');
+    if (on) on.focus();
+  }
 
-  // Updates the mode chip and the send button in place, so focus stays where it is (FR-032).
+  // Updates the mode switch and the send button in place, so focus stays where it is (FR-032).
   function syncComposer(c) {
-    const chip = document.querySelector("[data-act=mode]");
-    if (chip && chip.dataset.mode !== c.mode) {
-      chip.innerHTML = chipInner(c.mode).s;
-      chip.dataset.mode = c.mode;
-      chip.setAttribute("aria-label", `Mode: ${MODE_LABEL[c.mode]}. Shift+Tab switches it.`);
+    const sw = document.querySelector(".composer .mode-wrap");
+    if (sw && sw.dataset.mode !== modeName(c.mode)) {
+      const had = sw.contains(document.activeElement);
+      sw.outerHTML = modeSwitch(c.mode, c.default_mode).s;
+      if (had) focusMode();
     }
     // 009: the lead's head, its notice, and a box closed while the lead cannot answer.
     const head = document.getElementById("lead-head");
@@ -732,7 +767,7 @@ const Fallow = (() => {
   }
 
   function composer(c, placeholder) {
-    const mode = c ? c.mode : "ask";
+    const mode = c ? c.mode : "manual";
     // One box, as in VS Code's chat (008 T046): the message on top, a slim bar under it with the
     // mode on the left and the send arrow on the right.
     return h`<form class="composer" data-submit="say">
@@ -740,7 +775,7 @@ const Fallow = (() => {
         <label for="say" class="sr">Message the lead</label>
         <textarea id="say" rows="2" placeholder="${placeholder}"${raw(c && c.lead && c.lead.problem ? " disabled" : "")}></textarea>
         <div class="cbar">
-          <button type="button" class="mode-chip" data-act="mode" data-mode="${mode}" title="Shift+Tab switches the mode" aria-label="${`Mode: ${MODE_LABEL[mode]}. Shift+Tab switches it.`}">${chipInner(mode)}</button>
+          ${modeSwitch(mode, c && c.default_mode)}
           <span class="grow"></span>
           ${sendBtn(c)}
         </div>
@@ -809,9 +844,12 @@ const Fallow = (() => {
       if (back) back.focus();
       return true;
     }
-    if (name === "mode") {
-      const v = await get(`/api/conversations/${conv}`);
-      await post(`/api/conversations/${conv}/mode`, { mode: nextMode(v.mode) });
+    if (name === "chat-mode") {
+      try {
+        if (el.getAttribute("aria-checked") !== "true") await post(`/api/conversations/${conv}/mode`, { mode: el.dataset.mode });
+      } catch (e) {
+        alertLine(e.message);
+      }
       after();
       return true;
     }
@@ -950,10 +988,18 @@ const Fallow = (() => {
       if (b) { b.setAttribute("aria-expanded", "false"); b.focus(); }
       return;
     }
+    // 015 (R-7): arrows in the mode switch move to the other option and choose it.
+    if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(ev.key) && ev.target && ev.target.closest && ev.target.closest(".mode-switch")) {
+      ev.preventDefault();
+      const other = ev.target.closest(".mode-switch").querySelector('[aria-checked="false"]');
+      if (other) other.click();
+      return;
+    }
+    // 015 (FR-002): Shift+Tab in either composer switches between Manual and Auto.
     if (ev.key === "Tab" && ev.shiftKey && ev.target && ev.target.id === "say") {
       ev.preventDefault();
-      const chip = document.querySelector("[data-act=mode]");
-      if (chip) chip.click();
+      const other = document.querySelector('.composer .mode-switch [aria-checked="false"]');
+      if (other) other.click();
     }
     // Enter sends, Shift+Enter starts a new line (the engineer, 2026-11-01); not while an
     // input method is composing a character.
@@ -1020,7 +1066,7 @@ const Fallow = (() => {
   }
 
   return { deleteSession, chatWide, expandBtn, saveFor, scopeOf, esc, h, raw, md, inline, LOGO, icon, api, get, post, watch, live, here, confirm, register, route, show, start, money,
-    MODE_LABEL, messages, composer, syncComposer, chatAct, sendSay, alertLine, atEnd, stagePill, filesRead, leadHead, leadNotice, working, leaveAsked, restamp, showWorking, closeAsked,
+    MODE_LABEL, modeSwitch, modeNotes, focusMode, messages, composer, syncComposer, chatAct, sendSay, alertLine, atEnd, stagePill, filesRead, leadHead, leadNotice, working, leaveAsked, restamp, showWorking, closeAsked,
     get headerWatch() { return headerWatch; } };
 
 })();
