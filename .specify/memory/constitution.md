@@ -1,17 +1,19 @@
 <!--
 Sync Impact Report
 ==================
-Version change: 8.0.0 → 9.0.0
-Bump rationale: MAJOR. A solo session gets Auto mode, in which the assistant's actions run without
-asking the engineer, and the engineer may allow, once, an action outside the assistant's fixed
-limits, including a push to a protected target branch. This removes guarantees (per-command asks
-in solo sessions; II's "never pushes to the target branch" in that one case): MAJOR under
-Governance. Why: user feedback on 2026-11-18 ("How do I turn on run without permission? It keeps
-asking."); decided by the project owner on 2026-11-18 for feature 015: "Auto mode is auto mode.
-Manual mode is manual mode", refusals at the limits never silent, and a button to override them.
+Version change: 9.0.0 → 10.0.0
+Bump rationale: MAJOR. The lead's spec sessions get the same two modes as the assistant's solo
+sessions, Manual and Auto, replacing the lead's four (Read only, Approved commands, Ask, Run
+anything); the lead's limit to spec documents becomes a fixed limit like the assistant's, with a
+visible refusal that the engineer may allow once; and no runtime may be given a rule that allows
+commands or edits without the request reaching Fallow (as the lead's Run anything did). This
+removes guarantees (the lead's edits limited to spec documents "either way"): MAJOR under
+Governance. It also restores 9.0.0's accidental loss of the lead's "until they switch back", in
+the form of Auto. Why: the engineer, 2026-11-18, during /speckit-plan for feature 015: "Why would
+the modes differ between the lead and the solo session?"
 
-Modified sections: II. The Engineer Decides (solo sessions: Manual and Auto; the override of a
-refusal is the engineer's word); VI. Least Privilege (Auto mode; the permission-checks rule).
+Modified sections: II. The Engineer Decides (both chats: Manual and Auto; refusals in either
+mode); VI. Least Privilege (fixed limits; the permission-checks rule).
 
 Added sections: none. Removed sections: none.
 
@@ -19,8 +21,9 @@ Templates requiring updates: none.
 
 Follow-up TODOs: none.
 
-Previous amendments: 8.0.0 (MAJOR, 2026-11-14) memory counted as each process's private working
-set; 7.0.1 (PATCH, 2026-11-14) budgets measured on each platform Fallow supports;
+Previous amendments: 9.0.0 (MAJOR, 2026-11-18) Manual and Auto in solo sessions, visible
+refusals with a one-time override; 8.0.0 (MAJOR, 2026-11-14) memory counted as each process's
+private working set; 7.0.1 (PATCH, 2026-11-14) budgets measured on each platform Fallow supports;
 7.0.0 (MAJOR, 2026-11-14) Fallow as a standalone desktop app: the Studio
 only in Fallow's own window through the system's web view, the browser page retired, combined
 memory budgets (< 250 MB idle, < 400 MB running) and window ready < 1 s, a per-user install
@@ -68,12 +71,13 @@ offers to merge has been checked by something other than the agent that produced
 - In a solo session the assistant acts on the engineer's word: a merge, commit, push or pull
   request it makes when the engineer asks for it counts as the engineer's decision. Fallow shows
   every change to the project's branches and remotes it observes, from any session.
-- A solo session is in Manual or Auto mode, as the engineer chooses. In Manual, Fallow asks the
-  engineer before commands that are not approved. In Auto, the engineer's choice of Auto is their
-  word for every action within the assistant's fixed limits (VI), and nothing is asked. An action
-  outside those limits is refused, never silently: the assistant is told why, and the engineer
-  sees the refusal at once with the reason and a way to allow it once. Allowing it, even a push to
-  a protected target branch, is the engineer's decision, and the first rule does not forbid it.
+- The lead's spec sessions and the assistant's solo sessions are each in Manual or Auto mode, as
+  the engineer chooses. In Manual, Fallow asks the engineer before commands that are not approved.
+  In Auto, the engineer's choice of Auto is their word for every action within the agent's fixed
+  limits (VI), and nothing is asked. An action outside those limits is refused, in either mode,
+  never silently: the agent is told why, and the engineer sees the refusal at once with the reason
+  and a way to allow it once. Allowing it, even a push to a protected target branch, is the
+  engineer's decision, and the first rule does not forbid it.
 - Agent steps start only after the engineer approved the plan, apart from the planning
   conversation the engineer started. The approval covers that run's steps, within its caps.
 - The engineer sets how much is decided without them (the autonomy level). The lead may answer an
@@ -165,14 +169,15 @@ already has.
   edits only its own working copy, and never the locked documents. A checker runs commands without
   editing. The lead writes only spec documents (`specs/`, the constitution, `.fallow/`). The
   assistant edits only its solo session's working copy, and the project's branches only on the
-  engineer's word (II). Commands are limited to the gates, the plan's commands and the project's
-  approved commands.
-- Options that make an agent skip its own permission checks MUST NOT be used: Fallow answers every
-  request an agent makes itself, in every mode. In a conversation the engineer is present for,
-  they may let the lead run commands that are not approved, per command. In a solo session the
-  engineer chooses Manual (asked per command) or Auto (every action within the assistant's fixed
-  limits runs without asking; outside them, II). The lead's edits stay limited to spec documents
-  either way.
+  engineer's word (II). These are the lead's and the assistant's fixed limits; beyond them, only
+  what the engineer allowed once from a refusal (II). Commands are limited to the gates, the
+  plan's commands and the project's approved commands, except as the next rule allows.
+- Options that make an agent skip its own permission checks MUST NOT be used, nor rules that let
+  a runtime allow commands or edits without the request reaching Fallow: Fallow answers every
+  request an agent makes itself, in every mode. In a conversation the engineer is present for (the
+  lead's spec session, the assistant's solo session), the engineer chooses Manual (commands that
+  are not approved are asked per command) or Auto (every action within the agent's fixed limits
+  runs without asking; outside them, II).
 - Fallow writes only to these places:
   - its own data and config directories;
   - the working copies and branches of its loops, conversations and solo sessions;
@@ -274,4 +279,4 @@ breaks silently on the next, and ties the engineer to one supplier.
   section; unjustified violations block merge.
 - Compliance is reviewed at every pull request and at every release.
 
-**Version**: 9.0.0 | **Ratified**: 2026-10-13 | **Last Amended**: 2026-11-18
+**Version**: 10.0.0 | **Ratified**: 2026-10-13 | **Last Amended**: 2026-11-18

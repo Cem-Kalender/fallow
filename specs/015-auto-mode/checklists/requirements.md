@@ -1,4 +1,4 @@
-# Specification Quality Checklist: Manual and Auto mode for the assistant
+# Specification Quality Checklist: Manual and Auto mode, the same for the lead and the assistant
 
 **Purpose**: Validate specification completeness and quality before proceeding to planning
 **Created**: 2026-11-18
@@ -32,4 +32,4 @@
 ## Notes
 
 - Fixed limits hold in Auto with visible refusals (clarified 2026-11-18, FR-009).
-- Constitution 9.0.0 (2026-11-18) made for this feature (II, VI).
+- Constitution 10.0.0 (2026-11-18) made for this feature (II, VI).
