@@ -1267,6 +1267,8 @@ impl Studio {
     pub fn solo_tick(&mut self, ctx: &Ctx) {
         // 012 (R-15): spec sessions whose constitution step is done run specify on the brief.
         self.brief_tick(ctx);
+        // 015 (R-5): Fallow's notes to a lead whose turn ended.
+        self.lead_notes_tick(ctx);
     }
 
     /// 012 (R-9): the sessions whose oldest waiting message may go now: (session, id, text).

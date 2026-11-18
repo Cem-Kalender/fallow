@@ -1285,6 +1285,8 @@ impl Engine {
                     .collect(),
             })
             .collect();
+        // 015 (R-9): refusals in the chats, waiting for the engineer.
+        items.extend(self.studio.refusals_waiting());
         items.sort_by(|a, b| b["at"].as_str().cmp(&a["at"].as_str()));
         items
     }
@@ -4036,6 +4038,7 @@ impl Engine {
             | Req::Commands { conv: c }
             | Req::SetMode { conv: c, .. }
             | Req::Approve { conv: c, .. }
+            | Req::Refusal { conv: c, .. }
             | Req::SetLead { conv: c, .. } => conv(c),
             Req::SessionMode { session, .. }
             | Req::RenameSession { session, .. }
@@ -4208,6 +4211,9 @@ impl Engine {
                 made
             }
             Req::SessionMode { session, mode } => self.studio.set_solo_mode(&session, &mode),
+            Req::Refusal { conv, id, answer } => {
+                self.studio.answer_refusal(&self.ctx, &conv, &id, &answer)
+            }
             Req::Sessions { project } => self.studio.list_sessions(&project),
             Req::RenameSession { session, name } => self.studio.rename_session(&session, &name),
             Req::OpenSession { session } => self.studio.open_session(&session),

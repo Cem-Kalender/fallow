@@ -116,21 +116,21 @@ description: "Task list for 015 Manual and Auto mode, the same for the lead and 
 
 **Independent test**: quickstart Q2, Q3, Q4 and Q6.
 
-- [ ] T017 [US2] "Allow this once" and "Dismiss" (R-5, contracts), in `src/studio/mode.rs`, `src/studio/mod.rs` and `src/service/answer.rs`:
+- [X] T017 [US2] "Allow this once" and "Dismiss" (R-5, contracts), in `src/studio/mode.rs`, `src/studio/mod.rs` and `src/service/answer.rs`:
   - `POST /api/conversations/<c>/refusals/<id>`, as `Req::Refusal`;
   - `allow_once` appends `RefusalAllowed`, adds the grant, and tells the agent: the assistant through 012's waiting queue, the lead through its new `waiting` queue, sent when its turn ends or at once when idle (in `src/studio/mod.rs`, at the lead turn's end);
   - `dismiss` appends `RefusalDismissed`;
   - "already answered" is refused.
-- [ ] T018 [US2] A waiting request at the switch to Auto (R-8), in `src/studio/mod.rs`. It is answered by `mode::decide` under Auto:
+- [X] T018 [US2] A waiting request at the switch to Auto (R-8), in `src/studio/mod.rs` (built with the foundation: `mode.rs` `pending_under_auto`). It is answered by `mode::decide` under Auto:
   - allowed, with `ApprovalAnswered { auto: true, why: "switched to Auto" }`;
   - or turned into a refusal.
-- [ ] T019 [P] [US2] "Needs you" and the tray (R-9):
+- [X] T019 [P] [US2] "Needs you" and the tray (R-9):
   - `Studio::refusals_waiting()` in `src/studio/mod.rs`;
   - `Engine::needs_items` in `src/run/engine.rs` adds `kind: "refused"` items;
   - `src/service/notify.rs` adds `what()` for `refused`: "An agent was refused something", naming the project and the chat only;
   - `src/service/web/screens/dashboard.js` renders the item and opens the chat at the refusal.
-- [ ] T020 [P] [US2] The refusal card (R-4, R-7): `Fallow.refusalCard(r)` in `src/service/web/app.js`. It shows the reason, 012's folder facts when present, **Allow this once** (not for `limit: "control"`, which says "This file is never editable") and **Dismiss**, and the allowed, dismissed and expired states. Both the lead's chat (`app.js` messages) and `screens/solo.js` (`list`) render it in the turn.
-- [ ] T021 [US2] Test `tests/us15_modes.rs::auto_asks_nothing`. In Auto, the fake assistant requests:
+- [X] T020 [P] [US2] The refusal card (R-4, R-7): `Fallow.refusalCard(r)` in `src/service/web/app.js`. It shows the reason, 012's folder facts when present, **Allow this once** (not for `limit: "control"`, which says "This file is never editable") and **Dismiss**, and the allowed, dismissed and expired states. Both the lead's chat (`app.js` messages) and `screens/solo.js` (`list`) render it in the turn.
+- [X] T021 [US2] Test `tests/us15_modes.rs::auto_asks_nothing`. In Auto, the fake assistant requests:
   - a read outside the copy;
   - an edit;
   - `python -c`;
@@ -143,9 +143,9 @@ description: "Task list for 015 Manual and Auto mode, the same for the lead and 
   - no `ApprovalAsked`, and every action allowed (SC-002);
   - every action appears in the activity (FR-008);
   - the same turn with Claude Code's request shape (`agent::registry::permission_request("claude", …)`) gives the same decisions (SC-003);
-  - the median time from request to allow is within 10 ms of an approved command's (SC-004);
+  - the median time from request to allow is within 10 ms of an approved command's (SC-004; `mode.rs` unit test `an_auto_allow_is_as_quick_as_an_approved_command`);
   - with `env` and a read of `.env` added, neither the activity nor the records contain the values set in the test's environment and `.env` file (SC-006).
-- [ ] T022 [US2] Test `tests/us15_refusals.rs::refusals_are_never_silent`. In both modes:
+- [X] T022 [US2] Test `tests/us15_refusals.rs::refusals_are_never_silent` (and `auto_asks_nothing_refuses_at_the_limits_visibly_and_hides_secrets`). In both modes:
   - the assistant edits the engineer's folder;
   - the lead edits `src/main.rs`;
   - the assistant pushes `HEAD:<target>` with the remote marked protected.
@@ -155,7 +155,7 @@ description: "Task list for 015 Manual and Auto mode, the same for the lead and 
   - a control-file edit refused by the runtime becomes a refusal without "Allow this once", and `allow_once` on it is refused;
   - `dismiss` clears the "Needs you" item;
   - after a restart, an allowed-but-unused refusal is expired.
-- [ ] T023 [US2] Test `tests/us15_modes.rs::switching_to_auto_answers_the_waiting_request` (R-8): in Manual, a waiting request runs at the switch, and an out-of-limit one becomes a refusal.
+- [X] T023 [US2] Test `tests/us15_refusals.rs::switching_to_auto_answers_the_waiting_request_as_auto_would` (R-8): in Manual, a waiting request runs at the switch, and an out-of-limit one becomes a refusal.
 
 **Checkpoint**: the user's complaint is solved: Auto asks nothing, and every refusal can be seen and overridden.
 

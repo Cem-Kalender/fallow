@@ -74,7 +74,13 @@ pub struct Conv {
     /// 015 (R-5): one-shot grants from "Allow this once", in memory only.
     pub grants: Vec<super::mode::Grant>,
     /// 015 (R-5): Fallow's messages to the lead, sent when its turn ends (or at once when idle).
-    pub lead_notes: Vec<String>,
+    pub lead_notes: Vec<(String, String)>,
+    /// 015 (R-5): the assistant's waiting messages that carry an allowed refusal's note:
+    /// (refusal, waiting message), removed when the grant is used first.
+    pub note_queue: Vec<(String, String)>,
+    /// 015 (review of US2, 3): the lead's paths written this turn by an allowed-once edit,
+    /// kept (committed) at the turn's end instead of thrown away.
+    pub allowed_paths: Vec<String>,
     /// 015 (R-3): the tool calls of the running turn that Fallow answered itself, so a runtime's
     /// own refusal is told from Fallow's.
     pub answered: Vec<String>,
@@ -149,6 +155,8 @@ impl Conv {
             mode_note: None,
             grants: Vec::new(),
             lead_notes: Vec::new(),
+            note_queue: Vec::new(),
+            allowed_paths: Vec::new(),
             answered: Vec::new(),
             hidden: Default::default(),
             queue_hold: false,
@@ -218,9 +226,22 @@ impl Conv {
             for t in turns {
                 if let Some(rs) = t["refusals"].as_array_mut() {
                     for r in rs {
-                        let id = r["id"].as_str().unwrap_or_default();
+                        let id = r["id"].as_str().unwrap_or_default().to_string();
                         if r["state"] == "allowed" && !self.grants.iter().any(|g| g.refusal == id) {
                             r["state"] = json!("expired");
+                        }
+                        // The agent is told later: when its turn ends, or after the engineer's
+                        // answer to its question (review of US2, round 2, 4).
+                        let queued = |q: &str| {
+                            self.state
+                                .solo
+                                .as_ref()
+                                .is_some_and(|s| s.queue.iter().any(|w| w.id == q))
+                        };
+                        let waits = self.lead_notes.iter().any(|(x, _)| *x == id)
+                            || self.note_queue.iter().any(|(x, q)| *x == id && queued(q));
+                        if r["state"] == "allowed" && waits {
+                            r["told"] = json!("waiting");
                         }
                     }
                 }

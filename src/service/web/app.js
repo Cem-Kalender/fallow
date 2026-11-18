@@ -138,7 +138,9 @@ const Fallow = (() => {
         if (parts[4] === "loop") return { screen: "loop", nav: "loop", project: parts[1], feature: parts[3] };
         return { screen: "spec", nav: "spec", project: parts[1], feature: parts[3] };
       }
-      return { screen: "project", nav: "dashboard", project: parts[1] };
+      // 015 (R-9): `?session=<id>` opens that session (a refusal's "Needs you" or notification).
+      const q = new URLSearchParams(query || "");
+      return { screen: "project", nav: "dashboard", project: parts[1], session: q.get("session") || null };
     }
     const project = (p) => (p && p !== "_" ? p : null);
     if (parts[0] === "pipelines") return { screen: "pipelines", nav: "pipelines", project: project(parts[1]), pipeline: parts[2] || null };
@@ -149,8 +151,23 @@ const Fallow = (() => {
     return { screen: "dashboard", nav: "dashboard" };
   }
 
+  // 015 (R-9): a link to a refusal (`?refusal=<id>`) brings its card into view once drawn.
+  function toRefusal() {
+    const q = new URLSearchParams((location.hash.split("?")[1]) || "");
+    const id = q.get("refusal");
+    if (!id) return;
+    let tries = 0;
+    const look = () => {
+      const el = document.getElementById(`refusal-${id}`);
+      if (el) { el.scrollIntoView({ block: "center" }); el.setAttribute("tabindex", "-1"); el.focus({ preventScroll: true }); return; }
+      if (++tries < 30) setTimeout(look, 150);
+    };
+    setTimeout(look, 150);
+  }
+
   function show() {
     const r = route();
+    toRefusal();
     // Pipelines and Agents keep the selected project between them (008 FR-006).
     for (const [nav, base] of [["pipelines", "#/pipelines"], ["agents", "#/agents"]]) {
       const a = document.querySelector(`[data-nav="${nav}"]`);
@@ -501,6 +518,30 @@ const Fallow = (() => {
     const opt = (m) => h`<button type="button" role="radio" class="mode-opt${m === now ? " on" : ""}" aria-checked="${m === now ? "true" : "false"}" tabindex="${m === now ? "0" : "-1"}" data-act="chat-mode" data-mode="${m}" title="${CHAT_MODES[m].title}">${m === now ? h`<span class="check" aria-hidden="true">✓</span>` : ""}${CHAT_MODES[m].label}</button>`;
     return h`<span class="mode-wrap" data-mode="${now}"><span class="mode-switch" role="radiogroup" aria-label="Mode" aria-describedby="mode-hint" data-mode="${now}">${opt("manual")}${opt("auto")}</span><span class="tiny muted mode-hint" id="mode-hint" title="${`New chats start in ${d}: chat_mode in settings.toml`}">Shift+Tab · new chats: ${d} (chat_mode)</span></span>`;
   }
+  // 015 (R-4, R-5, FR-009): a request Fallow refused at the agent's fixed limit, in the turn:
+  // the reason, what it affects, and the engineer's answer; never silent.
+  function refusalCard(r, facts) {
+    const control = r.limit === "control";
+    const state = {
+      allowed: r.told === "waiting"
+        ? "Allowed once: the agent is told to try exactly this again when its turn ends, or after your answer to its question."
+        : "Allowed once: the agent was told to try exactly this again.",
+      used: "Allowed once, and used.",
+      dismissed: "Dismissed.",
+      expired: "Allowed once, but Fallow restarted before the agent tried again: ask it to try again.",
+    }[r.state];
+    return h`<div class="card refusal mt-8" id="${`refusal-${r.id}`}"><div class="b">Fallow refused ${r.kind === "run" ? "a command" : r.kind === "edit" ? "a change" : "a request"}</div>
+      <div class="term">${r.what}</div>
+      <div class="small mt-6">${r.reason}</div>
+      ${facts ? facts(r.facts) : ""}
+      ${r.note ? h`<div class="notice-line">${r.note}</div>` : ""}
+      ${state ? h`<div class="tiny muted mt-6">${state}</div>` : control
+        ? h`<div class="tiny muted mt-6">This file is never editable, in any mode: it controls the agent's own permissions.</div>
+          <div class="row wrap gap-8 mt-10"><button class="btn btn2" data-act="refusal" data-id="${r.id}" data-answer="dismiss">Dismiss</button></div>`
+        : h`<div class="row wrap gap-8 mt-10"><button class="btn" data-act="refusal" data-id="${r.id}" data-answer="allow_once">Allow this once</button><button class="btn btn2" data-act="refusal" data-id="${r.id}" data-answer="dismiss">Dismiss</button></div>`}
+    </div>`;
+  }
+
   // 015 (FR-006): the chat's note when the engineer changed its mode.
   const MODE_NOTE = {
     manual: "Manual: Fallow asks you before commands that are not approved.",
@@ -570,6 +611,8 @@ const Fallow = (() => {
         const reads = filesRead(c.activity);
         out.push(leadMsg(h`<b>${leadName(c)}</b>${workingInline(c)}`, c.live ? md(c.live) : raw(""),
           reads.length ? h`<div class="act small mt-6">${icon.file} Read ${reads.slice(0, 6).join(" · ")}</div>` : "", c.avatar));
+        // 015 (FR-009): a refusal shows at once, while the turn still works.
+        (t.refusals || []).forEach((rf) => out.push(refusalCard(rf, c.refusalFacts)));
         return;
       }
       const meta = [h`<b>${leadName(c)}</b>`];
@@ -583,6 +626,7 @@ const Fallow = (() => {
       if (i === asked && !c.busy && r.question) extras.push(question(r.question));
       if (r.proposed_feature) extras.push(proposal(r.proposed_feature));
       if (c.turnExtra && !undone) { const x = c.turnExtra(t); if (x) extras.push(x); }
+      (t.refusals || []).forEach((rf) => extras.push(refusalCard(rf, c.refusalFacts)));
       if (r.proposed_pipeline) extras.push(h`<div class="card pad-12 mt-8"><div class="row between"><span class="pill blue">proposed pipeline</span><button class="btn btn2 sm" data-draft="${r.proposed_pipeline}">Open in the designer</button></div><pre class="term">${r.proposed_pipeline}</pre></div>`);
       out.push(leadMsg(meta, md(t.reply), extras, c.avatar));
     });
@@ -844,6 +888,15 @@ const Fallow = (() => {
       if (back) back.focus();
       return true;
     }
+    if (name === "refusal") {
+      try {
+        await post(`/api/conversations/${conv}/refusals/${encodeURIComponent(el.dataset.id)}`, { answer: el.dataset.answer });
+      } catch (e) {
+        alertLine(e.message);
+      }
+      after();
+      return true;
+    }
     if (name === "chat-mode") {
       try {
         if (el.getAttribute("aria-checked") !== "true") await post(`/api/conversations/${conv}/mode`, { mode: el.dataset.mode });
@@ -1066,7 +1119,7 @@ const Fallow = (() => {
   }
 
   return { deleteSession, chatWide, expandBtn, saveFor, scopeOf, esc, h, raw, md, inline, LOGO, icon, api, get, post, watch, live, here, confirm, register, route, show, start, money,
-    MODE_LABEL, modeSwitch, modeNotes, focusMode, messages, composer, syncComposer, chatAct, sendSay, alertLine, atEnd, stagePill, filesRead, leadHead, leadNotice, working, leaveAsked, restamp, showWorking, closeAsked,
+    MODE_LABEL, modeSwitch, modeNotes, focusMode, refusalCard, messages, composer, syncComposer, chatAct, sendSay, alertLine, atEnd, stagePill, filesRead, leadHead, leadNotice, working, leaveAsked, restamp, showWorking, closeAsked,
     get headerWatch() { return headerWatch; } };
 
 })();

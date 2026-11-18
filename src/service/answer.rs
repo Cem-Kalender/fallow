@@ -520,6 +520,14 @@ fn studio_route(
                 Err(e) => Some(Err(e)),
             }
         }
+        ("POST", ["api", "conversations" | "sessions", c, "refusals", id]) => match need("answer") {
+            Ok(a) => r(Req::Refusal {
+                conv: c.to_string(),
+                id: id.to_string(),
+                answer: a,
+            }),
+            Err(e) => Some(Err(e)),
+        },
         ("POST", ["api", "conversations" | "sessions", c, "approve"]) => {
             use crate::conversation::events::ApprovalAnswer;
             let answer = match s("answer").as_deref() {

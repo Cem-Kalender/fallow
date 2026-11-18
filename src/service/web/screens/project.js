@@ -675,7 +675,11 @@
       } else if (fc && fc.st.project !== r.project) {
         fc.stop(); fc = null; tab = "features";
       }
-      load(app, r.project).then(() => {
+      // 015 (R-9): a refusal's link names its session, which opens first.
+      const opened = r.session
+        ? post(`/api/sessions/${encodeURIComponent(r.session)}/open`, {}).catch(() => null)
+        : Promise.resolve(null);
+      opened.then(() => load(app, r.project)).then(() => {
         if (!Fallow.here(app)) return;
         if (stop) stop();
         stop = null;

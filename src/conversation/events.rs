@@ -191,6 +191,9 @@ pub enum Event {
     RefusalUsed { id: String },
     /// 015: the engineer dismissed a refusal.
     RefusalDismissed { id: String },
+    /// 015 (review of US2, 2): an allowed refusal whose agent could not be told: refused again,
+    /// with why.
+    RefusalReopened { id: String, why: String },
     /// The Spec Kit step a spec session is at (FR-006).
     StepSet { step: String },
     DocEdited {
@@ -297,6 +300,8 @@ pub struct Refusal {
     pub limit: String,
     pub facts: Option<Value>,
     pub state: RefusalState,
+    /// Why an allowed refusal is refused again (its agent could not be told).
+    pub note: Option<String>,
 }
 
 /// A conversation, folded from its events.
@@ -559,12 +564,24 @@ impl State {
                         limit: limit.clone(),
                         facts: facts.clone(),
                         state: RefusalState::Refused,
+                        note: None,
                     });
                 }
             }
             Event::RefusalAllowed { id } => self.refusal_to(id, RefusalState::Allowed),
             Event::RefusalUsed { id } => self.refusal_to(id, RefusalState::Used),
             Event::RefusalDismissed { id } => self.refusal_to(id, RefusalState::Dismissed),
+            Event::RefusalReopened { id, why } => {
+                self.refusal_to(id, RefusalState::Refused);
+                if let Some(r) = self
+                    .turns
+                    .iter_mut()
+                    .flat_map(|t| t.refusals.iter_mut())
+                    .find(|r| &r.id == id)
+                {
+                    r.note = Some(why.clone());
+                }
+            }
             Event::StepSet { step } => self.step = Some(step.clone()),
             Event::DocEdited { path, diff, .. } => {
                 if !diff.is_empty() {
@@ -603,6 +620,13 @@ impl State {
             .iter()
             .flat_map(|t| t.refusals.iter())
             .find(|r| r.id == id)
+    }
+
+    /// 015: the turn a refusal belongs to.
+    pub fn refusal_turn(&self, id: &str) -> Option<&Turn> {
+        self.turns
+            .iter()
+            .find(|t| t.refusals.iter().any(|r| r.id == id))
     }
 
     /// 015: the next refusal's id (`r1`, `r2`, …).

@@ -284,6 +284,12 @@ pub enum Req {
         answer: ApprovalAnswer,
         prefix: Option<String>,
     },
+    /// 015 (R-5): the engineer's answer to a refusal: `allow_once` or `dismiss`.
+    Refusal {
+        conv: String,
+        id: String,
+        answer: String,
+    },
     NewFeature {
         project: String,
         title: String,
@@ -1449,6 +1455,7 @@ impl Studio {
         })?;
         c.live.clear();
         c.answered.clear();
+        c.allowed_paths.clear();
         if let Ok(mut h) = c.hidden.lock() {
             h.clear();
         }
@@ -1614,6 +1621,12 @@ impl Studio {
                     .any(|d| path == d || path.starts_with(&format!("{d}/")))
             };
             let root = p.in_root("");
+            // 015 (review of US2, 3): what the engineer allowed the lead once this turn stays.
+            let allowed = self
+                .convs
+                .get(conv)
+                .map(|c| c.allowed_paths.clone())
+                .unwrap_or_default();
             for path in all {
                 let path = path.trim_matches('"').to_string();
                 let in_root = path.strip_prefix(root.as_str()).unwrap_or(&path);
@@ -1623,7 +1636,7 @@ impl Studio {
                 {
                     continue;
                 }
-                if kind == Kind::Spec && is_spec(&path) {
+                if kind == Kind::Spec && (is_spec(&path) || allowed.contains(&path)) {
                     changed.push(path);
                 } else {
                     discarded.push(path);
@@ -1718,6 +1731,7 @@ impl Studio {
         })?;
         c.live.clear();
         c.answered.clear();
+        c.allowed_paths.clear();
         if let Ok(mut h) = c.hidden.lock() {
             h.clear();
         }
@@ -1758,6 +1772,7 @@ impl Studio {
         })?;
         c.live.clear();
         c.answered.clear();
+        c.allowed_paths.clear();
         if let Ok(mut h) = c.hidden.lock() {
             h.clear();
         }

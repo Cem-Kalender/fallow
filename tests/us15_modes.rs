@@ -236,3 +236,101 @@ fn the_page_has_one_switch_for_both_chats() {
         }
     }
 }
+
+/// 015 US2 (FR-003, FR-008, SC-002, SC-003): in Auto neither agent is asked: the assistant's
+/// reads outside its copy, edits, commands Fallow cannot read and a force-push of its own branch
+/// all run, as do the lead's command and its edit of a spec document; every action is in the
+/// activity. The fake agent asks in Claude Code's own request shape.
+#[test]
+fn auto_asks_nothing() {
+    let root = scratch("us15-auto-nothing");
+    let repo = repo(&root);
+    let outside = root.join("elsewhere.txt");
+    std::fs::write(&outside, "outside\n").unwrap();
+    std::fs::write(
+        root.join("settings.extra.toml"),
+        "[defaults]\nchat_mode = \"auto\"\n",
+    )
+    .unwrap();
+    let scenario = root.join("scenario.toml");
+    std::fs::write(
+        &scenario,
+        format!(
+            r#"[[step]]
+kind = "assistant_turn"
+read = [{outside}]
+edit = [{{ path = "src/new.txt", text = "x" }}]
+exec = ["python3 -c 'print(40 + 2)'", "bash -c 'echo from-bash'", "echo redirected > out.txt", "X=$HOME; echo $X > home.txt", "git push --force origin HEAD || true"]
+output = {{ reply = "done" }}
+
+[[step]]
+kind = "lead_turn"
+approve = "cargo test --no-run"
+edit = [{{ path = "specs/001-modes/notes.md", text = "a note" }}]
+output = {{ reply = "$APPROVED", step = "none" }}
+"#,
+            outside = lit(&outside.display().to_string())
+        ),
+    )
+    .unwrap();
+    let e = start_studio(&root, &scenario, None);
+    let tx = &e.tx;
+    let project = sreq(tx, Req::AddProject { path: repo.clone() }).unwrap()["project"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    git(&repo, &["add", "."]);
+    git(&repo, &["commit", "-q", "-m", "spec kit"]);
+    let s = start_session(tx, &project, "do the lot");
+    let v = wait_turn(tx, &s, 1);
+    let t = &v["turns"][0];
+    assert!(t["approvals"].as_array().unwrap().is_empty(), "{t}");
+    assert!(t["refusals"].as_array().unwrap().is_empty(), "{t}");
+    let activity = v["activity"].as_array().unwrap();
+    // Each call has its result, none refused.
+    let calls = activity
+        .iter()
+        .filter(|a| matches!(a["kind"].as_str(), Some("read" | "write" | "run")))
+        .count();
+    assert_eq!(calls, 7, "{}", v["activity"]);
+    assert!(
+        !activity.iter().any(|a| a["kind"] == "refused"),
+        "{}",
+        v["activity"]
+    );
+    let text = v["activity"].to_string();
+    for seen in ["42", "from-bash", "outside"] {
+        assert!(text.contains(seen), "{seen}: {text}");
+    }
+    let wt = std::path::PathBuf::from(v["session"]["worktree"].as_str().unwrap());
+    assert!(wt.join("out.txt").exists() && wt.join("src/new.txt").exists());
+
+    // The lead, in Auto too: its command is not asked, its spec document is written.
+    let lead = sreq(
+        tx,
+        Req::NewFeature {
+            project: project.clone(),
+            title: "Modes".into(),
+            lead: None,
+        },
+    )
+    .unwrap()["conversation"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    sreq(
+        tx,
+        Req::Say {
+            conv: lead.clone(),
+            text: "go".into(),
+        },
+    )
+    .unwrap();
+    let l = turn_ended(tx, &lead, 1);
+    let t = &l["turns"][0];
+    assert_eq!(t["reply"], "allow", "{t}");
+    assert!(t["approvals"].as_array().unwrap().is_empty(), "{t}");
+    assert!(t["refusals"].as_array().unwrap().is_empty(), "{t}");
+    drop(e);
+    let _ = std::fs::remove_dir_all(&root);
+}

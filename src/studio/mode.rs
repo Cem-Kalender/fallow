@@ -384,7 +384,206 @@ pub fn runtime_refused(c: &mut super::conv::Conv, id: &str) {
     });
 }
 
+/// 015: the lead's last answer asks the engineer a question that waits for them: a note from
+/// Fallow then goes with their answer, not as a turn of its own.
+fn lead_question_open(c: &super::conv::Conv) -> bool {
+    c.state.kind == crate::conversation::events::Kind::Spec
+        && c.state
+            .turns
+            .iter()
+            .rev()
+            .find(|t| !t.withdrawn)
+            .and_then(|t| t.result.as_ref())
+            .is_some_and(|r| !r["question"].is_null())
+}
+
 impl super::Studio {
+    /// 015 (R-5): "Allow this once" or "Dismiss" on a refusal. Allowing tells the agent first
+    /// (the assistant through its waiting messages, 012; the lead at once when idle, or when its
+    /// turn ends, or with the engineer's next message while its question waits), and only then
+    /// records the allow and puts the one-shot grant on the chat: an agent that cannot be told
+    /// leaves the refusal as it was. The agent's next request is handled after this returns, on
+    /// the same thread, so the grant is there in time. Clicking it is the engineer's go-ahead
+    /// for the session's waiting messages too, as their own message is (012 R-9).
+    pub fn answer_refusal(
+        &mut self,
+        ctx: &crate::run::engine::Ctx,
+        conv: &str,
+        id: &str,
+        answer: &str,
+    ) -> Result<Value, String> {
+        use crate::conversation::events::{Event as CEvent, Kind, RefusalState};
+        let c = self.conv_mut(conv)?;
+        if c.state.solo.as_ref().is_some_and(|s| s.closed.is_some()) {
+            return Err("this session is closed".into());
+        }
+        let r = c
+            .state
+            .refusal(id)
+            .cloned()
+            .ok_or_else(|| format!("there is no refusal {id}"))?;
+        if r.state != RefusalState::Refused {
+            return Err("this refusal was already answered".into());
+        }
+        let withdrawn = c.state.refusal_turn(id).is_some_and(|t| t.withdrawn);
+        match answer {
+            "dismiss" => {
+                c.append(CEvent::RefusalDismissed { id: id.into() })?;
+                Ok(serde_json::json!({}))
+            }
+            "allow_once" => {
+                if r.limit == Limit::Control.name() {
+                    return Err(
+                        "this file is never editable: it controls the agent's own permissions"
+                            .into(),
+                    );
+                }
+                if withdrawn {
+                    return Err("you cancelled that answer: ask for it again instead".into());
+                }
+                let kind = match r.kind.as_str() {
+                    "edit" => "edit",
+                    "run" => "run",
+                    "read" => "read",
+                    "web" => "web",
+                    _ => "tool",
+                };
+                let msg = allowed_message(&r.what);
+                let told = if c.state.kind == Kind::Solo {
+                    let v = self.say_solo(ctx, conv, &msg, Vec::new())?;
+                    match v["queued"].as_str() {
+                        Some(q) => {
+                            if let Some(c) = self.convs.get_mut(conv) {
+                                c.note_queue.push((id.to_string(), q.to_string()));
+                            }
+                            "queued"
+                        }
+                        None => "sent",
+                    }
+                } else if c.state.busy || lead_question_open(c) {
+                    c.lead_notes.push((id.to_string(), msg));
+                    "queued"
+                } else {
+                    self.say(ctx, conv, &msg, Vec::new())?;
+                    "sent"
+                };
+                let c = self.conv_mut(conv)?;
+                c.append(CEvent::RefusalAllowed { id: id.into() })?;
+                c.grants.push(Grant {
+                    refusal: id.into(),
+                    kind,
+                    what: r.what.clone(),
+                });
+                c.tick();
+                Ok(serde_json::json!({ "told": told }))
+            }
+            other => Err(format!("answer {other:?}: allow_once or dismiss")),
+        }
+    }
+
+    /// 015 (R-5): the lead's waiting notes from Fallow, sent as one message once its turn ended
+    /// (not while its question waits: then after the engineer's answer and the turn it starts). When the lead
+    /// cannot be told, the grants go and the refusals are refused again, saying why.
+    pub fn lead_notes_tick(&mut self, ctx: &crate::run::engine::Ctx) {
+        use crate::conversation::events::Event as CEvent;
+        let ready: Vec<String> = self
+            .convs
+            .iter()
+            .filter(|(_, c)| !c.state.busy && !c.lead_notes.is_empty() && !lead_question_open(c))
+            .map(|(id, _)| id.clone())
+            .collect();
+        for id in ready {
+            let Some(c) = self.convs.get_mut(&id) else {
+                continue;
+            };
+            let mut notes = std::mem::take(&mut c.lead_notes);
+            // A note for a refusal in an answer the engineer cancelled goes, with its grant
+            // (review of US2, round 2, 3).
+            let gone: Vec<String> = notes
+                .iter()
+                .filter(|(r, _)| c.state.refusal_turn(r).is_none_or(|t| t.withdrawn))
+                .map(|(r, _)| r.clone())
+                .collect();
+            notes.retain(|(r, _)| !gone.contains(r));
+            c.grants.retain(|g| !gone.contains(&g.refusal));
+            if notes.is_empty() {
+                continue;
+            }
+            let text = notes
+                .iter()
+                .map(|(_, m)| m.as_str())
+                .collect::<Vec<_>>()
+                .join("\n");
+            if let Err(e) = self.say(ctx, &id, &text, Vec::new()) {
+                self.console.push(format!("conversation {id}: {e}"));
+                if let Some(c) = self.convs.get_mut(&id) {
+                    for (rid, _) in &notes {
+                        c.grants.retain(|g| &g.refusal != rid);
+                        let _ = c.append(CEvent::RefusalReopened {
+                            id: rid.clone(),
+                            why: format!("Fallow could not tell the lead: {e}"),
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    /// 015 (R-9): the refusals waiting for the engineer, as "Needs you" items.
+    pub fn refusals_waiting(&self) -> Vec<Value> {
+        use crate::conversation::events::{Kind, RefusalState};
+        let mut out = Vec::new();
+        for (id, c) in &self.convs {
+            if c.state.solo.as_ref().is_some_and(|s| s.closed.is_some()) {
+                continue;
+            }
+            let project = c.state.project.clone();
+            let project_name = self
+                .store
+                .get(&project)
+                .map(|p| p.name.clone())
+                .unwrap_or_else(|| project.clone());
+            let chat = match c.state.kind {
+                Kind::Solo => c
+                    .state
+                    .solo
+                    .as_ref()
+                    .and_then(|s| s.name.clone())
+                    .filter(|n| !n.is_empty())
+                    .unwrap_or_else(|| "a session".into()),
+                _ => c
+                    .state
+                    .feature
+                    .clone()
+                    .unwrap_or_else(|| "a spec session".into()),
+            };
+            // A cancelled answer's refusals are gone with it (review of US2, 1).
+            for t in c.state.turns.iter().filter(|t| !t.withdrawn) {
+                for r in t
+                    .refusals
+                    .iter()
+                    .filter(|r| r.state == RefusalState::Refused)
+                {
+                    let short: String = r.what.chars().take(80).collect();
+                    out.push(serde_json::json!({
+                        "kind": "refused",
+                        "key": format!("{id}:refused:{}", r.id),
+                        "project": project,
+                        "project_name": project_name,
+                        "conv": id,
+                        "solo": c.state.kind == Kind::Solo,
+                        "feature": c.state.feature,
+                        "chat": chat,
+                        "refusal": r.id,
+                        "text": format!("{chat} — Fallow refused: {short}"),
+                        "at": t.started,
+                    }));
+                }
+            }
+        }
+        out
+    }
+
     /// 015 (R-8): switching to Auto answers the request waiting for the engineer as Auto
     /// would answer it: allowed, or refused at a fixed limit.
     pub(super) fn pending_under_auto(&mut self, conv: &str) {
@@ -454,7 +653,18 @@ impl super::Studio {
             )));
         };
         let kind = kind_name(req.kind);
-        let what = what(req);
+        // A tool Fallow cannot judge is named with its input, so a grant is for exactly that
+        // call (review of US2, 7).
+        let what = if req.kind == RequestKind::Other {
+            format!("{} {}", what(req), raw["input"])
+        } else {
+            what(req)
+        };
+        // Where the lead's paths start: its copy's spec root (012 R-18), as `lead_tool_call` judges.
+        let lead_cwd = self.convs.get(conv).and_then(|c| {
+            let p = self.project(&c.state.project).ok()?;
+            Some((c.state.workdir.clone(), c.state.workdir.join(&p.spec_root)))
+        });
         let c = self.convs.get_mut(conv).ok_or("the conversation is gone")?;
         // "Allow this once": exactly this kind and this command or path (R-5).
         let granted = c
@@ -472,6 +682,35 @@ impl super::Studio {
         let decision = match granted.filter(|_| !control) {
             Some(i) => {
                 let g = c.grants.remove(i);
+                // Its note, if still waiting, has nothing left to say (review of US2, 5).
+                c.lead_notes.retain(|(r, _)| r != &g.refusal);
+                let queued: Vec<String> = c
+                    .note_queue
+                    .iter()
+                    .filter(|(r, _)| r == &g.refusal)
+                    .map(|(_, q)| q.clone())
+                    .collect();
+                c.note_queue.retain(|(r, _)| r != &g.refusal);
+                for q in queued {
+                    if c.state
+                        .solo
+                        .as_ref()
+                        .is_some_and(|s| s.queue.iter().any(|w| w.id == q))
+                    {
+                        c.append(CEvent::Solo(
+                            crate::conversation::solo::SoloEvent::QueueRemoved { id: q },
+                        ))?;
+                    }
+                }
+                // A lead's allowed edit is kept at the turn's end (review of US2, 3).
+                if agent_kind == Agent::Lead && req.kind == RequestKind::Edit {
+                    if let Some((wd, cwd)) = &lead_cwd {
+                        let abs = cwd.join(&what);
+                        if let Some(rel) = judge::rel_inside(wd, &abs.display().to_string()) {
+                            c.allowed_paths.push(rel);
+                        }
+                    }
+                }
                 c.append(CEvent::RefusalUsed { id: g.refusal })?;
                 Decision::Allow
             }
@@ -763,6 +1002,32 @@ mod tests {
             } => {}
             other => panic!("{other:?}"),
         }
+        let _ = std::fs::remove_dir_all(&d.root);
+    }
+
+    /// SC-004: allowing a request in Auto costs what allowing an approved command costs: the
+    /// medians of 200 decisions each are within 10 ms of each other (both far below it).
+    #[test]
+    fn an_auto_allow_is_as_quick_as_an_approved_command() {
+        let d = dirs("timing");
+        let median = |mode: ChatMode, r: &agent::PermissionRequest| {
+            let mut t: Vec<std::time::Duration> = (0..200)
+                .map(|_| {
+                    let s = std::time::Instant::now();
+                    assert_eq!(assistant_decides(mode, r, &d, None), Decision::Allow);
+                    s.elapsed()
+                })
+                .collect();
+            t.sort();
+            t[100]
+        };
+        let auto = median(ChatMode::Auto, &run("python -c \"print(1)\""));
+        let approved = median(ChatMode::Manual, &run("npm run lint --fix"));
+        let gap = auto.abs_diff(approved);
+        assert!(
+            gap < std::time::Duration::from_millis(10),
+            "{auto:?} vs {approved:?}"
+        );
         let _ = std::fs::remove_dir_all(&d.root);
     }
 

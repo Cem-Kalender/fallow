@@ -20,6 +20,8 @@
     });
     c.lead = { name: (s && s.session && s.session.agent) || "assistant" };
     c.avatar = "A";
+    // 015: a refusal of a command changing the engineer's folder shows 012's facts.
+    c.refusalFacts = facts;
     c.pending_approval = null;
     // 012 US3 (FR-014): each turn can be undone, back to before it; undone turns are marked.
     c.undone = (s && s.session && s.session.undone) || [];

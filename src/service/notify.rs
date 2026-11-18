@@ -37,6 +37,7 @@ fn what(item: &Value) -> &'static str {
         Some("pr_merged") => "merged on the remote",
         Some("docs_changed") => "the target changed this feature's documents: lock again or stop",
         Some("overlap") => "another loop changes the same files; you may let one wait",
+        Some("refused") => "an agent was refused something; allow it once or dismiss it",
         _ => match item["what"].as_str() {
             Some("stopped at a limit") => "stopped at a limit",
             Some("stopped at the repair cap") => "stopped at the repair cap",
@@ -49,7 +50,21 @@ fn what(item: &Value) -> &'static str {
 pub fn notice(item: &Value, page: Option<&str>) -> Notice {
     let project = item["project_name"].as_str().unwrap_or_default();
     let feature = item["feature"].as_str().unwrap_or_default();
+    // 015 (R-9): a refusal opens its chat: the spec session, or the project with the session.
+    let chat = item["kind"] == "refused";
     let hash = match item["project"].as_str().filter(|p| !p.is_empty()) {
+        Some(p) if chat && item["solo"] == true => format!(
+            "#/p/{}?session={}&refusal={}",
+            enc(p),
+            enc(item["conv"].as_str().unwrap_or_default()),
+            enc(item["refusal"].as_str().unwrap_or_default())
+        ),
+        Some(p) if chat => format!(
+            "#/p/{}/f/{}?refusal={}",
+            enc(p),
+            enc(feature),
+            enc(item["refusal"].as_str().unwrap_or_default())
+        ),
         Some(p) => format!("#/p/{}/f/{}/loop", enc(p), enc(feature)),
         // A run of 006, outside any project: the dashboard.
         None => "#/".to_string(),
@@ -77,6 +92,12 @@ pub fn notice(item: &Value, page: Option<&str>) -> Notice {
                     if n == 1 { "" } else { "s" }
                 )
             }
+            // The chat's name only: never the command, the path or the reason (008, R-9).
+            Some("refused") => format!(
+                "{}: {}",
+                item["chat"].as_str().unwrap_or("a chat"),
+                what(item)
+            ),
             _ => format!("{feature}: {}", what(item)),
         },
         url: format!("{}{hash}", page.unwrap_or("")),

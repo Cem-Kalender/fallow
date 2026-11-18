@@ -35,6 +35,18 @@
 
   // ---- Needs you -----------------------------------------------------------------------------
   function need(n) {
+    // 015 (R-9): Fallow refused an agent's request in a chat; the chat decides.
+    if (n.kind === "refused") {
+      const href = n.solo
+        ? `#/p/${encodeURIComponent(n.project)}?session=${encodeURIComponent(n.conv)}&refusal=${encodeURIComponent(n.refusal)}`
+        : `#/p/${encodeURIComponent(n.project)}/f/${encodeURIComponent(n.feature)}?refusal=${encodeURIComponent(n.refusal)}`;
+      return h`<div class="card pad-16 needs">
+        <div class="row between wrap gap-8"><span class="pill orange">Refused · allow it once or dismiss it</span><span class="tiny muted">${ago(n.at)}</span></div>
+        <div class="small muted mt-10">${n.project_name} › ${n.chat}</div>
+        <div class="b mt-4 lh">${n.text}</div>
+        <div class="row wrap gap-8 mt-14"><a class="btn" href="${href}">Open the chat</a></div>
+      </div>`;
+    }
     const where = [n.project_name ? `${n.project_name} › ${n.feature}` : `run ${n.run}`];
     if (n.kind === "question") {
       if (n.task) where.push(n.task);
