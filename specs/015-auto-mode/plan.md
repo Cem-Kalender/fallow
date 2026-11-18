@@ -33,7 +33,7 @@
 - a `mode` mark file per conversation;
 - `settings.toml` `[defaults] chat_mode`.
 
-**Testing**: `cargo test --workspace --features automation`, with the fake runtime as the lead and as the assistant (R-10). Judge unit tests for `pushes_onto`. Rights unit tests show no allow-all rule.
+**Testing**: `cargo test --workspace --features automation`, with the fake runtime as the lead and as the assistant (R-11). Judge unit tests for `pushes_onto`. Rights unit tests show no allow-all rule.
 
 **Target Platform**: Windows 10 and 11 x64 (release); the tests also run on macOS and Linux for development.
 
@@ -61,11 +61,11 @@
 | Principle | Check |
 |---|---|
 | I. Verified, Not Trusted | Not affected: loops and their verification are unchanged. |
-| II. The Engineer Decides | Pass (10.0.0): both chats are in Manual or Auto as the engineer chooses. Auto is their word within the fixed limits. Refusals are never silent and can be allowed once, a push onto a protected target included (R-4, R-5). The merge rule for loops is unchanged. |
+| II. The Engineer Decides | Pass (10.1.0): both chats are in Manual or Auto as the engineer chooses. Auto is their word within the fixed limits. Refusals are never silent and can be allowed once, a push onto a protected target included (R-4, R-5). The merge rule for loops is unchanged. |
 | III. Coordination in Code | Pass: the mode is applied in Fallow's code at one decision point (R-1), with no model in the loop. |
 | IV. Simplest Setup First | Pass: two modes instead of six; no reviewer; one setting. |
-| V. Local and Private | Pass: no new traffic. The tray names the project and the chat, never the command (R-9). |
-| VI. Least Privilege | Pass (10.0.0): no bypass option and no allow-all rule, so every request reaches Fallow (R-1). The fixed limits hold in both modes; only a one-time allow goes past them (R-3, R-5). The runtime's control files stay denied at the runtime (R-3). |
+| V. Local and Private | Pass: no new traffic. The tray names the project and the chat, never the command (R-9). The output of commands that show the environment, and of reads of secrets files, is hidden in the activity and records (R-10, FR-010). |
+| VI. Least Privilege | Pass (10.1.0): no bypass option and no allow-all rule; Fallow's narrow rules stay (R-1). The fixed limits hold in both modes; only a one-time allow goes past them (R-3, R-5). The runtime's permission files are never editable, and their refusal is shown (R-3). |
 | VII. Runs Survive | Pass: grants and the mode are in memory. After a restart, chats start in the default mode and say so. Nothing waits on a refusal (R-6). |
 | VIII. Small and Measured | Pass: no dependency, a few hundred lines; no budget affected (SC-004). |
 | IX. Runtime-Agnostic | Pass: the decision is made on Fallow's request kinds (`RequestKind`), never on a runtime's tool names. The fake runtime and Claude Code take the same path (SC-003). |
@@ -81,9 +81,9 @@
 specs/015-auto-mode/
 ├── spec.md
 ├── plan.md              # this file
-├── research.md          # R-1 to R-10
+├── research.md          # R-1 to R-11
 ├── data-model.md        # the chat mode, refusals, grants, settings, events
-├── quickstart.md        # Q1 to Q8
+├── quickstart.md        # Q1 to Q9
 ├── contracts/
 │   └── web-api.md       # the mode routes, refusals, "Switch to Auto", "Needs you"
 ├── checklists/

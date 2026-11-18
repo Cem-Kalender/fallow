@@ -33,7 +33,7 @@ Any other value is a settings error, named the way the other `[defaults]` keys a
 
 | Event | Fields | When |
 |---|---|---|
-| `refused` | `id` (`r1`, `r2`, … per chat), `kind` (`edit`, `run`, `web`, `tool`), `what` (path, command, URL or tool name), `reason` (plain words), `limit` (`edit`, `target`, `web`, `tool`), `facts` (optional: 012's folder facts) | Fallow refused a request (research R-4), in either chat and either mode. |
+| `refused` | `id` (`r1`, `r2`, … per chat), `kind` (`edit`, `run`, `tool`), `what` (path, command, URL or tool name), `reason` (plain words), `limit` (`edit`, `target`, `tool`, `control`), `facts` (optional: 012's folder facts) | Fallow refused a request (research R-4), in either chat and either mode. |
 | `refusal_allowed` | `id` | The engineer chose "Allow this once". |
 | `refusal_dismissed` | `id` | The engineer chose "Dismiss". |
 | `chat_mode` | `mode` | The engineer changed the mode, for the chat's one-line notes. It is never used to restore the mode. |
@@ -49,7 +49,7 @@ refused ──Allow this once──▶ allowed (grant waiting) ──matching re
    └──Dismiss──▶ dismissed             └──restart──▶ expired (the card says so)
 ```
 
-Only `refused` is a "Needs you" item (R-9).
+Only `refused` is a "Needs you" item (R-9). A `control` refusal offers only "Dismiss".
 
 ## Views: changed keys
 

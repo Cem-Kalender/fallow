@@ -35,7 +35,7 @@ The lead answering an agent's question during a loop keeps its approved-commands
 
 **Alternatives rejected**:
 - *The runtime's own auto or bypass mode*: Claude-only, forbidden by VI.
-- *Keeping Run anything's allow-all rule for the lead's Auto*: Fallow would not see the commands (constitution 10.0.0, VI forbids it).
+- *Keeping Run anything's allow-all rule for the lead's Auto*: Fallow would not see the commands (constitution 10.1.0, VI forbids it).
 
 ## R-2 What each mode answers, per request kind
 
@@ -48,7 +48,7 @@ The lead answering an agent's question during a loop keeps its approved-commands
 | Run: a command that changes the engineer's folder (`refwatch::in_folder`), assistant only | Asked, as today, with 012's folder facts. | Refused at the copy limit, visible, can be allowed once. |
 | Run: a push onto the protected target (R-3) | Asked, with the reason "pushes onto the protected target". | Refused at the target limit, visible, can be allowed once. |
 | Run: any other command | Asked. For the assistant, with the judge's reasons (012). | **Allowed**, including the commands the judge "cannot tell", force-pushes of the session's own branch, and `gh`. |
-| Web (assistant) | As the web switch says: allowed when on, refused (visible) when off. | The same. The web switch is the engineer's explicit setting, not a question. Its refusal offers "Allow this once" and "Turn web on". |
+| Web (assistant) | Allowed when the web switch is on. When it is off, the agent has no web tools (`--tools` leaves them out, `claude.rs`), so there is no request and no refusal. | The same. The web switch stays the engineer's own setting, beside the mode switch (spec FR-003). |
 | Other (a tool Fallow cannot judge, such as an MCP tool) | Refused (visible). | Allowed. |
 
 **Rationale**:
@@ -63,7 +63,7 @@ When Auto allows a request, the runtime gets its ordinary allow reply (`permissi
    - For the assistant: an Edit request that `judge::edit_problem` refuses, or a Run request that `refwatch::in_folder` says changes the engineer's folder.
    - For the lead: an Edit request outside `SPEC_GLOBS`.
 
-   The runtime's own fixed denials stay at the runtime, because an agent that can edit its runtime's permission files could switch Fallow's checks off (VI). These are Claude Code's control files (`CONTROL_FILES`, `CONTROL_GLOBS`). Fallow never sees those requests. The Auto note (FR-006) names those files as never editable, and the activity shows the failed call. They are the only refusals Fallow does not record itself.
+   The runtime's own permission and settings files stay denied at the runtime, in every mode, because an agent that can edit them could switch Fallow's checks off (constitution VI, 10.1.0). These are Claude Code's `CONTROL_FILES` and `CONTROL_GLOBS`. Fallow does not receive these requests, but it sees their result: the runtime reports the call as `ToolResult { refused: true }` (`src/agent/mod.rs:172`). On such a result for an edit of a control file, Fallow appends the same `Refused` record, with `limit: "control"` and no "Allow this once" (spec FR-009). The note on switching to Auto names these files.
 2. **The protected-target limit**, for both agents: a Run request that pushes onto the project's target branch on its remote, when 010's record of the remote (`publish::Remote`) says `protected` is `yes`, `unknown` or `checking`.
    - A new judge function, `pushes_onto(cmd, target) -> bool`, reads the push forms: `git push <remote> <target>`, `…:<target>`, `HEAD:<target>`, `refs/heads/<target>`, `--all` and `--mirror`.
    - A plain `git push`, or a push of the session's own branch, is not onto the target.
@@ -76,10 +76,10 @@ When Auto allows a request, the runtime gets its ordinary allow reply (`permissi
 ## R-4 A refusal is a record, shown at once, in both modes and both chats
 
 **Decision**: a new conversation event, `Refused { id, kind, what, reason, facts, limit }`, appended when Fallow refuses a request.
-- `limit` is one of `edit`, `target`, `web` or `tool`.
+- `limit` is one of `edit`, `target`, `tool` (Manual only) or `control` (the runtime's own files, R-3; never "Allow this once").
 - `facts` holds 012's folder facts, when there are any.
 
-The runtime gets the deny reply at once, so the turn does not wait. Its message is: "Fallow refused this: <reason>. The engineer can allow it once from the chat; if they do, you will be told."
+The runtime gets the deny reply at once, so the turn does not wait. Its message is: "Fallow refused this: <reason>. The engineer can allow exactly this once from the chat; if they do, you will be told."
 
 The page shows a refusal card in the turn, with the reason, "Allow this once" and "Dismiss". The lead's and the assistant's chats share the card (R-7).
 
@@ -93,9 +93,9 @@ The page shows a refusal card in the turn, with the reason, "Allow this once" an
 - If a turn is running, the message waits and is sent when the turn ends. The assistant's waiting messages already work this way (012); the lead gets the same queue.
 - If the chat is idle, the message is sent now.
 
-The message is: "The engineer allowed, once: `<what>`. Do it again if it is still needed."
+The message is: "The engineer allowed, once, exactly: `<what>`. Run exactly that again if it is still needed; anything else is decided as before."
 
-The next request that matches the grant uses it up and is allowed, whatever the limit, including a push onto a protected target (II, 10.0.0). Whether the remote accepts the push is up to the remote.
+The next request that matches the grant uses it up and is allowed, whatever the limit, including a push onto a protected target (II, 10.1.0). Whether the remote accepts the push is up to the remote.
 
 Grants do not survive a restart: the card then says "Fallow restarted; ask the agent to try again". "Dismiss" records `RefusalDismissed { id }`.
 
@@ -139,15 +139,27 @@ Switching to Manual leaves nothing waiting.
 - A chat with a refusal that is neither allowed nor dismissed is a "Needs you" item: `kind: "refused"` and `key: "<conv>:refused:<id>"`, with the text "<chat name> — Fallow refused: <what, shortened to 80 characters>".
 - `Engine::needs_items` (`src/run/engine.rs:1230`) gains the studio's items. The tray's notice (`service::notify::notice`) maps `refused` to "An agent was refused something". It names the project and the chat only, never the command (008).
 
-## R-10 Tests without a real model
+## R-10 Hidden output for environment and secrets (constitution V, spec FR-010)
+
+**Decision**: the activity line of a tool result is built in `run/engine.rs` from `agent::Event::ToolResult`. For a call whose command `judge::assess` flags with "shows the environment's values" (or "sets environment variables" with no command after it), or a read that `judge::read_problem` flags as a file that may hold secrets, the line's output becomes "Output hidden: it may hold secret values". This happens before the activity is shown or written. The check uses the call's own command or path, kept from its `ToolCall` by `id`.
+
+In Manual this applies to the calls the engineer allowed. In Auto it applies to every such call. The runtime's own transcript is the runtime's, not Fallow's (constitution V concerns what Fallow displays and stores).
+
+**Alternatives rejected**:
+- *Keep asking for these commands in Auto*: Auto asks nothing.
+- *Refuse them*: an agent running tests often needs `env`, and refusing it would make Auto refuse ordinary work.
+
+## R-11 Tests without a real model
 
 The fake runtime already scripts permission requests for every kind, for the assistant (`fake_agent_012`) and the lead (007/009 scenarios). The new tests cover:
 - the R-2 table, for both agents and both modes;
-- the limits;
+- the limits, including a runtime-refused control-file edit (a `ToolResult { refused: true }` from the fake runtime) becoming a refusal without "Allow this once";
+- hidden output for `env` and a `.env` read (SC-006);
 - the refusal record, the deny message, and "Allow this once" with its grant and message;
 - the switch with a request waiting;
 - the restart rule, including an old lead conversation with `run_anything`;
 - "Needs you";
+- the time of an Auto allow against an approved command's (SC-004);
 - that no agent is started with an allow-all rule (`rights` unit tests).
 
 `judge::pushes_onto` gets unit tests for each push form, plus a variant that pushes the chat's own branch. One manual check with Claude Code is in the quickstart.

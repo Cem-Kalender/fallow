@@ -30,6 +30,7 @@ Body: `{ "answer": "allow_once" | "dismiss" }`.
   - tells the agent (research R-5): queued if a turn runs, sent now if the chat is idle;
   - answer: `{ "told": "queued" | "sent" }`.
 - `dismiss`: records `refusal_dismissed`; answer: `{}`.
+- `allow_once` is refused for a `control` refusal ("this file is never editable").
 - Refused when the refusal is not in the `refused` state ("already answered"), or when the chat is closed.
 
 `Req::Refusal { conv, id, answer }`.
@@ -52,5 +53,5 @@ Clicking it opens the chat at the refusal.
 ## What the runtime receives
 
 - **Allowed in Auto**: the runtime's ordinary allow reply (`agent::registry::permission_reply(runtime, true, "", raw)`), the same as for an approved command.
-- **Refused**: the runtime's deny reply with the message `Fallow refused this: <reason>. The engineer can allow it once from the chat; if they do, you will be told.`
-- **Allowed once**: the matching request's ordinary allow reply. Before it, the assistant received a message from Fallow: `The engineer allowed, once: <what>. Do it again if it is still needed.`
+- **Refused**: the runtime's deny reply with the message `Fallow refused this: <reason>. The engineer can allow exactly this once from the chat; if they do, you will be told.`
+- **Allowed once**: the matching request's ordinary allow reply. Before it, the assistant received a message from Fallow: `The engineer allowed, once, exactly: <what>. Run exactly that again if it is still needed; anything else is decided as before.`

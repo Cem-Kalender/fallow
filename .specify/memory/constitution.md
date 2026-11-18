@@ -1,7 +1,14 @@
 <!--
 Sync Impact Report
 ==================
-Version change: 9.0.0 → 10.0.0
+Version change: 10.0.0 → 10.1.0
+Bump rationale (10.1.0): MINOR. Found by /speckit-analyze for 015 (2026-11-18): VI's ban on
+rules that let a runtime allow requests without Fallow is narrowed to allow-all rules (Fallow's
+own narrow rules stay, as they were); VI adds that no agent edits its runtime's permission or
+settings files in any mode; II says that refusal is shown but cannot be allowed. Decided by the
+project owner on 2026-11-18.
+
+Previous: 9.0.0 → 10.0.0
 Bump rationale: MAJOR. The lead's spec sessions get the same two modes as the assistant's solo
 sessions, Manual and Auto, replacing the lead's four (Read only, Approved commands, Ask, Run
 anything); the lead's limit to spec documents becomes a fixed limit like the assistant's, with a
@@ -77,7 +84,9 @@ offers to merge has been checked by something other than the agent that produced
   limits (VI), and nothing is asked. An action outside those limits is refused, in either mode,
   never silently: the agent is told why, and the engineer sees the refusal at once with the reason
   and a way to allow it once. Allowing it, even a push to a protected target branch, is the
-  engineer's decision, and the first rule does not forbid it.
+  engineer's decision, and the first rule does not forbid it. The one exception is a runtime's
+  own permission and settings files (VI): their refusal is shown the same way, but cannot be
+  allowed.
 - Agent steps start only after the engineer approved the plan, apart from the planning
   conversation the engineer started. The approval covers that run's steps, within its caps.
 - The engineer sets how much is decided without them (the autonomy level). The lead may answer an
@@ -172,9 +181,12 @@ already has.
   engineer's word (II). These are the lead's and the assistant's fixed limits; beyond them, only
   what the engineer allowed once from a refusal (II). Commands are limited to the gates, the
   plan's commands and the project's approved commands, except as the next rule allows.
-- Options that make an agent skip its own permission checks MUST NOT be used, nor rules that let
-  a runtime allow commands or edits without the request reaching Fallow: Fallow answers every
-  request an agent makes itself, in every mode. In a conversation the engineer is present for (the
+- Options that make an agent skip its own permission checks MUST NOT be used, nor a rule that
+  lets a runtime allow every command or every edit without the request reaching Fallow. Narrow
+  rules for what Fallow's rights already allow (the gates, approved commands, reads, the lead's
+  spec documents) are Fallow's own decision and stay. Everything else reaches Fallow, which
+  answers it, in every mode. No agent edits its runtime's own permission or settings files, in
+  any mode: an agent that could would be able to switch Fallow's checks off. In a conversation the engineer is present for (the
   lead's spec session, the assistant's solo session), the engineer chooses Manual (commands that
   are not approved are asked per command) or Auto (every action within the agent's fixed limits
   runs without asking; outside them, II).
@@ -279,4 +291,4 @@ breaks silently on the next, and ties the engineer to one supplier.
   section; unjustified violations block merge.
 - Compliance is reviewed at every pull request and at every release.
 
-**Version**: 10.0.0 | **Ratified**: 2026-10-13 | **Last Amended**: 2026-11-18
+**Version**: 10.1.0 | **Ratified**: 2026-10-13 | **Last Amended**: 2026-11-18

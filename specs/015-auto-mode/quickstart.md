@@ -71,3 +71,12 @@ Set `chat_mode = "sometimes"`. Expect the settings error naming the key.
 ## Q8 With Claude Code (SC-003)
 
 Repeat Q2 and Q3 with Claude Code as the assistant and as the lead, on a throwaway project. Expect the same results. Check the agent's start command in the activity's details: it has `--permission-prompt-tool`, no `bypassPermissions` or `--dangerously-skip-permissions`, and no plain `Bash` allow rule.
+
+## Q9 Secrets stay hidden, and control files stay closed (FR-009, FR-010, SC-006)
+
+In Auto, with `FALLOW_TEST_SECRET=abc123` in the environment and a `.env` file holding `TOKEN=xyz789`, have the fake assistant run `env` and read `.env`. Expect:
+- both run without a card;
+- the activity shows "Output hidden: it may hold secret values" for both;
+- `abc123` and `xyz789` appear nowhere in Fallow's data folder (`grep -r`).
+
+Have the agent edit `.claude/settings.json`. Expect a refusal card that says "This file is never editable", with **Dismiss** only.

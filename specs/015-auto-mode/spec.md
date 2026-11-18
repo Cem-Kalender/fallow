@@ -35,7 +35,7 @@ There is no second model and no reviewer. Fallow keeps no list of exceptions tha
 - A runtime is never started with its own bypass option, nor with an allow-everything rule that would keep requests from reaching Fallow.
 - So every runtime Fallow supports gets the same Auto. Today Claude Code is the only real one.
 
-**Constitution amendment 10.0.0 (MAJOR)**, to be made with this spec on 2026-11-18. It replaces 9.0.0's wording and the uncommitted 9.0.1 patch.
+**Constitution amendments 10.0.0 (MAJOR) and 10.1.0 (MINOR, after /speckit-analyze)**, made with this spec on 2026-11-18. It replaces 9.0.0's wording and the uncommitted 9.0.1 patch.
 - **II**: both chats are in Manual or Auto. In Auto, the engineer's choice of Auto is their word for every action within the agent's fixed limits. A refusal at a limit is never silent, and allowing it once is the engineer's decision, a push onto a protected target branch included.
 - **VI**: the lead's fixed limit is that it edits only spec documents; the assistant's is that it edits only its session's working copy. Outside that limit, only what the engineer allowed once from a refusal is allowed.
 - **Unchanged**:
@@ -56,6 +56,8 @@ There is no second model and no reviewer. Fallow keeps no list of exceptions tha
 - Q: What should the engineer get when they choose auto mode? → A: Auto mode: Auto is Auto, Manual is Manual. In Auto nothing is asked; no second model reviews actions. Model and supplier agnostic.
 - Q: Do the fixed limits hold in Auto? → A: They hold, but a refusal is never silent: the agent is told why, and the engineer sees it at once with the reason and a button to allow it once, for every limit, a push onto a protected target included.
 - Q: Which chat does this cover, the lead's or the assistant's? → A: Both, with the same modes: there is no reason for them to differ. The lead's four modes (Read only, Approved commands, Ask, Run anything) and the assistant's two ("Ask for commands", "Until I switch back") are replaced by Manual and Auto.
+- Q (/speckit-analyze): Can the runtime's own permission files be allowed once? → A: No. They are never editable, in any mode, because an agent that could edit them could switch Fallow's checks off. Their refusal is shown like any other, without "Allow this once" (constitution 10.1.0).
+- Q (/speckit-analyze): Auto runs `env` and reads `.env` files, but constitution V forbids Fallow to display environment or secret values. → A: The output is hidden in the activity and in Fallow's records (FR-010); the agent still gets it.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -96,6 +98,7 @@ Check that all of them run with no card and appear in the activity. Do the same 
 1. **Given** Auto, **When** the agent requests any command, edit, read or web request within its fixed limits (FR-009), **Then** Fallow allows it without asking.
 2. **Given** Auto, **When** the agent requests an action outside its fixed limits, **Then** the action does not run, and the refusal is never silent. Outside the limits means: for the assistant, an edit outside its working copy; for the lead, an edit outside the spec documents; for both, a push onto a protected target branch.
    - The agent is told it was refused and why, so it can do it another way or tell the engineer.
+   - Allowing it once allows exactly that command or path once, and the agent is told so.
    - The chat shows the refusal at once, with the reason and "Allow this once". This runs the action, a push onto a protected target included, in case the engineer does want it.
    - The chat appears in "Needs you", and the tray notifies, naming the project and the chat.
 3. **Given** a request waiting for the engineer, **When** they switch to Auto, **Then** it is answered as Auto would answer it.
@@ -136,8 +139,8 @@ Manual asks before commands that are not the gates or the project's approved com
   - **Auto**: asks nothing.
 
   The lead's Read only, Approved commands, Ask and Run anything, and the assistant's "Ask for commands" and "Until I switch back", MUST be removed.
-- **FR-002**: Both composers MUST show the current mode by name, in the same control in the same place. Shift+Tab in the composer MUST toggle it. The control MUST work with the keyboard and screen readers, with its name and state announced.
-- **FR-003**: In Auto, Fallow MUST allow every request from the agent without asking, within its fixed limits (FR-009): commands, edits, reads and web requests, including the commands Fallow's judge cannot read. Fallow uses no reviewer, classifier or second model.
+- **FR-002**: Both composers MUST show the current mode by name, in the same control in the same place: the composer's bottom bar, left of the send button, where both chips are today. Shift+Tab in the composer MUST toggle it. The control MUST work with the keyboard and screen readers, with its name and state announced.
+- **FR-003**: In Auto, Fallow MUST allow every request from the agent without asking, within its fixed limits (FR-009): commands, edits, reads and web requests, including the commands Fallow's judge cannot read. Fallow uses no reviewer, classifier or second model. The assistant's web switch (012) stays its own setting, beside the mode switch. With web off the agent has no web tools at all, so there is nothing to allow or refuse.
 - **FR-004**: Fallow MUST NOT start any runtime with that runtime's own option for skipping permission checks, nor with a rule that allows every command or edit without the request reaching Fallow. Auto works by Fallow answering the runtime's requests, so it behaves the same for every runtime.
 - **FR-005**: Fallow's settings MUST offer a default mode for both chats: Manual unless set. A new chat, and every chat after a restart, starts in it.
 - **FR-006**: Switching modes MUST add a one-line note to the chat. Switching to Auto says that every action now runs without asking.
@@ -146,12 +149,17 @@ Manual asks before commands that are not the gates or the project's approved com
 - **FR-009**: Each agent's fixed limits MUST hold in both modes:
   - the assistant edits only inside its session's working copy (012 FR-008);
   - the lead edits only spec documents (`specs/`, the constitution, `.fallow/`);
-  - neither pushes onto a protected target branch (II).
+  - neither pushes onto a protected target branch (II). "Protected" includes a target whose protection Fallow could not read, or is still reading: only a target known to be unprotected is not a limit;
+  - in Manual only, a tool Fallow cannot judge (for example an MCP tool) is refused. Auto allows it.
 
   A request outside them MUST NOT run, and its refusal MUST NOT be silent:
   - The agent MUST receive the refusal with its reason.
-  - The chat MUST show it at once with the reason and "Allow this once", which runs that one request, a push onto a protected target included, as the engineer's decision (constitution II, 10.0.0). Whether the remote itself accepts the push is up to its protection.
+  - "Allow this once" MUST allow exactly that command or path once. The agent MUST be told so in those words, so that a retry with a different command is understood to be refused again.
+  - An edit of a runtime's own permission or settings files (for Claude Code, `.claude/settings.json` and `.claude/settings.local.json`) MUST be refused in every mode, shown like any refusal, and MUST NOT offer "Allow this once" (constitution II and VI, 10.1.0). The note on switching to Auto names these files.
+  - The chat MUST show it at once with the reason and "Allow this once", which runs that one request, a push onto a protected target included, as the engineer's decision (constitution II, 10.1.0). Whether the remote itself accepts the push is up to its protection.
   - The chat MUST be listed in "Needs you" and notified through the tray, naming the project and the chat only.
+
+- **FR-010**: Fallow MUST NOT display or store environment variable values or secret values (constitution V). When Auto lets through a command that Fallow's judge flags as showing the environment (for example `env`, `printenv`, `set`), or a read of a file that may hold secrets (the test of 012 FR-043), the activity and Fallow's records MUST show "Output hidden: it may hold secret values" instead of the output. The agent itself still receives the output from its runtime.
 
 ### Key Entities
 
@@ -162,15 +170,16 @@ Manual asks before commands that are not the gates or the project's approved com
 
 ### Measurable Outcomes
 
-- **SC-001**: In a test with at least 3 engineers new to Fallow, every one switches to Auto within 30 seconds of being asked to "let it run without asking", in both chats, without help.
+- **SC-001**: In a check by hand with at least 3 people new to Fallow (the person who gave the feedback among them, if willing), every one switches to Auto within 30 seconds of being asked to "let it run without asking", in both chats, without help.
 - **SC-002**: In Auto, 0 request cards appear in the scripted test turns. The turns cover every request kind and every command shape the judge asks about today, for both agents.
 - **SC-003**: Auto behaves identically with the fake runtime and with Claude Code, with no runtime-specific code on the path, as the scripted tests show.
-- **SC-004**: Allowing a request in Auto adds no measurable delay compared with an approved command today.
+- **SC-004**: Allowing a request in Auto takes no longer than allowing an approved command (within 10 ms at the median of the scripted turn).
 - **SC-005**: 100% of refusals reach both the agent (with the reason) and the chat, "Needs you" and the tray, within 2 s, as the scripted tests show.
+- **SC-006**: In Auto, 0 environment or secret values appear in the activity or in Fallow's records for the scripted turn that runs `env` and reads a `.env` file.
 
 ## Assumptions
 
 - "Exactly like Claude Code" means: choose the mode, and the agent stops asking; a default mode in settings; Shift+Tab to switch. The engineer explicitly rejected a reviewer model.
 - The lead's former Read only and Approved commands modes are dropped without a replacement. An engineer who wants a stricter lead stays in Manual and denies.
-- Constitution 10.0.0 (2026-11-18) is made with this spec (II, VI).
+- Constitution 10.1.0 (2026-11-18) is made with this spec (II, V, VI).
 - Builds on 007 and 009 (the lead's spec sessions), 012 (solo sessions, FR-008 and FR-043), 013 (themes) and 014 (the window), as on `main` at `dbafdd1`.
