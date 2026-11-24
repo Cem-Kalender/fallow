@@ -4018,6 +4018,7 @@ impl Engine {
             | Req::Move { id, .. }
             | Req::Project { id }
             | Req::CheckRemote { id } => Some(id.clone()),
+            Req::ProjectCommands { project } => Some(project.clone()),
             Req::ProjectConversation { project }
             | Req::NewSession { project, .. }
             | Req::Sessions { project }
@@ -4313,6 +4314,7 @@ impl Engine {
                 self.studio.delete_session(&session, confirmed)
             }
             Req::Commands { conv } => self.studio.commands(&conv),
+            Req::ProjectCommands { project } => self.studio.project_commands(&project),
             Req::SetMode { conv, mode } => self.studio.set_mode(&conv, mode),
             Req::Approve {
                 conv,
@@ -5098,6 +5100,7 @@ impl Engine {
                         | Req::Feature { .. }
                         | Req::Doc { .. }
                         | Req::Commands { .. }
+                        | Req::ProjectCommands { .. }
                         | Req::FileVersions { .. }
                         | Req::Files { .. }
                         | Req::File { .. }

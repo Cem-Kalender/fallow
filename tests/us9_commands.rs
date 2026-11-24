@@ -244,3 +244,76 @@ fn two_hundred_commands_are_listed_within_100_ms() {
         "200 commands took {took:?}"
     );
 }
+
+/// The `/` menu of a project's chat before its first message: no conversation yet, and the
+/// menu still lists the project's commands and the engineer's own skills, commands and agents
+/// (from the test's own home, never the engineer's).
+#[test]
+fn the_menu_is_there_before_the_chat_has_a_conversation() {
+    use fallow::service::answer::{KeptTheme, PageRequest, answer};
+    let root = scratch("cmds-before");
+    let repo = repo(&root);
+    let scenario = root.join("scenario.toml");
+    std::fs::write(&scenario, "").unwrap();
+    let e = start_studio(&root, &scenario, None);
+    let tx = &e.tx;
+    let project = sreq(tx, Req::AddProject { path: repo.clone() }).unwrap()["project"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    put(&repo, ".claude/skills/tidy/SKILL.md", "# Tidy the docs\n");
+    let home = root.join("home");
+    put(
+        &home,
+        ".claude/skills/car-mode/SKILL.md",
+        "---\ndescription: Car\n---\nShort.\n",
+    );
+    put(&home, ".claude/skills/tidy/SKILL.md", "Mine.\n");
+    put(&home, ".claude/commands/standup.md", "Standup.\n");
+    put(
+        &home,
+        ".claude/agents/reviewer.md",
+        "---\nname: reviewer\ndescription: Reviews\n---\n",
+    );
+    let res = answer(
+        PageRequest {
+            method: "GET".into(),
+            url: format!("/api/projects/{project}/commands"),
+            body: Vec::new(),
+        },
+        tx,
+        &KeptTheme::default(),
+    );
+    assert_eq!(res.status, 200);
+    let v: Value = serde_json::from_slice(&res.body).unwrap();
+    let v = &v["value"];
+    assert_eq!(names(v), ["tidy", "car-mode", "standup", "reviewer"]);
+    let groups: Vec<&str> = v["commands"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["group"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        groups,
+        ["project", "user_skill", "user_command", "claude_agent"]
+    );
+    assert_eq!(v["commands"][1]["origin"], "personal skill");
+    assert_eq!(
+        v["commands"][1]["source"],
+        "~/.claude/skills/car-mode/SKILL.md"
+    );
+    assert!(!String::from_utf8_lossy(&res.body).contains(&*home.to_string_lossy()));
+    // A project that is not there: an error, not a menu.
+    let none = answer(
+        PageRequest {
+            method: "GET".into(),
+            url: "/api/projects/nothing/commands".into(),
+            body: Vec::new(),
+        },
+        tx,
+        &KeptTheme::default(),
+    );
+    assert_ne!(none.status, 200);
+    let _ = std::fs::remove_dir_all(&root);
+}

@@ -276,6 +276,10 @@ pub enum Req {
     Commands {
         conv: String,
     },
+    /// The `/` menu of a project's chat that has no conversation yet.
+    ProjectCommands {
+        project: String,
+    },
     /// 015: a spec session's mode, `manual` or `auto`.
     SetMode {
         conv: String,
@@ -431,6 +435,9 @@ pub struct Studio {
     /// Squad files as committed, per folder, with the commit read (issue #3: a session's view
     /// reads it from git again only when the project's `HEAD` moved).
     pub squads: std::cell::RefCell<BTreeMap<PathBuf, (String, crate::config::Squad)>>,
+    /// The home folder whose Claude Code skills, commands, plugins and agents the `/` menu lists:
+    /// `None` reads `HOME` at each request (tests give one of their own).
+    pub home: Option<PathBuf>,
 }
 
 /// Whether a session's lead now runs on another runtime or model than the session began on
@@ -611,6 +618,7 @@ impl Studio {
             console: Vec::new(),
             settings,
             squads: std::cell::RefCell::default(),
+            home: None,
         };
         // 012 (R-2, R-3): the empty folder Fallow's own git commands on a session use as their
         // hooks path, so no hook runs.
@@ -1051,6 +1059,22 @@ impl Studio {
         Ok(json!({}))
     }
 
+    /// The home folder the `/` menu reads the engineer's own Claude Code files from.
+    fn claude_home(&self) -> Option<PathBuf> {
+        self.home.clone().or_else(commands::home)
+    }
+
+    /// The `/` menu of a project's chat before it has a conversation (a session starts with its
+    /// first message): the project's own commands and the engineer's, no Spec Kit steps and none
+    /// of a session's own commands.
+    pub fn project_commands(&self, project: &str) -> Result<Value, String> {
+        let p = self.project(project)?;
+        let root = p.root_dir();
+        let mut list = commands::catalogue(&root, &root, true, self.claude_home().as_deref());
+        list.retain(|x| x.group != commands::Group::SpecKit);
+        Ok(json!({ "commands": list }))
+    }
+
     /// The `/` menu's commands of a conversation (009 US1, contracts/web-api.md "Commands").
     pub fn commands(&self, conv: &str) -> Result<Value, String> {
         let c = self
@@ -1072,11 +1096,12 @@ impl Studio {
             &p.root_dir(),
             &workdir.join(&p.spec_root),
             c.state.kind == Kind::Project,
+            self.claude_home().as_deref(),
         );
         // 012 (R-15): a session offers Fallow's own commands and the project's, not Spec Kit's
         // steps (those are a spec session's).
         if c.state.kind == Kind::Solo {
-            list.retain(|x| x.group == commands::Group::Project);
+            list.retain(|x| x.group != commands::Group::SpecKit);
             list.insert(
                 0,
                 commands::fallow(
@@ -1231,6 +1256,7 @@ impl Studio {
             &p.root_dir(),
             &workdir.join(&p.spec_root),
             kind == Kind::Project,
+            self.claude_home().as_deref(),
         );
         let command = match commands::resolve(&catalogue, text) {
             Some((cmd, _)) if !cmd.available => {
@@ -1246,13 +1272,16 @@ impl Studio {
                     path: cmd.source.clone(),
                     input,
                 },
-                commands::Group::Project => prompts::CommandUse::Project {
+                commands::Group::Project
+                | commands::Group::UserSkill
+                | commands::Group::UserCommand => prompts::CommandUse::Project {
                     name: cmd.name.clone(),
                     source: cmd.source.clone(),
                     instructions: commands::instructions(cmd, &input)?,
                 },
-                // A session's own commands never reach a spec session's lead.
-                commands::Group::Fallow => {
+                // A session's own commands never reach a spec session's lead; an agent is not a
+                // command (`resolve` leaves them out).
+                commands::Group::Fallow | commands::Group::ClaudeAgent => {
                     return Err(format!("/{} is a session's command", cmd.name));
                 }
             }),
