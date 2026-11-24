@@ -1,8 +1,10 @@
 // 009 US1: the chat's `/` menu (contracts/page.md "The `/` menu", research R-9). Typing "/" at
 // the start of the message box lists what can be done here: Spec Kit's steps and the project's
-// own commands (from Fallow, `GET /api/conversations/<c>/commands`), Fallow's actions (the
-// screen's, each doing what its button does), and the project's agents. The box is an ARIA
-// combobox while the menu is open; the arrow keys move, Tab completes, Enter picks, Escape closes.
+// own commands (from Fallow, `GET /api/conversations/<c>/commands`, or before the chat has a
+// conversation `GET /api/projects/<p>/commands`), Fallow's actions (the screen's, each doing what
+// its button does), the project's agents, and the engineer's own Claude Code skills, commands and
+// agents (subagents). The box is an ARIA combobox while the menu is open; the arrow keys move, Tab
+// completes, Enter picks, Escape closes.
 "use strict";
 (() => {
   const { h, get } = Fallow;
@@ -18,7 +20,12 @@
     ["action", "Fallow actions"],
     ["agent", "Agents"],
     ["project", "Project commands"],
+    ["user_skill", "Your skills"],
+    ["user_command", "Your commands"],
+    ["claude_agent", "Claude Code agents"],
   ];
+  // Kinds that are `/name` commands: picked or completed as `/name ` in the box.
+  const SLASH = new Set(["spec_kit", "project", "user_skill", "user_command"]);
 
   // The screen with a chat says which conversation the box talks to, and what Fallow can do there.
   function attach(opts) {
@@ -33,8 +40,12 @@
   async function load() {
     const key = `${ctx.conv}|${ctx.project}`;
     if (cache && cache.key === key && Date.now() - cache.at < 5000) return cache;
+    // Before its first message a chat has no conversation: the project's menu then.
+    const url = ctx.conv
+      ? `/api/conversations/${encodeURIComponent(ctx.conv)}/commands`
+      : `/api/projects/${encodeURIComponent(ctx.project)}/commands`;
     const [cmds, ags] = await Promise.all([
-      get(`/api/conversations/${encodeURIComponent(ctx.conv)}/commands`).catch(() => ({ commands: [] })),
+      get(url).catch(() => ({ commands: [] })),
       get(`/api/agents${ctx.project ? `?project=${encodeURIComponent(ctx.project)}` : ""}`).catch(() => ({ agents: [] })),
     ]);
     cache = { key, at: Date.now(), commands: cmds.commands || [], agents: ags.agents || [] };
@@ -109,10 +120,11 @@
       parts.push(h`<div role="group" aria-labelledby="${gid}"><div class="cmd-group" id="${gid}">${label}</div>${these.map((o) => {
         const n = items.indexOf(o);
         i += 1;
-        const src = o.kind === "project" ? h`<span class="cmd-src">${o.source}</span>` : "";
+        const from = o.origin ? `${o.origin}${o.source ? ` · ${o.source}` : ""}` : o.source;
+        const src = o.kind === "project" || o.origin ? h`<span class="cmd-src">${from}</span>` : "";
         const why = o.available === false && o.reason ? h`<span class="cmd-why">${o.reason}</span>` : "";
         return h`<div class="cmd-opt${n === active ? " on" : ""}${o.available === false ? " off" : ""}" role="option" id="cmd-o-${n}" data-i="${n}" aria-selected="${n === active ? "true" : "false"}"${Fallow.raw(o.available === false ? ' aria-disabled="true"' : "")}>
-          <span class="cmd-name${o.kind === "action" || o.kind === "agent" ? " plain" : ""}">${o.kind === "action" || o.kind === "agent" ? o.name : `/${o.name}`}</span>
+          <span class="cmd-name${SLASH.has(o.kind) ? "" : " plain"}">${SLASH.has(o.kind) ? `/${o.name}` : o.name}</span>
           <span class="cmd-desc">${o.description || ""}</span>${src}${why}</div>`;
       })}</div>`);
     }
@@ -133,7 +145,7 @@
     const n = items.filter((o) => o.available !== false).length;
     const on = items[active];
     const at = on ? items.filter((o) => o.available !== false).indexOf(on) + 1 : 0;
-    if (st) st.textContent = !items.length ? "No command matches" : on ? `${on.kind === "spec_kit" || on.kind === "project" ? "/" : ""}${on.name}, ${at} of ${n}` : `${n} command${n === 1 ? "" : "s"}`;
+    if (st) st.textContent = !items.length ? "No command matches" : on ? `${SLASH.has(on.kind) ? "/" : ""}${on.name}, ${at} of ${n}` : `${n} command${n === 1 ? "" : "s"}`;
     open = true;
   }
 
@@ -156,7 +168,7 @@
 
   async function refresh() {
     const b = box();
-    if (!ctx || !ctx.conv || !b || document.activeElement !== b) return close();
+    if (!ctx || !(ctx.conv || ctx.project) || !b || document.activeElement !== b) return close();
     const v = b.value;
     if (!wants(v)) {
       dismissed = null;
@@ -196,7 +208,9 @@
   function pick(o) {
     if (!o || o.available === false) return;
     close();
-    if (o.kind === "spec_kit" || o.kind === "project") return setBox(`/${o.name} `);
+    if (SLASH.has(o.kind)) return setBox(`/${o.name} `);
+    // A Claude Code agent is asked for in plain text (constitution IX): the engineer adds the task.
+    if (o.kind === "claude_agent") return setBox(`Use the ${o.name} agent (subagent) for this: `);
     setBox("");
     if (o.kind === "action") return o.run();
     if (o.kind === "agent") {
@@ -223,7 +237,7 @@
     else if (ev.key === "Escape") { stopIt(); dismissed = box().value; close(); }
     else if (ev.key === "Tab" && !ev.shiftKey) {
       const o = items[active];
-      if (o && (o.kind === "spec_kit" || o.kind === "project")) { stopIt(); close(); setBox(`/${o.name} `); }
+      if (o && SLASH.has(o.kind)) { stopIt(); close(); setBox(`/${o.name} `); }
     } else if (ev.key === "Enter" && !ev.shiftKey) {
       // With no match, Enter sends the text as it is.
       if (active >= 0) { stopIt(); pick(items[active]); } else close();

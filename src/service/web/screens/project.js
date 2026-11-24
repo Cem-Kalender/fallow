@@ -271,7 +271,8 @@
     try { pre = sessionStorage.getItem("fallow.prefill"); sessionStorage.removeItem("fallow.prefill"); } catch (_) { pre = null; }
     const box = document.getElementById("say");
     if (pre && box) { box.value = pre; box.focus(); }
-    // Always: a screen without a conversation leaves the menu with none (009 review).
+    // Always, so the menu follows the screen; without a conversation yet (before the chat's first
+    // message) the menu is the project's.
     if (Fallow.menu) {
       Fallow.menu.attach({ conv: (p.session && p.session.id) || null, project: p.id, actions: () => actions(state), pickAgent: (a) => pickLead(state, a) });
     }

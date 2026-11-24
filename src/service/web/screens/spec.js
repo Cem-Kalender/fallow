@@ -158,7 +158,8 @@
       const say = document.getElementById("say");
       if (pre && say && pre.key === key) { sessionStorage.removeItem("fallow.prefill"); say.value = pre.message; say.focus(); }
     } catch (_) { /* nothing kept */ }
-    // Always: a screen without a conversation leaves the menu with none (009 review).
+    // Always, so the menu follows the screen; without a conversation yet (before the chat's first
+    // message) the menu is the project's.
     if (Fallow.menu) {
       Fallow.menu.attach({ conv: c.id || null, project: route.project, actions: () => actions(state), pickAgent: (a) => pickLead(state, a) });
     }
