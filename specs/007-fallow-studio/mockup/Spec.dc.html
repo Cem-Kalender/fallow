@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Spec session</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#F6F6F3}
+a{color:#2F52C9}a:hover{color:#1F3A99}
+.nav{color:#4A4945;text-decoration:none;padding:8px 12px;border-radius:8px;font-size:14px;font-weight:500}
+.nav:hover{background:#ECEBE6;color:#1C1C1A}
+.navon{background:#1C1C1A;color:#FFFFFF}
+.navon:hover{background:#1C1C1A;color:#FFFFFF}
+.card{background:#FFFFFF;border:1px solid #E3E2DC;border-radius:12px}
+.pill{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;padding:3px 9px;border-radius:999px;white-space:nowrap}
+.mono{font-family:'JetBrains Mono',ui-monospace,monospace}
+.btn{display:inline-flex;align-items:center;justify-content:center;min-height:40px;padding:0 16px;border-radius:8px;font:600 14px Inter,sans-serif;text-decoration:none;border:1px solid #1C1C1A;background:#1C1C1A;color:#FFFFFF;cursor:pointer}
+.btn:hover{background:#000000;color:#FFFFFF}
+.btn2{background:#FFFFFF;color:#1C1C1A;border:1px solid #D4D3CC}
+.btn2:hover{background:#F0EFEA;color:#1C1C1A}
+.step{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;padding:6px 10px;border-radius:8px;white-space:nowrap}
+.tab{font-size:13px;font-weight:600;padding:10px 14px;border:0;background:transparent;color:#5E5D58;border-bottom:2px solid transparent;cursor:pointer;font-family:inherit}
+.tabon{color:#1C1C1A;border-bottom-color:#1C1C1A}
+.opt{display:flex;gap:10px;align-items:flex-start;width:100%;text-align:left;padding:10px 12px;border:1px solid #E3E2DC;border-radius:8px;background:#FFFFFF;font:14px Inter,sans-serif;color:#1C1C1A;cursor:pointer;line-height:1.4}
+.opt:hover{border-color:#2F52C9}
+</style>
+</helmet>
+<div style="width:100%;min-height:1000px;box-sizing:border-box;font-family:Inter,system-ui,sans-serif;color:#1C1C1A;background:#F6F6F3;display:flex;flex-direction:column">
+
+<header style="display:flex;flex-wrap:wrap;align-items:center;gap:16px;padding:12px 24px;border-bottom:1px solid #E3E2DC;background:#FFFFFF">
+<div style="display:flex;align-items:center;gap:10px;font-weight:700;font-size:17px;margin-right:12px">
+<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#2F52C9" stroke-width="2" aria-hidden="true"><path d="M4 20c4-1 6-5 8-9s4-7 8-7"></path><path d="M4 14c3 0 5-2 6-4"></path><path d="M12 20c3-1 5-3 6-6"></path></svg>
+Fallow
+</div>
+<nav aria-label="Main" style="display:flex;flex-wrap:wrap;gap:4px">
+<a class="nav" href="Main.dc.html">Dashboard</a>
+<a class="nav navon" href="Spec.dc.html">Spec sessions</a>
+<a class="nav" href="Run.dc.html">Loops</a>
+<a class="nav" href="Pipeline.dc.html">Pipelines &amp; agents</a>
+</nav>
+</header>
+
+<div style="display:flex;flex-wrap:wrap;align-items:center;gap:12px 20px;padding:14px 24px;background:#FFFFFF;border-bottom:1px solid #E3E2DC">
+<div>
+<div style="font-size:13px;color:#5E5D58">shop-demo</div>
+<h1 style="margin:2px 0 0;font-size:20px">008-checkout <span style="font-weight:500;color:#5E5D58;font-size:15px">· spec session with the lead</span></h1>
+</div>
+<div style="flex:1"></div>
+<ol aria-label="Spec Kit steps" style="display:flex;flex-wrap:wrap;gap:4px;list-style:none;margin:0;padding:0">
+<li class="step" style="color:#226640"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" aria-hidden="true"><path d="M5 12l5 5 9-10"></path></svg>Constitution</li>
+<li class="step" style="color:#226640"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" aria-hidden="true"><path d="M5 12l5 5 9-10"></path></svg>Specify</li>
+<li class="step" style="background:#EEF1FB;color:#2F52C9"><span style="width:8px;height:8px;border-radius:50%;background:#2F52C9"></span>Clarify 2/4</li>
+<li class="step" style="color:#6E6D67">Plan</li>
+<li class="step" style="color:#6E6D67">Tasks</li>
+<li class="step" style="color:#6E6D67">Analyze</li>
+<li class="step" style="color:#6E6D67"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="5" y="11" width="14" height="9" rx="2"></rect><path d="M8 11V8a4 4 0 0 1 8 0v3"></path></svg>Lock</li>
+</ol>
+</div>
+
+<div style="display:flex;flex-wrap:wrap;flex:1;min-height:0">
+
+<section aria-label="Conversation" style="flex:1 1 420px;max-width:620px;display:flex;flex-direction:column;border-right:1px solid #E3E2DC;background:#FBFBF9">
+<div style="flex:1;padding:20px 24px;display:flex;flex-direction:column;gap:16px">
+
+<div style="align-self:flex-end;max-width:85%;background:#1C1C1A;color:#FFFFFF;padding:12px 14px;border-radius:12px 12px 2px 12px;font-size:14px;line-height:1.5">I want a checkout for the cart: it takes the cart, applies discounts, shows a receipt and empties the cart. Keep it CLI only.</div>
+
+<div style="display:flex;gap:10px;max-width:92%">
+<div style="flex:none;width:28px;height:28px;border-radius:8px;background:#F3EEFB;color:#5B3BB0;font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center">L</div>
+<div style="font-size:14px;line-height:1.55">
+<div style="font-size:12px;color:#5E5D58;margin-bottom:4px"><b style="color:#1C1C1A">lead</b> · ran /speckit-specify</div>
+I wrote a first draft of <a href="#doc">spec.md</a> with three user stories: checkout, discounts and the receipt. Four things aren't clear yet; I'll ask them one by one and write each answer into the spec.
+<div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap"><span class="pill" style="background:#F0EFEA;color:#4A4945">spec.md · new</span><span class="pill" style="background:#F0EFEA;color:#4A4945">checklists/requirements.md · 12/16</span></div>
+</div>
+</div>
+
+<div style="display:flex;gap:10px;max-width:92%">
+<div style="flex:none;width:28px;height:28px;border-radius:8px;background:#F3EEFB;color:#5B3BB0;font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center">L</div>
+<div style="font-size:14px;line-height:1.55;color:#4A4945">
+<div style="font-size:12px;color:#5E5D58;margin-bottom:4px"><b style="color:#1C1C1A">lead</b> · Q1 answered</div>
+Discounts apply before tax. Written to <span class="mono" style="font-size:12px">spec.md › Clarifications</span> and FR-006.
+</div>
+</div>
+
+<div class="card" style="padding:16px;margin-left:38px;border-color:#BFCBF0">
+<div style="font-size:12px;font-weight:600;color:#2F52C9;margin-bottom:6px">QUESTION 2 OF 4 · /speckit-clarify</div>
+<div style="font-weight:600;line-height:1.45">If an item in the cart sold out after it was added, what should checkout do?</div>
+<div style="font-size:13px;color:#5E5D58;margin:6px 0 12px;line-height:1.45">This decides whether checkout can fail halfway, and what the must-fail test for US1 checks.</div>
+<div style="display:flex;flex-direction:column;gap:8px">
+<button class="opt" style="border-color:#2F52C9;background:#F5F7FE"><b style="flex:none">A</b><span>Stop before charging and list the sold-out items <span class="pill" style="background:#EEF1FB;color:#2F52C9;margin-left:4px">recommended</span></span></button>
+<button class="opt"><b style="flex:none">B</b><span>Check out the rest and drop the sold-out items</span></button>
+<button class="opt"><b style="flex:none">C</b><span>Ask the user each time</span></button>
+</div>
+</div>
+
+</div>
+<form style="padding:16px 24px;border-top:1px solid #E3E2DC;background:#FFFFFF;display:flex;gap:10px;align-items:flex-end">
+<label for="say" style="position:absolute;left:-9999px">Message the lead</label>
+<button type="button" title="Shift+Tab switches the mode" style="flex:none;min-height:44px;display:inline-flex;align-items:center;gap:6px;padding:0 12px;border:1px solid #D4D3CC;border-radius:999px;background:#FFFFFF;font:600 13px Inter,sans-serif;color:#4A4945;cursor:pointer"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#2F52C9" stroke-width="2" aria-hidden="true"><path d="M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7z"></path></svg>Ask<span style="font-weight:500;color:#6E6D67">· Shift+Tab</span></button>
+<textarea id="say" rows="2" placeholder="Answer, or tell the lead what to change…" style="flex:1;resize:none;border:1px solid #D4D3CC;border-radius:10px;padding:10px 12px;font:14px Inter,sans-serif;color:#1C1C1A"></textarea>
+<button class="btn" type="submit">Send</button>
+</form>
+</section>
+
+<section id="doc" aria-label="Documents" style="flex:999 1 520px;min-width:0;display:flex;flex-direction:column;background:#FFFFFF">
+<div style="display:flex;flex-wrap:wrap;align-items:center;gap:4px;padding:0 16px;border-bottom:1px solid #E3E2DC">
+<button class="tab tabon">spec.md</button>
+<button class="tab">plan.md <span style="color:#6E6D67;font-weight:500">· later</span></button>
+<button class="tab">tasks.md <span style="color:#6E6D67;font-weight:500">· later</span></button>
+<button class="tab">constitution.md</button>
+<div style="flex:1"></div>
+<span style="font-size:12px;color:#5E5D58;display:inline-flex;align-items:center;gap:6px"><span style="width:8px;height:8px;border-radius:50%;background:#2F52C9"></span>lead is editing · you edited 2 min ago</span>
+</div>
+<div style="display:flex;flex:1;min-height:0">
+<div class="mono" aria-hidden="true" style="padding:20px 10px 20px 16px;color:#A3A29B;font-size:13px;line-height:1.75;text-align:right;user-select:none">41<br>42<br>43<br>44<br>45<br>46<br>47<br>48<br>49<br>50<br>51<br>52<br>53<br>54<br>55<br>56<br>57<br>58<br>59<br>60<br>61<br>62</div>
+<div class="mono" style="flex:1;min-width:0;padding:20px 20px 20px 8px;font-size:13px;line-height:1.75;white-space:pre-wrap;color:#2B2A27;overflow-x:auto">## User Scenarios &amp; Testing
+
+### User Story 1 - Check out the cart (Priority: P1)
+
+The shopper runs `python -m shop checkout` and gets a receipt;
+the cart is empty afterwards.
+
+**Independent Test**: add two items, check out, read the receipt.
+
+1. **Given** a cart with apple:2, **When** checkout runs,
+   **Then** the receipt lists apple x2 and the total.
+<span style="background:#FDF1DC;display:block">2. **Given** an item sold out after it was added, **When**
+   checkout runs, **Then** [NEEDS CLARIFICATION: stop or skip?]</span>
+### User Story 2 - Discounts (Priority: P2)
+
+- **FR-006**: Discounts MUST apply before tax.
+<span style="background:#E9F5EC;display:block">  <span style="color:#226640">(answered Q1, 16:02)</span></span>
+### Edge Cases
+
+- An empty cart: checkout refuses with "Your cart is empty".
+- [NEEDS CLARIFICATION: rounding of discounted prices]</div>
+</div>
+<div style="display:flex;flex-wrap:wrap;align-items:center;gap:12px;padding:14px 20px;border-top:1px solid #E3E2DC;background:#FBFBF9">
+<div style="font-size:13px;color:#4A4945;line-height:1.45;flex:1 1 300px">You can edit any document here; the lead sees your changes on its next turn. Locking commits spec, plan and tasks to <span class="mono" style="font-size:12px">008-checkout</span>; after that, only answers to questions change them.</div>
+<button class="btn" disabled="" style="opacity:.45;cursor:not-allowed">Lock &amp; start the loop</button>
+<span style="font-size:12px;color:#5E5D58">after Tasks and Analyze</span>
+</div>
+</section>
+
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":1000}}'>
+class Component extends DCLogic {
+renderVals() {
+return {};
+}
+}
+</script>
+</body>
+</html>

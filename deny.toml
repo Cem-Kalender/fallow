@@ -1,0 +1,58 @@
+# cargo-deny policy (Constitution III, plan.md Dependency budget).
+
+[graph]
+all-features = true
+# 014: Windows first (006); 016: macOS on Apple silicon. `wry`'s Linux dependencies (gtk,
+# webkit2gtk) are not built here and would otherwise trip the bans below (014 research R-1).
+targets = ["x86_64-pc-windows-msvc", "aarch64-apple-darwin"]
+
+[licenses]
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "Zlib",
+    # Phase 5 editor dependencies (T065): notify is CC0-1.0 (public domain dedication);
+    # clipboard-win and error-code (arboard on Windows) are BSL-1.0. Both are permissive,
+    # OSI-approved and impose no obligations beyond keeping the notice.
+    "CC0-1.0",
+    "BSL-1.0",
+]
+confidence-threshold = 0.9
+unused-allowed-license = "allow"
+# 016: `wry` brings `dirs` on every Apple target, and with it `option-ext` (MPL-2.0, a file-level
+# licence: used unmodified, it asks nothing of Fallow). Allowed for that crate only.
+exceptions = [{ allow = ["MPL-2.0"], crate = "option-ext" }]
+
+[bans]
+multiple-versions = "allow"
+wildcards = "deny"
+allow-wildcard-paths = true
+# Async runtimes (R-6), resolver crates (R-5), GUI/webview toolkits (Constitution III; 014 allows
+# `wry` only, on Fallow's own window, research R-1) and
+# netstat2 (R-4) are rejected in the plan's Dependency budget.
+deny = [
+    { crate = "tokio" },
+    { crate = "async-std" },
+    { crate = "smol" },
+    { crate = "hickory-resolver" },
+    { crate = "tao" },
+    { crate = "winit" },
+    { crate = "gtk" },
+    { crate = "webkit2gtk" },
+    # Fallow makes no network requests of its own (constitution V, 007 T088): no HTTP client.
+    { crate = "reqwest" },
+    { crate = "ureq" },
+    { crate = "hyper" },
+    { crate = "curl" },
+    { crate = "isahc" },
+    { crate = "attohttpc" },
+    { crate = "netstat2" },
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

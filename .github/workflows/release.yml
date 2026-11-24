@@ -1,0 +1,211 @@
+# A release (constitution, Development Workflow): built by CI from a tagged commit on `main`, with
+# a published checksum for every download; Fallow does not update itself. Push a tag `v<version>`,
+# with <version> the one in Cargo.toml, on a commit of `main`:
+#   git tag v0.1.0 && git push origin v0.1.0
+# The installer is not signed (an open-source tool, no paid certificate): Windows SmartScreen warns
+# about it, as the README says. 016: the Mac disk image is signed ad hoc and not notarized (no
+# paid Apple membership); the README and the notes give the first-launch step.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: release
+    runs-on: windows-2025
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: The tag is on main and names Cargo.toml's version
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          if [ "$tag" != "v$version" ]; then
+            echo "the tag $tag does not name Cargo.toml's version $version"; exit 1
+          fi
+          git fetch origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "the tagged commit is not on main"; exit 1
+          fi
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+
+      - name: Rust toolchain (from rust-toolchain.toml)
+        run: rustup toolchain install
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release
+
+      - name: Release build
+        run: cargo build --release --locked --bins
+
+      - name: "Gate: the release has no automation test page"
+        run: |
+          if grep -c "automation build: the Studio's test page" target/release/fallow.exe; then
+            echo "the release carries the automation build's page"; exit 1
+          fi
+
+      - name: Inno Setup
+        shell: pwsh
+        run: choco upgrade innosetup -y --no-progress
+
+      - name: The installer and its checksum
+        run: |
+          "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" "//DAppVersion=$VERSION" installer/fallow.iss
+          cd target/installer
+          sha256sum "Fallow-$VERSION-x64-setup.exe" > "Fallow-$VERSION-x64-setup.exe.sha256"
+          cat "Fallow-$VERSION-x64-setup.exe.sha256"
+
+      - name: The GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sum=$(cut -d' ' -f1 "target/installer/Fallow-$VERSION-x64-setup.exe.sha256")
+          cat > notes.md <<EOF
+          Fallow $VERSION for Windows 10 and 11 (x64).
+
+          **Install**: download \`Fallow-$VERSION-x64-setup.exe\` and run it. It installs for you only,
+          with no administrator rights. It is not signed, so Windows SmartScreen warns about it:
+          choose *More info*, then *Run anyway*. Then install and sign in to Claude Code
+          (see the README).
+
+          SHA-256: \`$sum\`
+
+          The web view of Fallow's window (Microsoft Edge WebView2) sends Windows' required diagnostic
+          data and is updated by Microsoft Edge Update; Fallow cannot switch these off. Fallow itself
+          makes no network requests.
+          EOF
+          sed -i 's/^          //' notes.md
+          gh release create "$GITHUB_REF_NAME" \
+            "target/installer/Fallow-$VERSION-x64-setup.exe" \
+            "target/installer/Fallow-$VERSION-x64-setup.exe.sha256" \
+            --title "Fallow $VERSION" --notes-file notes.md --verify-tag
+
+  # 016 (research M-19, M-20, FR-021 to FR-024, T036): the Mac download, built from the same tag
+  # on macOS: the app signed (ad hoc, hardened runtime; with a Developer ID and notarized when
+  # the secrets exist, FR-024), its disk image and SHA-256 uploaded to the release the Windows job
+  # created, the notes given a macOS section, and the published image checked once more. It runs
+  # after the Windows job (not racing it to create the release): for the length of this job the
+  # new release has no Mac download yet, and the install command says so.
+  macos:
+    name: release (macOS)
+    needs: release
+    runs-on: macos-15
+    timeout-minutes: 60
+    env:
+      # Absent today (no Apple membership): the signing and notarization steps are skipped.
+      FALLOW_SIGN_ID: ${{ secrets.MAC_DEVELOPER_ID }}
+      MAC_CERT_P12_BASE64: ${{ secrets.MAC_CERT_P12_BASE64 }}
+      MAC_CERT_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
+      MAC_NOTARY_APPLE_ID: ${{ secrets.MAC_NOTARY_APPLE_ID }}
+      MAC_NOTARY_TEAM_ID: ${{ secrets.MAC_NOTARY_TEAM_ID }}
+      MAC_NOTARY_PASSWORD: ${{ secrets.MAC_NOTARY_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: The tag is on main and names Cargo.toml's version
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          if [ "$tag" != "v$version" ]; then
+            echo "the tag $tag does not name Cargo.toml's version $version"; exit 1
+          fi
+          git fetch origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "the tagged commit is not on main"; exit 1
+          fi
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+
+      - name: Rust toolchain (from rust-toolchain.toml)
+        run: rustup toolchain install
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-macos
+
+      - name: Release build
+        run: cargo build --release --locked --bins
+
+      - name: "Gate: the release has no automation test page"
+        run: |
+          if grep -c "automation build: the Studio's test page" target/release/fallow; then
+            echo "the release carries the automation build's page"; exit 1
+          fi
+
+      - name: The Developer ID certificate (only with the secrets)
+        if: env.FALLOW_SIGN_ID != '' && env.MAC_CERT_P12_BASE64 != ''
+        run: |
+          kc="$RUNNER_TEMP/fallow.keychain-db"
+          kpw=$(openssl rand -base64 24)
+          echo "$MAC_CERT_P12_BASE64" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "$kpw" "$kc"
+          security set-keychain-settings -lut 3600 "$kc"
+          security unlock-keychain -p "$kpw" "$kc"
+          security import "$RUNNER_TEMP/cert.p12" -k "$kc" -P "$MAC_CERT_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$kpw" "$kc" >/dev/null
+          security list-keychains -d user -s "$kc"
+          rm -f "$RUNNER_TEMP/cert.p12"
+
+      - name: The app and its disk image (signature checked)
+        run: sh installer/macos/make-app.sh "$VERSION" target/macos
+
+      - name: Notarization (only with the secrets)
+        if: env.FALLOW_SIGN_ID != '' && env.MAC_NOTARY_APPLE_ID != ''
+        run: |
+          dmg="target/macos/Fallow-$VERSION-macos-arm64.dmg"
+          # The image signed too, with the same identity, before it is submitted and stapled.
+          codesign --force --timestamp --sign "$FALLOW_SIGN_ID" "$dmg"
+          xcrun notarytool submit "$dmg" --apple-id "$MAC_NOTARY_APPLE_ID" \
+            --team-id "$MAC_NOTARY_TEAM_ID" --password "$MAC_NOTARY_PASSWORD" --wait
+          xcrun stapler staple "$dmg"
+          # Stapling changes the image: its checksum again.
+          (cd target/macos && shasum -a 256 "$(basename "$dmg")" > "$(basename "$dmg").sha256")
+
+      - name: Upload to the release, with a macOS section in its notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          dmg="target/macos/Fallow-$VERSION-macos-arm64.dmg"
+          gh release upload "$GITHUB_REF_NAME" "$dmg" "$dmg.sha256" --clobber
+          sum=$(cut -d' ' -f1 "$dmg.sha256")
+          # WebKit's traffic from its file (any number of lines), never through a command-line
+          # value (review: awk refuses a newline in -v).
+          sed '/<!--/,/-->/d' installer/macos/webkit-traffic.md > traffic.md
+          # The release's notes without a macOS section from an earlier run of this job.
+          gh release view "$GITHUB_REF_NAME" --json body -q .body \
+            | awk '/^## macOS \(Apple silicon\)$/ { skip = 1 } !skip' > notes.md
+          printf '\n' >> notes.md
+          sed -e "s/@VERSION@/$VERSION/g" -e "s/@SHA256@/$sum/g" \
+            -e '/^@WEBKIT_TRAFFIC@$/{' -e 'r traffic.md' -e 'd' -e '}' \
+            installer/macos/release-notes.md >> notes.md
+          if [ -n "$FALLOW_SIGN_ID" ] && [ -n "$MAC_NOTARY_APPLE_ID" ]; then
+            # Notarized: the first-launch step and the new-identity note do not apply (FR-024).
+            perl -0pi -e 's/\*\*Not notarized by Apple\.\*\*.*?needs none of this\.\n\n//s; s/\*\*After an upgrade\*\*.*?keep their setting\.\n\n//s' notes.md
+          fi
+          gh release edit "$GITHUB_REF_NAME" --notes-file notes.md
+
+      - name: "Gate: the published image matches its checksum and the app its signature (SC-008)"
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          d=$(mktemp -d)
+          gh release download "$GITHUB_REF_NAME" -D "$d" -p "Fallow-$VERSION-macos-arm64.dmg*"
+          (cd "$d" && shasum -a 256 -c "Fallow-$VERSION-macos-arm64.dmg.sha256")
+          mnt=$(mktemp -d)
+          hdiutil attach -quiet -nobrowse -readonly -mountpoint "$mnt" "$d/Fallow-$VERSION-macos-arm64.dmg"
+          codesign --verify --deep --strict --verbose=2 "$mnt/Fallow.app"
+          hdiutil detach -quiet "$mnt"
+

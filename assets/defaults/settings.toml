@@ -1,0 +1,24 @@
+# Fallow's built-in settings (006 contracts/config.md). Copy what you want to change into your
+# own settings.toml in Fallow's config folder; anything you leave out keeps these values.
+
+[defaults]
+autonomy = "medium"          # high | medium | low (FR-017)
+limit_usd = 10               # per run (FR-038); only what agents report counts
+limit_min = 120              # per run, from building start
+step_min = 30                # per agent step
+repair_cap = 2               # repair rounds per part before you are asked (FR-008)
+max_parallel = 2             # builder steps at once (FR-022)
+memory_budget_mb = 0         # 0: three quarters of free memory at start
+
+[roles.planner]
+agent = "claude"
+model = ""                   # empty: the agent's default model
+[roles.builder]
+agent = "claude"
+model = ""
+[roles.reviewer]
+agent = "claude"
+model = ""                   # e.g. "opus"; the run page warns while it equals the builder's
+
+[agents.claude]
+command = "claude"

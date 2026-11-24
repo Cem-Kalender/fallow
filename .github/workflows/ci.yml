@@ -1,0 +1,430 @@
+# CI for Fallow (006 tasks T008, 007 T082): format, lint, dependency policy, build, the gates
+# 007 names, the tests and the constitution VIII benchmarks, on Windows, the release target of
+# 006 (clarified 2026-10-29).
+name: ci
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    name: windows
+    runs-on: windows-2025
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust toolchain (from rust-toolchain.toml)
+        run: |
+          rustup toolchain install
+          rustc --version
+          cargo --version
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny
+
+      - name: Format
+        run: cargo fmt --all --check
+
+      - name: Clippy
+        run: |
+          cargo clippy --workspace --all-targets -- -D warnings
+          cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+      - name: Dependency policy (licenses, bans)
+        run: cargo deny check
+
+      - name: Build
+        run: cargo build --locked
+
+      # The gates of 007 (tasks T082), each named so a failure says which promise broke.
+      - name: "Gate: false claims and unverified results"
+        run: cargo test --locked --test us2_false_claims --test us2_pipeline_steps
+
+      - name: "Gate: reserved questions are relayed to the engineer"
+        run: cargo test --locked --test us4_ask
+
+      - name: "Gate: writes only where allowed (project install, discarded lead edits)"
+        run: cargo test --locked --test us1_projects --test us1_conversation
+
+      - name: "Gate: no listener without the automation build (014 FR-015)"
+        run: cargo test --locked --test no_listener
+
+      - name: "Gate: the page on the loopback only, to the engineer only"
+        run: cargo test --locked --features automation --test service_http
+
+      - name: "Gate: no outgoing connection of Fallow's own, no push, no pull request"
+        run: cargo test --locked --test no_egress_no_push
+
+      - name: "Gate: loops resume after a restart"
+        run: cargo test --locked --test us2_resume
+
+      - name: "Gate: run records hold no text (marker test)"
+        run: cargo test --locked --test record_marker
+
+      - name: Tests (agents are the scripted fake agent; no network, no cost)
+        run: cargo test --workspace --locked --features automation
+
+  # 016 (research M-15, M-16, T044): on each supported macOS version CI can run (14 is no longer
+  # offered by GitHub; 15 and 26 are).
+  macos:
+    name: macos (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, macos-26]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust toolchain (from rust-toolchain.toml)
+        run: rustup toolchain install
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Clippy
+        run: |
+          cargo clippy --workspace --all-targets -- -D warnings
+          cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+      - name: Build
+        run: cargo build --locked
+
+      - name: Tests (agents are the scripted fake agent; no network, no cost)
+        run: cargo test --workspace --locked --features automation
+
+      - name: "Gate: a Mac build without the automation feature serves no page (016 FR-015)"
+        run: cargo test --locked --test release_no_page
+
+      # FR-014 on this version: an app signed ad hoc gets provisional notifications (research
+      # M-9). A failure is recorded in research M-9; FR-014's fallback then applies here.
+      - name: "Check: provisional notifications for an app signed ad hoc"
+        run: sh ci/macos/notify-check/check.sh
+
+  # 016 (research M-16, T035): the Mac package, built from the release binary: no `automation`
+  # test page, the app signed (ad hoc, hardened runtime) and its signature intact in the disk
+  # image, then installed and uninstalled with the install command as a standard user (VI).
+  package-macos:
+    name: package (macOS)
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust toolchain (from rust-toolchain.toml)
+        run: rustup toolchain install
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-macos
+
+      - name: Release build
+        run: cargo build --release --locked --bins
+
+      - name: "Gate: the release has no automation test page"
+        run: |
+          if grep -c "automation build: the Studio's test page" target/release/fallow; then
+            echo "the release carries the automation build's page"; exit 1
+          fi
+          echo "no automation marker in the release"
+
+      - name: The app, its disk image and checksum (signature checked)
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          sh installer/macos/make-app.sh "$version" target/macos
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+
+      - name: "Gate: the app taken from the disk image keeps its signature"
+        run: |
+          mnt=$(mktemp -d)
+          hdiutil attach -quiet -nobrowse -readonly -mountpoint "$mnt" "target/macos/Fallow-$VERSION-macos-arm64.dmg"
+          codesign --verify --deep --strict --verbose=2 "$mnt/Fallow.app"
+          codesign -dv "$mnt/Fallow.app" 2>&1 | grep -q 'flags=.*runtime'
+          hdiutil detach -quiet "$mnt"
+          (cd target/macos && shasum -a 256 -c "Fallow-$VERSION-macos-arm64.dmg.sha256")
+
+      - name: "Gate: the release app listens on no port, its window open (SC-007)"
+        run: cargo xtask no-listener --app target/macos/Fallow.app
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fallow-macos-arm64
+          path: |
+            target/macos/*.dmg
+            target/macos/*.dmg.sha256
+
+      - name: "Gate: install and uninstall with the install command as a standard user (VI)"
+        run: |
+          pw="$(openssl rand -base64 24)a1!"
+          sudo sysadminctl -addUser fallowci -fullName "Fallow CI" -password "$pw" -home /Users/fallowci
+          sudo createhomedir -c -u fallowci >/dev/null
+          if dseditgroup -o checkmember -m fallowci admin | grep -q '^yes'; then
+            echo "fallowci is an administrator"; exit 1
+          fi
+          share=/tmp/fallow-ci
+          mkdir -p "$share"
+          cp target/macos/*.dmg target/macos/*.dmg.sha256 installer/macos/install.sh "$share/"
+          chmod -R a+rX "$share"
+          as_ci() { sudo -u fallowci -H env HOME=/Users/fallowci PATH=/usr/bin:/bin:/usr/sbin:/sbin "$@"; }
+          as_ci sh -c "cd /tmp && FALLOW_INSTALL_FROM=$share sh $share/install.sh"
+          app=/Users/fallowci/Applications/Fallow.app
+          sudo test -d "$app"
+          sudo test -L /Users/fallowci/.local/bin/fallow
+          sudo codesign --verify --deep --strict "$app"
+          # PATH has no ~/.local/bin here: the one marked line is added to ~/.zprofile.
+          test "$(sudo grep -c "added by Fallow's installer" /Users/fallowci/.zprofile)" = 1
+          # Nothing for macOS to warn about: a file the install command fetched has no quarantine mark.
+          if sudo xattr -p com.apple.quarantine "$app" 2>/dev/null; then
+            echo "the installed app carries a quarantine mark"; exit 1
+          fi
+          test ! -e "/Applications/Fallow.app"
+          as_ci sh -c "cd /tmp && sh $share/install.sh --uninstall"
+          if sudo test -e "$app" || sudo test -L /Users/fallowci/.local/bin/fallow; then
+            echo "uninstall left the app or its link"; exit 1
+          fi
+          if sudo grep -q "added by Fallow's installer" /Users/fallowci/.zprofile; then
+            echo "uninstall left the PATH line in ~/.zprofile"; exit 1
+          fi
+          echo "installed and uninstalled as fallowci, a standard user, without a password prompt"
+
+  # 014 (T032): the benchmarks in a job of their own (constitution VIII), with the window; they
+  # drive the Studio over the `automation` build's page (research R-15).
+  bench:
+    name: benchmarks
+    runs-on: windows-2025
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust toolchain (from rust-toolchain.toml)
+        run: rustup toolchain install
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: "Benchmarks: window, memory, activity, sessions (constitution VIII)"
+        run: cargo build --locked --features automation --bins && cargo xtask bench
+
+  # 016 (research M-17, M-18, T041, T042, T045, T047): the benchmarks on macOS, on `main`: the
+  # window, cold start through LaunchServices (the release app), memory as physical footprint,
+  # the WebKit private calls Fallow relies on, and the screens in the Mac window.
+  bench-macos:
+    name: benchmarks (macOS)
+    if: github.ref == 'refs/heads/main'
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust toolchain (from rust-toolchain.toml)
+        run: rustup toolchain install
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: The release app, for the cold start
+        run: |
+          cargo build --release --locked
+          sh installer/macos/make-app.sh "$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)" target/macos
+
+      - name: "Benchmarks: window, cold start, memory, activity, sessions, WebKit (constitution VIII)"
+        run: cargo build --locked --features automation --bins && cargo xtask bench --app target/macos/Fallow.app
+
+      - name: "Screens in the Mac window, light and dark (013 FR-005)"
+        run: cargo xtask screens --out target/screens
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: screens-macos
+          path: target/screens
+
+  # 014 (research R-6, T029, SC-007): with the release window open and idle for 10 minutes,
+  # Fallow's own process opens no connection; the web view's connections and the names Windows
+  # resolved meanwhile are listed (the release notes say what WebView2 does that Fallow cannot
+  # switch off). Polled every 500 ms from the system's connection tables, by process tree.
+  trace:
+    name: network trace
+    runs-on: windows-2025
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust toolchain (from rust-toolchain.toml)
+        run: rustup toolchain install
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release
+
+      - name: Release build
+        run: cargo build --release --locked --bins
+
+      - name: "Gate: no connection of Fallow's own, window open and idle for 10 minutes"
+        shell: pwsh
+        run: |
+          $root = "$env:RUNNER_TEMP/fallow-trace"
+          New-Item -ItemType Directory -Force "$root/data", "$root/config" | Out-Null
+          Clear-DnsClientCache
+          $exe = (Resolve-Path "target/release/fallow.exe").Path
+          $svc = Start-Process -FilePath $exe -ArgumentList 'serve','--data-dir',"$root/data",'--config-dir',"$root/config" -PassThru -WindowStyle Hidden
+          Start-Sleep -Seconds 3
+          & $exe
+          if ($LASTEXITCODE -ne 0) { throw "the window did not open" }
+          $seen = @{}
+          $end = (Get-Date).AddMinutes(10)
+          while ((Get-Date) -lt $end) {
+            $all = Get-CimInstance Win32_Process | Select-Object ProcessId, ParentProcessId, Name
+            $ids = @($svc.Id)
+            do { $n = $ids.Count; $ids = @($ids + ($all | Where-Object { $ids -contains $_.ParentProcessId } | ForEach-Object ProcessId)) | Select-Object -Unique } while ($ids.Count -ne $n)
+            foreach ($c in @(Get-NetTCPConnection -ErrorAction SilentlyContinue | Where-Object { $ids -contains $_.OwningProcess -and $_.RemoteAddress -notin @('0.0.0.0','::','127.0.0.1','::1') })) {
+              $name = ($all | Where-Object ProcessId -eq $c.OwningProcess).Name
+              $seen["$name $($c.RemoteAddress):$($c.RemotePort)"] = $c.OwningProcess
+            }
+            Start-Sleep -Milliseconds 500
+          }
+          "connections seen from Fallow's process tree:"
+          $seen.Keys | Sort-Object
+          "names resolved on the machine meanwhile:"
+          Get-DnsClientCache | Select-Object -ExpandProperty Entry -Unique | Sort-Object
+          & $exe stop
+          $own = @($seen.Keys | Where-Object { $_ -like 'fallow.exe *' })
+          if ($own.Count -gt 0) { throw "Fallow's own process connected: $own" }
+
+  # 016 (SC-007, research M-7, M-16, T043): the release app opened, its window idle for 10
+  # minutes, every packet captured with its process: Fallow's own process opens no connection;
+  # WebKit's connections and the names looked up are listed in the job's summary.
+  trace-macos:
+    name: network trace (macOS)
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust toolchain (from rust-toolchain.toml)
+        run: rustup toolchain install
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release
+
+      - name: The release app
+        run: |
+          cargo build --release --locked
+          sh installer/macos/make-app.sh "$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)" target/macos
+
+      - name: "Gate: no connection of Fallow's own, window open and idle for 10 minutes"
+        run: sh ci/macos/trace.sh target/macos/Fallow.app 10
+
+  # 014 (research R-11, R-16, T025): the Windows package, built from the release binaries; the
+  # release has no `automation` test page; the package installs and uninstalls as a standard
+  # (non-administrator) user. Publishing it is 015.
+  package:
+    name: package
+    runs-on: windows-2025
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust toolchain (from rust-toolchain.toml)
+        run: rustup toolchain install
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release
+
+      - name: Release build
+        run: cargo build --release --locked --bins
+
+      - name: "Gate: the release has no automation test page"
+        run: |
+          if grep -c "automation build: the Studio's test page" target/release/fallow.exe; then
+            echo "the release carries the automation build's page"; exit 1
+          fi
+          echo "no automation marker in the release"
+
+      - name: "Benchmarks: window ready, idle memory with the window open and closed (VIII, release)"
+        run: cargo xtask bench --bin target/release/fallow.exe --fake target/release/fallow-fake-agent.exe --only window
+
+      - name: Inno Setup
+        shell: pwsh
+        run: |
+          # 6.3 or later reads `x64compatible`: installed or brought up to date.
+          choco upgrade innosetup -y --no-progress
+
+      - name: The installer and its checksum
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" "//DAppVersion=$version" installer/fallow.iss
+          cd target/installer
+          sha256sum "Fallow-$version-x64-setup.exe" > "Fallow-$version-x64-setup.exe.sha256"
+          cat "Fallow-$version-x64-setup.exe.sha256"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fallow-windows-x64
+          path: target/installer/
+
+      - name: "Gate: install and uninstall as a standard user, without elevation (VI)"
+        shell: pwsh
+        run: |
+          $setup = (Get-ChildItem target/installer/*-setup.exe | Select-Object -First 1).FullName
+          $pw = -join ((48..57) + (65..90) + (97..122) | Get-Random -Count 20 | ForEach-Object {[char]$_}) + "!a1"
+          $secure = ConvertTo-SecureString $pw -AsPlainText -Force
+          New-LocalUser -Name fallowci -Password $secure -AccountNeverExpires | Out-Null
+          # A standard user; "Performance Log Users" only gives it the right to run as a batch job
+          # (Windows Server's default), so a scheduled task can run as it with its own profile.
+          Add-LocalGroupMember -Group Users -Member fallowci
+          Add-LocalGroupMember -Group "Performance Log Users" -Member fallowci
+          if (Get-LocalGroupMember -Group Administrators | Where-Object { $_.Name -like '*\fallowci' }) { throw "fallowci is an administrator" }
+          $log = "$env:PUBLIC\fallow-install.log"
+          # Runs `exe args` as fallowci, with its own profile and without elevation; its exit code.
+          function As-Fallowci($exe, $arguments) {
+            $name = "fallowci-" + [guid]::NewGuid().ToString("N").Substring(0, 8)
+            $action = New-ScheduledTaskAction -Execute $exe -Argument $arguments
+            Register-ScheduledTask -TaskName $name -Action $action -User "$env:COMPUTERNAME\fallowci" -Password $pw -RunLevel Limited | Out-Null
+            Start-ScheduledTask -TaskName $name
+            $end = (Get-Date).AddMinutes(5)
+            do { Start-Sleep -Seconds 2; $info = Get-ScheduledTaskInfo -TaskName $name } while (((Get-ScheduledTask -TaskName $name).State -eq 'Running' -or $info.LastRunTime.Year -lt 2000) -and (Get-Date) -lt $end)
+            $code = $info.LastTaskResult
+            Unregister-ScheduledTask -TaskName $name -Confirm:$false
+            return $code
+          }
+          $code = As-Fallowci $setup "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG=`"$log`""
+          if ($code -ne 0) { Get-Content $log -ErrorAction SilentlyContinue; throw "install exited $code" }
+          $installed = "C:\Users\fallowci\AppData\Local\Programs\Fallow"
+          foreach ($f in 'fallow.exe','fallow-app.exe') {
+            if (-not (Test-Path "$installed\$f")) { Get-Content $log; throw "$f is not in $installed" }
+          }
+          if (Test-Path "${env:ProgramFiles}\Fallow") { throw "installed for all users" }
+          $code = As-Fallowci "$installed\unins000.exe" "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART"
+          if ($code -ne 0) { throw "uninstall exited $code" }
+          # The uninstaller runs again from a copy of itself: wait for the files to go.
+          $end = (Get-Date).AddSeconds(60)
+          while ((Test-Path "$installed\fallow.exe") -and (Get-Date) -lt $end) { Start-Sleep -Seconds 1 }
+          if (Test-Path "$installed\fallow.exe") { throw "fallow.exe is still installed" }
+          "installed and uninstalled as fallowci, a standard user, under its own profile"

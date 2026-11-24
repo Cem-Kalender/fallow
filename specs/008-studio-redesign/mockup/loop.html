@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Loop page (008 mockup)</title><link rel="stylesheet" href="mockup.css"></head>
+<body>
+<header class="top">
+  <span class="logo"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke-width="2"><path d="M4 20c4-1 6-5 8-9s4-7 8-7"/><path d="M4 14c3 0 5-2 6-4"/><path d="M12 20c3-1 5-3 6-6"/></svg>Fallow</span>
+  <nav class="nav"><a>Dashboard</a><a>Spec sessions</a><a class="on">Loops</a><a>Pipelines</a><a>Agents</a></nav>
+  <span class="grow"></span><span class="pill orange">1 needs you</span><span class="small muted">$7.11 today</span>
+</header>
+<main class="page">
+  <div class="head">
+    <div><div class="small muted">fallowsandbox · locked at <span class="mono">07bd2eb</span> · pipeline <span class="link">standard + security</span></div>
+      <h1>001-shopping-cart-with-total <span class="pill orange">Repairing</span></h1></div>
+    <span style="flex:1"></span>
+    <div class="totals"><span><b>9</b> of 140 min</span><span><b>$3.12</b> of $7.00</span><span><b>11</b>/14 tasks</span><span><b>1</b> repair</span></div>
+    <div class="row"><button class="btn btn2">Note for next step</button><button class="btn btn2">Limits</button><button class="btn btn2">Pause</button><button class="btn btn2">Stop</button></div>
+  </div>
+  <div class="steer">Your last steering: 17:02 · limits raised to $7.00 · <span class="link">all steering</span></div>
+
+  <div class="stages">
+    <div class="stage done"><div class="k">DONE</div><b>Spec session</b><div class="small muted">lead + you</div></div>
+    <div class="stage done"><div class="k">DONE</div><b>Lock</b><div class="small muted">you</div></div>
+    <div class="stage done"><div class="k">DONE · 3 OF 5 PHASES</div><b>Implement → Gates</b><div class="small muted">builder, task by task</div></div>
+    <div class="stage now"><div class="k">NOW · US2 CHECKPOINT</div><b>Review</b><div class="small muted">reviewer · security-reviewer, alongside</div></div>
+    <div class="stage"><div class="k">IF IT FAILS · UP TO 3</div><b>Repair</b><div class="small muted">builder, same session · 1 so far</div></div>
+    <div class="stage"><div class="k">ONCE</div><b>Merge</b><div class="small muted">you</div></div>
+  </div>
+
+  <section class="card" aria-label="Verified by Fallow">
+    <div class="verif">
+      <h2 class="th" style="margin:0 6px 0 0">Verified by Fallow</h2>
+      <span class="vpill ok"><b>US1 ✓ 5/5</b><span class="t">Add products to a cart</span></span>
+      <span class="vpill fail open"><b>US2 ✗ 1 failed</b><span class="t">See the cart and its total</span></span>
+      <span class="vpill"><b>US3 0/4</b><span class="t">Remove products and empty the cart</span></span>
+    </div>
+    <div class="evidence" style="margin-top:12px">
+      <div class="row"><b>US2 · See the cart and its total</b><span style="flex:1"></span><span class="small muted">checked by reviewer, by running each one · security-reviewer: no finding</span></div>
+      <div class="crit"><span class="pill green">checked</span><div>Given 2 Milk and 1 Bread, When the customer shows the cart, Then it lists both lines and the total <code>4.98</code>.
+        <div class="ev">ran <b>python -m shop add Milk 2; add Bread 1; cart</b></div><div class="ev">got <b>Total: 4.98</b>, exit 0</div></div></div>
+      <div class="crit"><span class="pill green">checked</span><div>Given an empty cart, When the customer shows the cart, Then it prints <code>Your cart is empty.</code> and <code>0.00</code>.
+        <div class="ev">ran <b>python -m shop cart</b> (no cart.json)</div><div class="ev">got <b>Your cart is empty. Total: 0.00</b>, exit 0</div></div></div>
+      <div class="crit bad"><span class="pill red">failed</span><div>Given <code>cart.json</code> is not valid, When the customer shows the cart, Then it prints a message, exits non-zero and leaves the file untouched. <span class="small" style="color:var(--needs)">must fail</span>
+        <div class="ev">ran <b>python -m shop cart</b> with <b>cart.json = "not json"</b></div><div class="ev got">got exit 0, and cart.json was replaced by {}</div><div class="ev">expected a message, exit 1, the file untouched</div></div></div>
+      <div class="small muted" style="margin-top:6px">2 more checked · the repair is under way with this finding</div>
+    </div>
+  </section>
+
+  <div class="body">
+    <aside class="card"><h2 class="th">tasks.md · 11/14</h2>
+      <div class="task">Phase 1 · Foundation 2/2</div><div class="task">Phase 2 · US1 Add products 3/3</div>
+      <div class="task cur">Phase 3 · US2 See the cart 3/3</div><div class="task muted">◇ checkpoint: review US2</div>
+      <div class="task">Phase 4 · US3 Remove and clear 0/3</div><div class="task">Phase 5 · Persistence 0/3</div></aside>
+    <section style="display:flex;flex-direction:column;gap:12px;min-width:0">
+      <div class="cards">
+        <div class="card"><div class="row"><b>builder</b><span style="flex:1"></span><span class="pill blue">repairing</span></div><div class="small muted">claude · sonnet · fallow/001-…/build</div><div class="small">US2 repair · $2.41</div></div>
+        <div class="card"><div class="row"><b>reviewer</b><span style="flex:1"></span><span class="pill grey">waiting</span></div><div class="small muted">claude · sonnet · fresh per check</div><div class="small">checks per checkpoint · $0.38</div></div>
+        <div class="card"><div class="row"><b>security-reviewer</b><span style="flex:1"></span><span class="pill grey">waiting</span></div><div class="small muted">claude · sonnet · alongside the reviewer</div><div class="small">$0.21</div></div>
+      </div>
+      <div class="card feed"><div class="row"><b>All</b><span class="muted">builder</span><span class="muted">reviewer</span><span class="muted">security-reviewer</span><span class="muted">Fallow checks</span></div>
+        <div class="line"><span class="muted">17:21</span><span style="color:var(--needs)">Fallow</span><span>US2 review: 1 criterion failed (US2/5) → repair 1 of 3</span></div>
+        <div class="line"><span class="muted">17:21</span><span>builder</span><span>Reading shop/__main__.py to make an invalid cart file refused by <code>cart</code>…</span></div>
+        <div class="line"><span class="muted">17:22</span><span>builder</span><span>Ran <code>python -m unittest</code> · 46 tests OK</span></div></div>
+    </section>
+    <aside class="side">
+      <div class="card"><h2 class="th">Gates vs baseline</h2><div class="kv"><span>tests <span class="mono muted">python -m unittest</span></span><b style="color:var(--ok)">passed</b></div><div class="kv"><span>newly failing</span><span>none</span></div></div>
+      <div class="card"><h2 class="th">Questions · normal</h2><div class="kv"><span>q1 T001</span><span class="pill green">lead answered</span></div></div>
+      <div class="card"><h2 class="th">Commits on fallow/001-…/build</h2><div class="kv"><span class="mono">7890677</span><span class="small">T007 Added the cart command…</span></div><div class="kv"><span class="mono">0c37b6d</span><span class="small">T006 lines and total_cents…</span></div></div>
+    </aside>
+  </div>
+  <div class="note">Mockup notes: no story cards and no steering card in the side column; "What was verified" appears next to Merge once the loop is ready; a story without criteria has no pill; the panel shows one story at a time.</div>
+</main>
+</body></html>

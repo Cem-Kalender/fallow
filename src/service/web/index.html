@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Fallow</title>
+<link rel="stylesheet" href="/app.css">
+<script src="/app.js" defer></script>
+<script src="/screens/dashboard.js" defer></script>
+<script src="/screens/solo.js" defer></script>
+<script src="/screens/project.js" defer></script>
+<script src="/screens/spec.js" defer></script>
+<script src="/screens/loop.js" defer></script>
+<script src="/screens/pipelines.js" defer></script>
+<script src="/screens/agents.js" defer></script>
+<script src="/screens/cmdmenu.js" defer></script>
+<script src="/screens/files.js" defer></script>
+</head>
+<body>
+<header class="top-bar">
+  <a class="logo" href="#/" aria-label="Fallow dashboard">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke-width="2" aria-hidden="true"><path d="M4 20c4-1 6-5 8-9s4-7 8-7"></path><path d="M4 14c3 0 5-2 6-4"></path><path d="M12 20c3-1 5-3 6-6"></path></svg>
+    Fallow
+  </a>
+  <nav aria-label="Main" class="nav-links">
+    <a class="nav" data-nav="dashboard" href="#/">Dashboard</a>
+    <a class="nav" data-nav="spec" href="#/specs">Spec sessions</a>
+    <a class="nav" data-nav="loop" href="#/loops">Loops</a>
+    <a class="nav" data-nav="pipelines" href="#/pipelines">Pipelines</a>
+    <a class="nav" data-nav="agents" href="#/agents">Agents</a>
+  </nav>
+  <div class="grow"></div>
+  <span id="needs-count" class="pill orange" hidden></span>
+  <span id="header-status" class="small muted"></span>
+  <fieldset class="theme-pick" id="theme-pick">
+    <legend class="sr">Theme</legend>
+    <label title="Theme: follow the system"><input type="radio" name="theme" value="system" autocomplete="off"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2"></rect><path d="M8 20h8M12 16v4"></path></svg><span class="sr">System</span></label>
+    <label title="Theme: light"><input type="radio" name="theme" value="light" autocomplete="off"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"></path></svg><span class="sr">Light</span></label>
+    <label title="Theme: dark"><input type="radio" name="theme" value="dark" autocomplete="off"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"></path></svg><span class="sr">Dark</span></label>
+  </fieldset>
+</header>
+<main id="app"></main>
+<dialog id="confirm" class="confirm" aria-labelledby="confirm-title">
+  <form method="dialog">
+    <h2 id="confirm-title"></h2>
+    <p id="confirm-text" class="body-ink lh mt-8"></p>
+    <ul id="confirm-list"></ul>
+    <div id="confirm-field" class="field mt-10" hidden><label for="confirm-input" id="confirm-label"></label><input id="confirm-input" type="text"></div>
+    <div class="row mt-16">
+      <div class="grow"></div>
+      <button class="btn btn2" value="cancel">Cancel</button>
+      <button id="confirm-ok" class="btn" value="ok">Confirm</button>
+    </div>
+  </form>
+</dialog>
+<dialog id="verified" class="confirm wide" aria-labelledby="verified-title">
+  <form method="dialog">
+    <div class="row"><h2 id="verified-title">What Fallow verified</h2><div class="grow"></div><button class="btn btn2 sm" value="close">Close</button></div>
+    <p class="small muted mt-6">Each criterion with what its checker ran and what came out. The criteria's text is the spec's.</p>
+    <div id="verified-body" class="col gap-12 mt-10"></div>
+  </form>
+</dialog>
+</body>
+</html>

@@ -1,0 +1,2299 @@
+//! Git calls for runs (006 research R-7, R-9).
+//!
+//! Each call runs the engineer's own `git`. Reads check claims; the writes create and remove a
+//! run's own branches (`fallow/r<id>/…`) and worktrees, and nothing else. The engineer's merge
+//! lives in `publish`.
+
+use std::path::{Path, PathBuf};
+
+fn git(dir: &Path, args: &[&str]) -> Result<String, String> {
+    let out = crate::platform::command("git")
+        .current_dir(dir)
+        .args(args)
+        .output()
+        .map_err(|e| format!("git: {e}"))?;
+    if out.status.success() {
+        Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+    } else {
+        Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
+    }
+}
+
+/// The commit checked out, in full.
+pub fn head(dir: &Path) -> Result<String, String> {
+    git(dir, &["rev-parse", "HEAD"]).map(|s| s.trim().to_string())
+}
+
+/// The commits `revs` name, in one git process (issue #3); `None` when one of them is not there.
+pub fn revs(dir: &Path, revs: &[&str]) -> Option<Vec<String>> {
+    let mut args = vec!["rev-parse"];
+    args.extend(revs.iter().copied());
+    let out = git(dir, &args).ok()?;
+    let got: Vec<String> = out.lines().map(|l| l.trim().to_string()).collect();
+    (got.len() == revs.len() && got.iter().all(|c| c.len() >= 40)).then_some(got)
+}
+
+/// The commit `HEAD` of the repository whose top folder is `top` is at, read from git's own
+/// files, without a process (issue #3); `None` whenever that is not plain (git is asked then).
+pub fn head_from_files(top: &Path) -> Option<String> {
+    let dotgit = top.join(".git");
+    let gitdir = if dotgit.is_dir() {
+        dotgit
+    } else {
+        let t = std::fs::read_to_string(&dotgit).ok()?;
+        let g = PathBuf::from(t.trim().strip_prefix("gitdir:")?.trim());
+        if g.is_absolute() { g } else { top.join(g) }
+    };
+    let common = match std::fs::read_to_string(gitdir.join("commondir")) {
+        Ok(c) => {
+            let c = PathBuf::from(c.trim());
+            if c.is_absolute() { c } else { gitdir.join(c) }
+        }
+        Err(_) => gitdir.clone(),
+    };
+    let is_id =
+        |s: &str| (s.len() == 40 || s.len() == 64) && s.bytes().all(|b| b.is_ascii_hexdigit());
+    let head = std::fs::read_to_string(gitdir.join("HEAD")).ok()?;
+    let head = head.trim();
+    if is_id(head) {
+        return Some(head.to_string());
+    }
+    let r = head.strip_prefix("ref:")?.trim();
+    if !r.starts_with("refs/heads/") {
+        return None;
+    }
+    if let Ok(v) = std::fs::read_to_string(common.join(r)) {
+        let v = v.trim();
+        return is_id(v).then(|| v.to_string());
+    }
+    let packed = std::fs::read_to_string(common.join("packed-refs")).ok()?;
+    packed.lines().find_map(|l| {
+        let (id, name) = l.split_once(' ')?;
+        (name.trim() == r && is_id(id)).then(|| id.to_string())
+    })
+}
+
+/// `HEAD`'s commit and the branch it is on (`None` when detached), read together so they
+/// agree (issue #2 review: one git process, no switch between two).
+pub fn head_and_branch(dir: &Path) -> Result<(String, Option<String>), String> {
+    let out = git(dir, &["rev-parse", "HEAD", "--symbolic-full-name", "HEAD"])?;
+    let mut lines = out.lines().map(str::trim);
+    let head = lines
+        .next()
+        .filter(|h| h.len() >= 40)
+        .ok_or_else(|| format!("no commit in {out:?}"))?
+        .to_string();
+    let branch = lines
+        .next()
+        .and_then(|b| b.strip_prefix("refs/heads/"))
+        .filter(|b| !b.is_empty())
+        .map(str::to_string);
+    Ok((head, branch))
+}
+
+/// The branch checked out, or `None` when `HEAD` is detached.
+pub fn branch(dir: &Path) -> Option<String> {
+    git(dir, &["symbolic-ref", "--short", "-q", "HEAD"])
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+/// Whether the repository has at least one remote (draft pull requests need one).
+pub fn has_remote(dir: &Path) -> bool {
+    git(dir, &["remote"]).is_ok_and(|s| !s.trim().is_empty())
+}
+
+/// The files `to` has that `from` does not (`diff --diff-filter=A from to`).
+pub fn added_files(dir: &Path, from: &str, to: &str) -> Result<Vec<String>, String> {
+    Ok(git(
+        dir,
+        &[
+            "diff",
+            "--name-only",
+            "--no-renames",
+            "--diff-filter=A",
+            from,
+            to,
+        ],
+    )?
+    .lines()
+    .map(str::to_string)
+    .collect())
+}
+
+/// Changes to tracked files only: untracked files never block a merge.
+pub fn tracked_changes(dir: &Path) -> Result<Vec<String>, String> {
+    Ok(
+        git(dir, &["status", "--porcelain", "--untracked-files=no"])?
+            .lines()
+            .filter(|l| l.len() > 3)
+            .map(|l| l[3..].to_string())
+            .collect(),
+    )
+}
+
+/// Changed or untracked files in the worktree (`status --porcelain`).
+pub fn changes(dir: &Path) -> Result<Vec<String>, String> {
+    Ok(git(dir, &["status", "--porcelain"])?
+        .lines()
+        .filter(|l| l.len() > 3)
+        .map(|l| l[3..].to_string())
+        .collect())
+}
+
+/// Changed or untracked files, each untracked file named on its own (not its folder).
+pub fn changes_all(dir: &Path) -> Result<Vec<String>, String> {
+    // 012 (Phase 6 reviews): every name as it is (`-z`), a rename as both its new name and
+    // the one it left, so a moved file is judged, restored and committed on both ends.
+    let out = git(
+        dir,
+        &[
+            "--no-optional-locks",
+            "-c",
+            "core.quotePath=false",
+            "-c",
+            "core.fsmonitor=false",
+            "status",
+            "--porcelain=v1",
+            "-z",
+            "--untracked-files=all",
+        ],
+    )?;
+    let mut files = Vec::new();
+    let mut parts = out.split('\0');
+    while let Some(e) = parts.next() {
+        if e.len() < 4 {
+            continue;
+        }
+        files.push(e[3..].to_string());
+        let b = e.as_bytes();
+        if matches!(b[0], b'R' | b'C') || matches!(b[1], b'R' | b'C') {
+            if let Some(old) = parts.next().filter(|o| !o.is_empty()) {
+                // A copy leaves its source as it was: only a rename's is changed.
+                if b[0] == b'R' || b[1] == b'R' {
+                    files.push(old.to_string());
+                }
+            }
+        }
+    }
+    Ok(files)
+}
+
+/// 012 (FR-002): the paths a session's working copy changed, read while its assistant may be at
+/// work: no optional locks (its own git commands never meet Fallow's `index.lock`), no
+/// fsmonitor (a program its config names), names unquoted, a rename as its new name.
+pub fn session_changes(dir: &Path) -> Result<Vec<String>, String> {
+    let out = git(
+        dir,
+        &[
+            "--no-optional-locks",
+            "-c",
+            "core.quotePath=false",
+            "-c",
+            "core.fsmonitor=false",
+            "status",
+            "--porcelain=v1",
+            "-z",
+            "--untracked-files=all",
+        ],
+    )?;
+    let mut files = Vec::new();
+    let mut parts = out.split('\0');
+    while let Some(e) = parts.next() {
+        if e.len() < 4 {
+            continue;
+        }
+        files.push(e[3..].to_string());
+        // A rename or copy, in the index or in the working tree: its old name follows.
+        let b = e.as_bytes();
+        if matches!(b[0], b'R' | b'C') || matches!(b[1], b'R' | b'C') {
+            let _ = parts.next();
+        }
+    }
+    Ok(files)
+}
+
+/// Commits in `to` that are not in `from` (`rev-list from..to`).
+pub fn commits_between(dir: &Path, from: &str, to: &str) -> Result<Vec<String>, String> {
+    Ok(git(dir, &["rev-list", &format!("{from}..{to}")])?
+        .lines()
+        .map(str::to_string)
+        .collect())
+}
+
+/// The files git tracks in `dir`.
+pub fn tracked_files(dir: &Path) -> Result<Vec<String>, String> {
+    Ok(git(dir, &["ls-files"])?
+        .lines()
+        .map(str::to_string)
+        .collect())
+}
+
+/// Whether `commit` names a commit in this repository.
+pub fn commit_exists(dir: &Path, commit: &str) -> bool {
+    crate::platform::command("git")
+        .current_dir(dir)
+        .args(["cat-file", "-e", &format!("{commit}^{{commit}}")])
+        .output()
+        .is_ok_and(|o| o.status.success())
+}
+
+/// Whether `commit` is on `branch` (an ancestor of its tip, or the tip).
+pub fn on_branch(dir: &Path, commit: &str, branch: &str) -> bool {
+    crate::platform::command("git")
+        .current_dir(dir)
+        .args(["merge-base", "--is-ancestor", commit, branch])
+        .output()
+        .is_ok_and(|o| o.status.success())
+}
+
+/// Files changed between two commits.
+pub fn files_between(dir: &Path, from: &str, to: &str) -> Result<Vec<String>, String> {
+    Ok(git(
+        dir,
+        &[
+            "-c",
+            "core.quotePath=false",
+            "diff",
+            "--name-only",
+            &format!("{from}..{to}"),
+        ],
+    )?
+    .lines()
+    .map(str::to_string)
+    .collect())
+}
+
+/// The flags for reading a session's working copy while its assistant works: no lock, no
+/// fsmonitor, names unquoted.
+const SESSION_READ: [&str; 6] = [
+    "--no-optional-locks",
+    "--literal-pathspecs",
+    "-c",
+    "core.quotePath=false",
+    "-c",
+    "core.fsmonitor=false",
+];
+
+/// 012 (FR-043): the files a search in a session's working copy reads by default, under the
+/// folder `under` (`""`: all): tracked and untracked ones; ignored ones are left out, as a
+/// search that follows git's ignore rules leaves them out.
+pub fn session_files(dir: &Path, under: &str) -> Option<Vec<String>> {
+    let mut a: Vec<&str> = SESSION_READ.to_vec();
+    a.extend([
+        "ls-files",
+        "-z",
+        "--cached",
+        "--others",
+        "--exclude-standard",
+        "--",
+    ]);
+    if !under.is_empty() {
+        a.push(under);
+    }
+    let out = git(dir, &a).ok()?;
+    Some(
+        out.split('\0')
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .collect(),
+    )
+}
+
+/// 012 (R-18): whether `path` (a file or folder) is in `dir`'s `HEAD` as it is in the folder:
+/// committed, and not changed since.
+pub fn committed_as_is(dir: &Path, path: &str) -> bool {
+    let at_head = git(
+        dir,
+        &[
+            "--literal-pathspecs",
+            "ls-tree",
+            "--name-only",
+            "HEAD",
+            "--",
+            path,
+        ],
+    )
+    .is_ok_and(|s| !s.trim().is_empty());
+    let untracked = git(
+        dir,
+        &[
+            "--literal-pathspecs",
+            "ls-files",
+            "--others",
+            "--exclude-standard",
+            "--",
+            path,
+        ],
+    )
+    .map_or(true, |s| !s.trim().is_empty());
+    at_head
+        && !untracked
+        && git(
+            dir,
+            &["--literal-pathspecs", "diff", "--quiet", "HEAD", "--", path],
+        )
+        .is_ok()
+}
+
+/// 012 (FR-043): whether git ignores `path` in a session's working copy (exit 0); an error
+/// (exit 128, or git not run) counts as ignored, so a caller looks closer, never less.
+pub fn is_ignored(dir: &Path, path: &str) -> bool {
+    ignore_state(dir, path).unwrap_or(true)
+}
+
+/// Whether git ignores `path` in `dir`, or `None` when git could not tell (an error).
+pub fn ignore_state(dir: &Path, path: &str) -> Option<bool> {
+    // `check-ignore` refuses `--literal-pathspecs`: it reads `path` as a path anyway.
+    let mut a: Vec<&str> = SESSION_READ
+        .iter()
+        .copied()
+        .filter(|f| *f != "--literal-pathspecs")
+        .collect();
+    a.extend(["check-ignore", "-q", "--", path]);
+    let status = crate::platform::command("git")
+        .args(&a)
+        .current_dir(dir)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+    match status.map(|s| s.code()) {
+        Ok(Some(0)) => Some(true),
+        Ok(Some(1)) => Some(false),
+        _ => None,
+    }
+}
+
+/// 012 (FR-043): the files and folders git ignores in a session's working copy under `under`
+/// (an ignored folder as one entry, `dir/`).
+pub fn session_ignored(dir: &Path, under: &str) -> Option<Vec<String>> {
+    let mut a: Vec<&str> = SESSION_READ.to_vec();
+    a.extend([
+        "ls-files",
+        "-z",
+        "--others",
+        "--ignored",
+        "--exclude-standard",
+        "--directory",
+        "--",
+    ]);
+    if !under.is_empty() {
+        a.push(under);
+    }
+    let out = git(dir, &a).ok()?;
+    Some(
+        out.split('\0')
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .collect(),
+    )
+}
+
+/// `files_between`, every name as it is (`-z`: never quoted), to match `session_changes`.
+pub fn files_between_z(dir: &Path, from: &str, to: &str) -> Result<Vec<String>, String> {
+    Ok(git(
+        dir,
+        &["diff", "--name-only", "-z", &format!("{from}..{to}")],
+    )?
+    .split('\0')
+    .filter(|s| !s.is_empty())
+    .map(str::to_string)
+    .collect())
+}
+
+/// What a worktree looks like now, for the read-only check (FR-013).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorktreeState {
+    pub path: PathBuf,
+    pub changes: Vec<String>,
+    pub own_commits: Vec<String>,
+}
+
+impl WorktreeState {
+    pub fn clean(&self) -> bool {
+        self.changes.is_empty() && self.own_commits.is_empty()
+    }
+}
+
+/// Reads a read-only session's worktree: uncommitted changes and commits since `start`.
+pub fn worktree_state(path: &Path, start: &str) -> Result<WorktreeState, String> {
+    Ok(WorktreeState {
+        path: path.to_path_buf(),
+        changes: changes(path)?,
+        own_commits: commits_between(path, start, "HEAD")?,
+    })
+}
+
+/// A read-only session's worktree now (FR-013): the tip of its branch (or `HEAD`), its
+/// uncommitted changes, and the commits on its branch since `base` (none without a base).
+pub fn read_only_check(
+    dir: &Path,
+    branch: Option<&str>,
+    base: Option<&str>,
+) -> Result<(String, Vec<String>, Vec<String>), String> {
+    let at = branch.unwrap_or("HEAD");
+    let tip = git(dir, &["rev-parse", at])?.trim().to_string();
+    let changed = changes(dir)?;
+    let commits = match base {
+        Some(b) => commits_between(dir, b, at)?,
+        None => Vec::new(),
+    };
+    Ok((tip, changed, commits))
+}
+
+/// The text of `path` at `commit`; `Ok(None)` when the commit has no such file (005 R-1).
+pub fn show(dir: &Path, commit: &str, path: &str) -> Result<Option<String>, String> {
+    if !commit_exists(dir, commit) {
+        return Err(format!("no commit {commit}"));
+    }
+    let spec = format!("{commit}:{path}");
+    let exists = crate::platform::command("git")
+        .current_dir(dir)
+        .args(["cat-file", "-e", &spec])
+        .output()
+        .is_ok_and(|o| o.status.success());
+    if !exists {
+        return Ok(None);
+    }
+    git(dir, &["show", &spec]).map(Some)
+}
+
+/// Commits in `to` that are not in `from` and change one of `paths` (005 R-5).
+pub fn commits_touching(
+    dir: &Path,
+    from: &str,
+    to: &str,
+    paths: &[&str],
+) -> Result<Vec<String>, String> {
+    let range = format!("{from}..{to}");
+    let mut args = vec!["rev-list", range.as_str(), "--"];
+    args.extend_from_slice(paths);
+    Ok(git(dir, &args)?.lines().map(str::to_string).collect())
+}
+
+/// The files tracked at `commit`.
+pub fn files_at(dir: &Path, commit: &str) -> Result<Vec<String>, String> {
+    Ok(git(
+        dir,
+        &[
+            "-c",
+            "core.quotePath=false",
+            "ls-tree",
+            "-r",
+            "--name-only",
+            commit,
+        ],
+    )?
+    .lines()
+    .map(str::to_string)
+    .collect())
+}
+
+/// The best common ancestor of two commits.
+pub fn merge_base(dir: &Path, a: &str, b: &str) -> Result<String, String> {
+    git(dir, &["merge-base", a, b]).map(|s| s.trim().to_string())
+}
+
+/// Whether `a` is `b` or an ancestor of it.
+pub fn is_ancestor(dir: &Path, a: &str, b: &str) -> bool {
+    on_branch(dir, a, b)
+}
+
+/// A one-way fingerprint of `text` with line endings normalised to LF (005 R-12), computed by
+/// git so that no hashing crate is needed.
+pub fn fingerprint(text: &str) -> Result<String, String> {
+    use std::io::Write;
+    let normalised = text.replace("\r\n", "\n");
+    let mut child = crate::platform::command("git")
+        .args(["hash-object", "--stdin"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("git: {e}"))?;
+    child
+        .stdin
+        .take()
+        .ok_or("git: no stdin")?
+        .write_all(normalised.as_bytes())
+        .map_err(|e| format!("git: {e}"))?;
+    let out = child.wait_with_output().map_err(|e| format!("git: {e}"))?;
+    if out.status.success() {
+        Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+    } else {
+        Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
+    }
+}
+
+/// A new repository at `dest` holding only `commit` of `project` and its history, checked out
+/// on `main` (005 FR-011a, R-11). The project is only read; `dest` has no remote, so a run
+/// cannot see another run's work.
+pub fn copy_at(project: &Path, commit: &str, dest: &Path) -> Result<(), String> {
+    std::fs::create_dir_all(dest).map_err(|e| format!("{}: {e}", dest.display()))?;
+    git(dest, &["init", "-q", "-b", "main"])?;
+    let source = project.display().to_string();
+    git(dest, &["fetch", "-q", "--no-tags", &source, commit])?;
+    git(dest, &["checkout", "-q", "-B", "main", "FETCH_HEAD"])?;
+    Ok(())
+}
+
+/// Creates `branch` at `at` unless it exists (a run's branch keeps the work committed on it).
+pub fn create_branch(dir: &Path, branch: &str, at: &str) -> Result<(), String> {
+    match git(
+        dir,
+        &[
+            "rev-parse",
+            "--verify",
+            "-q",
+            &format!("refs/heads/{branch}"),
+        ],
+    ) {
+        Ok(_) => Ok(()),
+        Err(_) => git(dir, &["branch", branch, at]).map(|_| ()),
+    }
+}
+
+/// The full commit id of `rev`.
+pub fn rev(dir: &Path, rev: &str) -> Result<String, String> {
+    git(
+        dir,
+        &["rev-parse", "--verify", &format!("{rev}^{{commit}}")],
+    )
+    .map(|s| s.trim().to_string())
+}
+
+/// Forgets worktrees whose folders are gone, so their branches can be deleted.
+pub fn worktree_prune(repo: &Path) {
+    let _ = git(repo, &["worktree", "prune"]);
+}
+
+/// Deletes `branch` (not checked out anywhere), merged or not; one that is not there is fine.
+/// 011: the local branches matching `pattern` (a `for-each-ref` glob, such as
+/// `fallow/<feature>/update-*`).
+pub fn branches_like(dir: &Path, pattern: &str) -> Vec<String> {
+    git(
+        dir,
+        &[
+            "for-each-ref",
+            "--format=%(refname:short)",
+            &format!("refs/heads/{pattern}"),
+        ],
+    )
+    .map(|out| out.lines().map(str::to_string).collect())
+    .unwrap_or_default()
+}
+
+pub fn delete_branch(dir: &Path, branch: &str) -> Result<(), String> {
+    if git(
+        dir,
+        &[
+            "rev-parse",
+            "--verify",
+            "-q",
+            &format!("refs/heads/{branch}"),
+        ],
+    )
+    .is_err()
+    {
+        return Ok(());
+    }
+    git(dir, &["branch", "-D", branch]).map(|_| ())
+}
+
+/// Moves `branch` (not checked out anywhere) to `commit`.
+pub fn set_branch(dir: &Path, branch: &str, commit: &str) -> Result<(), String> {
+    git(dir, &["branch", "-f", branch, commit]).map(|_| ())
+}
+
+/// Adds a worktree at `path` on `branch`, or detached at a commit when `branch` is `None`. A
+/// worktree already there is kept.
+pub fn worktree_add(
+    repo: &Path,
+    path: &Path,
+    branch: Option<&str>,
+    at: &str,
+) -> Result<(), String> {
+    if path.join(".git").exists() {
+        return Ok(());
+    }
+    let p = path.display().to_string();
+    match branch {
+        Some(b) => git(repo, &["worktree", "add", "-q", &p, b]).map(|_| ()),
+        None => git(repo, &["worktree", "add", "-q", "--detach", &p, at]).map(|_| ()),
+    }
+}
+
+/// Removes a worktree and its administrative files.
+pub fn worktree_remove(repo: &Path, path: &Path) -> Result<(), String> {
+    let p = path.display().to_string();
+    let r = git(repo, &["worktree", "remove", "--force", &p]).map(|_| ());
+    let _ = git(repo, &["worktree", "prune"]);
+    r
+}
+
+/// Merges `commit` into the branch checked out in `dir` with a merge commit. A conflict is
+/// aborted and returned as the files in conflict.
+pub fn merge_into(dir: &Path, commit: &str, message: &str) -> Result<String, Vec<String>> {
+    match git(dir, &["merge", "--no-ff", "-m", message, commit]) {
+        Ok(_) => head(dir).map_err(|e| vec![e]),
+        Err(e) => {
+            let conflicts: Vec<String> = git(dir, &["diff", "--name-only", "--diff-filter=U"])
+                .map(|s| s.lines().map(str::to_string).collect())
+                .unwrap_or_default();
+            let _ = git(dir, &["merge", "--abort"]);
+            Err(if conflicts.is_empty() {
+                vec![e]
+            } else {
+                conflicts
+            })
+        }
+    }
+}
+
+/// The change a commit made (its first parent to it), as a unified diff.
+pub fn patch_of(dir: &Path, commit: &str) -> Result<String, String> {
+    git(dir, &["show", "--format=", "--patch", "--no-color", commit])
+}
+
+/// The change between two commits below `path`, as a unified diff.
+pub fn diff_between(dir: &Path, from: &str, to: &str, path: &str) -> Result<String, String> {
+    git(dir, &["diff", from, to, "--", path])
+}
+
+/// Starts merging `commit` into the branch checked out in `dir`, taking `commit`'s side of any
+/// conflicting hunk (a new lock's documents over the build's ticks, which Fallow then restores),
+/// without committing: `commit_merge` ends it. A merge left over from before is aborted first.
+pub fn merge_theirs(dir: &Path, commit: &str) -> Result<(), String> {
+    let _ = git(dir, &["merge", "--abort"]);
+    git(
+        dir,
+        &["merge", "--no-ff", "--no-commit", "-X", "theirs", commit],
+    )
+    .inspect_err(|_| {
+        let _ = git(dir, &["merge", "--abort"]);
+    })
+    .map(|_| ())
+}
+
+/// Ends a merge started by `merge_theirs` as one commit: what the merge staged, and `also`.
+/// Anything else in the worktree (left by a step that did not finish) stays out of it.
+pub fn commit_merge(dir: &Path, message: &str, also: &[&str]) -> Result<String, String> {
+    for p in also {
+        git(dir, &["add", "--", p])?;
+    }
+    let has_author = git(dir, &["config", "user.email"]).is_ok_and(|e| !e.trim().is_empty());
+    let mut args: Vec<&str> = Vec::new();
+    if !has_author {
+        args.extend([
+            "-c",
+            "user.name=Fallow",
+            "-c",
+            "user.email=fallow@localhost.invalid",
+        ]);
+    }
+    args.extend(["commit", "-q", "--no-verify", "-m", message]);
+    git(dir, &args)?;
+    head(dir)
+}
+
+/// Whether `dir`'s tracked files are unchanged and `HEAD` is still `at`. New untracked files,
+/// such as the caches running a check leaves behind, do not count (found on a real run).
+pub fn unchanged(dir: &Path, at: &str) -> Result<bool, String> {
+    let tracked = git(dir, &["status", "--porcelain", "--untracked-files=no"])?;
+    Ok(tracked.trim().is_empty() && rev(dir, "HEAD")? == rev(dir, at)?)
+}
+
+/// Files that running code or tests leaves behind, never committed for an agent.
+pub const CACHES: &[&str] = &[
+    "__pycache__",
+    "*.pyc",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
+    ".tox",
+    ".venv",
+    ".coverage",
+    "node_modules",
+];
+
+/// Commits what changed in the worktree `dir` (only below `paths`, when given) with `message`,
+/// as the repository's configured author, or as Fallow when none is configured. Returns the new
+/// commit, or `None` when nothing changed. Fallow commits a step's work itself, so agents need
+/// no git rights (006 research R-4, verified T001).
+pub fn commit_all(
+    dir: &Path,
+    message: &str,
+    paths: Option<&[&str]>,
+) -> Result<Option<String>, String> {
+    match paths {
+        Some(ps) => {
+            // Only these paths: whatever an agent staged itself is unstaged first (Phase 3
+            // review: a plain commit took everything in the index).
+            git(dir, &["reset", "-q"])?;
+            // One path at a time: a path that matches nothing is not an error here.
+            for p in ps {
+                let _ = git(dir, &["add", "-A", "--", p]);
+            }
+        }
+        None => {
+            let mut args: Vec<String> = vec!["add".into(), "-A".into(), "--".into(), ".".into()];
+            for c in CACHES {
+                args.push(format!(":(exclude,glob)**/{c}"));
+                args.push(format!(":(exclude,glob)**/{c}/**"));
+            }
+            let a: Vec<&str> = args.iter().map(String::as_str).collect();
+            git(dir, &a)?;
+        }
+    }
+    let staged = git(dir, &["diff", "--cached", "--name-only"])?;
+    if staged.trim().is_empty() {
+        return Ok(None);
+    }
+    let has_author = git(dir, &["config", "user.email"]).is_ok_and(|e| !e.trim().is_empty());
+    let mut args: Vec<&str> = Vec::new();
+    if !has_author {
+        args.extend([
+            "-c",
+            "user.name=Fallow",
+            "-c",
+            "user.email=fallow@localhost.invalid",
+        ]);
+    }
+    args.extend(["commit", "-q", "--no-verify", "-m", message]);
+    git(dir, &args)?;
+    head(dir).map(Some)
+}
+
+/// Moves the worktree's branch back to `commit`, keeping the files as they are (`reset --mixed`):
+/// commits an agent made itself are undone, their changes left to be judged.
+pub fn reset_mixed(dir: &Path, commit: &str) -> Result<(), String> {
+    git(dir, &["reset", "-q", "--mixed", commit]).map(|_| ())
+}
+
+/// Puts `paths` in the worktree `dir` back as they are at `commit` (a path that is not there is
+/// removed). Fallow undoes an agent's change to files it may not change.
+pub fn restore_paths(dir: &Path, commit: &str, paths: &[String]) -> Result<(), String> {
+    for p in paths {
+        if git(dir, &["cat-file", "-e", &format!("{commit}:{p}")]).is_ok() {
+            git(dir, &["checkout", "-q", commit, "--", p])?;
+        } else {
+            let _ = git(dir, &["rm", "-q", "--cached", "--ignore-unmatch", "--", p]);
+            let _ = std::fs::remove_file(dir.join(p));
+        }
+    }
+    Ok(())
+}
+
+/// Whether `dir` is inside a git repository (at its top or below).
+pub fn inside_repo(dir: &Path) -> Option<PathBuf> {
+    git(dir, &["rev-parse", "--show-toplevel"])
+        .ok()
+        .map(|s| PathBuf::from(s.trim()))
+}
+
+/// Throws away uncommitted changes and untracked files in the worktree `dir` (a run's own
+/// worktree only).
+pub fn discard_changes(dir: &Path) -> Result<(), String> {
+    git(dir, &["reset", "-q", "--hard"])?;
+    git(dir, &["clean", "-q", "-fd"]).map(|_| ())
+}
+
+/// The URL of the remote `origin`, if any.
+pub fn origin_url(dir: &Path) -> Option<String> {
+    git(dir, &["remote", "get-url", "origin"])
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+// ---- 009: read-only views of a working copy or a branch (research R-8) ----------------------
+
+fn git_bytes(dir: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
+    let out = crate::platform::command("git")
+        .current_dir(dir)
+        .args(args)
+        .output()
+        .map_err(|e| format!("git: {e}"))?;
+    if out.status.success() {
+        Ok(out.stdout)
+    } else {
+        Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
+    }
+}
+
+fn nul_list(bytes: &[u8]) -> Vec<String> {
+    bytes
+        .split(|b| *b == 0)
+        .filter(|s| !s.is_empty())
+        .map(|s| String::from_utf8_lossy(s).into_owned())
+        .collect()
+}
+
+/// The files of the working copy `dir` that the project does not ignore: tracked and untracked,
+/// by the project's own ignore rules.
+pub fn listed(dir: &Path) -> Result<Vec<String>, String> {
+    let mut v = nul_list(&git_bytes(
+        dir,
+        &[
+            "ls-files",
+            "-z",
+            "--cached",
+            "--others",
+            "--exclude-standard",
+        ],
+    )?);
+    v.sort();
+    v.dedup();
+    Ok(v)
+}
+
+/// What changed against `base`, as (`A`, `M` or `D`, path): the working tree of `dir` when `to`
+/// is `None` (uncommitted changes and untracked files included), else the commit `to`.
+pub fn name_status(
+    dir: &Path,
+    base: &str,
+    to: Option<&str>,
+) -> Result<Vec<(char, String)>, String> {
+    let mut args = vec!["diff", "--name-status", "--no-renames", "-z", base];
+    if let Some(t) = to {
+        args.push(t);
+    }
+    let parts = nul_list(&git_bytes(dir, &args)?);
+    let mut out = Vec::new();
+    let mut it = parts.into_iter();
+    while let (Some(st), Some(path)) = (it.next(), it.next()) {
+        let c = match st.chars().next() {
+            Some('A') => 'A',
+            Some('D') => 'D',
+            _ => 'M',
+        };
+        out.push((c, path));
+    }
+    if to.is_none() {
+        for p in nul_list(&git_bytes(
+            dir,
+            &["ls-files", "-z", "--others", "--exclude-standard"],
+        )?) {
+            out.push(('A', p));
+        }
+    }
+    out.sort_by(|a, b| a.1.cmp(&b.1));
+    out.dedup_by(|a, b| a.1 == b.1);
+    Ok(out)
+}
+
+/// The last commit after `base` up to `to` (default `HEAD`) that changed `path`: its id,
+/// subject, body and time (seconds since 1970).
+pub fn last_change(
+    dir: &Path,
+    base: &str,
+    to: Option<&str>,
+    path: &str,
+) -> Result<Option<(String, String, String, i64)>, String> {
+    let range = format!("{base}..{}", to.unwrap_or("HEAD"));
+    let out = git(
+        dir,
+        &[
+            "--literal-pathspecs",
+            "log",
+            "-1",
+            "--format=%H%x1f%s%x1f%b%x1f%ct",
+            &range,
+            "--",
+            path,
+        ],
+    )?;
+    let out = out.trim_end();
+    if out.is_empty() {
+        return Ok(None);
+    }
+    let f: Vec<&str> = out.split('\x1f').collect();
+    if f.len() < 4 {
+        return Ok(None);
+    }
+    Ok(Some((
+        f[0].trim().to_string(),
+        f[1].to_string(),
+        f[2].trim().to_string(),
+        f[3].trim().parse().unwrap_or(0),
+    )))
+}
+
+/// The unified diff of `path` against `base`, with `context` lines: the working tree of `dir`
+/// when `to` is `None`, else the commit `to`.
+pub fn diff_path(
+    dir: &Path,
+    base: &str,
+    to: Option<&str>,
+    path: &str,
+    context: u32,
+) -> Result<String, String> {
+    let u = format!("-U{context}");
+    // The path as it is, never a pattern; git's own diff, no tool of the project's.
+    let mut args = vec![
+        "--literal-pathspecs",
+        "diff",
+        "--no-color",
+        "--no-renames",
+        "--no-ext-diff",
+        "--no-textconv",
+        u.as_str(),
+        base,
+    ];
+    if let Some(t) = to {
+        args.push(t);
+    }
+    args.push("--");
+    args.push(path);
+    git(dir, &args)
+}
+
+/// The line ranges (first, last; 1-based, inclusive) of `path` added against `base`.
+pub fn added_ranges(
+    dir: &Path,
+    base: &str,
+    to: Option<&str>,
+    path: &str,
+) -> Result<Vec<(u32, u32)>, String> {
+    let d = diff_path(dir, base, to, path, 0)?;
+    let mut out = Vec::new();
+    for line in d.lines().filter(|l| l.starts_with("@@")) {
+        // "@@ -a,b +c,d @@": the new side is the word that starts with '+'.
+        let Some(plus) = line.split_whitespace().find(|w| w.starts_with('+')) else {
+            continue;
+        };
+        let mut it = plus[1..].split(',');
+        let start: u32 = it.next().and_then(|s| s.parse().ok()).unwrap_or(0);
+        let count: u32 = it.next().map_or(Some(1), |s| s.parse().ok()).unwrap_or(1);
+        if count > 0 && start > 0 {
+            out.push((start, start + count - 1));
+        }
+    }
+    Ok(out)
+}
+
+/// The bytes of `path` at `rev`; `Ok(None)` when `rev` has no such file.
+pub fn show_bytes(dir: &Path, rev: &str, path: &str) -> Result<Option<Vec<u8>>, String> {
+    let spec = format!("{rev}:{path}");
+    let exists = crate::platform::command("git")
+        .current_dir(dir)
+        .args(["cat-file", "-e", &spec])
+        .output()
+        .is_ok_and(|o| o.status.success());
+    if !exists {
+        return Ok(None);
+    }
+    git_bytes(dir, &["show", &spec]).map(Some)
+}
+
+/// Whether `rev` names a commit (a branch, say).
+pub fn rev_exists(dir: &Path, rev: &str) -> bool {
+    let spec = format!("{rev}^{{commit}}");
+    crate::platform::command("git")
+        .current_dir(dir)
+        .args(["rev-parse", "-q", "--verify", &spec])
+        .output()
+        .is_ok_and(|o| o.status.success())
+}
+
+/// For each file changed after `base` up to `to` (default `HEAD`), the last commit that changed
+/// it: its subject and body. One `git log` for the whole list.
+pub fn last_changes(
+    dir: &Path,
+    base: &str,
+    to: Option<&str>,
+) -> Result<std::collections::BTreeMap<String, (String, String)>, String> {
+    let range = format!("{base}..{}", to.unwrap_or("HEAD"));
+    let out = git(
+        dir,
+        &[
+            "log",
+            "--no-renames",
+            "--format=%x1e%s%x1f%b%x1f",
+            "--name-only",
+            &range,
+        ],
+    )?;
+    let mut map = std::collections::BTreeMap::new();
+    for rec in out.split('\x1e').filter(|r| !r.trim().is_empty()) {
+        let mut f = rec.splitn(3, '\x1f');
+        let subject = f.next().unwrap_or_default().trim().to_string();
+        let body = f.next().unwrap_or_default().trim().to_string();
+        for path in f
+            .next()
+            .unwrap_or_default()
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+        {
+            // Newest first: the first commit seen for a path is its last change.
+            map.entry(path.to_string())
+                .or_insert_with(|| (subject.clone(), body.clone()));
+        }
+    }
+    Ok(map)
+}
+
+// ---- 011: bringing a loop up to date (research R-1, R-2) ---------------------------------
+
+/// Runs git with extra environment; the exit code, stdout and stderr, whatever the code.
+fn git_full(
+    dir: &Path,
+    args: &[&str],
+    env: &[(&str, &str)],
+) -> Result<(i32, String, String), String> {
+    let mut c = crate::platform::command("git");
+    c.current_dir(dir).args(args);
+    for (k, v) in env {
+        c.env(k, v);
+    }
+    let out = c.output().map_err(|e| format!("git: {e}"))?;
+    Ok((
+        out.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).trim().to_string(),
+    ))
+}
+
+/// The arguments that make Fallow the author when the repository names none.
+fn author_args(dir: &Path) -> Vec<&'static str> {
+    let set = |k: &str| git(dir, &["config", k]).is_ok_and(|v| !v.trim().is_empty());
+    if set("user.email") && set("user.name") {
+        Vec::new()
+    } else {
+        vec![
+            "-c",
+            "user.name=Fallow",
+            "-c",
+            "user.email=fallow@localhost.invalid",
+        ]
+    }
+}
+
+/// The installed git's version, `(major, minor)`.
+pub fn git_version(dir: &Path) -> Option<(u32, u32)> {
+    let v = git(dir, &["--version"]).ok()?;
+    let nums = v
+        .split_whitespace()
+        .find(|w| w.starts_with(|c: char| c.is_ascii_digit()))?;
+    let mut it = nums.split('.');
+    let major = it.next()?.parse().ok()?;
+    let minor = it.next()?.parse().ok()?;
+    Some((major, minor))
+}
+
+/// Updates need `merge-tree --write-tree` (research R-1).
+pub const MERGE_TREE_GIT: (u32, u32) = (2, 38);
+
+/// Why an update cannot run with the git found, if it cannot.
+pub fn version_refusal(found: Option<(u32, u32)>) -> Option<String> {
+    match found {
+        Some(v) if v >= MERGE_TREE_GIT => None,
+        Some((a, b)) => Some(format!(
+            "updates need git {}.{} or newer (found {a}.{b})",
+            MERGE_TREE_GIT.0, MERGE_TREE_GIT.1
+        )),
+        None => Some("could not read git's version".into()),
+    }
+}
+
+/// A path a merge could not resolve: `Text` when the merged file holds conflict markers,
+/// `NonText` otherwise (modify/delete, binary, rename, file/directory: git kept one side or added
+/// `<path>~<side>` files).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConflictKind {
+    Text,
+    NonText,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Conflict {
+    pub path: String,
+    pub kind: ConflictKind,
+}
+
+/// A merge computed by git without a working copy (research R-2).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MergeTree {
+    /// The merged tree; with conflicts, it holds the conflicted files with their markers.
+    pub tree: String,
+    pub clean: bool,
+    pub conflicts: Vec<Conflict>,
+}
+
+/// `git merge-tree --write-tree ours theirs`: exit 0 clean, 1 conflicts, anything else an error.
+/// Refused below git 2.38, naming the version found.
+pub fn merge_tree(dir: &Path, ours: &str, theirs: &str) -> Result<MergeTree, String> {
+    if let Some(why) = version_refusal(git_version(dir)) {
+        return Err(why);
+    }
+    let (code, out, err) = git_full(
+        dir,
+        &[
+            "-c",
+            "core.quotePath=false",
+            "merge-tree",
+            "--write-tree",
+            ours,
+            theirs,
+        ],
+        &[],
+    )?;
+    if code != 0 && code != 1 {
+        return Err(if err.is_empty() {
+            format!("git merge-tree exited {code}")
+        } else {
+            err
+        });
+    }
+    let mut lines = out.lines();
+    let tree = lines
+        .next()
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+        .ok_or("git merge-tree wrote no tree")?
+        .to_string();
+    if code == 0 {
+        return Ok(MergeTree {
+            tree,
+            clean: true,
+            conflicts: Vec::new(),
+        });
+    }
+    // Conflicted file info: "<mode> <object> <stage>\t<path>", up to the blank line before the
+    // informational messages.
+    let mut paths: Vec<String> = Vec::new();
+    for l in lines {
+        if l.trim().is_empty() {
+            break;
+        }
+        if let Some((_, p)) = l.split_once('\t') {
+            let p = unquote(p);
+            if !paths.contains(&p) {
+                paths.push(p);
+            }
+        }
+    }
+    let mut conflicts = Vec::new();
+    for path in paths {
+        // The tree is not a commit, so `show` (which checks for one) is not used here.
+        let markers = git(dir, &["cat-file", "-p", &format!("{tree}:{path}")])
+            .is_ok_and(|text| text.lines().any(is_marker));
+        conflicts.push(Conflict {
+            path,
+            kind: if markers {
+                ConflictKind::Text
+            } else {
+                ConflictKind::NonText
+            },
+        });
+    }
+    Ok(MergeTree {
+        tree,
+        clean: false,
+        conflicts,
+    })
+}
+
+/// A path as git prints it, without C-style quoting for the simple cases.
+fn unquote(p: &str) -> String {
+    let p = p.trim();
+    if p.len() >= 2 && p.starts_with('"') && p.ends_with('"') {
+        p[1..p.len() - 1]
+            .replace("\\\"", "\"")
+            .replace("\\\\", "\\")
+    } else {
+        p.to_string()
+    }
+}
+
+/// A conflict marker line: `<<<<<<< ` or `>>>>>>> ` at its start (the separator `=======` is
+/// not one: it is also a Markdown underline).
+fn is_marker(line: &str) -> bool {
+    line.starts_with("<<<<<<< ") || line.starts_with(">>>>>>> ")
+}
+
+/// The files that would conflict if `target_tip` were merged into `integrated`, touching no
+/// working copy, index or ref; with git older than 2.38, by a trial merge in a detached scratch
+/// worktree under `scratch` (removed after).
+pub fn would_conflict(
+    dir: &Path,
+    integrated: &str,
+    target_tip: &str,
+    scratch: &Path,
+) -> Result<Vec<String>, String> {
+    if git_version(dir).is_some_and(|v| v >= MERGE_TREE_GIT) {
+        return merge_tree(dir, integrated, target_tip)
+            .map(|m| m.conflicts.into_iter().map(|c| c.path).collect());
+    }
+    // A fresh folder each time: a leftover checkout must never be merged into (review).
+    let scratch = scratch.join(format!(
+        "trial-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_nanos())
+    ));
+    let scratch = scratch.as_path();
+    // Always removed, whatever fails on the way (review).
+    let cleanup = |e: String| {
+        let _ = worktree_remove(dir, scratch);
+        let _ = std::fs::remove_dir_all(scratch);
+        e
+    };
+    worktree_add(dir, scratch, None, integrated).map_err(cleanup)?;
+    let at = rev(scratch, "HEAD").map_err(cleanup)?;
+    if at != rev(dir, integrated).map_err(cleanup)? {
+        return Err(cleanup(
+            "the trial merge's worktree is not at the verified commit".into(),
+        ));
+    }
+    let author = author_args(dir);
+    let mut args: Vec<&str> = author.clone();
+    args.extend(["merge", "--no-commit", "--no-ff", "-q", target_tip]);
+    let merged = git(scratch, &args);
+    let conflicts: Vec<String> = git(
+        scratch,
+        &[
+            "-c",
+            "core.quotePath=false",
+            "diff",
+            "--name-only",
+            "--diff-filter=U",
+        ],
+    )
+    .map(|s| s.lines().map(str::to_string).collect())
+    .unwrap_or_default();
+    let _ = git(scratch, &["merge", "--abort"]);
+    let _ = cleanup(String::new());
+    match (merged, conflicts.is_empty()) {
+        (Err(e), true) => Err(e),
+        _ => Ok(conflicts),
+    }
+}
+
+/// `git commit-tree tree -p <parent>… -m message`: a commit made by Fallow (as the repository's
+/// author, or as Fallow when none is configured); no hook runs.
+pub fn commit_tree(
+    dir: &Path,
+    tree: &str,
+    parents: &[&str],
+    message: &str,
+) -> Result<String, String> {
+    let author = author_args(dir);
+    let mut args: Vec<&str> = author;
+    args.extend(["commit-tree", tree]);
+    for p in parents {
+        args.extend(["-p", p]);
+    }
+    args.extend(["-m", message]);
+    git(dir, &args).map(|s| s.trim().to_string())
+}
+
+/// `tree` with `paths` taken from `from_commit` (a path absent there is removed), through a
+/// temporary index: the loop's own version of its documents kept in a merged tree (R-2).
+pub fn tree_with_paths_from(
+    dir: &Path,
+    tree: &str,
+    from_commit: &str,
+    paths: &[String],
+    index_file: &Path,
+) -> Result<String, String> {
+    let idx = index_file.display().to_string();
+    let env = [("GIT_INDEX_FILE", idx.as_str())];
+    let run = |args: &[&str]| -> Result<String, String> {
+        let (code, out, err) = git_full(dir, args, &env)?;
+        if code == 0 { Ok(out) } else { Err(err) }
+    };
+    let _ = std::fs::remove_file(index_file);
+    run(&["read-tree", tree])?;
+    for p in paths {
+        run(&[
+            "rm",
+            "-r",
+            "-q",
+            "-f",
+            "--cached",
+            "--ignore-unmatch",
+            "--",
+            p,
+        ])?;
+        let listed = git(dir, &["ls-tree", "-r", "--name-only", from_commit, "--", p])?;
+        if !listed.trim().is_empty() {
+            let spec = format!("{from_commit}:{p}");
+            let kind = git(dir, &["cat-file", "-t", &spec])?;
+            if kind.trim() == "tree" {
+                run(&[
+                    "read-tree",
+                    &format!("--prefix={}/", p.trim_end_matches('/')),
+                    &spec,
+                ])?;
+            } else {
+                let line = git(dir, &["ls-tree", from_commit, "--", p])?;
+                let (meta, _) = line
+                    .trim()
+                    .split_once('\t')
+                    .ok_or("ls-tree gave no entry")?;
+                let mut m = meta.split_whitespace();
+                let (mode, _, oid) = (m.next().unwrap_or(""), m.next(), m.next().unwrap_or(""));
+                run(&[
+                    "update-index",
+                    "--add",
+                    "--cacheinfo",
+                    &format!("{mode},{oid},{p}"),
+                ])?;
+            }
+        }
+    }
+    let out = run(&["write-tree"])?;
+    let _ = std::fs::remove_file(index_file);
+    Ok(out.trim().to_string())
+}
+
+/// Conflict marker lines left in `paths` at `commit`: `(path, line)`.
+pub fn marker_lines(dir: &Path, commit: &str, paths: &[String]) -> Vec<(String, String)> {
+    let mut found = Vec::new();
+    for p in paths {
+        if let Ok(Some(text)) = show(dir, commit, p) {
+            for l in text.lines().filter(|l| is_marker(l)) {
+                found.push((p.clone(), l.to_string()));
+            }
+        }
+    }
+    found
+}
+
+/// Files git added beside a conflicted path (`<path>~<side>`) still there at `commit`.
+pub fn side_files(dir: &Path, commit: &str, paths: &[String]) -> Vec<String> {
+    let all = files_at(dir, commit).unwrap_or_default();
+    all.into_iter()
+        .filter(|f| paths.iter().any(|p| f.starts_with(&format!("{p}~"))))
+        .collect()
+}
+
+/// Creates `name` at `at`, refusing a name already taken (the caller tries `-2`, `-3`…), unlike
+/// `create_branch`, which keeps an existing branch.
+pub fn create_new_branch(dir: &Path, name: &str, at: &str) -> Result<(), String> {
+    if rev_exists(dir, &format!("refs/heads/{name}")) {
+        return Err(format!("{name} is taken"));
+    }
+    git(dir, &["branch", name, at]).map(|_| ())
+}
+
+/// The first of `base`, `base-2` … `base-9` not taken, created at `at`.
+pub fn create_numbered_branch(dir: &Path, base: &str, at: &str) -> Result<String, String> {
+    for n in 1..=9 {
+        let name = if n == 1 {
+            base.to_string()
+        } else {
+            format!("{base}-{n}")
+        };
+        if create_new_branch(dir, &name, at).is_ok() {
+            return Ok(name);
+        }
+    }
+    Err(format!("{base} and its numbered names up to -9 are taken"))
+}
+
+/// `git log --oneline from..to -- path`, for the repair prompt (what each side changed).
+pub fn log_paths(dir: &Path, from: &str, to: &str, path: &str) -> Vec<String> {
+    git(
+        dir,
+        &["log", "--oneline", &format!("{from}..{to}"), "--", path],
+    )
+    .map(|s| s.lines().map(str::to_string).collect())
+    .unwrap_or_default()
+}
+
+/// 011: puts the worktree `dir` at `commit`, detached (an update's repair starts there).
+pub fn checkout_detach(dir: &Path, commit: &str) -> Result<(), String> {
+    git(dir, &["checkout", "-q", "--detach", commit]).map(|_| ())
+}
+
+/// 011: checks `branch` out in the worktree `dir` again and moves it forward to `commit` (a
+/// fast-forward only).
+pub fn checkout_forward(dir: &Path, branch: &str, commit: &str) -> Result<(), String> {
+    git(dir, &["checkout", "-q", branch])?;
+    git(dir, &["merge", "-q", "--ff-only", commit]).map(|_| ())
+}
+
+/// 011: the parents of `commit`, in order.
+pub fn parents(dir: &Path, commit: &str) -> Result<Vec<String>, String> {
+    let line = git(dir, &["rev-list", "--parents", "-n", "1", commit])?;
+    Ok(line
+        .split_whitespace()
+        .skip(1)
+        .map(str::to_string)
+        .collect())
+}
+
+/// 011: the first line of `commit`'s message.
+pub fn subject(dir: &Path, commit: &str) -> Result<String, String> {
+    git(dir, &["log", "-1", "--format=%s", commit]).map(|s| s.trim().to_string())
+}
+
+/// 011: the tree of `commit`.
+pub fn tree_of(dir: &Path, commit: &str) -> Result<String, String> {
+    git(dir, &["rev-parse", &format!("{commit}^{{tree}}")]).map(|s| s.trim().to_string())
+}
+
+/// The commits on `to`'s first-parent line since `from`, oldest first (FR-002).
+pub fn first_parent_commits(dir: &Path, from: &str, to: &str) -> Vec<String> {
+    git(
+        dir,
+        &[
+            "rev-list",
+            "--reverse",
+            "--first-parent",
+            &format!("{from}..{to}"),
+        ],
+    )
+    .map(|s| s.lines().map(str::to_string).collect())
+    .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod update_tests {
+    use super::*;
+
+    fn run(dir: &Path, args: &[&str]) -> String {
+        git(dir, args).unwrap_or_else(|e| panic!("git {args:?}: {e}"))
+    }
+
+    fn repo(name: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("fallow-gitupd-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        run(&d, &["init", "-q", "-b", "main"]);
+        run(&d, &["config", "user.email", "t@example.invalid"]);
+        run(&d, &["config", "user.name", "t"]);
+        run(&d, &["config", "core.autocrlf", "false"]);
+        d
+    }
+
+    fn commit(d: &Path, files: &[(&str, Option<&str>)], msg: &str) -> String {
+        for (p, t) in files {
+            let path = d.join(p);
+            match t {
+                Some(t) => {
+                    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+                    std::fs::write(&path, t).unwrap();
+                }
+                None => {
+                    let _ = std::fs::remove_file(&path);
+                }
+            }
+        }
+        run(d, &["add", "-A"]);
+        run(d, &["commit", "-q", "-m", msg]);
+        head(d).unwrap()
+    }
+
+    #[test]
+    fn head_from_files_reads_what_git_reads_or_nothing() {
+        let d = repo("headfiles");
+        assert_eq!(head_from_files(&d), None, "no commit yet");
+        let c = commit(&d, &[("a.txt", Some("a\n"))], "one");
+        assert_eq!(head_from_files(&d).as_deref(), Some(c.as_str()));
+        // Packed, then a linked worktree, then detached.
+        run(&d, &["pack-refs", "--all"]);
+        assert_eq!(head_from_files(&d).as_deref(), Some(c.as_str()));
+        let w = d.with_file_name(format!("{}-wt", d.file_name().unwrap().to_string_lossy()));
+        let _ = std::fs::remove_dir_all(&w);
+        run(
+            &d,
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                "side",
+                &w.display().to_string(),
+            ],
+        );
+        let c2 = commit(&w, &[("b.txt", Some("b\n"))], "two");
+        assert_eq!(head_from_files(&w).as_deref(), Some(c2.as_str()));
+        assert_eq!(head_from_files(&d).as_deref(), Some(c.as_str()));
+        run(&d, &["checkout", "-q", "--detach"]);
+        assert_eq!(head_from_files(&d).as_deref(), Some(c.as_str()));
+        assert_eq!(
+            revs(&w, &["HEAD", "refs/heads/main"]),
+            Some(vec![c2.clone(), c.clone()])
+        );
+        assert_eq!(revs(&w, &["HEAD", "refs/heads/gone"]), None);
+        let _ = std::fs::remove_dir_all(&w);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn head_and_branch_agree_and_a_detached_head_has_no_branch() {
+        let d = repo("headbranch");
+        assert!(head_and_branch(&d).is_err(), "no commit yet");
+        let c = commit(&d, &[("a.txt", Some("a\n"))], "one");
+        assert_eq!(
+            head_and_branch(&d).unwrap(),
+            (c.clone(), Some("main".into()))
+        );
+        run(&d, &["checkout", "-q", "-b", "feature/x"]);
+        assert_eq!(head_and_branch(&d).unwrap().1.as_deref(), Some("feature/x"));
+        run(&d, &["checkout", "-q", "--detach"]);
+        assert_eq!(head_and_branch(&d).unwrap(), (c, None));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// A base with `a.txt` and `doc.md`; branch `loop` and `main` diverge from it.
+    fn diverged(
+        name: &str,
+        ours: &[(&str, Option<&str>)],
+        theirs: &[(&str, Option<&str>)],
+    ) -> (PathBuf, String, String) {
+        let d = repo(name);
+        commit(
+            &d,
+            &[
+                ("a.txt", Some("one\ntwo\nthree\n")),
+                ("doc.md", Some("Title\n=======\n")),
+            ],
+            "base",
+        );
+        run(&d, &["checkout", "-q", "-b", "loop"]);
+        let l = commit(&d, ours, "ours");
+        run(&d, &["checkout", "-q", "main"]);
+        let t = commit(&d, theirs, "theirs");
+        (d, l, t)
+    }
+
+    #[test]
+    fn a_clean_merge_is_computed_and_committed_with_two_parents() {
+        let (d, l, t) = diverged(
+            "clean",
+            &[("a.txt", Some("ONE\ntwo\nthree\n"))],
+            &[("b.txt", Some("new\n"))],
+        );
+        let m = merge_tree(&d, &l, &t).unwrap();
+        assert!(m.clean && m.conflicts.is_empty());
+        let c = commit_tree(&d, &m.tree, &[&l, &t], "merged").unwrap();
+        assert!(is_ancestor(&d, &l, &c) && is_ancestor(&d, &t, &c));
+        assert_eq!(show(&d, &c, "b.txt").unwrap().as_deref(), Some("new\n"));
+        // Nothing checked out changed: still on main at theirs.
+        assert_eq!(head(&d).unwrap(), t);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn a_text_conflict_gives_a_tree_with_markers_usable_by_commit_tree() {
+        let (d, l, t) = diverged(
+            "text",
+            &[("a.txt", Some("one\nOURS\nthree\n"))],
+            &[("a.txt", Some("one\nTHEIRS\nthree\n"))],
+        );
+        let m = merge_tree(&d, &l, &t).unwrap();
+        assert!(!m.clean);
+        assert_eq!(
+            m.conflicts,
+            vec![Conflict {
+                path: "a.txt".into(),
+                kind: ConflictKind::Text
+            }]
+        );
+        let working = commit_tree(&d, &m.tree, &[&l], "working").unwrap();
+        let marks = marker_lines(&d, &working, &["a.txt".into()]);
+        assert_eq!(marks.len(), 2, "{marks:?}");
+        assert!(
+            would_conflict(&d, &l, &t, &d.join("scratch")).unwrap() == vec!["a.txt".to_string()]
+        );
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn a_modify_delete_conflict_is_non_text_and_a_markdown_underline_is_no_marker() {
+        let (d, l, t) = diverged(
+            "moddel",
+            &[("a.txt", Some("one\nOURS\nthree\n"))],
+            &[("a.txt", None)],
+        );
+        let m = merge_tree(&d, &l, &t).unwrap();
+        assert_eq!(
+            m.conflicts,
+            vec![Conflict {
+                path: "a.txt".into(),
+                kind: ConflictKind::NonText
+            }]
+        );
+        assert!(
+            marker_lines(&d, &l, &["doc.md".into()]).is_empty(),
+            "======= is not a marker"
+        );
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn paths_are_taken_from_another_commit_into_a_tree() {
+        let (d, l, t) = diverged(
+            "paths",
+            &[("doc.md", Some("Ours\n"))],
+            &[("doc.md", Some("Theirs\n")), ("c.txt", Some("c\n"))],
+        );
+        let m = merge_tree(&d, &l, &t).unwrap();
+        let idx = d.join(".git").join("fallow-update-index");
+        let kept = tree_with_paths_from(&d, &m.tree, &l, &["doc.md".into()], &idx).unwrap();
+        let c = commit_tree(&d, &kept, &[&l, &t], "kept").unwrap();
+        assert_eq!(show(&d, &c, "doc.md").unwrap().as_deref(), Some("Ours\n"));
+        assert_eq!(show(&d, &c, "c.txt").unwrap().as_deref(), Some("c\n"));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn a_directory_and_a_missing_path_are_taken_from_the_other_commit() {
+        let (d, l, t) = diverged(
+            "dirs",
+            &[
+                ("specs/f/spec.md", Some("ours spec\n")),
+                ("specs/f/tasks.md", Some("ours tasks\n")),
+            ],
+            &[
+                ("specs/f/spec.md", Some("theirs spec\n")),
+                ("specs/f/extra.md", Some("theirs only\n")),
+                ("gone.txt", Some("theirs\n")),
+            ],
+        );
+        let m = merge_tree(&d, &l, &t).unwrap();
+        let idx = d.join(".git").join("fallow-update-index");
+        let kept = tree_with_paths_from(
+            &d,
+            &m.tree,
+            &l,
+            &["specs/f".into(), "gone.txt".into()],
+            &idx,
+        )
+        .unwrap();
+        let c = commit_tree(&d, &kept, &[&l, &t], "kept").unwrap();
+        assert_eq!(
+            show(&d, &c, "specs/f/spec.md").unwrap().as_deref(),
+            Some("ours spec\n")
+        );
+        assert_eq!(
+            show(&d, &c, "specs/f/tasks.md").unwrap().as_deref(),
+            Some("ours tasks\n")
+        );
+        assert_eq!(
+            show(&d, &c, "specs/f/extra.md").unwrap(),
+            None,
+            "the directory is ours as a whole"
+        );
+        assert_eq!(
+            show(&d, &c, "gone.txt").unwrap(),
+            None,
+            "a path absent there is removed"
+        );
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn an_old_git_is_refused_by_name() {
+        assert_eq!(version_refusal(Some((2, 45))), None);
+        assert_eq!(
+            version_refusal(Some((2, 37))).as_deref(),
+            Some("updates need git 2.38 or newer (found 2.37)")
+        );
+        assert!(version_refusal(None).is_some());
+    }
+
+    #[test]
+    fn numbered_branches_never_take_a_taken_name() {
+        let (d, l, _) = diverged(
+            "branches",
+            &[("a.txt", Some("x\n"))],
+            &[("b.txt", Some("y\n"))],
+        );
+        assert_eq!(
+            create_numbered_branch(&d, "fallow/f/update-1", &l).unwrap(),
+            "fallow/f/update-1"
+        );
+        assert_eq!(
+            create_numbered_branch(&d, "fallow/f/update-1", &l).unwrap(),
+            "fallow/f/update-1-2"
+        );
+        assert!(create_new_branch(&d, "fallow/f/update-1", &l).is_err());
+        assert!(git_version(&d).is_some());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+}
+
+#[cfg(test)]
+mod view_tests {
+    use super::*;
+
+    fn run(dir: &Path, args: &[&str]) {
+        let ok = crate::platform::command("git")
+            .current_dir(dir)
+            .args(args)
+            .output()
+            .unwrap()
+            .status
+            .success();
+        assert!(ok, "git {args:?}");
+    }
+
+    fn repo(name: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("fallow-gitview-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        run(&d, &["init", "-q", "-b", "main"]);
+        run(&d, &["config", "user.email", "t@example.invalid"]);
+        run(&d, &["config", "user.name", "t"]);
+        run(&d, &["config", "core.autocrlf", "false"]);
+        std::fs::write(d.join(".gitignore"), "build/\n").unwrap();
+        std::fs::write(d.join("a.txt"), "one\ntwo\n").unwrap();
+        std::fs::write(d.join("gone.txt"), "x\n").unwrap();
+        run(&d, &["add", "."]);
+        run(&d, &["commit", "-q", "-m", "base"]);
+        d
+    }
+
+    #[test]
+    fn a_working_copy_lists_marks_and_ranges() {
+        let d = repo("wc");
+        let base = head(&d).unwrap();
+        std::fs::write(d.join("a.txt"), "one\nnew\ntwo\n").unwrap();
+        std::fs::remove_file(d.join("gone.txt")).unwrap();
+        std::fs::write(d.join("new file.txt"), "n\n").unwrap();
+        std::fs::create_dir_all(d.join("build")).unwrap();
+        std::fs::write(d.join("build/out"), "o").unwrap();
+        let l = listed(&d).unwrap();
+        assert!(l.contains(&"new file.txt".to_string()), "{l:?}");
+        assert!(!l.iter().any(|p| p.starts_with("build/")), "{l:?}");
+        let ns = name_status(&d, &base, None).unwrap();
+        assert!(ns.contains(&('M', "a.txt".into())), "{ns:?}");
+        assert!(ns.contains(&('D', "gone.txt".into())), "{ns:?}");
+        assert!(ns.contains(&('A', "new file.txt".into())), "{ns:?}");
+        assert_eq!(
+            added_ranges(&d, &base, None, "a.txt").unwrap(),
+            vec![(2, 2)]
+        );
+        assert!(
+            diff_path(&d, &base, None, "a.txt", 3)
+                .unwrap()
+                .contains("+new")
+        );
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn a_branch_reads_without_a_working_copy() {
+        let d = repo("br");
+        let base = head(&d).unwrap();
+        run(&d, &["checkout", "-q", "-b", "f"]);
+        std::fs::write(d.join("b.txt"), "b\n").unwrap();
+        run(&d, &["add", "."]);
+        run(
+            &d,
+            &[
+                "commit",
+                "-q",
+                "-m",
+                "build T002: add b",
+                "-m",
+                "Fallow loop r3, step 4",
+            ],
+        );
+        run(&d, &["checkout", "-q", "main"]);
+        assert!(rev_exists(&d, "f"));
+        assert!(!rev_exists(&d, "nope"));
+        assert_eq!(
+            name_status(&d, &base, Some("f")).unwrap(),
+            vec![('A', "b.txt".to_string())]
+        );
+        assert_eq!(show_bytes(&d, "f", "b.txt").unwrap(), Some(b"b\n".to_vec()));
+        assert_eq!(show_bytes(&d, "f", "none").unwrap(), None);
+        let (_, subject, body, _) = last_change(&d, &base, Some("f"), "b.txt").unwrap().unwrap();
+        assert_eq!(subject, "build T002: add b");
+        assert_eq!(body, "Fallow loop r3, step 4");
+        assert!(
+            last_change(&d, &base, Some("f"), "a.txt")
+                .unwrap()
+                .is_none()
+        );
+        let all = last_changes(&d, &base, Some("f")).unwrap();
+        assert_eq!(
+            all.get("b.txt"),
+            Some(&(
+                "build T002: add b".to_string(),
+                "Fallow loop r3, step 4".to_string()
+            ))
+        );
+        assert!(!all.contains_key("a.txt"));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+}
+
+// ---- 012: solo sessions (research R-2, R-3, R-10, R-18) ----
+
+/// The empty folder Fallow points `core.hooksPath` at for its own git commands on a session,
+/// so no hook runs, from any source (R-2, R-3). Set once at start, under Fallow's own data.
+static NOHOOKS: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+/// Sets (and creates) the empty hooks folder; the first call wins.
+pub fn set_nohooks(dir: PathBuf) -> Result<(), String> {
+    std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let _ = NOHOOKS.set(dir);
+    Ok(())
+}
+
+fn nohooks() -> Result<&'static PathBuf, String> {
+    NOHOOKS
+        .get()
+        .ok_or_else(|| "Fallow's empty hooks folder is not set".to_string())
+}
+
+/// `git` in `dir` with no hook from any source and no LFS download (R-2): `-c core.hooksPath`
+/// at Fallow's empty folder, `GIT_LFS_SKIP_SMUDGE=1`.
+fn git_nohooks(dir: &Path, args: &[&str], env: &[(&str, &str)]) -> Result<String, String> {
+    let hooks = nohooks()?.display().to_string();
+    let mut c = crate::platform::command("git");
+    c.current_dir(dir)
+        .args(["-c", &format!("core.hooksPath={hooks}")])
+        .args(args)
+        .env("GIT_LFS_SKIP_SMUDGE", "1");
+    for (k, v) in env {
+        c.env(k, v);
+    }
+    let out = c.output().map_err(|e| format!("git: {e}"))?;
+    if out.status.success() {
+        Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+    } else {
+        Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
+    }
+}
+
+/// The engineer's configured identity (`user.name` and `user.email` both set), or `None`.
+pub fn identity(dir: &Path) -> Option<(String, String)> {
+    let get = |k: &str| {
+        git(dir, &["config", k])
+            .ok()
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())
+    };
+    Some((get("user.name")?, get("user.email")?))
+}
+
+/// A new worktree at `dir` on a new branch `branch` from `start`, without hooks or LFS download
+/// (R-2). Refused when the branch name is taken.
+pub fn worktree_add_new(repo: &Path, dir: &Path, branch: &str, start: &str) -> Result<(), String> {
+    if rev_exists(repo, &format!("refs/heads/{branch}")) {
+        return Err(format!("the branch {branch} exists already"));
+    }
+    let d = dir.display().to_string();
+    git_nohooks(
+        repo,
+        &["worktree", "add", "-q", "-b", branch, &d, start],
+        &[],
+    )
+    .map(|_| ())
+}
+
+/// Renames a branch, without hooks (a session's branch named after its first message).
+pub fn rename_branch_nohooks(dir: &Path, from: &str, to: &str) -> Result<(), String> {
+    git_nohooks(dir, &["branch", "-m", from, to], &[]).map(|_| ())
+}
+
+/// Fallow's snapshot of a session's working copy (R-3): everything the ignore rules let in,
+/// committed with plumbing so no hook runs and nothing is signed, on `branch` only. `None` when
+/// nothing changed. Refused when the working copy is not on `branch` (a command moved it).
+pub fn snapshot(wt: &Path, branch: &str, message: &str) -> Result<Option<String>, String> {
+    let on = git(wt, &["symbolic-ref", "-q", "HEAD"])
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default();
+    if on != format!("refs/heads/{branch}") {
+        let now = on.strip_prefix("refs/heads/").map_or_else(
+            || "a detached commit".to_string(),
+            |b| format!("the branch {b}"),
+        );
+        return Err(format!(
+            "the working copy is not on the session's branch (it is on {now})"
+        ));
+    }
+    git_nohooks(wt, &["add", "-A"], &[])?;
+    commit_index(wt, branch, message)
+}
+
+/// 012 (R-4): `snapshot` of `paths` only (a failed turn commit retried with what the turn left),
+/// whatever else changed staying out of it.
+pub fn snapshot_paths(
+    wt: &Path,
+    branch: &str,
+    message: &str,
+    paths: &[String],
+) -> Result<Option<String>, String> {
+    let on = git(wt, &["symbolic-ref", "-q", "HEAD"])
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default();
+    if on != format!("refs/heads/{branch}") {
+        return Err("the working copy is not on the session's branch".into());
+    }
+    // The index as at HEAD, then the paths alone.
+    git_nohooks(wt, &["reset", "-q"], &[])?;
+    for p in paths {
+        // A path that matches nothing any more (staged, then deleted) is not an error; any
+        // other failure is (a locked index): the retry says so rather than mislabel the turn.
+        if let Err(e) = git_nohooks(wt, &["--literal-pathspecs", "add", "-A", "--", p], &[]) {
+            if !e.contains("did not match any files") {
+                return Err(e);
+            }
+        }
+    }
+    commit_index(wt, branch, message)
+}
+
+/// The index committed on `branch` with plumbing (no hook, no signing); `None` when it holds
+/// what `HEAD` holds.
+fn commit_index(wt: &Path, branch: &str, message: &str) -> Result<Option<String>, String> {
+    let tree = git_nohooks(wt, &["write-tree"], &[])?.trim().to_string();
+    let old = head(wt)?;
+    let old_tree = git(wt, &["rev-parse", &format!("{old}^{{tree}}")])?
+        .trim()
+        .to_string();
+    if tree == old_tree {
+        return Ok(None);
+    }
+    let mut args: Vec<&str> = author_args(wt);
+    args.extend(["-c", "commit.gpgSign=false"]);
+    args.extend([
+        "commit-tree",
+        &tree,
+        "-p",
+        &old,
+        "--no-gpg-sign",
+        "-m",
+        message,
+    ]);
+    let new = git_nohooks(wt, &args, &[])?.trim().to_string();
+    let r = format!("refs/heads/{branch}");
+    git_nohooks(wt, &["update-ref", &r, &new, &old], &[])?;
+    Ok(Some(new))
+}
+
+/// 012 (R-12): a detached worktree at `commit`, without hooks or LFS download (a gate run).
+pub fn worktree_add_detached_nohooks(repo: &Path, dir: &Path, commit: &str) -> Result<(), String> {
+    let d = dir.display().to_string();
+    git_nohooks(
+        repo,
+        &["worktree", "add", "-q", "--detach", &d, commit],
+        &[],
+    )
+    .map(|_| ())
+}
+
+/// Removes a worktree Fallow made, without hooks.
+pub fn worktree_remove_nohooks(repo: &Path, dir: &Path) {
+    let d = dir.display().to_string();
+    let _ = git_nohooks(repo, &["worktree", "remove", "--force", &d], &[]);
+    let _ = std::fs::remove_dir_all(dir);
+    let _ = git_nohooks(repo, &["worktree", "prune"], &[]);
+}
+
+/// 012 (R-4): throws away the working copy's uncommitted changes and untracked files (not the
+/// ignored ones), without hooks or LFS download.
+pub fn discard_nohooks(wt: &Path) -> Result<(), String> {
+    git_nohooks(wt, &["reset", "-q", "--hard", "HEAD"], &[])?;
+    git_nohooks(wt, &["clean", "-q", "-fd"], &[]).map(|_| ())
+}
+
+/// 012 (R-5): the commits of `from..to`, newest first, each with its parents.
+pub fn parents_between(dir: &Path, from: &str, to: &str) -> Vec<(String, Vec<String>)> {
+    git(dir, &["rev-list", "--parents", &format!("{from}..{to}")])
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|l| {
+            let mut w = l.split_whitespace().map(str::to_string);
+            Some((w.next()?, w.collect()))
+        })
+        .collect()
+}
+
+/// 012 (FR-019): the commits of `from..to`, oldest first.
+pub fn commits_oldest_first(dir: &Path, from: &str, to: &str) -> Vec<String> {
+    git(dir, &["rev-list", "--reverse", &format!("{from}..{to}")])
+        .unwrap_or_default()
+        .lines()
+        .map(str::to_string)
+        .collect()
+}
+
+/// The paths a commit changed against its first parent.
+pub fn files_of(dir: &Path, commit: &str) -> Vec<String> {
+    git(
+        dir,
+        &[
+            "-c",
+            "core.quotePath=false",
+            "diff-tree",
+            "--no-commit-id",
+            "--name-only",
+            "-r",
+            "-z",
+            "-m",
+            "--first-parent",
+            commit,
+        ],
+    )
+    .unwrap_or_default()
+    .split('\0')
+    .filter(|s| !s.is_empty())
+    .map(str::to_string)
+    .collect()
+}
+
+/// The subjects of the commits of `range` (`a..b`), newest first.
+pub fn subjects(dir: &Path, range: &str) -> Vec<String> {
+    git(dir, &["--no-optional-locks", "log", "--format=%s", range])
+        .unwrap_or_default()
+        .lines()
+        .map(str::to_string)
+        .collect()
+}
+
+/// 012 (R-10): the first-parent commits of `from..to`, newest first.
+pub fn first_parents(dir: &Path, from: &str, to: &str) -> Vec<String> {
+    git(
+        dir,
+        &["rev-list", "--first-parent", &format!("{from}..{to}")],
+    )
+    .unwrap_or_default()
+    .lines()
+    .map(str::to_string)
+    .collect()
+}
+
+/// The blob `path` has in `commit`, if any (R-11).
+pub fn blob_at(dir: &Path, commit: &str, path: &str) -> Option<String> {
+    git(
+        dir,
+        &["rev-parse", "-q", "--verify", &format!("{commit}:{path}")],
+    )
+    .ok()
+    .map(|s| s.trim().to_string())
+    .filter(|s| !s.is_empty())
+}
+
+/// How many commits `to` has that `from` has not.
+pub fn count_between(dir: &Path, from: &str, to: &str) -> Option<u32> {
+    git(dir, &["rev-list", "--count", &format!("{from}..{to}")])
+        .ok()
+        .and_then(|s| s.trim().parse().ok())
+}
+
+/// Points `refname` at `commit`, without hooks (the session's undone refs, R-5).
+pub fn update_ref_nohooks(dir: &Path, refname: &str, commit: &str) -> Result<(), String> {
+    git_nohooks(dir, &["update-ref", refname, commit], &[]).map(|_| ())
+}
+
+/// Deletes `refname`, without hooks.
+pub fn delete_ref_nohooks(dir: &Path, refname: &str) -> Result<(), String> {
+    git_nohooks(dir, &["update-ref", "-d", refname], &[]).map(|_| ())
+}
+
+/// Resets the working copy and its branch to `commit`, without hooks or LFS download (undo).
+pub fn reset_hard_nohooks(wt: &Path, commit: &str) -> Result<(), String> {
+    git_nohooks(wt, &["reset", "-q", "--hard", commit], &[]).map(|_| ())
+}
+
+/// Every local and remote-tracking ref with its commit, read without taking a lock (R-10).
+pub fn ref_snapshot(repo: &Path) -> Result<std::collections::BTreeMap<String, String>, String> {
+    Ok(git(
+        repo,
+        &[
+            "--no-optional-locks",
+            "for-each-ref",
+            "--format=%(refname) %(objectname)",
+            "refs/heads",
+            "refs/remotes",
+        ],
+    )?
+    .lines()
+    .filter_map(|l| l.split_once(' '))
+    .map(|(r, s)| (r.to_string(), s.to_string()))
+    .collect())
+}
+
+/// The engineer's folder's status lines, read without taking its index lock (R-2).
+pub fn folder_status(dir: &Path) -> Result<Vec<String>, String> {
+    Ok(
+        git(dir, &["--no-optional-locks", "status", "--porcelain=v1"])?
+            .lines()
+            .map(str::to_string)
+            .collect(),
+    )
+}
+
+/// The blob a file's content would be (`hash-object`, nothing written), or `None` when it is
+/// gone.
+pub fn blob_of(dir: &Path, path: &str) -> Option<String> {
+    if !dir.join(path).is_file() {
+        return None;
+    }
+    git(dir, &["hash-object", "--", path])
+        .ok()
+        .map(|s| s.trim().to_string())
+}
+
+/// The oldest git Fallow works with (R-18): 011's updates need `merge-tree --write-tree`.
+pub const MIN_GIT: (u32, u32) = MERGE_TREE_GIT;
+
+/// Whether git is installed in a version Fallow can use (FR-040).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct GitCheck {
+    /// The version found, `major.minor`.
+    pub found: Option<String>,
+    pub ok: bool,
+    pub min: String,
+    /// How to install git on this system (R-18).
+    pub hint: String,
+}
+
+/// Runs `git --version` (FR-040). A missing git is never taken for a folder without a
+/// repository. `FALLOW_GIT_CHECK` names another program to ask, for the tests of a missing or
+/// old git (Fallow's own git calls always run `git`).
+pub fn git_check() -> GitCheck {
+    let program = std::env::var("FALLOW_GIT_CHECK").unwrap_or_else(|_| "git".into());
+    let v = crate::platform::command(&program)
+        .arg("--version")
+        .current_dir(std::env::temp_dir())
+        .stdin(std::process::Stdio::null())
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .and_then(|o| {
+            let t = String::from_utf8_lossy(&o.stdout).to_string();
+            let nums = t
+                .split_whitespace()
+                .find(|w| w.starts_with(|c: char| c.is_ascii_digit()))?
+                .to_string();
+            let mut it = nums.split('.');
+            Some((it.next()?.parse().ok()?, it.next()?.parse().ok()?))
+        });
+    GitCheck {
+        found: v.map(|(a, b): (u32, u32)| format!("{a}.{b}")),
+        ok: v.is_some_and(|v| v >= MIN_GIT),
+        min: format!("{}.{}", MIN_GIT.0, MIN_GIT.1),
+        hint: install_hint().to_string(),
+    }
+}
+
+/// How to install git here (R-18).
+pub fn install_hint() -> &'static str {
+    if cfg!(windows) {
+        "winget install --id Git.Git -e, or the installer from git-scm.com"
+    } else if cfg!(target_os = "macos") {
+        "xcode-select --install, or brew install git"
+    } else {
+        "your distribution's package manager (for example sudo apt install git)"
+    }
+}
+
+/// 012 (R-11): whether `commit` is reachable from a local branch or a remote-tracking ref not
+/// under `exclude` (Fallow's own branches, `refs/heads/fallow/`, which Fallow deletes).
+pub fn contained_elsewhere(repo: &Path, commit: &str, exclude: &str) -> bool {
+    git(
+        repo,
+        &[
+            "--no-optional-locks",
+            "for-each-ref",
+            "--format=%(refname)",
+            "--contains",
+            commit,
+            "refs/heads",
+            "refs/remotes",
+        ],
+    )
+    .map(|out| {
+        out.lines()
+            .map(str::trim)
+            .any(|r| !r.is_empty() && !r.starts_with(exclude) && !r.ends_with("/HEAD"))
+    })
+    .unwrap_or(false)
+}
+
+/// 012 (R-14): the commits of `range` (`a..b`), oldest first, with their subjects.
+pub fn log_subjects(dir: &Path, range: &str) -> Vec<(String, String)> {
+    git(
+        dir,
+        &[
+            "--no-optional-locks",
+            "log",
+            "--reverse",
+            "--format=%H %s",
+            range,
+        ],
+    )
+    .unwrap_or_default()
+    .lines()
+    .filter_map(|l| {
+        l.split_once(' ')
+            .map(|(a, b)| (a.to_string(), b.to_string()))
+    })
+    .collect()
+}
+
+/// 012 (R-14): a working copy's uncommitted paths and its ignored files, one by one.
+pub fn status_with_ignored(wt: &Path) -> Result<(Vec<String>, Vec<String>), String> {
+    let out = git(
+        wt,
+        &[
+            "--no-optional-locks",
+            "status",
+            "--porcelain=v1",
+            "-z",
+            "--ignored",
+            "--untracked-files=all",
+        ],
+    )?;
+    let mut changed = Vec::new();
+    let mut ignored = Vec::new();
+    let mut parts = out.split('\0').filter(|p| !p.is_empty());
+    while let Some(p) = parts.next() {
+        if p.len() < 4 {
+            continue;
+        }
+        let (code, path) = (&p[..2], p[3..].to_string());
+        if code == "!!" {
+            ignored.push(path);
+        } else {
+            // A rename names its source next: both are changed.
+            if code.contains('R') || code.contains('C') {
+                if let Some(from) = parts.next() {
+                    changed.push(from.to_string());
+                }
+            }
+            changed.push(path);
+        }
+    }
+    Ok((changed, ignored))
+}
+
+/// 012 (R-14): the refs under `prefix` with their commits.
+pub fn refs_under(dir: &Path, prefix: &str) -> Vec<(String, String)> {
+    git(
+        dir,
+        &[
+            "--no-optional-locks",
+            "for-each-ref",
+            "--format=%(refname) %(objectname)",
+            prefix,
+        ],
+    )
+    .unwrap_or_default()
+    .lines()
+    .filter_map(|l| {
+        l.split_once(' ')
+            .map(|(a, b)| (a.to_string(), b.to_string()))
+    })
+    .collect()
+}
+
+/// 012 (R-14): deletes the local branch `branch`, without hooks.
+pub fn branch_delete_nohooks(repo: &Path, branch: &str) -> Result<(), String> {
+    git_nohooks(repo, &["branch", "-q", "-D", "--", branch], &[]).map(|_| ())
+}

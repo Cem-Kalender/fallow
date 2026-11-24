@@ -1,0 +1,16 @@
+[package]
+name = "xtask"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT OR Apache-2.0"
+publish = false
+
+# Dev-only benchmark and verification harness. Never shipped.
+
+[dependencies]
+serde_json = "1"
+
+# 016 (T039, T041): macOS process queries (responsible pid, physical footprint).
+[target.'cfg(target_os = "macos")'.dependencies]
+libc = "0.2"

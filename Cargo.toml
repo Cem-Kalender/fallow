@@ -1,0 +1,172 @@
+[package]
+name = "fallow"
+version = "0.3.0"
+edition = "2024"
+rust-version = "1.88"
+license = "MIT OR Apache-2.0"
+publish = false
+description = "Takes a coding task from an approved plan to a result it has verified itself"
+
+[workspace]
+resolver = "3"
+members = [".", "xtask"]
+exclude = ["spikes"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+toml = { version = "1", default-features = false, features = ["parse", "display", "serde"] }
+serde_json = "1"
+globset = { version = "0.4", default-features = false }
+regex = "1"
+# The page on loopback (006 research R-6): on Windows (014 research R-3, R-15) and macOS (016)
+# only in the `automation` test build; on Linux the Studio's page, until its own window.
+tiny_http = { version = "=0.12.0", optional = true }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+# 016 (T038): the page stays on Linux only; on macOS, as on Windows, only in the `automation`
+# test build.
+[target.'cfg(all(not(windows), not(target_os = "macos")))'.dependencies]
+tiny_http = "=0.12.0"
+
+# 014/016: Fallow's own window, on a window Fallow makes itself: WebView2 on Windows (014 research
+# R-1), WebKit's WKWebView on macOS (016 research M-1).
+[target.'cfg(any(windows, target_os = "macos"))'.dependencies]
+wry = "=0.57.2"
+raw-window-handle = "0.6"
+
+# 016 (research M-1, M-2, M-9): AppKit for the window, menus, menu bar icon and dialogs; WebKit's
+# preferences; notifications. The objc2 crates are those `wry` already brings, at its versions;
+# only the features Fallow uses.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+block2 = "0.6"
+objc2-foundation = { version = "0.3", default-features = false, features = [
+    "std",
+    "NSArray",
+    "NSData",
+    "NSError",
+    "NSDate",
+    "NSGeometry",
+    "NSObjCRuntime",
+    "NSProcessInfo",
+    "NSString",
+    "NSNotification",
+    "NSThread",
+    "NSURL",
+] }
+objc2-app-kit = { version = "0.3", default-features = false, features = [
+    "std",
+    "block2",
+    "NSAlert",
+    "NSAppearance",
+    "NSApplication",
+    "NSButton",
+    "NSStatusItem",
+    "NSStatusBarButton",
+    "NSStatusBar",
+    "NSImage",
+    "NSCell",
+    "NSColor",
+    "NSControl",
+    "NSEvent",
+    "NSGraphics",
+    "NSGraphicsContext",
+    "NSMenu",
+    "NSMenuItem",
+    "NSOpenPanel",
+    "NSPanel",
+    "NSSavePanel",
+    "NSResponder",
+    "NSRunningApplication",
+    "NSScreen",
+    "NSView",
+    "NSWindow",
+    "NSWindowRestoration",
+    "NSWorkspace",
+] }
+objc2-web-kit = { version = "0.3", default-features = false, features = ["std"] }
+objc2-user-notifications = { version = "0.3", default-features = false, features = [
+    "std",
+    "block2",
+    "UNNotification",
+    "UNNotificationContent",
+    "UNNotificationRequest",
+    "UNNotificationResponse",
+    "UNNotificationSettings",
+    "UNNotificationTrigger",
+    "UNUserNotificationCenter",
+] }
+
+[target.'cfg(windows)'.dependencies]
+# 014: the WebView2 environment with Fallow's own options, and the events `wry` does not expose
+# (research R-1, R-4, R-6). Both are already in the graph through `wry`, at these versions.
+webview2-com = "=0.39.1"
+windows-core = "0.62"
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_Security_Cryptography",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Com",
+    "Win32_System_IO",
+    "Win32_System_JobObjects",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Pipes",
+    "Win32_System_Registry",
+    "Win32_System_SystemInformation",
+    "Win32_System_Threading",
+    # The notification icon (007 research S-14); Gdi for the window class's fields.
+    "Win32_Graphics_Gdi",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+    # 014: the window's thread (OLE), its frame (DWM), Quit's task dialog, the desktop check and
+    # the web view's processes (research R-2, R-7, R-9, R-13, R-15).
+    "Win32_System_Ole",
+    "Win32_Graphics_Dwm",
+    "Win32_UI_Controls",
+    "Win32_System_StationsAndDesktops",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_ProcessStatus",
+    "Win32_UI_HiDpi",
+    "Win32_System_RemoteDesktop",
+] }
+
+[features]
+# 014 (research R-15): the test build. Adds the loopback page (`service::http`) on Windows, where a
+# release build has none, for the benchmarks and the tests that drive the Studio over HTTP. Never
+# in a release.
+automation = ["dep:tiny_http"]
+
+[dev-dependencies]
+proptest = { version = "1", default-features = false, features = ["std"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+strip = "symbols"
+
+# 014 (T005): tests of the loopback page itself, which a Windows release build does not have.
+[[test]]
+name = "service_http"
+required-features = ["automation"]
+
+[[test]]
+name = "visual_009"
+required-features = ["automation"]
+
+[[test]]
+name = "visual_010"
+required-features = ["automation"]
+
+[[test]]
+name = "visual_013"
+required-features = ["automation"]
+
+# 016 (T025): drives the real macOS window through the `automation` build's page and commands.
+[[test]]
+name = "window_mac"
+required-features = ["automation"]

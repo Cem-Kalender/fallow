@@ -1,0 +1,14 @@
+[
+  ["--faint: #6E6D67", "--faint: #6A6963"],
+  ["#C9C8C1", "#878680"],
+  ["#A3A29B", "#878680"],
+  ["#9C9B94", "#878680"],
+  [".btn2 { background: var(--panel); color: var(--ink); border: 1px solid var(--line-3); }", ".btn2 { background: var(--panel); color: var(--ink); border: 1px solid #878680; }"],
+  ["color: var(--ink); border: 1px solid var(--line-3); border-radius: 10px;", "color: var(--ink); border: 1px solid #878680; border-radius: 10px;"],
+  [".cbox { max-width: 860px; margin: 0 auto; border: 1px solid var(--line-3);", ".cbox { max-width: 860px; margin: 0 auto; border: 1px solid #878680;"],
+  [".title-input:hover, .title-input:focus { border-color: var(--line-3);", ".title-input:hover, .title-input:focus { border-color: #878680;"],
+  [".lg-graph .gn .box { fill: var(--panel); stroke: var(--line-3);", ".lg-graph .gn .box { fill: var(--panel); stroke: #878680;"],
+  [".ft-tools input[type=search] { width: 100%; border: 1px solid var(--line);", ".ft-tools input[type=search] { width: 100%; border: 1px solid #878680;"],
+  [".btn2.danger { color: var(--bad); border-color: var(--bad-line); }", ".btn2.danger { color: var(--bad); border-color: #C1726B; }"],
+  [".gate textarea { width: 100%; box-sizing: border-box; padding: 8px; border: 1px solid var(--line, #ddd);", ".gate textarea { width: 100%; box-sizing: border-box; padding: 8px; border: 1px solid #878680;"]
+]

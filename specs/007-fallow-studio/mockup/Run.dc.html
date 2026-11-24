@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Orchestration loop</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#F6F6F3}
+a{color:#2F52C9}a:hover{color:#1F3A99}
+.nav{color:#4A4945;text-decoration:none;padding:8px 12px;border-radius:8px;font-size:14px;font-weight:500}
+.nav:hover{background:#ECEBE6;color:#1C1C1A}
+.navon{background:#1C1C1A;color:#FFFFFF}
+.navon:hover{background:#1C1C1A;color:#FFFFFF}
+.card{background:#FFFFFF;border:1px solid #E3E2DC;border-radius:12px}
+.pill{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;padding:3px 9px;border-radius:999px;white-space:nowrap}
+.mono{font-family:'JetBrains Mono',ui-monospace,monospace}
+.btn{display:inline-flex;align-items:center;justify-content:center;min-height:40px;padding:0 16px;border-radius:8px;font:600 14px Inter,sans-serif;text-decoration:none;border:1px solid #1C1C1A;background:#1C1C1A;color:#FFFFFF;cursor:pointer}
+.btn:hover{background:#000000;color:#FFFFFF}
+.btn2{background:#FFFFFF;color:#1C1C1A;border:1px solid #D4D3CC}
+.btn2:hover{background:#F0EFEA;color:#1C1C1A}
+.th{font-size:12px;font-weight:600;color:#5E5D58;text-transform:uppercase;letter-spacing:.04em;margin:0}
+.stage{flex:1 1 120px;min-width:110px;border:1px solid #E3E2DC;border-radius:10px;padding:10px 12px;background:#FFFFFF}
+.arrow{flex:none;align-self:center;color:#A3A29B}
+.task{display:flex;gap:8px;align-items:flex-start;font-size:13px;line-height:1.4;padding:5px 8px;border-radius:6px}
+.ev{display:flex;gap:10px;align-items:flex-start;padding:8px 0;font-size:13px;line-height:1.5}
+.who{flex:none;width:76px;font-size:12px;font-weight:600;padding-top:1px}
+.t{flex:none;width:40px;font-size:12px;color:#6E6D67;padding-top:1px}
+.act{display:inline-flex;align-items:center;gap:6px;color:#4A4945}
+.row{display:flex;justify-content:space-between;gap:8px;font-size:13px;padding:6px 0;border-bottom:1px solid #EFEEE9}
+</style>
+</helmet>
+<div style="width:100%;min-height:1100px;box-sizing:border-box;font-family:Inter,system-ui,sans-serif;color:#1C1C1A;background:#F6F6F3">
+
+<header style="display:flex;flex-wrap:wrap;align-items:center;gap:16px;padding:12px 24px;border-bottom:1px solid #E3E2DC;background:#FFFFFF">
+<div style="display:flex;align-items:center;gap:10px;font-weight:700;font-size:17px;margin-right:12px">
+<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#2F52C9" stroke-width="2" aria-hidden="true"><path d="M4 20c4-1 6-5 8-9s4-7 8-7"></path><path d="M4 14c3 0 5-2 6-4"></path><path d="M12 20c3-1 5-3 6-6"></path></svg>
+Fallow
+</div>
+<nav aria-label="Main" style="display:flex;flex-wrap:wrap;gap:4px">
+<a class="nav" href="Main.dc.html">Dashboard</a>
+<a class="nav" href="Spec.dc.html">Spec sessions</a>
+<a class="nav navon" href="Run.dc.html">Loops</a>
+<a class="nav" href="Pipeline.dc.html">Pipelines &amp; agents</a>
+</nav>
+</header>
+
+<div style="padding:20px 24px;max-width:1440px;margin:0 auto;box-sizing:border-box;display:flex;flex-direction:column;gap:16px">
+
+<div style="display:flex;flex-wrap:wrap;align-items:center;gap:12px 20px">
+<div>
+<div style="font-size:13px;color:#5E5D58">shop-demo · locked at <span class="mono" style="font-size:12px">a41c2e0</span> · pipeline <a href="Pipeline.dc.html">Standard</a></div>
+<h1 style="margin:2px 0 0;font-size:22px">007-cart <span class="pill" style="background:#EEF1FB;color:#2F52C9;vertical-align:middle">Building</span></h1>
+</div>
+<div style="flex:1"></div>
+<div style="display:flex;gap:20px;font-size:13px;color:#4A4945;flex-wrap:wrap">
+<span><b style="color:#1C1C1A">18</b> min</span><span><b style="color:#1C1C1A">$1.12</b> of $5</span><span><b style="color:#1C1C1A">13</b>/38 tasks</span><span><b style="color:#1C1C1A">0</b> repairs</span>
+</div>
+<button class="btn btn2">Pause</button>
+<button class="btn btn2">Stop</button>
+</div>
+
+<div aria-label="Pipeline" style="display:flex;flex-wrap:wrap;gap:6px;align-items:stretch">
+<div class="stage" style="background:#F4FAF6;border-color:#BFDCC9"><div style="font-size:12px;color:#226640;font-weight:600">DONE</div><div style="font-weight:600;font-size:14px">Spec session</div><div style="font-size:12px;color:#5E5D58">lead + you</div></div>
+<svg class="arrow" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"></path></svg>
+<div class="stage" style="background:#F4FAF6;border-color:#BFDCC9"><div style="font-size:12px;color:#226640;font-weight:600">DONE</div><div style="font-weight:600;font-size:14px">Lock</div><div style="font-size:12px;color:#5E5D58">you</div></div>
+<svg class="arrow" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"></path></svg>
+<div class="stage" style="flex:2 1 220px;border:2px solid #2F52C9;background:#F5F7FE">
+<div style="font-size:12px;color:#2F52C9;font-weight:600">NOW · PHASE 3 OF 6</div>
+<div style="font-weight:600;font-size:14px">Implement → Gates</div>
+<div style="font-size:12px;color:#4A4945">builder, task by task · Fallow commits and gates each task</div>
+</div>
+<svg class="arrow" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"></path></svg>
+<div class="stage"><div style="font-size:12px;color:#6E6D67;font-weight:600">PER USER STORY</div><div style="font-weight:600;font-size:14px">Review</div><div style="font-size:12px;color:#5E5D58">reviewer · black box</div></div>
+<svg class="arrow" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"></path></svg>
+<div class="stage" style="border-style:dashed"><div style="font-size:12px;color:#6E6D67;font-weight:600">IF IT FAILS · 0/3</div><div style="font-weight:600;font-size:14px">Repair</div><div style="font-size:12px;color:#5E5D58">builder, same session</div></div>
+<svg class="arrow" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"></path></svg>
+<div class="stage"><div style="font-size:12px;color:#6E6D67;font-weight:600">ONCE</div><div style="font-weight:600;font-size:14px">Merge</div><div style="font-size:12px;color:#5E5D58">you</div></div>
+</div>
+
+<div class="card" style="padding:16px;border-color:#E9B48F;background:#FFFCF9;display:flex;flex-wrap:wrap;gap:16px;align-items:flex-start">
+<div style="flex:1 1 420px">
+<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><span class="pill" style="background:#FBEDE3;color:#9A3A0B">builder asks · T014</span><span style="font-size:12px;color:#5E5D58">the loop waits for your answer; other loops go on</span></div>
+<div style="font-weight:600;margin-top:8px;line-height:1.45">The spec says adding beyond stock is refused, but not what happens to a line already in the cart. Refuse the whole add, or add what's left and say so?</div>
+</div>
+<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+<button class="btn">Refuse the whole add</button>
+<button class="btn btn2">Add what's left</button>
+<button class="btn btn2">Write an answer…</button>
+</div>
+<div style="flex-basis:100%;font-size:12px;color:#5E5D58">Your answer is committed to spec.md (Clarifications) and the builder resumes in its session with that commit.</div>
+</div>
+
+<div style="display:flex;flex-wrap:wrap;gap:16px;align-items:flex-start">
+
+<aside class="card" aria-label="Tasks" style="flex:1 1 260px;max-width:320px;padding:14px">
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><h2 class="th">tasks.md</h2><span style="font-size:12px;color:#5E5D58">13/38</span></div>
+<div style="font-size:13px;font-weight:600;padding:6px 8px;color:#226640">Phase 1 · Setup <span style="font-weight:500">4/4</span></div>
+<div style="font-size:13px;font-weight:600;padding:6px 8px;color:#226640">Phase 2 · Foundation <span style="font-weight:500">5/5</span></div>
+<div style="font-size:13px;font-weight:600;padding:6px 8px;color:#2F52C9">Phase 3 · US1 Add to cart <span style="font-weight:500">4/9</span></div>
+<div style="display:flex;flex-direction:column;gap:2px;margin-left:8px;border-left:2px solid #E3E2DC;padding-left:6px">
+<div class="task"><span style="color:#226640;font-weight:700">✓</span><span><span class="mono" style="font-size:12px">T010</span> Cart model in shop/cart.py</span></div>
+<div class="task"><span style="color:#226640;font-weight:700">✓</span><span><span class="mono" style="font-size:12px">T011</span> Persist to cart.json</span></div>
+<div class="task"><span style="color:#226640;font-weight:700">✓</span><span><span class="mono" style="font-size:12px">T012</span> [P] tests for add</span></div>
+<div class="task"><span style="color:#226640;font-weight:700">✓</span><span><span class="mono" style="font-size:12px">T013</span> <span class="mono" style="font-size:12px">cart add</span> command</span></div>
+<div class="task" style="background:#FBEDE3"><span style="color:#B4470F;font-weight:700">?</span><span><span class="mono" style="font-size:12px">T014</span> Refuse adding beyond stock <span style="display:block;font-size:12px;color:#9A3A0B">waiting for your answer</span></span></div>
+<div class="task" style="color:#5E5D58"><span>○</span><span><span class="mono" style="font-size:12px">T015</span> <span class="mono" style="font-size:12px">cart show</span> with total</span></div>
+<div class="task" style="color:#5E5D58"><span>○</span><span><span class="mono" style="font-size:12px">T016</span> <span class="mono" style="font-size:12px">cart clear</span></span></div>
+<div class="task" style="color:#5E5D58"><span>○</span><span><span class="mono" style="font-size:12px">T017</span> [P] must-fail tests</span></div>
+<div class="task" style="color:#5E5D58"><span>○</span><span><span class="mono" style="font-size:12px">T018</span> quickstart check</span></div>
+<div class="task" style="color:#5E5D58;font-style:italic"><span>◇</span><span>checkpoint: review US1</span></div>
+</div>
+<div style="font-size:13px;font-weight:600;padding:6px 8px;color:#5E5D58">Phase 4 · US2 Quantities <span style="font-weight:500">0/8</span></div>
+<div style="font-size:13px;font-weight:600;padding:6px 8px;color:#5E5D58">Phase 5 · US3 Receipt <span style="font-weight:500">0/7</span></div>
+<div style="font-size:13px;font-weight:600;padding:6px 8px;color:#5E5D58">Phase 6 · Polish <span style="font-weight:500">0/5</span></div>
+</aside>
+
+<section aria-label="Agents and activity" style="flex:999 1 520px;min-width:0;display:flex;flex-direction:column;gap:12px">
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px">
+<div class="card" style="padding:12px;border-color:#E9B48F">
+<div style="display:flex;justify-content:space-between;align-items:center"><b>builder</b><span class="pill" style="background:#FBEDE3;color:#9A3A0B">asks you</span></div>
+<div style="font-size:12px;color:#5E5D58;margin-top:4px">claude · sonnet · <span class="mono">fallow/7/build</span></div>
+<div style="font-size:13px;margin-top:8px">T014 · 6 tool calls · $0.94</div>
+</div>
+<div class="card" style="padding:12px">
+<div style="display:flex;justify-content:space-between;align-items:center"><b>reviewer</b><span class="pill" style="background:#F0EFEA;color:#4A4945">idle</span></div>
+<div style="font-size:12px;color:#5E5D58;margin-top:4px">claude · sonnet · fresh per review</div>
+<div style="font-size:13px;margin-top:8px">starts at the US1 checkpoint</div>
+</div>
+<div class="card" style="padding:12px;background:#FAFAF8">
+<div style="display:flex;justify-content:space-between;align-items:center"><b>Fallow</b><span class="pill" style="background:#E6F3EA;color:#226640">checks pass</span></div>
+<div style="font-size:12px;color:#5E5D58;margin-top:4px">not an agent: commits, gates, verdicts</div>
+<div style="font-size:13px;margin-top:8px">last gate after T013 · 18/18</div>
+</div>
+</div>
+
+<div class="card" style="padding:4px 16px 12px">
+<div style="display:flex;flex-wrap:wrap;gap:4px;border-bottom:1px solid #E3E2DC;margin:0 -16px 4px;padding:0 12px">
+<button style="font:600 13px Inter,sans-serif;padding:10px 12px;border:0;background:transparent;border-bottom:2px solid #1C1C1A;cursor:pointer">All</button>
+<button style="font:600 13px Inter,sans-serif;padding:10px 12px;border:0;background:transparent;color:#5E5D58;border-bottom:2px solid transparent;cursor:pointer">builder</button>
+<button style="font:600 13px Inter,sans-serif;padding:10px 12px;border:0;background:transparent;color:#5E5D58;border-bottom:2px solid transparent;cursor:pointer">reviewer</button>
+<button style="font:600 13px Inter,sans-serif;padding:10px 12px;border:0;background:transparent;color:#5E5D58;border-bottom:2px solid transparent;cursor:pointer">Fallow checks</button>
+<div style="flex:1"></div>
+<label style="font-size:12px;color:#5E5D58;display:inline-flex;align-items:center;gap:6px;padding:8px 4px"><input type="checkbox" checked=""> follow live</label>
+</div>
+
+<div class="ev"><span class="t">16:21</span><span class="who" style="color:#226640">Fallow</span><span><b>T013 accepted.</b> Committed <span class="mono" style="font-size:12px">3f2a91c</span> · gates: tests 18 passed (baseline 7, none newly failing) · only owned files changed.</span></div>
+<div class="ev"><span class="t">16:21</span><span class="who" style="color:#2F52C9">builder</span><span>Starting T014 in the same session. <span style="color:#4A4945">I'll check the stock in <span class="mono" style="font-size:12px">catalog.py</span> before writing to the cart.</span></span></div>
+<div class="ev"><span class="t">16:21</span><span class="who"></span><span class="act"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 4h10l6 6v10H4z"></path><path d="M14 4v6h6"></path></svg>Read <span class="mono" style="font-size:12px">shop/catalog.py</span> · <span class="mono" style="font-size:12px">shop/cart.py</span> · <span class="mono" style="font-size:12px">specs/007-cart/spec.md</span></span></div>
+<div class="ev"><span class="t">16:22</span><span class="who"></span>
+<div style="flex:1;min-width:0">
+<span class="act"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 20h4L20 8l-4-4L4 16z"></path></svg>Edited <span class="mono" style="font-size:12px">shop/cart.py</span> <span style="color:#226640;font-weight:600">+14</span> <span style="color:#B42318;font-weight:600">−2</span></span>
+<div class="mono" style="margin-top:6px;border:1px solid #E3E2DC;border-radius:8px;overflow-x:auto;font-size:12px;line-height:1.6;background:#FBFBF9;white-space:pre"><div style="padding:0 10px;color:#6E6D67">@@ def add(name, qty):</div><div style="padding:0 10px;background:#FDECEA;color:#8F1D14">-    items[name] = items.get(name, 0) + qty</div><div style="padding:0 10px;background:#E9F5EC;color:#1E5E38">+    have = items.get(name, 0)</div><div style="padding:0 10px;background:#E9F5EC;color:#1E5E38">+    stock = catalog.stock(name)</div><div style="padding:0 10px;background:#E9F5EC;color:#1E5E38">+    if have + qty &gt; stock:</div><div style="padding:0 10px;background:#E9F5EC;color:#1E5E38">+        raise OverStock(name, stock - have)</div></div>
+</div></div>
+<div class="ev"><span class="t">16:22</span><span class="who"></span>
+<div style="flex:1;min-width:0">
+<span class="act"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M5 7l5 5-5 5M13 17h6"></path></svg>Ran <span class="mono" style="font-size:12px">python -m unittest tests.test_cart</span> <span class="pill" style="background:#FDECEA;color:#8F1D14">1 failed</span></span>
+<div class="mono" style="margin-top:6px;padding:8px 10px;border-radius:8px;background:#1C1C1A;color:#E8E7E1;font-size:12px;line-height:1.6;white-space:pre-wrap">FAIL: test_add_partial_line (tests.test_cart)
+AssertionError: 'apple' not found in cart after add</div>
+</div></div>
+<div class="ev"><span class="t">16:23</span><span class="who" style="color:#2F52C9">builder</span><span>The spec doesn't say whether a partial add keeps what fits. That's a product decision, so I'm asking instead of guessing.</span></div>
+<div class="ev"><span class="t">16:23</span><span class="who" style="color:#B4470F">question</span><span>Sent to you; the builder's session is kept and resumes with your answer.</span></div>
+</div>
+</section>
+
+<aside aria-label="Checks" style="flex:1 1 260px;max-width:330px;display:flex;flex-direction:column;gap:12px">
+<div class="card" style="padding:14px">
+<h2 class="th" style="margin-bottom:8px">Gates vs baseline</h2>
+<div class="row"><span>tests <span class="mono" style="font-size:12px;color:#5E5D58">python -m unittest</span></span><span style="color:#226640;font-weight:600">18 / 18</span></div>
+<div class="row"><span>baseline (a41c2e0)</span><span style="color:#5E5D58">7 / 7</span></div>
+<div class="row" style="border:0"><span>newly failing</span><span style="color:#226640;font-weight:600">none</span></div>
+</div>
+<div class="card" style="padding:14px">
+<h2 class="th" style="margin-bottom:8px">US1 acceptance</h2>
+<div class="row"><span>add stores the line</span><span class="pill" style="background:#E6F3EA;color:#226640">tests pass</span></div>
+<div class="row"><span>adding again sums</span><span class="pill" style="background:#E6F3EA;color:#226640">tests pass</span></div>
+<div class="row"><span>beyond stock refused <span style="color:#9A3A0B;font-size:12px">must fail</span></span><span class="pill" style="background:#FBEDE3;color:#9A3A0B">open</span></div>
+<div class="row" style="border:0"><span>unknown product refused <span style="color:#9A3A0B;font-size:12px">must fail</span></span><span class="pill" style="background:#F0EFEA;color:#4A4945">not yet</span></div>
+<div style="font-size:12px;color:#5E5D58;margin-top:6px">The reviewer confirms each one by running it at the checkpoint.</div>
+</div>
+<div class="card" style="padding:14px">
+<h2 class="th" style="margin-bottom:8px">Commits on fallow/7/build</h2>
+<div class="row"><span class="mono" style="font-size:12px">3f2a91c</span><span>T013 cart add</span></div>
+<div class="row"><span class="mono" style="font-size:12px">b81e004</span><span>T012 tests for add</span></div>
+<div class="row"><span class="mono" style="font-size:12px">9c3d7a2</span><span>T011 cart.json</span></div>
+<div class="row" style="border:0"><span style="color:#5E5D58">+ 10 earlier</span><span></span></div>
+</div>
+<div class="card" style="padding:14px">
+<h2 class="th" style="margin-bottom:8px">Your steering</h2>
+<div style="font-size:13px;color:#4A4945;line-height:1.5">16:04 locked the spec<br>16:23 pending: T014 question</div>
+<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap"><button class="btn btn2" style="min-height:34px;font-size:13px">Note for next step</button><button class="btn btn2" style="min-height:34px;font-size:13px">Limits</button></div>
+</div>
+</aside>
+
+</div>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":1100}}'>
+class Component extends DCLogic {
+renderVals() {
+return {};
+}
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,33 @@
+# Spike 014 (research R-20): WebView2 through wry on Fallow's own Win32 window. Throwaway.
+# Its own workspace so it never joins the product build.
+[workspace]
+resolver = "3"
+
+[package]
+name = "window-spike"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+fallow = { path = "../.." }
+serde_json = "1"
+wry = "=0.57.2"
+raw-window-handle = "0.6"
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Ole",
+    "Win32_System_ProcessStatus",
+    "Win32_System_Threading",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+strip = "symbols"

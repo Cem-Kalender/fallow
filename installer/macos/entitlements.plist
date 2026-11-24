@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- 016 (research M-19): the hardened runtime with no exception. Fallow needs none: no JIT of its
+     own (WebKit's runs in its own processes), no unsigned libraries, no debugger attach. -->
+<plist version="1.0">
+<dict/>
+</plist>

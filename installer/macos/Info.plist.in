@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- 016 (data-model "App bundle", research M-3, M-15, M-19): Fallow.app's plist. make-app.sh puts
+     the version in for @VERSION@. No usage-description keys: Fallow asks for no permission it does
+     not use (FR-019). The identifier never changes (FR-020, FR-024). -->
+<plist version="1.0">
+<dict>
+	<key>CFBundleIdentifier</key>
+	<string>dev.fallow.Fallow</string>
+	<key>CFBundleName</key>
+	<string>Fallow</string>
+	<key>CFBundleDisplayName</key>
+	<string>Fallow</string>
+	<key>CFBundleExecutable</key>
+	<string>fallow</string>
+	<key>CFBundleIconFile</key>
+	<string>Fallow</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleShortVersionString</key>
+	<string>@VERSION@</string>
+	<key>CFBundleVersion</key>
+	<string>@VERSION@</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>14.0</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.developer-tools</string>
+</dict>
+</plist>
