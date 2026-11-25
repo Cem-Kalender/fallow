@@ -1784,6 +1784,264 @@ pub fn limit_problem(cmd: &str, ctx: &Ctx, control_files: &[String]) -> Option<(
         .map(|w| (false, w.clone()))
 }
 
+/// 015 (2026-11-24 amendment, the engineer): what a command, read as written, writes to one of
+/// the places that control the agents (`ctx.protect`: Fallow's control files, the runtime's
+/// settings files, git's own record of the working copy). Never allowed, in Auto: a read of
+/// them is not a write. `None` when it writes none of them, as far as the text tells.
+pub fn protected_write(cmd: &str, ctx: &Ctx) -> Option<String> {
+    // Read as written only: a command Fallow cannot split is `protected_unread`'s.
+    split(cmd).ok()?;
+    if let Some(rel) = super::control::writes(cmd, ctx.wt, ctx.folder, ctx.protect) {
+        return Some(format!(
+            "it may change {rel}, which the agent may not change"
+        ));
+    }
+    let Verdict::Ask(reasons) = assess(cmd, ctx) else {
+        return None;
+    };
+    let parts = split(cmd).ok()?;
+    let changes = parts.iter().any(|p| {
+        MODIFIES.contains(&part_program(p).as_str()) || p.redirects.iter().any(|t| !discards(t))
+    });
+    if !changes {
+        return None;
+    }
+    reasons
+        .iter()
+        .find(|w| {
+            w.contains("git's own record") || w.contains("which the assistant may not change")
+        })
+        .map(|w| format!("it changes a file the agent may not change ({w})"))
+}
+
+/// 015 (2026-11-24 amendment): a command Fallow cannot read as written (a here-document, a
+/// substitution) that names a place controlling the agents: it may write there or not, so it
+/// waits for the engineer rather than being refused for good (the runtime's own settings
+/// files stay refused, `limit_problem`).
+pub fn protected_unread(cmd: &str, ctx: &Ctx) -> Option<String> {
+    if split(cmd).is_ok() {
+        return None;
+    }
+    super::control::writes(cmd, ctx.wt, ctx.folder, ctx.protect).map(|rel| {
+        format!("it may change {rel}, which the agent may not change; Fallow cannot read the command as written")
+    })
+}
+
+/// A redirection that writes nowhere (`/dev/null`, PowerShell's `$null`, `NUL`).
+fn discards(t: &str) -> bool {
+    matches!(
+        t.to_ascii_lowercase().as_str(),
+        "/dev/null" | "$null" | "nul"
+    )
+}
+
+/// Programs that only read, or only print, whatever they name: a part running one of them
+/// changes nothing but what it redirects to (015, `folder_change`).
+const ONLY_READ: &[&str] = &[
+    "awk", "gawk", "cut", "sort", "uniq", "tr", "echo", "printf", "pwd", "which", "whereis",
+    "basename", "dirname", "column", "nl", "od", "hexdump", "xxd", "strings", "tac", "rev",
+    "paste", "join", "comm", "fold", "expand", "date", "uname", "whoami", "id", "du", "df", "tree",
+    "true", "false", "sleep", "seq", "find", "fd", "sed", "command",
+];
+
+/// 015 (2026-11-24 amendment): whether `cmd`, read as written, writes to, deletes in or
+/// otherwise changes the engineer's folder (outside the session's working copy): the one Run
+/// limit of Auto besides the target and the control files. It follows each `cd` (the home
+/// folder by `HOME`), so `cd <folder> && rm x` counts and `cd /tmp/x; tail f` does not. A part
+/// that only reads (`READS`, `ONLY_READ`) changes nothing but what it redirects to; any other
+/// program counts when it runs in the folder or names a path in it (a copy, only its
+/// destination). Reading or naming paths elsewhere, and writing elsewhere (the system temp
+/// folder included), are not limits. What cannot be read as written is not judged here (Auto
+/// allows it, spec FR-003), except a writing program after a `cd` Fallow cannot follow.
+pub fn folder_change(cmd: &str, ctx: &Ctx) -> Option<String> {
+    let parts = split(cmd).ok()?;
+    let folder = canon(ctx.folder);
+    let wt = canon(ctx.wt);
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    // Where a word points, from `base`; `None` when the text does not tell (a variable).
+    let at = |base: &Path, w: &str| -> Option<PathBuf> {
+        let w = w.trim();
+        let (root, rest) = if w == "~" || w.starts_with("~/") {
+            (home.clone()?, w.trim_start_matches('~'))
+        } else if let Some(r) = w
+            .strip_prefix("$HOME")
+            .or_else(|| w.strip_prefix("${HOME}"))
+        {
+            (home.clone()?, r)
+        } else if uses_variable(w) || w.starts_with('~') {
+            return None;
+        } else {
+            (base.to_path_buf(), w)
+        };
+        let rest = rest.trim_start_matches(['/', '\\']);
+        let abs = if Path::new(w).is_absolute() {
+            PathBuf::from(w)
+        } else if rest.is_empty() {
+            root
+        } else {
+            root.join(rest)
+        };
+        Some(resolve(Path::new("/"), &abs.display().to_string()))
+    };
+    let in_folder = |p: &Path| p.starts_with(&folder) && !p.starts_with(&wt);
+    // Where the shell is; `None` after a `cd` Fallow cannot follow.
+    let mut base: Option<PathBuf> = Some(wt.clone());
+    for p in &parts {
+        // Shell keywords before the command (`do`, `then`): the command after them is judged.
+        const KEYWORDS: &[&str] = &[
+            "if", "elif", "then", "else", "do", "while", "until", "!", "fi", "done", "esac", "{",
+            "}",
+        ];
+        let words: Vec<&str> = p
+            .words
+            .iter()
+            .map(String::as_str)
+            .skip_while(|w| KEYWORDS.contains(w))
+            .skip_while(|w| {
+                w.split_once('=').is_some_and(|(k, _)| {
+                    !k.is_empty() && k.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+                })
+            })
+            .collect();
+        for t in p.redirects.iter().filter(|t| !discards(t)) {
+            match base.as_deref().and_then(|b| at(b, t)) {
+                Some(x) if in_folder(&x) => {
+                    return Some(format!("it writes in your project folder ({t})"));
+                }
+                None if !Path::new(t).is_absolute() && base.is_none() => {
+                    return Some(format!(
+                        "it writes {t} after moving to a folder Fallow cannot tell"
+                    ));
+                }
+                _ => {}
+            }
+        }
+        let Some(first) = words.first() else {
+            continue;
+        };
+        let prog = program(first);
+        let args = &words[1..];
+        // `for x in …`, `case …`: they run nothing themselves.
+        if matches!(prog.as_str(), "for" | "case" | "select" | "function") {
+            continue;
+        }
+        if matches!(
+            prog.as_str(),
+            "cd" | "pushd" | "set-location" | "sl" | "chdir" | "push-location"
+        ) {
+            base = match args.iter().find(|a| !a.starts_with('-')) {
+                None => home.as_deref().map(canon),
+                Some(t) => base.as_deref().and_then(|b| at(b, t)),
+            };
+            continue;
+        }
+        let opts = options(args);
+        let reads = READS.contains(&prog.as_str())
+            || (ONLY_READ.contains(&prog.as_str())
+                && match prog.as_str() {
+                    "sed" => !args.iter().any(|a| {
+                        a.starts_with("--in-place")
+                            || (a.starts_with('-') && !a.starts_with("--") && a.contains('i'))
+                    }),
+                    "find" => !opts.iter().any(|o| {
+                        matches!(
+                            o.as_str(),
+                            "-exec"
+                                | "-execdir"
+                                | "-ok"
+                                | "-okdir"
+                                | "-delete"
+                                | "-fprint"
+                                | "-fprint0"
+                                | "-fprintf"
+                                | "-fls"
+                        )
+                    }),
+                    _ => true,
+                });
+        if reads {
+            continue;
+        }
+        match base.as_deref() {
+            Some(b) if in_folder(b) => {
+                return Some(format!("it runs {prog} in your project folder"));
+            }
+            None if MODIFIES.contains(&prog.as_str()) => {
+                return Some(format!(
+                    "it runs {prog} after moving to a folder Fallow cannot tell"
+                ));
+            }
+            None => continue,
+            Some(_) => {}
+        }
+        let b = base.clone().unwrap_or_else(|| wt.clone());
+        // A copy reads its sources: only its destination is written.
+        let named: Vec<&str> = if matches!(prog.as_str(), "cp" | "rsync" | "install" | "ln" | "scp")
+        {
+            args.iter()
+                .rev()
+                .find(|a| !a.starts_with('-'))
+                .copied()
+                .into_iter()
+                .collect()
+        } else {
+            args.to_vec()
+        };
+        for a in named {
+            // A string given to a shell or a program: each word in it, and `--opt=value`'s value.
+            for w in a
+                .split(|c: char| {
+                    c.is_whitespace()
+                        || matches!(c, ';' | '&' | '|' | '(' | ')' | '>' | '<' | '=' | ',')
+                })
+                .filter(|w| !w.is_empty() && !w.starts_with('-'))
+            {
+                if !(looks_like_path(w) || w.starts_with('$')) {
+                    continue;
+                }
+                if let Some(x) = at(&b, w) {
+                    if in_folder(&x) {
+                        return Some(format!("it may change your project folder ({w})"));
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+/// 015 (2026-11-24 amendment, research R-3): whether `path` is in the system's temporary
+/// folder (`/tmp`, `$TMPDIR`, `std::env::temp_dir()`, `/private/tmp`, `/var/folders/…`),
+/// however it is spelled: scratch space, not the engineer's project.
+pub fn in_temp(path: &str) -> bool {
+    let p = path.trim();
+    if p.is_empty() || !Path::new(p).is_absolute() {
+        return false;
+    }
+    let real = resolve(Path::new("/"), p);
+    let mut roots: Vec<PathBuf> = vec![std::env::temp_dir()];
+    if let Some(t) = std::env::var_os("TMPDIR") {
+        roots.push(PathBuf::from(t));
+    }
+    if cfg!(unix) {
+        roots.extend(
+            [
+                "/tmp",
+                "/private/tmp",
+                "/var/tmp",
+                "/private/var/tmp",
+                "/var/folders",
+                "/private/var/folders",
+            ]
+            .map(PathBuf::from),
+        );
+    }
+    roots
+        .iter()
+        .filter(|r| r.is_absolute() && r.components().count() > 1)
+        .any(|r| real.starts_with(canon(r)) || real.starts_with(r))
+}
+
 /// The program a part runs, after any `X=1` assignments before it.
 fn part_program(p: &Part) -> String {
     p.words

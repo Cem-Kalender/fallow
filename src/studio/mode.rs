@@ -57,6 +57,14 @@ pub enum Decision {
         reason: String,
         facts: Option<Value>,
     },
+    /// 015 (2026-11-24 amendment, the engineer): stopped at a limit the engineer may open, in
+    /// either mode: the request waits for their answer (Allow once, Always allow, Deny), unless
+    /// the project already allows it past that limit (`Project::allowed_past_limits`).
+    Hold {
+        limit: Limit,
+        reason: String,
+        facts: Option<Value>,
+    },
 }
 
 /// The project's target branch on its remote, as 010 last read it.
@@ -152,6 +160,31 @@ pub fn kind_name(kind: RequestKind) -> &'static str {
     }
 }
 
+/// 015 (2026-11-24 amendment): a request waiting for the engineer at a limit.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Held {
+    pub limit: Limit,
+    /// The record's kind: `run`, `edit`, `read`, `web` or `tool`.
+    pub kind: &'static str,
+    pub reason: String,
+}
+
+impl Held {
+    /// Whether "Always allow" may be offered: past the edit or the target limit, never a tool
+    /// Fallow cannot judge (nor a control file, which is never held).
+    pub fn always(&self) -> bool {
+        matches!(self.limit, Limit::Edit | Limit::Target)
+    }
+
+    /// What the agent is told when the engineer denies it (R-4's reason).
+    pub fn denied(&self) -> String {
+        format!(
+            "Fallow refused this: {}. The engineer denied it; do not try another way to do it.",
+            self.reason
+        )
+    }
+}
+
 /// A one-shot grant from "Allow this once" (R-5): exactly this kind and this command or path.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Grant {
@@ -194,7 +227,7 @@ pub struct AssistantCx<'a> {
 fn target_refusal(command: &str, target: Option<&Target>) -> Option<Decision> {
     let t = target.filter(|t| t.protected)?;
     let name = t.names().find(|n| judge::pushes_onto(command, n))?;
-    Some(Decision::Refuse {
+    Some(Decision::Hold {
         limit: Limit::Target,
         reason: format!(
             "it pushes onto {name}, the remote's protected target branch (Fallow only opens a pull request there)"
@@ -217,17 +250,31 @@ pub fn assistant(
         RequestKind::Web => Decision::Allow,
         RequestKind::Edit => {
             let path = req.path.clone().unwrap_or_default();
-            match judge::edit_problem(&path, ctx) {
-                None => Decision::Allow,
-                Some(why) => Decision::Refuse {
-                    limit: if control_file(&path, cx.control_files, ctx.wt) {
-                        Limit::Control
-                    } else {
-                        Limit::Edit
-                    },
-                    reason: format!("the assistant may not change {path}: {why}"),
+            let Some(why) = judge::edit_problem(&path, ctx) else {
+                return Decision::Allow;
+            };
+            let reason = format!("the assistant may not change {path}: {why}");
+            // The files that control the agents, and git's own record: never (constitution VI).
+            let opaque = path.trim().starts_with('~') || path.contains('$');
+            let protected = control_file(&path, cx.control_files, ctx.wt)
+                || (!opaque && judge::rel_inside(ctx.wt, &path).is_some());
+            if protected {
+                return Decision::Refuse {
+                    limit: Limit::Control,
+                    reason,
                     facts: None,
-                },
+                };
+            }
+            // The system's temporary folder is scratch space, not the engineer's project
+            // (research R-3, 2026-11-24 amendment); the engineer's folder never is.
+            let in_folder = judge::rel_inside(ctx.folder, &path).is_some();
+            if !in_folder && judge::in_temp(&path) {
+                return Decision::Allow;
+            }
+            Decision::Hold {
+                limit: Limit::Edit,
+                reason,
+                facts: None,
             }
         }
         RequestKind::Read => {
@@ -247,7 +294,7 @@ pub fn assistant(
         }
         RequestKind::Other => match mode {
             ChatMode::Auto => Decision::Allow,
-            ChatMode::Manual => Decision::Refuse {
+            ChatMode::Manual => Decision::Hold {
                 limit: Limit::Tool,
                 reason: format!("{} is not a tool Fallow can judge", tool_name(req)),
                 facts: None,
@@ -271,22 +318,33 @@ pub fn assistant(
             if judge::runs_unasked(&command, cx.gates, cx.approved, ctx) {
                 return Decision::Allow;
             }
-            let in_folder = super::refwatch::in_folder(&command, ctx.folder, ctx.wt);
-            match mode {
-                ChatMode::Auto if in_folder => Decision::Refuse {
+            // 015 (2026-11-24 amendment): in Auto, git's own record and Fallow's control files
+            // written are never allowed; the engineer's folder changed waits for the engineer,
+            // in both modes. Reads, `cd` and writes elsewhere (the temp folder) are not limits.
+            if mode == ChatMode::Auto {
+                if let Some(why) = judge::protected_write(&command, ctx) {
+                    return Decision::Refuse {
+                        limit: Limit::Control,
+                        reason: why,
+                        facts: None,
+                    };
+                }
+                if let Some(reason) = judge::protected_unread(&command, ctx) {
+                    return Decision::Hold {
+                        limit: Limit::Edit,
+                        reason,
+                        facts: None,
+                    };
+                }
+            }
+            if let Some(reason) = folder_limit(&command, ctx) {
+                return Decision::Hold {
                     limit: Limit::Edit,
-                    reason: "it changes your project folder, outside the session's working copy"
-                        .into(),
+                    reason,
                     facts: folder_facts(&command),
-                },
-                ChatMode::Auto if limit.is_some() => Decision::Refuse {
-                    limit: Limit::Edit,
-                    reason: match limit.map(|(_, w)| w).unwrap_or_default() {
-                        w if w.starts_with("it ") => w,
-                        w => format!("it reaches outside the session's working copy: {w}"),
-                    },
-                    facts: None,
-                },
+                };
+            }
+            match mode {
                 ChatMode::Auto => Decision::Allow,
                 ChatMode::Manual => match judge::assess(&command, ctx) {
                     judge::Verdict::Allow => Decision::Ask(Vec::new()),
@@ -295,6 +353,15 @@ pub fn assistant(
             }
         }
     }
+}
+
+/// 015 (2026-11-24 amendment): why a command is at the folder limit: it runs git in the
+/// engineer's folder (`refwatch::in_folder`), or otherwise changes it (`judge::folder_change`).
+fn folder_limit(command: &str, ctx: &judge::Ctx) -> Option<String> {
+    if super::refwatch::in_folder(command, ctx.folder, ctx.wt) {
+        return Some("it changes your project folder, outside the session's working copy".into());
+    }
+    judge::folder_change(command, ctx).map(|w| format!("{w}, outside the session's working copy"))
 }
 
 /// Whether `path` is one of the runtime's own permission or settings files (constitution VI,
@@ -356,7 +423,7 @@ pub fn lead(mode: ChatMode, req: &agent::PermissionRequest, cx: &LeadCx) -> Deci
             } else if spec_document(&path, workdir) {
                 Decision::Allow
             } else {
-                Decision::Refuse {
+                Decision::Hold {
                     limit: Limit::Edit,
                     reason: format!(
                         "the lead changes only spec documents (specs/, the constitution, .fallow/drafts/), not {path}"
@@ -367,7 +434,7 @@ pub fn lead(mode: ChatMode, req: &agent::PermissionRequest, cx: &LeadCx) -> Deci
         }
         RequestKind::Other => match mode {
             ChatMode::Auto => Decision::Allow,
-            ChatMode::Manual => Decision::Refuse {
+            ChatMode::Manual => Decision::Hold {
                 limit: Limit::Tool,
                 reason: format!("{} is not a tool Fallow can judge", tool_name(req)),
                 facts: None,
@@ -411,14 +478,33 @@ pub fn lead(mode: ChatMode, req: &agent::PermissionRequest, cx: &LeadCx) -> Deci
             {
                 return Decision::Allow;
             }
-            match (limit, mode) {
-                (Some((_, why)), ChatMode::Auto) => Decision::Refuse {
+            // 015 (2026-11-24 amendment): as the assistant's (`assistant`).
+            if mode == ChatMode::Auto {
+                if let Some(why) = judge::protected_write(&command, &ctx) {
+                    return Decision::Refuse {
+                        limit: Limit::Control,
+                        reason: why,
+                        facts: None,
+                    };
+                }
+                if let Some(reason) = judge::protected_unread(&command, &ctx) {
+                    return Decision::Hold {
+                        limit: Limit::Edit,
+                        reason,
+                        facts: None,
+                    };
+                }
+            }
+            if let Some(reason) = folder_limit(&command, &ctx) {
+                return Decision::Hold {
                     limit: Limit::Edit,
-                    reason: format!("it reaches outside the lead's working copy: {why}"),
+                    reason: reason.replace("the session's", "the lead's"),
                     facts: None,
-                },
-                (_, ChatMode::Auto) => Decision::Allow,
-                (_, ChatMode::Manual) => Decision::Ask(Vec::new()),
+                };
+            }
+            match mode {
+                ChatMode::Auto => Decision::Allow,
+                ChatMode::Manual => Decision::Ask(Vec::new()),
             }
         }
     }
@@ -734,6 +820,23 @@ impl super::Studio {
                     .clone()
                     .unwrap_or_else(|| "a spec session".into()),
             };
+            // 015 (2026-11-24 amendment): a request waiting at a limit for the engineer.
+            if let Some(p) = c.pending.as_ref().filter(|p| p.held.is_some()) {
+                let short: String = p.command.chars().take(80).collect();
+                out.push(serde_json::json!({
+                    "kind": "limit",
+                    "key": format!("{id}:limit:{}", p.id),
+                    "project": project,
+                    "project_name": project_name,
+                    "conv": id,
+                    "solo": c.state.kind == Kind::Solo,
+                    "feature": c.state.feature,
+                    "chat": chat,
+                    "refusal": p.id,
+                    "text": format!("{chat} — waits at a limit: {short}"),
+                    "at": c.state.turns.last().map(|t| t.started.clone()),
+                }));
+            }
             // A cancelled answer's refusals are gone with it (review of US2, 1).
             for t in c.state.turns.iter().filter(|t| !t.withdrawn) {
                 for r in t
@@ -789,6 +892,11 @@ impl super::Studio {
         let Some(c) = self.convs.get_mut(conv) else {
             return;
         };
+        // Held at a limit under Auto too (2026-11-24 amendment): the new card answers the
+        // agent's same request when the engineer answers it.
+        if let Some(np) = c.pending.as_mut() {
+            np.reply = p.reply.clone();
+        }
         let after: usize = c.state.turns.iter().map(|t| t.refusals.len()).sum();
         let allowed = !failed && after == before && out.is_some();
         let _ = c.append(CEvent::ApprovalAnswered {
@@ -842,6 +950,21 @@ impl super::Studio {
             let p = self.project(&c.state.project).ok()?;
             Some((c.state.workdir.clone(), c.state.workdir.join(&p.spec_root)))
         });
+        // 015 (2026-11-24 amendment): what the engineer allowed always, in this project, past
+        // this limit, goes without waiting, in both modes.
+        let past = match &decision {
+            Decision::Hold { limit, .. } if matches!(limit, Limit::Edit | Limit::Target) => self
+                .convs
+                .get(conv)
+                .and_then(|c| self.project(&c.state.project).ok())
+                .is_some_and(|p| {
+                    p.allowed_past_limits
+                        .iter()
+                        .any(|e| e.allows(limit.name(), kind, &what))
+                }),
+            _ => false,
+        };
+        let decision = if past { Decision::Allow } else { decision };
         let c = self.convs.get_mut(conv).ok_or("the conversation is gone")?;
         // "Allow this once": exactly this kind and this command or path (R-5).
         let granted = c
@@ -917,7 +1040,39 @@ impl super::Studio {
                 };
                 let tool = req.tool.clone();
                 self.ask_engineer(
-                    conv, runtime, &tool, read, shown, reasons, raw, reply, ask_facts,
+                    conv, runtime, &tool, read, shown, reasons, raw, reply, ask_facts, None,
+                )
+            }
+            // 015 (2026-11-24 amendment): the agent waits for the engineer's answer, the same
+            // card as Manual's, with "Always allow" past the limit.
+            Decision::Hold {
+                limit,
+                reason,
+                facts,
+            } => {
+                if c.pending.is_some() {
+                    return Err(
+                        "Another request is waiting for the engineer: ask again once it is answered."
+                            .into(),
+                    );
+                }
+                let tool = req.tool.clone();
+                let held = Held {
+                    limit,
+                    kind,
+                    reason: reason.clone(),
+                };
+                self.ask_engineer(
+                    conv,
+                    runtime,
+                    &tool,
+                    false,
+                    what,
+                    vec![reason],
+                    raw,
+                    reply,
+                    facts,
+                    Some(held),
                 )
             }
             Decision::Refuse {
@@ -1041,11 +1196,17 @@ mod tests {
         )
     }
 
+    /// The limit a request is refused or held at.
     fn limit_of(d: &Decision) -> Option<Limit> {
         match d {
-            Decision::Refuse { limit, .. } => Some(*limit),
+            Decision::Refuse { limit, .. } | Decision::Hold { limit, .. } => Some(*limit),
             _ => None,
         }
+    }
+
+    /// Whether it waits for the engineer at a limit (2026-11-24 amendment).
+    fn held(d: &Decision) -> bool {
+        matches!(d, Decision::Hold { .. })
     }
 
     #[test]
@@ -1167,19 +1328,43 @@ mod tests {
                 None
             );
         }
-        // Shell commands that reach beyond the copy, read as written (final review, 1).
+        // The target push and the edit outside the copy wait for the engineer.
+        for mode in [ChatMode::Manual, ChatMode::Auto] {
+            assert!(held(&assistant_decides(mode, &edit(&in_folder), &d, None)));
+            assert!(held(&assistant_decides(
+                mode,
+                &run("git push origin HEAD:main"),
+                &d,
+                Some(&target)
+            )));
+        }
+        // Shell commands that change the engineer's folder, read as written (final review, 1;
+        // 2026-11-24 amendment): they wait at the folder limit, in both modes.
         let f = d.folder.display().to_string();
         for cmd in [
             format!("echo x > {f}/README.md"),
             format!("rm -rf {f}/src"),
             format!("cp a.txt {f}/src/a.txt"),
+            format!("cd {f} && rm x"),
+            format!("cd {f} && npm install"),
+            format!("bash -c 'rm -rf {f}/src'"),
+        ] {
+            for mode in [ChatMode::Manual, ChatMode::Auto] {
+                let got = assistant_decides(mode, &run(&cmd), &d, None);
+                assert!(held(&got), "{cmd} {mode:?}: {got:?}");
+                assert_eq!(limit_of(&got), Some(Limit::Edit), "{cmd}");
+            }
+        }
+        // Writing elsewhere, outside the folder, is not a limit in Auto; Manual asks.
+        for cmd in [
             "echo x > ../../elsewhere.txt".to_string(),
-            "rm -rf .git".to_string(),
             format!("mv notes.txt {}/away.txt", d.root.display()),
+            format!("cat {f}/README.md"),
+            format!("cp {f}/README.md /tmp/x.md"),
         ] {
             assert_eq!(
-                limit_of(&assistant_decides(ChatMode::Auto, &run(&cmd), &d, None)),
-                Some(Limit::Edit),
+                assistant_decides(ChatMode::Auto, &run(&cmd), &d, None),
+                Decision::Allow,
                 "{cmd}"
             );
             assert!(
@@ -1190,6 +1375,16 @@ mod tests {
                 "{cmd}: Manual asks, as 012 does"
             );
         }
+        // Git's own record, written: never, in Auto (Manual asks, as 012 does).
+        assert_eq!(
+            limit_of(&assistant_decides(
+                ChatMode::Auto,
+                &run("rm -rf .git"),
+                &d,
+                None
+            )),
+            Some(Limit::Control)
+        );
         for cmd in [
             "echo '{}' > .claude/settings.local.json",
             "cp x .claude/settings.json",
@@ -1224,10 +1419,10 @@ mod tests {
             assistant_decides(ChatMode::Auto, &run("cat .claude/settings.json"), &d, None),
             Decision::Allow
         );
-        // A protected file of Fallow's, written: refused in Auto, named as such.
+        // A protected file of Fallow's, written: refused in Auto, named as such, never allowed.
         match assistant_decides(ChatMode::Auto, &run("cp x .fallow/squad.toml"), &d, None) {
             Decision::Refuse {
-                limit: Limit::Edit,
+                limit: Limit::Control,
                 reason,
                 ..
             } => assert!(reason.contains("may not change"), "{reason}"),
@@ -1246,19 +1441,17 @@ mod tests {
                 "{cmd}"
             );
         }
-        // The engineer's folder: asked in Manual (012), refused in Auto, with 012's facts.
+        // The engineer's folder: waits for the engineer in both modes, with 012's facts.
         let cmd = format!("git -C {} checkout -b x", d.folder.display());
-        assert!(matches!(
-            assistant_decides(ChatMode::Manual, &run(&cmd), &d, None),
-            Decision::Ask(_)
-        ));
-        match assistant_decides(ChatMode::Auto, &run(&cmd), &d, None) {
-            Decision::Refuse {
-                limit: Limit::Edit,
-                facts: Some(_),
-                ..
-            } => {}
-            other => panic!("{other:?}"),
+        for mode in [ChatMode::Manual, ChatMode::Auto] {
+            match assistant_decides(mode, &run(&cmd), &d, None) {
+                Decision::Hold {
+                    limit: Limit::Edit,
+                    facts: Some(_),
+                    ..
+                } => {}
+                other => panic!("{other:?}"),
+            }
         }
         let _ = std::fs::remove_dir_all(&d.root);
     }
@@ -1417,16 +1610,25 @@ mod tests {
                 Some(Limit::Control)
             );
         }
-        // Beyond its copy, in Auto: refused; in Manual: asked.
+        // The engineer's folder changed: waits for the engineer, in both modes; elsewhere it
+        // runs in Auto (2026-11-24 amendment).
         let far = run("echo x > /w/folder/README.md");
+        for m in [ChatMode::Manual, ChatMode::Auto] {
+            let got = lead(m, &far, &wd, &cf, None, &fold);
+            assert!(held(&got), "{got:?}");
+            assert_eq!(limit_of(&got), Some(Limit::Edit));
+        }
         assert_eq!(
-            limit_of(&lead(ChatMode::Auto, &far, &wd, &cf, None, &fold)),
-            Some(Limit::Edit)
+            lead(
+                ChatMode::Auto,
+                &run("echo x > /w/elsewhere.txt"),
+                &wd,
+                &cf,
+                None,
+                &fold
+            ),
+            Decision::Allow
         );
-        assert!(matches!(
-            lead(ChatMode::Manual, &far, &wd, &cf, None, &fold),
-            Decision::Ask(_)
-        ));
         assert_eq!(
             lead(
                 ChatMode::Auto,
@@ -1491,14 +1693,15 @@ mod tests {
                 );
             }
         }
-        // An approved `git` does not write git's own record or Fallow's control files unasked.
+        // An approved `git` does not write git's own record or Fallow's control files: never,
+        // in Auto.
         for cmd in [
             "git log --output=.git/hooks/pre-commit",
             "git diff --output=.fallow/squad.toml",
         ] {
             assert_eq!(
                 limit_of(&lead(ChatMode::Auto, &run(cmd), &wd, &cf, None, &fold)),
-                Some(Limit::Edit),
+                Some(Limit::Control),
                 "{cmd}"
             );
             assert!(

@@ -244,6 +244,7 @@
           <div class="feat"><span>constitution.md</span><span class="tiny muted">.specify/memory</span></div>
           <a class="feat" href="#/agents/${encodeURIComponent(p.id)}"><span>.fallow/agents/</span><span class="tiny muted">${p.agent_overrides} override${p.agent_overrides === 1 ? "" : "s"}</span></a>
           <div class="feat"><span>approved commands</span><span class="tiny muted">${p.approved_commands.length}</span></div>
+          ${(p.allowed_past_limits || []).length ? h`<div class="small mt-6">Allowed always past a limit</div>${(p.allowed_past_limits || []).map((e, i) => h`<div class="feat"><span class="mono tiny" title="${e.limit === "target" ? "Pushes onto the protected target" : "Outside the agent's working copy"}">${e.limit === "target" ? "target" : "folder"} · ${e.prefix}${e.kind === "run" ? " …" : ""}</span><button class="linkish tiny" data-act="past-limit-remove" data-i="${i}" aria-label="${`Stop allowing ${e.prefix} past the limit`}">Remove</button></div>`)}` : ""}
           <label class="feat" for="notify-toggle"><span>Desktop notifications</span><input id="notify-toggle" type="checkbox" data-change="notifications"${raw(p.notifications ? " checked" : "")}></label>
           ${p.notification_permission === "provisional" ? h`<div class="feat"><span class="tiny muted">macOS shows them quietly in Notification Center</span><button class="btn btn2 xs" data-act="banners">Show banners</button></div>` : ""}
           ${p.notification_permission === "refused" ? h`<div class="tiny muted">macOS does not let Fallow show notifications: System Settings → Notifications → Fallow</div>` : ""}
@@ -960,6 +961,12 @@
             el.closest(".feat") && el.closest(".feat").remove();
           }
           return;
+        }
+        // 015 (2026-11-24 amendment): stop allowing an entry past its limit.
+        if (name === "past-limit-remove") {
+          const keep = (state.allowed_past_limits || []).filter((_, i) => i !== Number(el.dataset.i));
+          await Fallow.api("PATCH", `/api/projects/${encodeURIComponent(state.id)}`, { allowed_past_limits: keep });
+          return again();
         }
         if (name === "remove") {
           const ok = await confirm({ title: `Remove ${state.name} from Fallow?`, text: "Fallow forgets the project and deletes its own data for it. Nothing in the folder is touched.", items: ["its conversations and spec sessions in Fallow", "Fallow's worktrees for it"], ok: "Remove" });
