@@ -62,8 +62,79 @@ const TEN: &[(&str, &str, &str)] = &[
     ("r10", "edit", r###"/tmp/cropscan/result5.md"###),
 ];
 
-/// Two more the same chat refused later, the same way.
+/// Three more the same chat refused later: two the same way, and r13, a quoted here-document
+/// writing a script inside the session's copy, whose body named nothing.
 const LATER: &[(&str, &str, &str)] = &[
+    (
+        "r13",
+        "run",
+        r####"cat > _cropscan/write.py <<'EOF'
+import json, csv, collections, glob
+D = "agentic-workflow/classifier/output/"
+cand = {r["id"]: r for r in csv.DictReader(open("_cropscan/candidates.tsv", encoding="utf-8"), delimiter="\t", quoting=csv.QUOTE_NONE)}
+out = {}
+for f in sorted(glob.glob("_cropscan/out*.tsv")):
+    for r in csv.DictReader(open(f, encoding="utf-8"), delimiter="\t", quoting=csv.QUOTE_NONE): out[r["id"]] = r
+occ = collections.defaultdict(list); total = 0
+for l in open("_cropscan/all.jsonl", encoding="utf-8"):
+    r = json.loads(l); occ[r["crop"].replace("\t", " ⇥ ")].append(r); total += 1
+ORDER = ["REQ", "COND", "REF", "ATTR", "ODD"]
+rows = []
+for i, f in out.items():
+    c = cand[i]["crop"]
+    for o in occ[c]:
+        rows.append([f["category"], o["doc"].split("/")[0], o["doc"], o["path"], c, f["offending_part"], f["belongs_in"], f["already_elsewhere"], f["note"], i])
+rows.sort(key=lambda r: (ORDER.index(r[0]), r[1], r[2], r[3]))
+with open(D + "crops_audit.tsv", "w", encoding="utf-8", newline="") as fh:
+    w = csv.writer(fh, delimiter="\t", lineterminator="\n", quoting=csv.QUOTE_MINIMAL)
+    w.writerow(["category", "sector", "doc", "path", "crop", "offending_part", "belongs_in", "already_elsewhere", "note", "string_id"])
+    w.writerows(rows)
+secs = sorted({r[1] for r in rows})
+dist = collections.Counter(r[0] for r in out.values() for _ in [0])
+dist = collections.Counter(out[i]["category"] for i in out)
+occc = collections.Counter(r[0] for r in rows)
+docs = collections.defaultdict(set)
+for r in rows: docs[r[0]].add(r[2])
+by = collections.Counter((r[0], r[1]) for r in rows)
+topdocs = collections.Counter(r[2] for r in rows).most_common(12)
+L = []
+L.append("# Audit: wat in `crops` staat en er niet hoort (2026-11-24)\n")
+L.append("Verkennende analyse, geen besluit en geen herstel. Elke vindplaats staat in `crops_audit.tsv` (één regel per voorkomen, met document en pad).\n")
+L.append("## Werkwijze\n")
+L.append(f"- Alle `crops`-waarden uit de {len({o['doc'] for v in occ.values() for o in v})} `_ast.yml` onder `classifier/output/`, op elke diepte: {total} voorkomens, {len(occ)} verschillende strings.")
+L.append(f"- Kandidaten: {len(cand)} strings die lang zijn (>30 tekens of >3 woorden), leestekens of cijfers bevatten, met een kleine letter beginnen of een trefwoord bevatten (vrij, verbod, vereist, origine, product, materiaal, alleen, zie, …). De overige {len(occ)-len(cand)} zijn korte namen zonder leesteken of trefwoord (steekproef van 80: alle kale taxon- of volksnamen) en zijn niet beoordeeld.")
+L.append("- Zeven subagents beoordeelden de kandidaten tegen `extractie/regels/veld-crops.md` en E22, E30 en E37: wat die regels toestaan (letterlijke productlabels, waardplantengroepen met hun organisme, restgroepen, synoniemen, `(zie register …)`, `(Alleen …)`) is niet gemarkeerd. Twijfelgevallen en de meeste REQ/COND zijn in het brondocument nagekeken; de rest is op de string beoordeeld (`already_elsewhere: unchecked`).\n")
+L.append("## Categorieën\n")
+L.append("| Categorie | Betekenis | Strings | Voorkomens | Documenten |\n|---|---|---|---|---|")
+mean = {"REQ": "een eis, verbod of vergunningsuitspraak in de crop", "COND": "een voorwaarde: herkomst, gebied, plaagstatus, datum of periode", "REF": "een verwijzing, kop of voetnootteken in plaats van of aan het product", "ATTR": "een eigenschap (`attributes`), vorm (`productForm`) of uitzondering (`exclusion`) in de crop", "ODD": "anders fout: samengevoegde namen, verpakking als crop, tabs, fragmenten"}
+for k in ORDER: L.append(f"| {k} | {mean[k]} | {dist[k]} | {occc[k]} | {len(docs[k])} |")
+L.append(f"| totaal | | {len(out)} | {len(rows)} | {len({r[2] for r in rows})} |\n")
+L.append("## Per sector (voorkomens)\n")
+L.append("| Sector | " + " | ".join(ORDER) + " |\n|---|" + "---|" * len(ORDER))
+for s in secs: L.append(f"| {s} | " + " | ".join(str(by[(k, s)]) for k in ORDER) + " |")
+L.append("\n## Documenten met de meeste vindplaatsen\n")
+L.append("| Document | Vindplaatsen |\n|---|---|")
+for d, n in topdocs: L.append(f"| {d} | {n} |")
+for k in ["REQ", "COND"]:
+    L.append(f"\n## Alle {k}\n")
+    L.append("| Document | Pad | Crop | Fout deel | Hoort in | Al elders |\n|---|---|---|---|---|---|")
+    for r in rows:
+        if r[0] == k:
+            L.append(f"| {r[2].replace('_ast.yml','')} | `{r[3]}` | {r[4][:160].replace('|','/')} | {r[5][:90].replace('|','/')} | {r[6]} | {r[7]} |")
+L.append("\n## Patronen\n")
+L.append("- **REF is grotendeels voetnoottekens** (`*`, `**`, een cijfer) aan een taxonnaam geplakt (\"Alpinia spp.**\", \"Buxus6\", \"Rubus idaeus3\"), vooral in SIER (Zuid-Korea, Martinique, Turkije, Puerto Rico, Zuid-Afrika, Taiwan). Daarnaast koppen als crop (\"De inspectieplichtige producten\", \"Alle toegelaten producten\") en verwijzingen naar externe lijsten.")
+L.append("- **COND** komt uit twee bronnen: de EU-volzinnen van SIER Turkije 2.43 (\"Plants of X … originating in countries where … is known to occur\") en de vergunningslijst van ZZ Nieuw-Zeeland 10.4 (\"Pinus (indien uit productiegebied niet bekend als vrij van Fusarium circinatum)\"); verder \"(origine NL)\", \"(geldt alleen voor Florida …)\" en ingangsdatums in GF.")
+L.append("- **ATTR**: gebruik en toestand (\"voor consumptie\", \"gedroogde\", \"ongepelde\") vooral in DIV; maat, beworteling en stek, \"m.u.v.\"-lijsten en in-vitro-zinnen vooral in SIER. Vaak staat de vorm of de uitzondering al in `productForm` of `exclusion` en is de tekst in de crop een dubbeling.")
+L.append("- **ODD**: verpakking als crop (zakken, dozen, pallets, fust), samengevoegde goederen (\"Aubergine & Tomaat\", \"Paprika/Peper\", \"Hybriden van Cydonia, Malus, Prunus en Pyrus\"), losse fragmenten (\"pit\", \"divaricatum\") en tabs.")
+L.append("\n## Voorbehoud\n")
+L.append("- De categorie is een oordeel van een subagent; REQ en de meeste COND zijn nagekeken, ATTR/REF/ODD grotendeels alleen op de string. Er zitten grensgevallen in: toestandswoorden die deel van de productnaam kunnen zijn (\"Gedroogde vijgen\"), \"GECONDITIONEERDE TEELT\" (mogelijk een toegestane kop), \"o.a.\"-opsommingen.")
+L.append("- Elke string telt in één categorie, de ernstigste (REQ > COND > REF > ATTR > ODD); de `note` noemt de andere.")
+L.append("- \"(alleen voor PEQ)\" en andere \"(Alleen …)\"-toevoegingen zijn als toegestaan gelaten omdat `veld-crops.md` ze bewaart.")
+open(D + "crops_audit.md", "w", encoding="utf-8").write("\n".join(L) + "\n")
+print(len(rows), dist, occc)
+EOF
+uv run --no-project python -I _cropscan/write.py && sed -n 1,60p agentic-workflow/classifier/output/crops_audit.md"####,
+    ),
     (
         "r11",
         "run",
@@ -166,7 +237,7 @@ fn the_engineer_s_ten_refusals_run_in_auto_and_the_limits_still_stop() {
         also: Vec::new(),
     };
 
-    // 1. All ten, and the two after them, as written: allowed in Auto, no card.
+    // 1. All ten, and the three after them, as written: allowed in Auto, no card.
     for (id, kind, what) in TEN.iter().chain(LATER) {
         let what = what.replace("{WT}", &wt_text);
         assert_eq!(
@@ -203,6 +274,8 @@ fn the_engineer_s_ten_refusals_run_in_auto_and_the_limits_still_stop() {
         "echo '{}' > .claude/settings.local.json",
         "cp x .fallow/squad.toml",
         "rm -rf .git/hooks",
+        "cat > .fallow/agents/x.toml <<'EOF'\nx = 1\nEOF",
+        "cat <<EOF > .claude/settings.json\n{}\nEOF",
     ] {
         match fx.decide(ChatMode::Auto, "run", cmd, Some(&target)) {
             Decision::Refuse {

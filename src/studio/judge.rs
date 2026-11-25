@@ -53,6 +53,10 @@ pub struct Part {
 /// whose effect cannot be told from the text (a subshell, a substitution, a background `&`, a
 /// here-document, ANSI-C quoting, a line continuation).
 pub fn split(cmd: &str) -> Result<Vec<Part>, String> {
+    // A here-document fed to a program that only reads its input as data: read without its
+    // body (2026-11-24 amendment, r13).
+    let stripped = strip_heredocs(cmd);
+    let cmd = stripped.as_deref().unwrap_or(cmd);
     let mut parts = Vec::new();
     let mut cur = Part::default();
     let mut word = String::new();
@@ -264,6 +268,229 @@ pub fn split(cmd: &str) -> Result<Vec<Part>, String> {
     }
     push_part(&mut parts, &mut cur, &mut text);
     Ok(parts)
+}
+
+/// Programs whose here-document is data they read, never code they run (`strip_heredocs`).
+const HEREDOC_DATA: &[&str] = &[
+    "cat", "tee", "head", "tail", "grep", "wc", "sort", "uniq", "cut", "tr", "jq", "base64",
+    "column", "nl", "less", "more",
+];
+
+/// 015 (2026-11-24 amendment, r13): `command` with each top-level here-document (`<<TAG`,
+/// `<<-TAG`, `<<'TAG'`, `<<"TAG"`, `<<\TAG`) fed to a program that reads it as data
+/// (`HEREDOC_DATA`) taken out: the operator becomes `</dev/null` (the part still reads its
+/// input) and the body goes. A quoted here-document's body is text, never paths or commands;
+/// an unquoted one's `$(…)` and backtick expansions run, so they are kept, each as a command of
+/// its own after the line. `None` when there is none, or when it cannot be read this way (an
+/// unclosed body, a here-document fed to a shell or an interpreter, inside quotes or a
+/// substitution): the command is then read as before.
+fn strip_heredocs(command: &str) -> Option<String> {
+    let c: Vec<char> = command.chars().collect();
+    let mut out = String::new();
+    let mut extra: Vec<String> = Vec::new();
+    // Here-documents opened on the current line: (tag, quoted, `<<-`).
+    let mut open: Vec<(String, bool, bool)> = Vec::new();
+    let mut quote: Option<char> = None;
+    let mut depth = 0usize;
+    let mut found = false;
+    // Where the current simple command starts in `out`.
+    let mut seg = 0usize;
+    let mut i = 0;
+    while i < c.len() {
+        let ch = c[i];
+        if let Some(q) = quote {
+            out.push(ch);
+            if ch == '\\' && q == '"' {
+                if let Some(n) = c.get(i + 1) {
+                    out.push(*n);
+                    i += 1;
+                }
+            } else if ch == q {
+                quote = None;
+            }
+            i += 1;
+            continue;
+        }
+        match ch {
+            '\'' | '"' => {
+                quote = Some(ch);
+                out.push(ch);
+                i += 1;
+            }
+            '\\' => {
+                out.push(ch);
+                if let Some(n) = c.get(i + 1) {
+                    out.push(*n);
+                }
+                i += 2;
+            }
+            '(' => {
+                depth += 1;
+                out.push(ch);
+                i += 1;
+            }
+            ')' => {
+                depth = depth.saturating_sub(1);
+                out.push(ch);
+                i += 1;
+            }
+            ';' | '&' | '|' => {
+                out.push(ch);
+                seg = out.len();
+                i += 1;
+            }
+            '<' if c.get(i + 1) == Some(&'<') && c.get(i + 2) != Some(&'<') => {
+                if depth > 0 {
+                    return None;
+                }
+                // The program it feeds: the first word of the command, after assignments.
+                let prog = out[seg..]
+                    .split_whitespace()
+                    .find(|w| !w.contains('='))
+                    .map(program)
+                    .unwrap_or_default();
+                if !HEREDOC_DATA.contains(&prog.as_str()) {
+                    return None;
+                }
+                let mut j = i + 2;
+                let dash = c.get(j) == Some(&'-');
+                if dash {
+                    j += 1;
+                }
+                while c.get(j) == Some(&' ') {
+                    j += 1;
+                }
+                let (tag, quoted) = match c.get(j) {
+                    Some(q @ ('\'' | '"')) => {
+                        let q = *q;
+                        let start = j + 1;
+                        let end = (start..c.len()).find(|k| c[*k] == q)?;
+                        j = end + 1;
+                        (c[start..end].iter().collect::<String>(), true)
+                    }
+                    Some('\\') => {
+                        let start = j + 1;
+                        j = start;
+                        while c
+                            .get(j)
+                            .is_some_and(|x| x.is_ascii_alphanumeric() || *x == '_')
+                        {
+                            j += 1;
+                        }
+                        (c[start..j].iter().collect::<String>(), true)
+                    }
+                    _ => {
+                        let start = j;
+                        while c
+                            .get(j)
+                            .is_some_and(|x| x.is_ascii_alphanumeric() || *x == '_')
+                        {
+                            j += 1;
+                        }
+                        (c[start..j].iter().collect::<String>(), false)
+                    }
+                };
+                if tag.is_empty() {
+                    return None;
+                }
+                open.push((tag, quoted, dash));
+                out.push_str(" </dev/null ");
+                found = true;
+                i = j;
+            }
+            '\n' if !open.is_empty() => {
+                out.push('\n');
+                seg = out.len();
+                i += 1;
+                // The bodies, in order, each up to its tag's line.
+                for (tag, quoted, dash) in std::mem::take(&mut open) {
+                    let mut body = String::new();
+                    loop {
+                        if i >= c.len() {
+                            return None;
+                        }
+                        let end = (i..c.len()).find(|k| c[*k] == '\n').unwrap_or(c.len());
+                        let line: String = c[i..end].iter().collect();
+                        i = (end + 1).min(c.len());
+                        let bare = if dash {
+                            line.trim_start_matches('\t')
+                        } else {
+                            &line
+                        };
+                        if bare == tag {
+                            break;
+                        }
+                        body.push_str(&line);
+                        body.push('\n');
+                    }
+                    if !quoted {
+                        extra.extend(expansions(&body)?);
+                    }
+                }
+            }
+            '\n' => {
+                out.push(ch);
+                seg = out.len();
+                i += 1;
+            }
+            _ => {
+                out.push(ch);
+                i += 1;
+            }
+        }
+    }
+    if !open.is_empty() || !found {
+        return None;
+    }
+    for e in extra {
+        out.push('\n');
+        out.push_str(&e);
+    }
+    Some(out)
+}
+
+/// The commands of the `$(…)` and backtick expansions in an unquoted here-document's body;
+/// `None` when one is not closed.
+fn expansions(body: &str) -> Option<Vec<String>> {
+    let c: Vec<char> = body.chars().collect();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < c.len() {
+        if c[i] == '\\' {
+            i += 2;
+            continue;
+        }
+        if c[i] == '$' && c.get(i + 1) == Some(&'(') {
+            let mut depth = 0usize;
+            let start = i + 2;
+            let mut j = i + 1;
+            loop {
+                match c.get(j) {
+                    None => return None,
+                    Some('(') => depth += 1,
+                    Some(')') => {
+                        depth -= 1;
+                        if depth == 0 {
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+                j += 1;
+            }
+            out.push(c[start..j].iter().collect());
+            i = j + 1;
+            continue;
+        }
+        if c[i] == '`' {
+            let end = (i + 1..c.len()).find(|k| c[*k] == '`')?;
+            out.push(c[i + 1..end].iter().collect());
+            i = end + 1;
+            continue;
+        }
+        i += 1;
+    }
+    Some(out)
 }
 
 /// `$(cat <<'TAG'` + newline + lines + `TAG` + newline + `)` at the start of `chars`: the
@@ -2586,6 +2813,31 @@ pub fn runs_unasked(cmd: &str, gates: &[String], approved: &[String], ctx: &Ctx)
 
 #[cfg(test)]
 mod tests {
+    /// 2026-11-24 amendment (r13): a here-document read as data has no paths or commands in
+    /// its body, except an unquoted one's expansions; one fed to a shell is still unreadable.
+    #[test]
+    fn a_here_document_s_body_is_data() {
+        let parts =
+            |c: &str| split(c).map(|p| p.iter().map(|x| x.text.clone()).collect::<Vec<_>>());
+        assert_eq!(
+            parts("cat > a.py <<'EOF'\nopen('.fallow/agents/x')\nrm -rf /\nEOF\nwc -l a.py")
+                .unwrap(),
+            ["cat > a.py  </dev/null", "wc -l a.py"]
+        );
+        let p = split("cat <<EOF > out.txt\nhi $(rm -rf x) `touch y`\nEOF").unwrap();
+        let t: Vec<&str> = p.iter().map(|x| x.text.as_str()).collect();
+        assert_eq!(t, ["cat  </dev/null  > out.txt", "rm -rf x", "touch y"]);
+        assert_eq!(p[0].redirects, ["/dev/null", "out.txt"]);
+        // Fed to a shell or an interpreter, or not closed: as before, not readable.
+        for c in [
+            "bash <<'EOF'\nrm -rf /\nEOF",
+            "python3 <<'EOF'\nprint(1)\nEOF",
+            "cat > a <<'EOF'\nno end",
+        ] {
+            assert!(split(c).is_err(), "{c}");
+        }
+    }
+
     use super::*;
 
     fn dirs() -> (PathBuf, PathBuf) {
