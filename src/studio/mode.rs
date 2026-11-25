@@ -46,11 +46,16 @@ impl Limit {
     }
 }
 
+/// Why a command the judge has nothing against is still asked in Manual: an ask always says
+/// why (Windows CI, PR #3).
+pub const NOT_APPROVED: &str =
+    "it is not an approved command, and this chat is in Manual: Fallow asks first";
+
 /// What Fallow answers.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Decision {
     Allow,
-    /// Put to the engineer (Manual only), with the judge's reasons.
+    /// Put to the engineer (Manual only), with the judge's reasons: never none.
     Ask(Vec<String>),
     Refuse {
         limit: Limit,
@@ -267,7 +272,7 @@ pub fn assistant(
             }
             // The system's temporary folder is scratch space, not the engineer's project
             // (research R-3, 2026-11-24 amendment); the engineer's folder never is.
-            let in_folder = judge::rel_inside(ctx.folder, &path).is_some();
+            let in_folder = judge::in_folder_path(ctx.folder, ctx.wt, &path);
             if !in_folder && judge::in_temp(&path) {
                 return Decision::Allow;
             }
@@ -347,7 +352,7 @@ pub fn assistant(
             match mode {
                 ChatMode::Auto => Decision::Allow,
                 ChatMode::Manual => match judge::assess(&command, ctx) {
-                    judge::Verdict::Allow => Decision::Ask(Vec::new()),
+                    judge::Verdict::Allow => Decision::Ask(vec![NOT_APPROVED.into()]),
                     judge::Verdict::Ask(why) => Decision::Ask(why),
                 },
             }
@@ -504,7 +509,7 @@ pub fn lead(mode: ChatMode, req: &agent::PermissionRequest, cx: &LeadCx) -> Deci
             }
             match mode {
                 ChatMode::Auto => Decision::Allow,
-                ChatMode::Manual => Decision::Ask(Vec::new()),
+                ChatMode::Manual => Decision::Ask(vec![NOT_APPROVED.into()]),
             }
         }
     }
@@ -1508,9 +1513,12 @@ mod tests {
 
     #[test]
     fn the_lead_gets_the_same_two_modes() {
-        let wd = PathBuf::from("/w/spec");
+        // Real absolute paths for the platform (on Windows, with its drive), not created.
+        let root = std::env::temp_dir().join(format!("fallow-mode-lead-{}", std::process::id()));
+        let w = root.display().to_string();
+        let wd = root.join("spec");
         let cf = vec![".claude/settings.json".to_string()];
-        let fold = PathBuf::from("/w/folder");
+        let fold = root.join("folder");
         let target = Target {
             name: "main".into(),
             protected: true,
@@ -1541,13 +1549,13 @@ mod tests {
         );
         assert_eq!(
             lead(ChatMode::Manual, &run("cargo test"), &wd, &cf, None, &fold),
-            Decision::Ask(Vec::new())
+            Decision::Ask(vec![NOT_APPROVED.into()])
         );
         for m in [ChatMode::Manual, ChatMode::Auto] {
             assert_eq!(
                 lead(
                     m,
-                    &edit("/w/spec/specs/015-x/spec.md"),
+                    &edit(&format!("{w}/spec/specs/015-x/spec.md")),
                     &wd,
                     &cf,
                     None,
@@ -1562,7 +1570,7 @@ mod tests {
             assert_eq!(
                 limit_of(&lead(
                     m,
-                    &edit("/w/spec/src/main.rs"),
+                    &edit(&format!("{w}/spec/src/main.rs")),
                     &wd,
                     &cf,
                     None,
@@ -1573,7 +1581,7 @@ mod tests {
             assert_eq!(
                 limit_of(&lead(
                     m,
-                    &edit("/w/spec/specs/../src/main.rs"),
+                    &edit(&format!("{w}/spec/specs/../src/main.rs")),
                     &wd,
                     &cf,
                     None,
@@ -1584,7 +1592,7 @@ mod tests {
             assert_eq!(
                 limit_of(&lead(
                     m,
-                    &edit("/w/spec/specs/../.claude/settings.json"),
+                    &edit(&format!("{w}/spec/specs/../.claude/settings.json")),
                     &wd,
                     &cf,
                     None,
@@ -1595,7 +1603,7 @@ mod tests {
             assert_eq!(
                 limit_of(&lead(
                     m,
-                    &edit("/w/spec/.claude/settings.json"),
+                    &edit(&format!("{w}/spec/.claude/settings.json")),
                     &wd,
                     &cf,
                     None,
@@ -1636,7 +1644,7 @@ mod tests {
         }
         // The engineer's folder changed: waits for the engineer, in both modes; elsewhere it
         // runs in Auto (2026-11-24 amendment).
-        let far = run("echo x > /w/folder/README.md");
+        let far = run(&format!("echo x > {w}/folder/README.md"));
         for m in [ChatMode::Manual, ChatMode::Auto] {
             let got = lead(m, &far, &wd, &cf, None, &fold);
             assert!(held(&got), "{got:?}");
@@ -1645,7 +1653,7 @@ mod tests {
         assert_eq!(
             lead(
                 ChatMode::Auto,
-                &run("echo x > /w/elsewhere.txt"),
+                &run(&format!("echo x > {w}/elsewhere.txt")),
                 &wd,
                 &cf,
                 None,
@@ -1709,9 +1717,13 @@ mod tests {
                 Some(Limit::Control)
             );
             // A bare `cd` inside its copy is Fallow's to allow, not a runtime rule's.
-            for cmd in ["cd specs", "cd specs/015-x && cd ..", "cd /w/spec/specs"] {
+            for cmd in [
+                "cd specs".to_string(),
+                "cd specs/015-x && cd ..".to_string(),
+                format!("cd {w}/spec/specs"),
+            ] {
                 assert_eq!(
-                    lead(m, &run(cmd), &wd, &cf, None, &fold),
+                    lead(m, &run(&cmd), &wd, &cf, None, &fold),
                     Decision::Allow,
                     "{cmd}"
                 );
@@ -1748,13 +1760,13 @@ mod tests {
         }
         // Fallow's control files and the runtime's, however spelled, at the control limit.
         for path in [
-            "/w/spec/.CLAUDE/settings.json",
-            "/w/spec/.fallow/squad.toml",
-            "/w/spec/.fallow/agents/lead.md",
-            ".Fallow/pipelines/x.toml",
+            format!("{w}/spec/.CLAUDE/settings.json"),
+            format!("{w}/spec/.fallow/squad.toml"),
+            format!("{w}/spec/.fallow/agents/lead.md"),
+            ".Fallow/pipelines/x.toml".to_string(),
         ] {
             assert_eq!(
-                limit_of(&lead(ChatMode::Auto, &edit(path), &wd, &cf, None, &fold)),
+                limit_of(&lead(ChatMode::Auto, &edit(&path), &wd, &cf, None, &fold)),
                 Some(Limit::Control),
                 "{path}"
             );

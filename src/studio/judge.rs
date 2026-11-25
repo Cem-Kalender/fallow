@@ -598,6 +598,26 @@ fn plain_as(arg: &str, windows: bool) -> String {
         return arg.to_string();
     }
     let s = arg.replace('/', "\\");
+    // Git Bash's and Cygwin's spelling of a drive: `/c/Users/…`, `/cygdrive/c/…` is `C:\Users\…`.
+    let msys = |r: &str| -> Option<String> {
+        let mut ch = r.chars();
+        let d = ch.next().filter(char::is_ascii_alphabetic)?;
+        let rest: String = ch.collect();
+        (rest.is_empty() || rest.starts_with('\\')).then(|| {
+            format!(
+                "{}:{}",
+                d.to_ascii_uppercase(),
+                if rest.is_empty() { "\\" } else { &rest }
+            )
+        })
+    };
+    if let Some(d) = s.strip_prefix(r"\cygdrive\").and_then(msys).or_else(|| {
+        s.strip_prefix('\\')
+            .filter(|r| !r.starts_with('\\'))
+            .and_then(msys)
+    }) {
+        return d;
+    }
     if let Some(r) = s.strip_prefix(r"\\?\UNC\") {
         format!(r"\\{r}")
     } else if let Some(r) = s.strip_prefix(r"\\?\") {
@@ -622,6 +642,35 @@ pub(crate) fn within(path: &Path, base: &Path) -> Option<String> {
         cfg!(windows),
         FOLD_CASE,
     )
+}
+
+/// `within` for the engineer's folder, read to be safe: on Windows a rooted path with no drive
+/// (`\Users\me\proj\x`, on the current drive) counts as on the folder's drive, so it is never
+/// taken for somewhere else.
+pub(crate) fn in_folder_at(path: &Path, folder: &Path) -> bool {
+    in_folder_as(
+        &path.to_string_lossy(),
+        &folder.to_string_lossy(),
+        cfg!(windows),
+        FOLD_CASE,
+    )
+}
+
+/// `in_folder_at` as on Windows (`windows`) and with case folded (`fold`) or not.
+fn in_folder_as(path: &str, folder: &str, windows: bool, fold: bool) -> bool {
+    if within_as(path, folder, windows, fold).is_some() {
+        return true;
+    }
+    if !windows {
+        return false;
+    }
+    let p = plain_as(path, true).replace('\\', "/");
+    let f = plain_as(folder, true).replace('\\', "/");
+    let drive_less = p.starts_with('/') && !p.starts_with("//");
+    match f.split_once(':') {
+        Some((d, rest)) if drive_less && d.len() == 1 => within_as(&p, rest, true, fold).is_some(),
+        _ => false,
+    }
 }
 
 /// `within` as on Windows (`windows`) and with case folded (`fold`) or not.
@@ -717,6 +766,9 @@ fn resolve(base: &Path, arg: &str) -> PathBuf {
 fn canon(p: &Path) -> PathBuf {
     match std::fs::canonicalize(p) {
         Ok(c) => PathBuf::from(plain(&c.to_string_lossy())),
+        // Not there (yet): read as `resolve` reads the paths compared with it, through the
+        // folders that exist (`/var` is `/private/var` on macOS).
+        Err(_) if p.has_root() => resolve(p, &p.to_string_lossy()),
         Err(_) => normalize(Path::new(&plain(&p.to_string_lossy()))),
     }
 }
@@ -750,10 +802,16 @@ fn place(ctx: &Ctx, base: &Path, arg: &str) -> Place {
     if let Some(rel) = within(&real, &canon(ctx.wt)) {
         return Place::Inside(rel);
     }
-    if within(&real, &canon(ctx.folder)).is_some() {
+    if in_folder_at(&real, &canon(ctx.folder)) {
         return Place::Folder;
     }
     Place::Outside
+}
+
+/// 015: whether `path` (as an agent wrote it, from the copy `wt`) is in the engineer's
+/// `folder`, read to be safe (`in_folder_at`).
+pub fn in_folder_path(folder: &Path, wt: &Path, path: &str) -> bool {
+    in_folder_at(&resolve(&canon(wt), path.trim()), &canon(folder))
 }
 
 /// 015: `path` relative to `base` as it resolves (symlinks, `..`, absolute spellings), when it
@@ -2201,8 +2259,10 @@ pub fn folder_change(cmd: &str, ctx: &Ctx) -> Option<String> {
             (base.to_path_buf(), w)
         };
         let rest = rest.trim_start_matches(['/', '\\']);
-        let abs = if Path::new(w).is_absolute() {
-            PathBuf::from(w)
+        // Rooted counts as absolute: on Windows `/c/x` or `\x` has no drive yet names no
+        // folder below the shell's.
+        let abs = if Path::new(w).is_absolute() || w.starts_with(['/', '\\']) {
+            PathBuf::from(plain(w))
         } else if rest.is_empty() {
             root
         } else {
@@ -2210,7 +2270,7 @@ pub fn folder_change(cmd: &str, ctx: &Ctx) -> Option<String> {
         };
         Some(resolve(Path::new("/"), &abs.display().to_string()))
     };
-    let in_folder = |p: &Path| within(p, &folder).is_some() && within(p, &wt).is_none();
+    let in_folder = |p: &Path| in_folder_at(p, &folder) && within(p, &wt).is_none();
     // Where the shell is; `None` after a `cd` Fallow cannot follow.
     let mut base: Option<PathBuf> = Some(wt.clone());
     for p in &parts {
@@ -2239,6 +2299,10 @@ pub fn folder_change(cmd: &str, ctx: &Ctx) -> Option<String> {
                     return Some(format!(
                         "it writes {t} after moving to a folder Fallow cannot tell"
                     ));
+                }
+                // On Windows, a write Fallow cannot place may be in the folder (PR #3).
+                None if cfg!(windows) => {
+                    return Some(format!("it writes {t}, a path Fallow cannot place"));
                 }
                 _ => {}
             }
@@ -2326,10 +2390,15 @@ pub fn folder_change(cmd: &str, ctx: &Ctx) -> Option<String> {
                 if !(looks_like_path(w) || w.starts_with('$')) {
                     continue;
                 }
-                if let Some(x) = at(&b, w) {
-                    if in_folder(&x) {
+                match at(&b, w) {
+                    Some(x) if in_folder(&x) => {
                         return Some(format!("it may change your project folder ({w})"));
                     }
+                    // On Windows, a path Fallow cannot place may be in the folder (PR #3).
+                    None if cfg!(windows) => {
+                        return Some(format!("it may change {w}, a path Fallow cannot place"));
+                    }
+                    _ => {}
                 }
             }
         }
@@ -2977,6 +3046,31 @@ mod tests {
             Some("a")
         );
         assert_eq!(plain_as(r"\\?\C:\a", false), r"\\?\C:\a");
+        // Git Bash and Cygwin drives; a drive-less rooted path counts as on the folder's drive
+        // (PR #3), never inside the copy for it.
+        assert_eq!(plain_as("/c/Users/me/proj/a", true), r"C:\Users\me\proj\a");
+        assert_eq!(plain_as("/cygdrive/d/x", true), r"D:\x");
+        assert_eq!(plain_as("/c", true), r"C:\");
+        assert_eq!(plain_as("/cc/x", true), r"\cc\x");
+        let folder = r"C:\Users\me\proj";
+        for p in [
+            "/c/Users/me/proj/src/a.py",
+            "C:/Users/me/proj/README.md",
+            r"\Users\me\proj\x",
+            "/Users/ME/proj/x",
+            r"\\?\C:\Users\me\proj",
+        ] {
+            assert!(in_folder_as(p, folder, true, true), "{p}");
+        }
+        for p in [
+            r"D:\Users\me\proj\x",
+            "/d/Users/me/proj/x",
+            r"C:\Users\me\other",
+        ] {
+            assert!(!in_folder_as(p, folder, true, true), "{p}");
+        }
+        assert_eq!(within_as(r"\Users\me\proj\x", folder, true, true), None);
+        assert!(!in_folder_as("/w/folder/x", "/w/other", false, false));
     }
 
     /// 2026-11-24 amendment (r13): a here-document read as data has no paths or commands in
