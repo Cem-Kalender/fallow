@@ -339,11 +339,11 @@ fn a_folder_write_waits_allow_once_runs_it_and_deny_denies_it() {
             "{}{}",
             assistant_step(
                 "wrote a",
-                &format!("exec = [{}]", lit(&format!("echo one > {}", a.display())))
+                &format!("exec = [{}]", lit(&format!("echo one > {}", bash_path(&a))))
             ),
             assistant_step(
                 "wrote b",
-                &format!("exec = [{}]", lit(&format!("echo two > {}", b.display())))
+                &format!("exec = [{}]", lit(&format!("echo two > {}", bash_path(&b))))
             )
         ),
     )
@@ -607,4 +607,10 @@ fn a_control_file_write_is_refused_with_no_allow() {
     let _ = ChatMode::Auto;
     drop(e);
     let _ = std::fs::remove_dir_all(&root);
+}
+
+/// A path as an agent writes it in Git Bash, the shell Claude Code (and the fake agent) runs
+/// commands in on Windows: forward slashes, since a backslash is an escape there.
+fn bash_path(p: &std::path::Path) -> String {
+    p.display().to_string().replace('\\', "/")
 }
