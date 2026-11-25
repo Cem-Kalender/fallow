@@ -1720,7 +1720,9 @@ mod tests {
             for cmd in [
                 "cd specs".to_string(),
                 "cd specs/015-x && cd ..".to_string(),
-                format!("cd {w}/spec/specs"),
+                // Git Bash (Claude Code's shell on Windows) reads a backslash as an escape, so the
+                // path is written with forward slashes, as an agent there writes it.
+                format!("cd {}/spec/specs", w.replace('\\', "/")),
             ] {
                 assert_eq!(
                     lead(m, &run(&cmd), &wd, &cf, None, &fold),
