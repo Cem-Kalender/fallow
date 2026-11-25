@@ -159,6 +159,13 @@ Manual asks before commands that are not the gates or the project's approved com
   - The chat MUST show it at once with the reason and "Allow this once", which runs that one request, a push onto a protected target included, as the engineer's decision (constitution II, 10.1.0). Whether the remote itself accepts the push is up to its protection.
   - The chat MUST be listed in "Needs you" and notified through the tray, naming the project and the chat only.
 
+- **FR-009a** (2026-11-24 amendment, the engineer): At the edit limit and the protected-target limit, the agent MUST wait for the engineer, in both modes, instead of being refused at once.
+  - The request's card MUST offer **Allow once** (it runs then), **Always allow** and **Deny** (the agent receives the refusal with its reason).
+  - Always allow records, for the project, the limit and a command prefix, or a path or folder, that the engineer can edit in the card's confirm. The next matching request MUST then run without a card, in both modes. The project page MUST list these entries and let the engineer remove them.
+  - In Auto, a command reaches the edit limit only when it changes the engineer's folder. Reads anywhere, `cd` anywhere, and work in the system temp folder (the assistant's edits there included) run without asking.
+  - Control files (the runtime's settings files, Fallow's control files, `.git` internals) MUST be refused with no Allow and no Always.
+  - No message about an allowed request is queued for the agent.
+
 - **FR-010**: Fallow MUST NOT display or store environment variable values or secret values (constitution V). When Auto lets through a command that Fallow's judge flags as showing the environment (for example `env`, `printenv`, `set`), or a read of a file that may hold secrets (the test of 012 FR-043), the activity and Fallow's records MUST show "Output hidden: it may hold secret values" instead of the output. The agent itself still receives the output from its runtime.
 
 ### Key Entities

@@ -112,6 +112,41 @@ impl Feature {
     }
 }
 
+/// 015 (2026-11-24 amendment): one "Always allow" past a limit: at `limit` (`edit` or
+/// `target`), a `run` request whose command is `prefix` or starts with it and a space (with no
+/// further command chained), or an `edit` request of the path `prefix`, or below it when it
+/// ends with `/`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PastLimit {
+    pub limit: String,
+    pub kind: String,
+    pub prefix: String,
+}
+
+impl PastLimit {
+    /// Whether this entry allows a `kind` request for `what` at `limit`.
+    pub fn allows(&self, limit: &str, kind: &str, what: &str) -> bool {
+        if self.limit != limit || self.kind != kind || self.prefix.is_empty() {
+            return false;
+        }
+        let what = what.trim();
+        match kind {
+            "edit" => {
+                what == self.prefix
+                    || (self.prefix.ends_with('/') && what.starts_with(&self.prefix))
+            }
+            _ => match what.strip_prefix(self.prefix.as_str()) {
+                Some("") => true,
+                Some(rest) => {
+                    rest.starts_with(' ')
+                        && !rest.contains([';', '&', '|', '<', '>', '`', '\n', '$', '(', ')'])
+                }
+                None => false,
+            },
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Project {
     pub id: String,
@@ -124,6 +159,10 @@ pub struct Project {
     pub level: Level,
     #[serde(default)]
     pub approved_commands: Vec<String>,
+    /// 015 (2026-11-24 amendment, the engineer): what the engineer allowed always, in this
+    /// project, past a limit Fallow stops the agents at (never a control file).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub allowed_past_limits: Vec<PastLimit>,
     #[serde(default)]
     pub budget_per_task: Budget,
     /// 1 once `budget_per_task` moved off the old default (T086); new projects start at 1.
@@ -437,6 +476,7 @@ impl Store {
             pipeline: standard(),
             level: Level::Normal,
             approved_commands: Vec::new(),
+            allowed_past_limits: Vec::new(),
             budget_per_task: Budget::default(),
             budget_version: 1,
             notifications: true,

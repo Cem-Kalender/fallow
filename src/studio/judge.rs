@@ -53,6 +53,10 @@ pub struct Part {
 /// whose effect cannot be told from the text (a subshell, a substitution, a background `&`, a
 /// here-document, ANSI-C quoting, a line continuation).
 pub fn split(cmd: &str) -> Result<Vec<Part>, String> {
+    // A here-document fed to a program that only reads its input as data: read without its
+    // body (2026-11-24 amendment, r13).
+    let stripped = strip_heredocs(cmd);
+    let cmd = stripped.as_deref().unwrap_or(cmd);
     let mut parts = Vec::new();
     let mut cur = Part::default();
     let mut word = String::new();
@@ -266,6 +270,229 @@ pub fn split(cmd: &str) -> Result<Vec<Part>, String> {
     Ok(parts)
 }
 
+/// Programs whose here-document is data they read, never code they run (`strip_heredocs`).
+const HEREDOC_DATA: &[&str] = &[
+    "cat", "tee", "head", "tail", "grep", "wc", "sort", "uniq", "cut", "tr", "jq", "base64",
+    "column", "nl", "less", "more",
+];
+
+/// 015 (2026-11-24 amendment, r13): `command` with each top-level here-document (`<<TAG`,
+/// `<<-TAG`, `<<'TAG'`, `<<"TAG"`, `<<\TAG`) fed to a program that reads it as data
+/// (`HEREDOC_DATA`) taken out: the operator becomes `</dev/null` (the part still reads its
+/// input) and the body goes. A quoted here-document's body is text, never paths or commands;
+/// an unquoted one's `$(…)` and backtick expansions run, so they are kept, each as a command of
+/// its own after the line. `None` when there is none, or when it cannot be read this way (an
+/// unclosed body, a here-document fed to a shell or an interpreter, inside quotes or a
+/// substitution): the command is then read as before.
+fn strip_heredocs(command: &str) -> Option<String> {
+    let c: Vec<char> = command.chars().collect();
+    let mut out = String::new();
+    let mut extra: Vec<String> = Vec::new();
+    // Here-documents opened on the current line: (tag, quoted, `<<-`).
+    let mut open: Vec<(String, bool, bool)> = Vec::new();
+    let mut quote: Option<char> = None;
+    let mut depth = 0usize;
+    let mut found = false;
+    // Where the current simple command starts in `out`.
+    let mut seg = 0usize;
+    let mut i = 0;
+    while i < c.len() {
+        let ch = c[i];
+        if let Some(q) = quote {
+            out.push(ch);
+            if ch == '\\' && q == '"' {
+                if let Some(n) = c.get(i + 1) {
+                    out.push(*n);
+                    i += 1;
+                }
+            } else if ch == q {
+                quote = None;
+            }
+            i += 1;
+            continue;
+        }
+        match ch {
+            '\'' | '"' => {
+                quote = Some(ch);
+                out.push(ch);
+                i += 1;
+            }
+            '\\' => {
+                out.push(ch);
+                if let Some(n) = c.get(i + 1) {
+                    out.push(*n);
+                }
+                i += 2;
+            }
+            '(' => {
+                depth += 1;
+                out.push(ch);
+                i += 1;
+            }
+            ')' => {
+                depth = depth.saturating_sub(1);
+                out.push(ch);
+                i += 1;
+            }
+            ';' | '&' | '|' => {
+                out.push(ch);
+                seg = out.len();
+                i += 1;
+            }
+            '<' if c.get(i + 1) == Some(&'<') && c.get(i + 2) != Some(&'<') => {
+                if depth > 0 {
+                    return None;
+                }
+                // The program it feeds: the first word of the command, after assignments.
+                let prog = out[seg..]
+                    .split_whitespace()
+                    .find(|w| !w.contains('='))
+                    .map(program)
+                    .unwrap_or_default();
+                if !HEREDOC_DATA.contains(&prog.as_str()) {
+                    return None;
+                }
+                let mut j = i + 2;
+                let dash = c.get(j) == Some(&'-');
+                if dash {
+                    j += 1;
+                }
+                while c.get(j) == Some(&' ') {
+                    j += 1;
+                }
+                let (tag, quoted) = match c.get(j) {
+                    Some(q @ ('\'' | '"')) => {
+                        let q = *q;
+                        let start = j + 1;
+                        let end = (start..c.len()).find(|k| c[*k] == q)?;
+                        j = end + 1;
+                        (c[start..end].iter().collect::<String>(), true)
+                    }
+                    Some('\\') => {
+                        let start = j + 1;
+                        j = start;
+                        while c
+                            .get(j)
+                            .is_some_and(|x| x.is_ascii_alphanumeric() || *x == '_')
+                        {
+                            j += 1;
+                        }
+                        (c[start..j].iter().collect::<String>(), true)
+                    }
+                    _ => {
+                        let start = j;
+                        while c
+                            .get(j)
+                            .is_some_and(|x| x.is_ascii_alphanumeric() || *x == '_')
+                        {
+                            j += 1;
+                        }
+                        (c[start..j].iter().collect::<String>(), false)
+                    }
+                };
+                if tag.is_empty() {
+                    return None;
+                }
+                open.push((tag, quoted, dash));
+                out.push_str(" </dev/null ");
+                found = true;
+                i = j;
+            }
+            '\n' if !open.is_empty() => {
+                out.push('\n');
+                seg = out.len();
+                i += 1;
+                // The bodies, in order, each up to its tag's line.
+                for (tag, quoted, dash) in std::mem::take(&mut open) {
+                    let mut body = String::new();
+                    loop {
+                        if i >= c.len() {
+                            return None;
+                        }
+                        let end = (i..c.len()).find(|k| c[*k] == '\n').unwrap_or(c.len());
+                        let line: String = c[i..end].iter().collect();
+                        i = (end + 1).min(c.len());
+                        let bare = if dash {
+                            line.trim_start_matches('\t')
+                        } else {
+                            &line
+                        };
+                        if bare == tag {
+                            break;
+                        }
+                        body.push_str(&line);
+                        body.push('\n');
+                    }
+                    if !quoted {
+                        extra.extend(expansions(&body)?);
+                    }
+                }
+            }
+            '\n' => {
+                out.push(ch);
+                seg = out.len();
+                i += 1;
+            }
+            _ => {
+                out.push(ch);
+                i += 1;
+            }
+        }
+    }
+    if !open.is_empty() || !found {
+        return None;
+    }
+    for e in extra {
+        out.push('\n');
+        out.push_str(&e);
+    }
+    Some(out)
+}
+
+/// The commands of the `$(…)` and backtick expansions in an unquoted here-document's body;
+/// `None` when one is not closed.
+fn expansions(body: &str) -> Option<Vec<String>> {
+    let c: Vec<char> = body.chars().collect();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < c.len() {
+        if c[i] == '\\' {
+            i += 2;
+            continue;
+        }
+        if c[i] == '$' && c.get(i + 1) == Some(&'(') {
+            let mut depth = 0usize;
+            let start = i + 2;
+            let mut j = i + 1;
+            loop {
+                match c.get(j) {
+                    None => return None,
+                    Some('(') => depth += 1,
+                    Some(')') => {
+                        depth -= 1;
+                        if depth == 0 {
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+                j += 1;
+            }
+            out.push(c[start..j].iter().collect());
+            i = j + 1;
+            continue;
+        }
+        if c[i] == '`' {
+            let end = (i + 1..c.len()).find(|k| c[*k] == '`')?;
+            out.push(c[i + 1..end].iter().collect());
+            i = end + 1;
+            continue;
+        }
+        i += 1;
+    }
+    Some(out)
+}
+
 /// `$(cat <<'TAG'` + newline + lines + `TAG` + newline + `)` at the start of `chars`: the
 /// lines as text, and how many characters it takes. Only this exact form, with a quoted tag
 /// and nothing else on the opening line: bash ends the here-document at the first line that is
@@ -358,9 +585,146 @@ fn normalize(p: &Path) -> PathBuf {
     out
 }
 
+/// 015 (Windows): a path as written, in the platform's plain form: on Windows a verbatim
+/// prefix (`\\?\C:\…`, `\\?\UNC\server\…`, as `canonicalize` gives) taken off and `/` read as
+/// `\`, so the parts compare with the paths around them. Elsewhere as it is.
+pub(crate) fn plain(arg: &str) -> String {
+    plain_as(arg, cfg!(windows))
+}
+
+/// `plain` as on Windows (`windows`) or not: pure, tested on every platform.
+fn plain_as(arg: &str, windows: bool) -> String {
+    if !windows {
+        return arg.to_string();
+    }
+    let s = arg.replace('/', "\\");
+    // Git Bash's and Cygwin's spelling of a drive: `/c/Users/…`, `/cygdrive/c/…` is `C:\Users\…`.
+    let msys = |r: &str| -> Option<String> {
+        let mut ch = r.chars();
+        let d = ch.next().filter(char::is_ascii_alphabetic)?;
+        let rest: String = ch.collect();
+        (rest.is_empty() || rest.starts_with('\\')).then(|| {
+            format!(
+                "{}:{}",
+                d.to_ascii_uppercase(),
+                if rest.is_empty() { "\\" } else { &rest }
+            )
+        })
+    };
+    if let Some(d) = s.strip_prefix(r"\cygdrive\").and_then(msys).or_else(|| {
+        s.strip_prefix('\\')
+            .filter(|r| !r.starts_with('\\'))
+            .and_then(msys)
+    }) {
+        return d;
+    }
+    if let Some(r) = s.strip_prefix(r"\\?\UNC\") {
+        format!(r"\\{r}")
+    } else if let Some(r) = s.strip_prefix(r"\\?\") {
+        r.to_string()
+    } else {
+        s
+    }
+}
+
+/// Whether paths compare without regard to case: on Windows and macOS (their default
+/// filesystems).
+const FOLD_CASE: bool = cfg!(windows) || cfg!(target_os = "macos");
+
+/// 015 (Windows): `path` relative to `base`, with `/` between its parts, when it is `base` or
+/// inside it, both read the same way: the verbatim prefix off, `\` and `/` alike (on
+/// Windows), `.` and `..` resolved, and without regard to case where the filesystem is (the
+/// relative part keeps the path's own spelling).
+pub(crate) fn within(path: &Path, base: &Path) -> Option<String> {
+    within_as(
+        &path.to_string_lossy(),
+        &base.to_string_lossy(),
+        cfg!(windows),
+        FOLD_CASE,
+    )
+}
+
+/// `within` for the engineer's folder, read to be safe: on Windows a rooted path with no drive
+/// (`\Users\me\proj\x`, on the current drive) counts as on the folder's drive, so it is never
+/// taken for somewhere else.
+pub(crate) fn in_folder_at(path: &Path, folder: &Path) -> bool {
+    in_folder_as(
+        &path.to_string_lossy(),
+        &folder.to_string_lossy(),
+        cfg!(windows),
+        FOLD_CASE,
+    )
+}
+
+/// `in_folder_at` as on Windows (`windows`) and with case folded (`fold`) or not.
+fn in_folder_as(path: &str, folder: &str, windows: bool, fold: bool) -> bool {
+    if within_as(path, folder, windows, fold).is_some() {
+        return true;
+    }
+    if !windows {
+        return false;
+    }
+    let p = plain_as(path, true).replace('\\', "/");
+    let f = plain_as(folder, true).replace('\\', "/");
+    let drive_less = p.starts_with('/') && !p.starts_with("//");
+    match f.split_once(':') {
+        Some((d, rest)) if drive_less && d.len() == 1 => within_as(&p, rest, true, fold).is_some(),
+        _ => false,
+    }
+}
+
+/// `within` as on Windows (`windows`) and with case folded (`fold`) or not.
+fn within_as(path: &str, base: &str, windows: bool, fold: bool) -> Option<String> {
+    let key = |s: &str| -> String {
+        let s = if windows {
+            plain_as(s, true).replace('\\', "/")
+        } else {
+            s.to_string()
+        };
+        let unc = s.starts_with("//");
+        let rooted = s.starts_with('/');
+        let mut parts: Vec<&str> = Vec::new();
+        for c in s.split('/') {
+            match c {
+                "" | "." => {}
+                ".." => {
+                    // Never above a drive (`C:`).
+                    if parts.last().is_some_and(|l| !(windows && l.ends_with(':'))) {
+                        parts.pop();
+                    }
+                }
+                x => parts.push(x),
+            }
+        }
+        let joined = parts.join("/");
+        if unc {
+            format!("//{joined}")
+        } else if rooted {
+            format!("/{joined}")
+        } else {
+            joined
+        }
+    };
+    let (p, b) = (key(path), key(base));
+    let same = |x: &str, y: &str| {
+        if fold {
+            x.eq_ignore_ascii_case(y)
+        } else {
+            x == y
+        }
+    };
+    if same(&p, &b) {
+        return Some(String::new());
+    }
+    let pre = format!("{}/", b.trim_end_matches('/'));
+    (p.len() > pre.len() && p.is_char_boundary(pre.len()) && same(&p[..pre.len()], &pre))
+        .then(|| p[pre.len()..].to_string())
+}
+
 /// Where a path argument points: its folder resolved through symlinks as far as it exists.
 fn resolve(base: &Path, arg: &str) -> PathBuf {
-    let p = Path::new(arg);
+    let arg = plain(arg);
+    let p = Path::new(&arg);
     let joined = normalize(&if p.is_absolute() {
         p.to_path_buf()
     } else {
@@ -381,7 +745,18 @@ fn resolve(base: &Path, arg: &str) -> PathBuf {
             _ => break,
         }
     }
-    let mut out = std::fs::canonicalize(&existing).unwrap_or(existing);
+    // Only a folder is canonicalized, never a bare root: on Windows `/` would become the
+    // current drive (`C:\`) while the paths it is compared with keep no drive.
+    let named = existing
+        .components()
+        .any(|c| matches!(c, Component::Normal(_)));
+    let mut out = if named {
+        std::fs::canonicalize(&existing)
+            .map(|c| PathBuf::from(plain(&c.to_string_lossy())))
+            .unwrap_or(existing)
+    } else {
+        existing
+    };
     for n in rest.into_iter().rev() {
         out.push(n);
     }
@@ -389,7 +764,13 @@ fn resolve(base: &Path, arg: &str) -> PathBuf {
 }
 
 fn canon(p: &Path) -> PathBuf {
-    std::fs::canonicalize(p).unwrap_or_else(|_| normalize(p))
+    match std::fs::canonicalize(p) {
+        Ok(c) => PathBuf::from(plain(&c.to_string_lossy())),
+        // Not there (yet): read as `resolve` reads the paths compared with it, through the
+        // folders that exist (`/var` is `/private/var` on macOS).
+        Err(_) if p.has_root() => resolve(p, &p.to_string_lossy()),
+        Err(_) => normalize(Path::new(&plain(&p.to_string_lossy()))),
+    }
 }
 
 /// What a word as a path means for the session: inside its copy (with the path relative to
@@ -402,7 +783,8 @@ enum Place {
 
 /// Where `arg` points, read from the folder `base` the command runs in (R-6).
 fn place(ctx: &Ctx, base: &Path, arg: &str) -> Place {
-    let a = arg.trim();
+    // A verbatim prefix (`\\?\C:\…`) is a local path, not a network one.
+    let a = &plain(arg.trim());
     let lower = a.to_ascii_lowercase();
     // PowerShell's provider drives and network paths are never the working copy (V).
     if lower.starts_with("\\\\") || lower.starts_with("//") {
@@ -417,23 +799,26 @@ fn place(ctx: &Ctx, base: &Path, arg: &str) -> Place {
         }
     }
     let real = resolve(&canon(base), a);
-    let wt = canon(ctx.wt);
-    if let Ok(rel) = real.strip_prefix(&wt) {
-        return Place::Inside(rel.to_string_lossy().replace('\\', "/"));
+    if let Some(rel) = within(&real, &canon(ctx.wt)) {
+        return Place::Inside(rel);
     }
-    if real.starts_with(canon(ctx.folder)) {
+    if in_folder_at(&real, &canon(ctx.folder)) {
         return Place::Folder;
     }
     Place::Outside
+}
+
+/// 015: whether `path` (as an agent wrote it, from the copy `wt`) is in the engineer's
+/// `folder`, read to be safe (`in_folder_at`).
+pub fn in_folder_path(folder: &Path, wt: &Path, path: &str) -> bool {
+    in_folder_at(&resolve(&canon(wt), path.trim()), &canon(folder))
 }
 
 /// 015: `path` relative to `base` as it resolves (symlinks, `..`, absolute spellings), when it
 /// is inside `base`; with `/` separators.
 pub fn rel_inside(base: &Path, path: &str) -> Option<String> {
     let real = resolve(&canon(base), path.trim());
-    real.strip_prefix(canon(base))
-        .ok()
-        .map(|r| r.to_string_lossy().replace('\\', "/"))
+    within(&real, &canon(base))
 }
 
 /// Whether a word is used as a path: it names a folder or a file by its form (a URL is not).
@@ -1784,6 +2169,275 @@ pub fn limit_problem(cmd: &str, ctx: &Ctx, control_files: &[String]) -> Option<(
         .map(|w| (false, w.clone()))
 }
 
+/// 015 (2026-11-24 amendment, the engineer): what a command, read as written, writes to one of
+/// the places that control the agents (`ctx.protect`: Fallow's control files, the runtime's
+/// settings files, git's own record of the working copy). Never allowed, in Auto: a read of
+/// them is not a write. `None` when it writes none of them, as far as the text tells.
+pub fn protected_write(cmd: &str, ctx: &Ctx) -> Option<String> {
+    // Read as written only: a command Fallow cannot split is `protected_unread`'s.
+    split(cmd).ok()?;
+    if let Some(rel) = super::control::writes(cmd, ctx.wt, ctx.folder, ctx.protect) {
+        return Some(format!(
+            "it may change {rel}, which the agent may not change"
+        ));
+    }
+    let Verdict::Ask(reasons) = assess(cmd, ctx) else {
+        return None;
+    };
+    let parts = split(cmd).ok()?;
+    let changes = parts.iter().any(|p| {
+        MODIFIES.contains(&part_program(p).as_str()) || p.redirects.iter().any(|t| !discards(t))
+    });
+    if !changes {
+        return None;
+    }
+    reasons
+        .iter()
+        .find(|w| {
+            w.contains("git's own record") || w.contains("which the assistant may not change")
+        })
+        .map(|w| format!("it changes a file the agent may not change ({w})"))
+}
+
+/// 015 (2026-11-24 amendment): a command Fallow cannot read as written (a here-document, a
+/// substitution) that names a place controlling the agents: it may write there or not, so it
+/// waits for the engineer rather than being refused for good (the runtime's own settings
+/// files stay refused, `limit_problem`).
+pub fn protected_unread(cmd: &str, ctx: &Ctx) -> Option<String> {
+    if split(cmd).is_ok() {
+        return None;
+    }
+    super::control::writes(cmd, ctx.wt, ctx.folder, ctx.protect).map(|rel| {
+        format!("it may change {rel}, which the agent may not change; Fallow cannot read the command as written")
+    })
+}
+
+/// A redirection that writes nowhere (`/dev/null`, PowerShell's `$null`, `NUL`).
+fn discards(t: &str) -> bool {
+    matches!(
+        t.to_ascii_lowercase().as_str(),
+        "/dev/null" | "$null" | "nul"
+    )
+}
+
+/// Programs that only read, or only print, whatever they name: a part running one of them
+/// changes nothing but what it redirects to (015, `folder_change`).
+const ONLY_READ: &[&str] = &[
+    "awk", "gawk", "cut", "sort", "uniq", "tr", "echo", "printf", "pwd", "which", "whereis",
+    "basename", "dirname", "column", "nl", "od", "hexdump", "xxd", "strings", "tac", "rev",
+    "paste", "join", "comm", "fold", "expand", "date", "uname", "whoami", "id", "du", "df", "tree",
+    "true", "false", "sleep", "seq", "find", "fd", "sed", "command",
+];
+
+/// 015 (2026-11-24 amendment): whether `cmd`, read as written, writes to, deletes in or
+/// otherwise changes the engineer's folder (outside the session's working copy): the one Run
+/// limit of Auto besides the target and the control files. It follows each `cd` (the home
+/// folder by `HOME`), so `cd <folder> && rm x` counts and `cd /tmp/x; tail f` does not. A part
+/// that only reads (`READS`, `ONLY_READ`) changes nothing but what it redirects to; any other
+/// program counts when it runs in the folder or names a path in it (a copy, only its
+/// destination). Reading or naming paths elsewhere, and writing elsewhere (the system temp
+/// folder included), are not limits. What cannot be read as written is not judged here (Auto
+/// allows it, spec FR-003), except a writing program after a `cd` Fallow cannot follow.
+pub fn folder_change(cmd: &str, ctx: &Ctx) -> Option<String> {
+    let parts = split(cmd).ok()?;
+    let folder = canon(ctx.folder);
+    let wt = canon(ctx.wt);
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    // Where a word points, from `base`; `None` when the text does not tell (a variable).
+    let at = |base: &Path, w: &str| -> Option<PathBuf> {
+        let w = w.trim();
+        let (root, rest) = if w == "~" || w.starts_with("~/") {
+            (home.clone()?, w.trim_start_matches('~'))
+        } else if let Some(r) = w
+            .strip_prefix("$HOME")
+            .or_else(|| w.strip_prefix("${HOME}"))
+        {
+            (home.clone()?, r)
+        } else if uses_variable(w) || w.starts_with('~') {
+            return None;
+        } else {
+            (base.to_path_buf(), w)
+        };
+        let rest = rest.trim_start_matches(['/', '\\']);
+        // Rooted counts as absolute: on Windows `/c/x` or `\x` has no drive yet names no
+        // folder below the shell's.
+        let abs = if Path::new(w).is_absolute() || w.starts_with(['/', '\\']) {
+            PathBuf::from(plain(w))
+        } else if rest.is_empty() {
+            root
+        } else {
+            root.join(rest)
+        };
+        Some(resolve(Path::new("/"), &abs.display().to_string()))
+    };
+    let in_folder = |p: &Path| in_folder_at(p, &folder) && within(p, &wt).is_none();
+    // Where the shell is; `None` after a `cd` Fallow cannot follow.
+    let mut base: Option<PathBuf> = Some(wt.clone());
+    for p in &parts {
+        // Shell keywords before the command (`do`, `then`): the command after them is judged.
+        const KEYWORDS: &[&str] = &[
+            "if", "elif", "then", "else", "do", "while", "until", "!", "fi", "done", "esac", "{",
+            "}",
+        ];
+        let words: Vec<&str> = p
+            .words
+            .iter()
+            .map(String::as_str)
+            .skip_while(|w| KEYWORDS.contains(w))
+            .skip_while(|w| {
+                w.split_once('=').is_some_and(|(k, _)| {
+                    !k.is_empty() && k.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+                })
+            })
+            .collect();
+        for t in p.redirects.iter().filter(|t| !discards(t)) {
+            match base.as_deref().and_then(|b| at(b, t)) {
+                Some(x) if in_folder(&x) => {
+                    return Some(format!("it writes in your project folder ({t})"));
+                }
+                None if !Path::new(t).is_absolute() && base.is_none() => {
+                    return Some(format!(
+                        "it writes {t} after moving to a folder Fallow cannot tell"
+                    ));
+                }
+                // On Windows, a write Fallow cannot place may be in the folder (PR #3).
+                None if cfg!(windows) => {
+                    return Some(format!("it writes {t}, a path Fallow cannot place"));
+                }
+                _ => {}
+            }
+        }
+        let Some(first) = words.first() else {
+            continue;
+        };
+        let prog = program(first);
+        let args = &words[1..];
+        // `for x in …`, `case …`: they run nothing themselves.
+        if matches!(prog.as_str(), "for" | "case" | "select" | "function") {
+            continue;
+        }
+        if matches!(
+            prog.as_str(),
+            "cd" | "pushd" | "set-location" | "sl" | "chdir" | "push-location"
+        ) {
+            base = match args.iter().find(|a| !a.starts_with('-')) {
+                None => home.as_deref().map(canon),
+                Some(t) => base.as_deref().and_then(|b| at(b, t)),
+            };
+            continue;
+        }
+        let opts = options(args);
+        let reads = READS.contains(&prog.as_str())
+            || (ONLY_READ.contains(&prog.as_str())
+                && match prog.as_str() {
+                    "sed" => !args.iter().any(|a| {
+                        a.starts_with("--in-place")
+                            || (a.starts_with('-') && !a.starts_with("--") && a.contains('i'))
+                    }),
+                    "find" => !opts.iter().any(|o| {
+                        matches!(
+                            o.as_str(),
+                            "-exec"
+                                | "-execdir"
+                                | "-ok"
+                                | "-okdir"
+                                | "-delete"
+                                | "-fprint"
+                                | "-fprint0"
+                                | "-fprintf"
+                                | "-fls"
+                        )
+                    }),
+                    _ => true,
+                });
+        if reads {
+            continue;
+        }
+        match base.as_deref() {
+            Some(b) if in_folder(b) => {
+                return Some(format!("it runs {prog} in your project folder"));
+            }
+            None if MODIFIES.contains(&prog.as_str()) => {
+                return Some(format!(
+                    "it runs {prog} after moving to a folder Fallow cannot tell"
+                ));
+            }
+            None => continue,
+            Some(_) => {}
+        }
+        let b = base.clone().unwrap_or_else(|| wt.clone());
+        // A copy reads its sources: only its destination is written.
+        let named: Vec<&str> = if matches!(prog.as_str(), "cp" | "rsync" | "install" | "ln" | "scp")
+        {
+            args.iter()
+                .rev()
+                .find(|a| !a.starts_with('-'))
+                .copied()
+                .into_iter()
+                .collect()
+        } else {
+            args.to_vec()
+        };
+        for a in named {
+            // A string given to a shell or a program: each word in it, and `--opt=value`'s value.
+            for w in a
+                .split(|c: char| {
+                    c.is_whitespace()
+                        || matches!(c, ';' | '&' | '|' | '(' | ')' | '>' | '<' | '=' | ',')
+                })
+                .filter(|w| !w.is_empty() && !w.starts_with('-'))
+            {
+                if !(looks_like_path(w) || w.starts_with('$')) {
+                    continue;
+                }
+                match at(&b, w) {
+                    Some(x) if in_folder(&x) => {
+                        return Some(format!("it may change your project folder ({w})"));
+                    }
+                    // On Windows, a path Fallow cannot place may be in the folder (PR #3).
+                    None if cfg!(windows) => {
+                        return Some(format!("it may change {w}, a path Fallow cannot place"));
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    None
+}
+
+/// 015 (2026-11-24 amendment, research R-3): whether `path` is in the system's temporary
+/// folder (`/tmp`, `$TMPDIR`, `std::env::temp_dir()`, `/private/tmp`, `/var/folders/…`),
+/// however it is spelled: scratch space, not the engineer's project.
+pub fn in_temp(path: &str) -> bool {
+    let p = path.trim();
+    if p.is_empty() || !Path::new(p).is_absolute() {
+        return false;
+    }
+    let real = resolve(Path::new("/"), p);
+    let mut roots: Vec<PathBuf> = vec![std::env::temp_dir()];
+    if let Some(t) = std::env::var_os("TMPDIR") {
+        roots.push(PathBuf::from(t));
+    }
+    if cfg!(unix) {
+        roots.extend(
+            [
+                "/tmp",
+                "/private/tmp",
+                "/var/tmp",
+                "/private/var/tmp",
+                "/var/folders",
+                "/private/var/folders",
+            ]
+            .map(PathBuf::from),
+        );
+    }
+    roots
+        .iter()
+        .filter(|r| r.is_absolute() && r.components().count() > 1)
+        .any(|r| within(&real, &canon(r)).is_some() || within(&real, r).is_some())
+}
+
 /// The program a part runs, after any `X=1` assignments before it.
 fn part_program(p: &Part) -> String {
     p.words
@@ -2328,6 +2982,122 @@ pub fn runs_unasked(cmd: &str, gates: &[String], approved: &[String], ctx: &Ctx)
 
 #[cfg(test)]
 mod tests {
+    /// 015 (Windows CI): Windows-shaped paths compare as Windows reads them, on every
+    /// platform: the verbatim prefix, `\` and `/`, case, drive letters, `.` and `..`.
+    #[test]
+    fn windows_paths_compare_as_windows_reads_them() {
+        let wt = r"\\?\C:\Users\runneradmin\AppData\Local\Temp\fallow-mode-auto-7088\wt";
+        for (path, rel) in [
+            (
+                r"\\?\C:\Users\runneradmin\AppData\Local\Temp\fallow-mode-auto-7088\wt\src/a.rs",
+                Some("src/a.rs"),
+            ),
+            (
+                r"C:\Users\runneradmin\AppData\Local\Temp\fallow-mode-auto-7088\wt\src\a.rs",
+                Some("src/a.rs"),
+            ),
+            (
+                "c:/users/RUNNERADMIN/appdata/local/temp/fallow-mode-auto-7088/WT/src/a.rs",
+                Some("src/a.rs"),
+            ),
+            (
+                r"C:\Users\runneradmin\AppData\Local\Temp\fallow-mode-auto-7088\wt\x\..\.\src\a.rs",
+                Some("src/a.rs"),
+            ),
+            (
+                r"C:\Users\runneradmin\AppData\Local\Temp\fallow-mode-auto-7088\wt",
+                Some(""),
+            ),
+            (
+                r"C:\Users\runneradmin\AppData\Local\Temp\fallow-mode-auto-7088\wt2\a.rs",
+                None,
+            ),
+            (
+                r"C:\Users\runneradmin\AppData\Local\Temp\fallow-mode-auto-7088\wt\..\a.rs",
+                None,
+            ),
+            (
+                r"D:\Users\runneradmin\AppData\Local\Temp\fallow-mode-auto-7088\wt\a.rs",
+                None,
+            ),
+            (
+                r"C:\..\..\Users\runneradmin\AppData\Local\Temp\fallow-mode-auto-7088\wt\a.rs",
+                Some("a.rs"),
+            ),
+        ] {
+            assert_eq!(within_as(path, wt, true, true).as_deref(), rel, "{path}");
+        }
+        assert_eq!(
+            within_as(r"\\?\UNC\srv\share\wt\a", r"\\srv\share\wt", true, true).as_deref(),
+            Some("a")
+        );
+        // A drive-less root, as the lead's tests spell it.
+        assert_eq!(
+            within_as("/w/spec/specs/015-x/spec.md", r"\w\spec", true, true).as_deref(),
+            Some("specs/015-x/spec.md")
+        );
+        assert_eq!(plain_as(r"\\?\C:\a/b", true), r"C:\a\b");
+        assert_eq!(plain_as(r"\\?\UNC\srv\s", true), r"\\srv\s");
+        // Elsewhere a backslash is part of a name, and case counts where the filesystem says.
+        assert_eq!(within_as(r"/w/x\..\..\wt/a", "/w/wt", false, false), None);
+        assert_eq!(within_as("/w/WT/a", "/w/wt", false, false), None);
+        assert_eq!(
+            within_as("/w/WT/a", "/w/wt", false, true).as_deref(),
+            Some("a")
+        );
+        assert_eq!(plain_as(r"\\?\C:\a", false), r"\\?\C:\a");
+        // Git Bash and Cygwin drives; a drive-less rooted path counts as on the folder's drive
+        // (PR #3), never inside the copy for it.
+        assert_eq!(plain_as("/c/Users/me/proj/a", true), r"C:\Users\me\proj\a");
+        assert_eq!(plain_as("/cygdrive/d/x", true), r"D:\x");
+        assert_eq!(plain_as("/c", true), r"C:\");
+        assert_eq!(plain_as("/cc/x", true), r"\cc\x");
+        let folder = r"C:\Users\me\proj";
+        for p in [
+            "/c/Users/me/proj/src/a.py",
+            "C:/Users/me/proj/README.md",
+            r"\Users\me\proj\x",
+            "/Users/ME/proj/x",
+            r"\\?\C:\Users\me\proj",
+        ] {
+            assert!(in_folder_as(p, folder, true, true), "{p}");
+        }
+        for p in [
+            r"D:\Users\me\proj\x",
+            "/d/Users/me/proj/x",
+            r"C:\Users\me\other",
+        ] {
+            assert!(!in_folder_as(p, folder, true, true), "{p}");
+        }
+        assert_eq!(within_as(r"\Users\me\proj\x", folder, true, true), None);
+        assert!(!in_folder_as("/w/folder/x", "/w/other", false, false));
+    }
+
+    /// 2026-11-24 amendment (r13): a here-document read as data has no paths or commands in
+    /// its body, except an unquoted one's expansions; one fed to a shell is still unreadable.
+    #[test]
+    fn a_here_document_s_body_is_data() {
+        let parts =
+            |c: &str| split(c).map(|p| p.iter().map(|x| x.text.clone()).collect::<Vec<_>>());
+        assert_eq!(
+            parts("cat > a.py <<'EOF'\nopen('.fallow/agents/x')\nrm -rf /\nEOF\nwc -l a.py")
+                .unwrap(),
+            ["cat > a.py  </dev/null", "wc -l a.py"]
+        );
+        let p = split("cat <<EOF > out.txt\nhi $(rm -rf x) `touch y`\nEOF").unwrap();
+        let t: Vec<&str> = p.iter().map(|x| x.text.as_str()).collect();
+        assert_eq!(t, ["cat  </dev/null  > out.txt", "rm -rf x", "touch y"]);
+        assert_eq!(p[0].redirects, ["/dev/null", "out.txt"]);
+        // Fed to a shell or an interpreter, or not closed: as before, not readable.
+        for c in [
+            "bash <<'EOF'\nrm -rf /\nEOF",
+            "python3 <<'EOF'\nprint(1)\nEOF",
+            "cat > a <<'EOF'\nno end",
+        ] {
+            assert!(split(c).is_err(), "{c}");
+        }
+    }
+
     use super::*;
 
     fn dirs() -> (PathBuf, PathBuf) {

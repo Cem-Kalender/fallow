@@ -1013,6 +1013,7 @@ impl Studio {
         raw: &Value,
         reply: Sender<Reply>,
         facts: Option<Value>,
+        held: Option<super::mode::Held>,
     ) -> Result<(), String> {
         let c = self.convs.get(conv).ok_or("the session is gone")?;
         let id = format!(
@@ -1031,6 +1032,7 @@ impl Studio {
             command: command.clone(),
             reasons,
             merge: facts.clone(),
+            limit: held.as_ref().map(|h| h.limit.name().to_string()),
         })
         .map_err(|_| "Fallow could not record the question.".to_string())?;
         c.pending = Some(Pending {
@@ -1038,6 +1040,7 @@ impl Studio {
             tool: tool.to_string(),
             read,
             facts,
+            held,
             command,
             raw: raw.clone(),
             runtime: runtime.to_string(),
@@ -1416,8 +1419,9 @@ impl Studio {
                 .map(|p| !self.squad_of(p).gates.is_empty())
                 .unwrap_or(false),
         };
-        // "Always in this project" only for a prefix the server would accept (review 6).
-        if let Some(p) = c.pending.as_ref() {
+        // "Always in this project" only for a prefix the server would accept (review 6); past a
+        // limit, the entry is not an approved command (015, 2026-11-24 amendment).
+        if let Some(p) = c.pending.as_ref().filter(|p| p.held.is_none()) {
             let always = crate::project::commands::always_prefix(&p.command).ok();
             let safe = always.as_deref().is_some_and(|pre| {
                 self.judge_cx(c.id(), &p.runtime).is_ok_and(|jx| {

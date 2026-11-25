@@ -37,7 +37,7 @@ use crate::run::events::{Level, Log, PhaseSpec};
 use crate::speckit::lock::{self, Finding};
 use crate::verify::git;
 
-use conv::{Conv, Pending};
+use conv::Conv;
 
 /// The Spec Kit steps of a spec session, in order (FR-006). `done` follows analyze.
 pub const STEPS: &[&str] = &[
@@ -934,6 +934,19 @@ impl Studio {
                 return Err(why);
             }
             p.assistant = Some(v.to_string()).filter(|a| a != solo::ASSISTANT);
+        }
+        // 015 (2026-11-24 amendment): the engineer removes what they allowed always past a
+        // limit; entries are only added from a card ("Always allow"), never here.
+        if let Some(v) = patch.get("allowed_past_limits") {
+            let keep: Vec<project::PastLimit> = serde_json::from_value(v.clone())
+                .map_err(|e| format!("allowed_past_limits: {e}"))?;
+            if let Some(e) = keep.iter().find(|e| !p.allowed_past_limits.contains(e)) {
+                return Err(format!(
+                    "{:?} is not allowed past a limit: it is only added from a card",
+                    e.prefix
+                ));
+            }
+            p.allowed_past_limits.retain(|e| keep.contains(e));
         }
         *self.project_mut(id)? = p;
         self.store.save()?;
@@ -2441,7 +2454,11 @@ impl Studio {
             return Err("that command is no longer waiting".into());
         }
         let solo = c.state.solo.clone();
-        if answer == ApprovalAnswer::Always && c.pending.as_ref().is_some_and(Pending::is_read) {
+        if answer == ApprovalAnswer::Always
+            && c.pending
+                .as_ref()
+                .is_some_and(|p| p.is_read() && p.held.is_none())
+        {
             return Err("a read is allowed once at a time".into());
         }
         let command = c
@@ -2450,7 +2467,42 @@ impl Studio {
             .map(|p| p.command.clone())
             .unwrap_or_default();
         let project = c.state.project.clone();
+        let held = c.pending.as_ref().and_then(|p| p.held.clone());
+        // 015 (2026-11-24 amendment): "Always allow" past a limit: an entry of the project's
+        // `allowed_past_limits`, not an approved command.
+        let mut past: Option<project::PastLimit> = None;
+        if let (ApprovalAnswer::Always, Some(h)) = (answer, held.as_ref()) {
+            if !h.always() {
+                return Err("this is allowed once at a time".into());
+            }
+            let pre = prefix
+                .as_deref()
+                .map(str::trim)
+                .filter(|p| !p.is_empty())
+                .ok_or("name what to allow always")?
+                .to_string();
+            let fits = if h.kind == "edit" {
+                command == pre || (pre.ends_with('/') && command.starts_with(&pre))
+            } else {
+                command
+                    .strip_prefix(pre.as_str())
+                    .is_some_and(|r| r.is_empty() || r.starts_with(' '))
+            };
+            if !fits {
+                return Err(if h.kind == "edit" {
+                    format!("{pre:?} is not this path, nor a folder ending in / that holds it")
+                } else {
+                    format!("{pre:?} is not the start of {command:?}")
+                });
+            }
+            past = Some(project::PastLimit {
+                limit: h.limit.name().to_string(),
+                kind: h.kind.to_string(),
+                prefix: pre,
+            });
+        }
         let prefix = match (answer, prefix) {
+            (ApprovalAnswer::Always, Some(pre)) if past.is_some() => Some(pre.trim().to_string()),
             (ApprovalAnswer::Always, Some(pre)) => {
                 let pre = pre.trim().to_string();
                 if let Some(why) = project::commands::command_problem(&pre) {
@@ -2491,25 +2543,52 @@ impl Studio {
             }
             _ => None,
         };
-        if let Some(pre) = &prefix {
+        if let Some(e) = past {
+            let p = self.project_mut(&project)?;
+            if !p.allowed_past_limits.contains(&e) {
+                p.allowed_past_limits.push(e);
+            }
+            self.store.save()?;
+        } else if let Some(pre) = &prefix {
             let p = self.project_mut(&project)?;
             if !p.approved_commands.contains(pre) {
                 p.approved_commands.push(pre.clone());
             }
             self.store.save()?;
         }
+        let lead_cwd = self.convs.get(conv).and_then(|c| {
+            let p = self.project(&c.state.project).ok()?;
+            Some((c.state.workdir.clone(), c.state.workdir.join(&p.spec_root)))
+        });
         let c = self.conv_mut(conv)?;
         let pending = c.pending.take().expect("checked");
-        let msg = match answer {
-            ApprovalAnswer::Deny if pending.is_read() => {
+        let msg = match (answer, &pending.held) {
+            (ApprovalAnswer::Deny, Some(h)) => pending.answer(false, &h.denied()),
+            (ApprovalAnswer::Deny, None) if pending.is_read() => {
                 pending.answer(false, "The engineer refused this read.")
             }
-            ApprovalAnswer::Deny => pending.answer(false, "The engineer refused this command."),
+            (ApprovalAnswer::Deny, None) => {
+                pending.answer(false, "The engineer refused this command.")
+            }
             _ => pending.answer(true, ""),
         };
+        // 015: a lead's edit allowed past its limit is kept at the turn's end (review of US2, 3).
+        if solo.is_none() && answer != ApprovalAnswer::Deny {
+            if let (Some(h), Some((wd, cwd))) = (&pending.held, &lead_cwd) {
+                if h.kind == "edit" {
+                    let abs = cwd.join(&pending.command);
+                    if let Some(rel) = judge::rel_inside(wd, &abs.display().to_string()) {
+                        c.allowed_paths.push(rel);
+                    }
+                }
+            }
+        }
         // 012 (R-10): a session's command allowed now opens its window (never earlier: what
         // the engineer did while the card waited is not the session's).
-        let opens = solo.is_some() && answer != ApprovalAnswer::Deny && !pending.is_read();
+        let opens = solo.is_some()
+            && answer != ApprovalAnswer::Deny
+            && !pending.is_read()
+            && pending.held.as_ref().is_none_or(|h| h.kind == "run");
         let (raw, command) = (pending.raw.clone(), pending.command.clone());
         // The window opens before the answer goes: a fast push is in it (Phase 7 review, 4).
         if opens {

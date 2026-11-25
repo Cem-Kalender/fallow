@@ -38,6 +38,7 @@ fn what(item: &Value) -> &'static str {
         Some("docs_changed") => "the target changed this feature's documents: lock again or stop",
         Some("overlap") => "another loop changes the same files; you may let one wait",
         Some("refused") => "an agent was refused something; allow it once or dismiss it",
+        Some("limit") => "an agent waits at a limit; allow it or deny it",
         _ => match item["what"].as_str() {
             Some("stopped at a limit") => "stopped at a limit",
             Some("stopped at the repair cap") => "stopped at the repair cap",
@@ -51,7 +52,7 @@ pub fn notice(item: &Value, page: Option<&str>) -> Notice {
     let project = item["project_name"].as_str().unwrap_or_default();
     let feature = item["feature"].as_str().unwrap_or_default();
     // 015 (R-9): a refusal opens its chat: the spec session, or the project with the session.
-    let chat = item["kind"] == "refused";
+    let chat = item["kind"] == "refused" || item["kind"] == "limit";
     let hash = match item["project"].as_str().filter(|p| !p.is_empty()) {
         Some(p) if chat && item["solo"] == true => format!(
             "#/p/{}?session={}&refusal={}",
@@ -93,7 +94,7 @@ pub fn notice(item: &Value, page: Option<&str>) -> Notice {
                 )
             }
             // The chat's name only: never the command, the path or the reason (008, R-9).
-            Some("refused") => format!(
+            Some("refused" | "limit") => format!(
                 "{}: {}",
                 item["chat"].as_str().unwrap_or("a chat"),
                 what(item)
