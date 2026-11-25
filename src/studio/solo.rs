@@ -143,6 +143,8 @@ pub(super) fn cut_on_load(c: &mut super::Conv) {
         changed: Vec::new(),
         cut: true,
         folded_into: None,
+        session_total_usd: None,
+        own_cost: true,
     });
 }
 
@@ -646,6 +648,7 @@ impl Studio {
             session: session.clone(),
             model: Some(def.model.clone()).filter(|m| !m.is_empty()),
             budget_usd: Some(def.limits.usd.unwrap_or(5.0)),
+            session_total_usd: c.state.session_total(&session),
             cwd: wt.clone(),
             time_limit: Duration::from_secs(def.limits.minutes.unwrap_or(30) * 60),
             system: Some(prompts::assistant_system(&def.body)),
@@ -760,6 +763,7 @@ impl Studio {
                 result: None,
                 failure: Some(e.clone()),
                 cost_usd: None,
+                session_total_usd: None,
                 session: None,
                 denials: Vec::new(),
                 duration: Duration::ZERO,
@@ -871,6 +875,8 @@ impl Studio {
             changed,
             cut,
             folded_into: folding,
+            session_total_usd: outcome.session_total_usd,
+            own_cost: true,
         })?;
         if let Some((title, brief)) = result
             .as_ref()

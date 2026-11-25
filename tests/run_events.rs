@@ -450,3 +450,80 @@ fn an_update_folds_into_the_loop_and_reopens_every_story() {
     );
     let _ = std::fs::remove_dir_all(&d);
 }
+
+/// A repair resumes its builder's session. Steps recorded before 2026-11-25 hold Claude Code's
+/// running total for the session: on load, a resumed step's total at least the session's last
+/// is corrected to the difference, so the loop's cost and its budget count each dollar once.
+#[test]
+fn old_steps_of_running_totals_are_corrected_on_load() {
+    use fallow::run::events::{StepEnd, StepKind};
+    let d = dir("step-costs");
+    let (mut log, _, _) = Log::open(&d).unwrap();
+    log.append(created()).unwrap();
+    // (kind, resume, session, cost, session total, own cost)
+    type Rec<'a> = (StepKind, Option<&'a str>, &'a str, f64, Option<f64>, bool);
+    let steps: [Rec; 5] = [
+        (StepKind::Build, None, "s1", 0.5, None, false),
+        (StepKind::Repair, Some("s1"), "s1", 0.75, None, false),
+        (StepKind::Build, None, "s2", 0.25, None, false),
+        // Recorded since: the step's own cost, with the session's total beside it.
+        (StepKind::Repair, Some("s1"), "s1", 0.125, Some(0.875), true),
+        (
+            StepKind::Repair,
+            Some("s1"),
+            "s1",
+            0.0625,
+            Some(0.9375),
+            true,
+        ),
+    ];
+    for (i, (kind, resume, session, cost, total, own)) in steps.into_iter().enumerate() {
+        let n = i as u32 + 1;
+        log.append(Event::StepQueued {
+            n,
+            kind,
+            part: None,
+            resume: resume.map(str::to_string),
+            reason: "r".into(),
+            task: None,
+            phase: None,
+            def: None,
+        })
+        .unwrap();
+        log.append(Event::StepStarted {
+            n,
+            agent: "claude".into(),
+            model: "opus".into(),
+            session: session.into(),
+            worktree: PathBuf::from("w"),
+            base: "b".into(),
+        })
+        .unwrap();
+        log.append(Event::StepFinished {
+            n,
+            end: StepEnd::Failed { why: "x".into() },
+            cost_usd: Some(cost),
+            duration_ms: 1,
+            denials: Vec::new(),
+            session_total_usd: total,
+            own_cost: own,
+        })
+        .unwrap();
+    }
+    drop(log);
+    let (_, events, _) = Log::open(&d).unwrap();
+    let s = RunState::fold(1, &events).unwrap();
+    let costs: Vec<f64> = s.steps.values().map(|x| x.cost_usd.unwrap()).collect();
+    assert_eq!(costs, [0.5, 0.25, 0.25, 0.125, 0.0625]);
+    assert!((s.cost_usd - 1.1875).abs() < 1e-9, "{}", s.cost_usd);
+    assert_eq!(
+        s.session_total(&fallow::agent::Session::Resume("s1".into())),
+        Some(0.9375)
+    );
+    assert_eq!(
+        s.session_total(&fallow::agent::Session::New("s1".into())),
+        None,
+        "a new session starts from 0"
+    );
+    let _ = std::fs::remove_dir_all(&d);
+}

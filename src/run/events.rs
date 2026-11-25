@@ -316,6 +316,14 @@ pub enum Event {
         cost_usd: Option<f64>,
         duration_ms: u64,
         denials: Vec<String>,
+        /// The runtime's running total for the step's session after it
+        /// (`Outcome.session_total_usd`), handed back when a later step resumes the session.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        session_total_usd: Option<f64>,
+        /// `cost_usd` is the step's own cost. False in steps recorded before 2026-11-25, whose
+        /// `cost_usd` holds Claude Code's running total as it came: see `RunState::step_cost`.
+        #[serde(default)]
+        own_cost: bool,
     },
     Verified {
         n: u32,

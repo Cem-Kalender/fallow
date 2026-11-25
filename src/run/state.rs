@@ -419,6 +419,9 @@ pub struct RunState {
     pub stopped: Option<Option<String>>,
     pub notes: Vec<String>,
     pub cost_usd: f64,
+    /// The runtime's last running total per agent session, for `Call.session_total_usd`.
+    #[serde(skip)]
+    pub session_totals: BTreeMap<String, f64>,
     /// Sessions that could not be resumed.
     pub lost_sessions: Vec<String>,
     /// One step may start past the limits (FR-038 "continue once").
@@ -503,6 +506,7 @@ impl RunState {
             stopped: None,
             notes: Vec::new(),
             cost_usd: 0.0,
+            session_totals: BTreeMap::new(),
             lost_sessions: Vec::new(),
             allow_once: false,
             paused_since: None,
@@ -516,6 +520,51 @@ impl RunState {
             s.apply(l);
         }
         Ok(s)
+    }
+
+    /// Step `n`'s own cost, and its session's running total kept for a step that resumes it.
+    ///
+    /// A step recorded with `own_cost` already holds its own cost. One recorded before holds
+    /// what the runtime reported, which for Claude Code was the session's running total (a
+    /// repair resumes its builder's session). It is corrected only where it is clearly a
+    /// running total: the step resumed a session, an earlier step of that same session
+    /// reported a total, and this one is at least that total. Then the step cost the
+    /// difference. Anything else (a new session, a total that went down) is taken as the
+    /// step's own cost, as it was counted before.
+    fn step_cost(
+        &mut self,
+        n: u32,
+        cost: Option<f64>,
+        total: Option<f64>,
+        own: bool,
+    ) -> Option<f64> {
+        let Some((session, resumed)) = self.steps.get(&n).and_then(|st| {
+            st.session
+                .as_ref()
+                .map(|s| (s.clone(), st.resume.as_ref() == Some(s)))
+        }) else {
+            return cost;
+        };
+        if own {
+            if let Some(t) = total {
+                self.session_totals.insert(session, t);
+            }
+            return cost;
+        }
+        let c = cost?;
+        let before = resumed
+            .then(|| self.session_totals.get(&session).copied())
+            .flatten();
+        self.session_totals.insert(session, c);
+        Some(crate::agent::turn_cost(c, before))
+    }
+
+    /// What to hand a call as `Call.session_total_usd` for `session`.
+    pub fn session_total(&self, session: &crate::agent::Session) -> Option<f64> {
+        match session {
+            crate::agent::Session::New(_) => None,
+            s => self.session_totals.get(s.id()).copied(),
+        }
     }
 
     /// Applies one event.
@@ -695,7 +744,10 @@ impl RunState {
                 cost_usd,
                 duration_ms,
                 denials,
+                session_total_usd,
+                own_cost,
             } => {
+                let cost_usd = &self.step_cost(*n, *cost_usd, *session_total_usd, *own_cost);
                 if let Some(st) = self.steps.get_mut(n) {
                     st.end = Some(end.clone());
                     st.finished = Some(l.at.clone());
