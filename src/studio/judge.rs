@@ -585,9 +585,97 @@ fn normalize(p: &Path) -> PathBuf {
     out
 }
 
+/// 015 (Windows): a path as written, in the platform's plain form: on Windows a verbatim
+/// prefix (`\\?\C:\…`, `\\?\UNC\server\…`, as `canonicalize` gives) taken off and `/` read as
+/// `\`, so the parts compare with the paths around them. Elsewhere as it is.
+pub(crate) fn plain(arg: &str) -> String {
+    plain_as(arg, cfg!(windows))
+}
+
+/// `plain` as on Windows (`windows`) or not: pure, tested on every platform.
+fn plain_as(arg: &str, windows: bool) -> String {
+    if !windows {
+        return arg.to_string();
+    }
+    let s = arg.replace('/', "\\");
+    if let Some(r) = s.strip_prefix(r"\\?\UNC\") {
+        format!(r"\\{r}")
+    } else if let Some(r) = s.strip_prefix(r"\\?\") {
+        r.to_string()
+    } else {
+        s
+    }
+}
+
+/// Whether paths compare without regard to case: on Windows and macOS (their default
+/// filesystems).
+const FOLD_CASE: bool = cfg!(windows) || cfg!(target_os = "macos");
+
+/// 015 (Windows): `path` relative to `base`, with `/` between its parts, when it is `base` or
+/// inside it, both read the same way: the verbatim prefix off, `\` and `/` alike (on
+/// Windows), `.` and `..` resolved, and without regard to case where the filesystem is (the
+/// relative part keeps the path's own spelling).
+pub(crate) fn within(path: &Path, base: &Path) -> Option<String> {
+    within_as(
+        &path.to_string_lossy(),
+        &base.to_string_lossy(),
+        cfg!(windows),
+        FOLD_CASE,
+    )
+}
+
+/// `within` as on Windows (`windows`) and with case folded (`fold`) or not.
+fn within_as(path: &str, base: &str, windows: bool, fold: bool) -> Option<String> {
+    let key = |s: &str| -> String {
+        let s = if windows {
+            plain_as(s, true).replace('\\', "/")
+        } else {
+            s.to_string()
+        };
+        let unc = s.starts_with("//");
+        let rooted = s.starts_with('/');
+        let mut parts: Vec<&str> = Vec::new();
+        for c in s.split('/') {
+            match c {
+                "" | "." => {}
+                ".." => {
+                    // Never above a drive (`C:`).
+                    if parts.last().is_some_and(|l| !(windows && l.ends_with(':'))) {
+                        parts.pop();
+                    }
+                }
+                x => parts.push(x),
+            }
+        }
+        let joined = parts.join("/");
+        if unc {
+            format!("//{joined}")
+        } else if rooted {
+            format!("/{joined}")
+        } else {
+            joined
+        }
+    };
+    let (p, b) = (key(path), key(base));
+    let same = |x: &str, y: &str| {
+        if fold {
+            x.eq_ignore_ascii_case(y)
+        } else {
+            x == y
+        }
+    };
+    if same(&p, &b) {
+        return Some(String::new());
+    }
+    let pre = format!("{}/", b.trim_end_matches('/'));
+    (p.len() > pre.len() && p.is_char_boundary(pre.len()) && same(&p[..pre.len()], &pre))
+        .then(|| p[pre.len()..].to_string())
+}
+
 /// Where a path argument points: its folder resolved through symlinks as far as it exists.
 fn resolve(base: &Path, arg: &str) -> PathBuf {
-    let p = Path::new(arg);
+    let arg = plain(arg);
+    let p = Path::new(&arg);
     let joined = normalize(&if p.is_absolute() {
         p.to_path_buf()
     } else {
@@ -608,7 +696,18 @@ fn resolve(base: &Path, arg: &str) -> PathBuf {
             _ => break,
         }
     }
-    let mut out = std::fs::canonicalize(&existing).unwrap_or(existing);
+    // Only a folder is canonicalized, never a bare root: on Windows `/` would become the
+    // current drive (`C:\`) while the paths it is compared with keep no drive.
+    let named = existing
+        .components()
+        .any(|c| matches!(c, Component::Normal(_)));
+    let mut out = if named {
+        std::fs::canonicalize(&existing)
+            .map(|c| PathBuf::from(plain(&c.to_string_lossy())))
+            .unwrap_or(existing)
+    } else {
+        existing
+    };
     for n in rest.into_iter().rev() {
         out.push(n);
     }
@@ -616,7 +715,10 @@ fn resolve(base: &Path, arg: &str) -> PathBuf {
 }
 
 fn canon(p: &Path) -> PathBuf {
-    std::fs::canonicalize(p).unwrap_or_else(|_| normalize(p))
+    match std::fs::canonicalize(p) {
+        Ok(c) => PathBuf::from(plain(&c.to_string_lossy())),
+        Err(_) => normalize(Path::new(&plain(&p.to_string_lossy()))),
+    }
 }
 
 /// What a word as a path means for the session: inside its copy (with the path relative to
@@ -629,7 +731,8 @@ enum Place {
 
 /// Where `arg` points, read from the folder `base` the command runs in (R-6).
 fn place(ctx: &Ctx, base: &Path, arg: &str) -> Place {
-    let a = arg.trim();
+    // A verbatim prefix (`\\?\C:\…`) is a local path, not a network one.
+    let a = &plain(arg.trim());
     let lower = a.to_ascii_lowercase();
     // PowerShell's provider drives and network paths are never the working copy (V).
     if lower.starts_with("\\\\") || lower.starts_with("//") {
@@ -644,11 +747,10 @@ fn place(ctx: &Ctx, base: &Path, arg: &str) -> Place {
         }
     }
     let real = resolve(&canon(base), a);
-    let wt = canon(ctx.wt);
-    if let Ok(rel) = real.strip_prefix(&wt) {
-        return Place::Inside(rel.to_string_lossy().replace('\\', "/"));
+    if let Some(rel) = within(&real, &canon(ctx.wt)) {
+        return Place::Inside(rel);
     }
-    if real.starts_with(canon(ctx.folder)) {
+    if within(&real, &canon(ctx.folder)).is_some() {
         return Place::Folder;
     }
     Place::Outside
@@ -658,9 +760,7 @@ fn place(ctx: &Ctx, base: &Path, arg: &str) -> Place {
 /// is inside `base`; with `/` separators.
 pub fn rel_inside(base: &Path, path: &str) -> Option<String> {
     let real = resolve(&canon(base), path.trim());
-    real.strip_prefix(canon(base))
-        .ok()
-        .map(|r| r.to_string_lossy().replace('\\', "/"))
+    within(&real, &canon(base))
 }
 
 /// Whether a word is used as a path: it names a folder or a file by its form (a URL is not).
@@ -2110,7 +2210,7 @@ pub fn folder_change(cmd: &str, ctx: &Ctx) -> Option<String> {
         };
         Some(resolve(Path::new("/"), &abs.display().to_string()))
     };
-    let in_folder = |p: &Path| p.starts_with(&folder) && !p.starts_with(&wt);
+    let in_folder = |p: &Path| within(p, &folder).is_some() && within(p, &wt).is_none();
     // Where the shell is; `None` after a `cd` Fallow cannot follow.
     let mut base: Option<PathBuf> = Some(wt.clone());
     for p in &parts {
@@ -2266,7 +2366,7 @@ pub fn in_temp(path: &str) -> bool {
     roots
         .iter()
         .filter(|r| r.is_absolute() && r.components().count() > 1)
-        .any(|r| real.starts_with(canon(r)) || real.starts_with(r))
+        .any(|r| within(&real, &canon(r)).is_some() || within(&real, r).is_some())
 }
 
 /// The program a part runs, after any `X=1` assignments before it.
@@ -2813,6 +2913,72 @@ pub fn runs_unasked(cmd: &str, gates: &[String], approved: &[String], ctx: &Ctx)
 
 #[cfg(test)]
 mod tests {
+    /// 015 (Windows CI): Windows-shaped paths compare as Windows reads them, on every
+    /// platform: the verbatim prefix, `\` and `/`, case, drive letters, `.` and `..`.
+    #[test]
+    fn windows_paths_compare_as_windows_reads_them() {
+        let wt = r"\\?\C:\Users\runneradmin\AppData\Local\Temp\fallow-mode-auto-7088\wt";
+        for (path, rel) in [
+            (
+                r"\\?\C:\Users\runneradmin\AppData\Local\Temp\fallow-mode-auto-7088\wt\src/a.rs",
+                Some("src/a.rs"),
+            ),
+            (
+                r"C:\Users\runneradmin\AppData\Local\Temp\fallow-mode-auto-7088\wt\src\a.rs",
+                Some("src/a.rs"),
+            ),
+            (
+                "c:/users/RUNNERADMIN/appdata/local/temp/fallow-mode-auto-7088/WT/src/a.rs",
+                Some("src/a.rs"),
+            ),
+            (
+                r"C:\Users\runneradmin\AppData\Local\Temp\fallow-mode-auto-7088\wt\x\..\.\src\a.rs",
+                Some("src/a.rs"),
+            ),
+            (
+                r"C:\Users\runneradmin\AppData\Local\Temp\fallow-mode-auto-7088\wt",
+                Some(""),
+            ),
+            (
+                r"C:\Users\runneradmin\AppData\Local\Temp\fallow-mode-auto-7088\wt2\a.rs",
+                None,
+            ),
+            (
+                r"C:\Users\runneradmin\AppData\Local\Temp\fallow-mode-auto-7088\wt\..\a.rs",
+                None,
+            ),
+            (
+                r"D:\Users\runneradmin\AppData\Local\Temp\fallow-mode-auto-7088\wt\a.rs",
+                None,
+            ),
+            (
+                r"C:\..\..\Users\runneradmin\AppData\Local\Temp\fallow-mode-auto-7088\wt\a.rs",
+                Some("a.rs"),
+            ),
+        ] {
+            assert_eq!(within_as(path, wt, true, true).as_deref(), rel, "{path}");
+        }
+        assert_eq!(
+            within_as(r"\\?\UNC\srv\share\wt\a", r"\\srv\share\wt", true, true).as_deref(),
+            Some("a")
+        );
+        // A drive-less root, as the lead's tests spell it.
+        assert_eq!(
+            within_as("/w/spec/specs/015-x/spec.md", r"\w\spec", true, true).as_deref(),
+            Some("specs/015-x/spec.md")
+        );
+        assert_eq!(plain_as(r"\\?\C:\a/b", true), r"C:\a\b");
+        assert_eq!(plain_as(r"\\?\UNC\srv\s", true), r"\\srv\s");
+        // Elsewhere a backslash is part of a name, and case counts where the filesystem says.
+        assert_eq!(within_as(r"/w/x\..\..\wt/a", "/w/wt", false, false), None);
+        assert_eq!(within_as("/w/WT/a", "/w/wt", false, false), None);
+        assert_eq!(
+            within_as("/w/WT/a", "/w/wt", false, true).as_deref(),
+            Some("a")
+        );
+        assert_eq!(plain_as(r"\\?\C:\a", false), r"\\?\C:\a");
+    }
+
     /// 2026-11-24 amendment (r13): a here-document read as data has no paths or commands in
     /// its body, except an unquoted one's expansions; one fed to a shell is still unreadable.
     #[test]
