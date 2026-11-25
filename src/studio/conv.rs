@@ -30,6 +30,8 @@ pub struct Pending {
     pub runtime: String,
     /// 012 (FR-016; T037): what a command changing the engineer's folder must show.
     pub facts: Option<serde_json::Value>,
+    /// 015 (2026-11-24 amendment): the limit it waits at, when it was stopped at one.
+    pub held: Option<super::mode::Held>,
     pub reply: Sender<Reply>,
     pub deadline: Instant,
 }
@@ -271,7 +273,18 @@ impl Conv {
                 // What "always in this project" could allow, or why it cannot (008 T040). A
                 // read (012, FR-043) is allowed once at a time.
                 let read = p.is_read();
-                let (always, why) = if read {
+                let (always, why) = if let Some(h) = &p.held {
+                    // 015 (2026-11-24 amendment): past the limit, always: the whole command or
+                    // path by default, editable in the confirm.
+                    if h.always() {
+                        (Some(command.clone()), None)
+                    } else {
+                        (
+                            None,
+                            Some("a tool Fallow cannot judge is allowed once at a time"),
+                        )
+                    }
+                } else if read {
                     (None, Some("a read is allowed once at a time"))
                 } else {
                     match crate::project::commands::always_prefix(command) {
@@ -279,8 +292,15 @@ impl Conv {
                         Err(why) => (None, Some(why)),
                     }
                 };
+                let kind = match &p.held {
+                    Some(h) => h.kind,
+                    None if read => "read",
+                    None => "run",
+                };
                 json!({ "id": p.id, "command": command, "always": always, "always_not": why,
-                        "kind": if read { "read" } else { "run" }, "facts": p.facts })
+                        "kind": kind, "facts": p.facts,
+                        "limit": p.held.as_ref().map(|h| h.limit.name()),
+                        "reason": p.held.as_ref().map(|h| h.reason.clone()) })
             }
             None => Value::Null,
         };

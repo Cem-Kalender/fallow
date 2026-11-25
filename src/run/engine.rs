@@ -3610,6 +3610,7 @@ impl Engine {
         v["pipeline"] = json!(p.pipeline);
         v["autonomy"] = json!(p.level);
         v["approved_commands"] = json!(p.approved_commands);
+        v["allowed_past_limits"] = json!(p.allowed_past_limits);
         v["budget_per_task"] = json!(p.budget_per_task);
         v["notifications"] = json!(p.notifications);
         // 016 (FR-014, T028): what macOS lets Fallow do with its notifications.
