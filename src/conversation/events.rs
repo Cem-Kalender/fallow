@@ -152,6 +152,10 @@ pub enum Event {
         /// 012 (FR-016): what a merge would bring, and the engineer's folder.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         merge: Option<Value>,
+        /// 015 (2026-11-24 amendment): the limit the request was stopped at (`edit`, `target`,
+        /// `tool`), when it waits at one rather than being asked in Manual.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        limit: Option<String>,
     },
     ApprovalAnswered {
         id: String,
@@ -269,6 +273,9 @@ pub struct Approval {
     pub prefix: Option<String>,
     /// 012: why the judge asks the engineer, per command.
     pub reasons: Vec<String>,
+    /// 015 (2026-11-24 amendment): the limit it waited at, if it did.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit: Option<String>,
 }
 
 /// 015 (FR-006): the engineer changed the chat's mode after turn `after`, for the chat's notes.
@@ -516,6 +523,7 @@ impl State {
                 id,
                 command,
                 reasons,
+                limit,
                 ..
             } => {
                 if let Some(t) = self.turns.last_mut() {
@@ -525,6 +533,7 @@ impl State {
                         answer: None,
                         prefix: None,
                         reasons: reasons.clone(),
+                        limit: limit.clone(),
                     });
                 }
             }
@@ -769,6 +778,7 @@ mod tests {
                     command: "pip list".into(),
                     reasons: Vec::new(),
                     merge: None,
+                    limit: None,
                 },
             ),
             logged(

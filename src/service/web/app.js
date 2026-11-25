@@ -566,10 +566,32 @@ const Fallow = (() => {
     </div>`;
   }
 
+  // 015 (2026-11-24 amendment): a request Fallow stopped at a limit, waiting for the engineer:
+  // the same card in both modes and both chats. Allow once runs it now; Always allow lets what
+  // starts the same way (an edit: the path, or a folder ending in /) past this limit in this
+  // project; Deny tells the agent why. Control files are never held: they are refused.
+  function limitCard(a, who, factsHtml) {
+    const edit = a.kind === "edit";
+    const what = a.limit === "target" ? "push onto the protected target branch"
+      : a.limit === "tool" ? "use a tool Fallow cannot judge"
+      : edit ? "change a file outside its working copy" : "run a command that changes your project folder";
+    return h`<div class="card approval limit" id="${`approval-${a.id}`}"><div class="b">${who} waits: it asks to ${what}</div>
+      <div class="tiny muted">Fallow stopped it at a fixed limit; it waits for your answer, in Manual and in Auto.</div>
+      <div class="term">${a.command}</div>
+      ${a.reason ? h`<div class="small mt-6">${a.reason}</div>` : ""}
+      ${factsHtml || ""}
+      <div class="row wrap gap-8 mt-10">
+        <button class="btn" data-act="approve" data-id="${a.id}" data-answer="once">Allow once</button>
+        ${a.always ? h`<button class="btn btn2" data-act="approve" data-id="${a.id}" data-answer="always" data-command="${a.always}" data-limit="${a.limit}" data-kind="${a.kind}">Always allow</button>` : ""}
+        <button class="btn btn2" data-act="approve" data-id="${a.id}" data-answer="deny">Deny</button>
+      </div>
+      ${a.always_not ? h`<div class="tiny muted mt-6">Not offered for always: ${a.always_not}.</div>` : ""}</div>`;
+  }
+
   // 015 (FR-006): the chat's note when the engineer changed its mode.
   const MODE_NOTE = {
     manual: "Manual: Fallow asks you before commands that are not approved.",
-    auto: "Auto: every action runs without asking you; Fallow shows you anything it refuses at the agent's limits, and no agent ever edits its runtime's settings files (.claude/settings.json, .claude/settings.local.json).",
+    auto: "Auto: every action runs without asking you; at the agent's fixed limits (your project folder, a push onto the protected target) it waits for your answer, and no agent ever edits its runtime's settings files (.claude/settings.json, .claude/settings.local.json).",
   };
   const MODE_MORE = {
     manual: "",
@@ -655,7 +677,9 @@ const Fallow = (() => {
       out.push(leadMsg(meta, md(t.reply), extras, c.avatar));
     });
     out.push(...modeNotes(c, turns.length));
-    if (c.pending_approval) {
+    if (c.pending_approval && c.pending_approval.limit) {
+      out.push(limitCard(c.pending_approval, leadName(c), c.refusalFacts ? c.refusalFacts(c.pending_approval.facts) : ""));
+    } else if (c.pending_approval) {
       const a = c.pending_approval;
       out.push(h`<div class="card approval"><div class="b">The lead asks to run a command</div>
         <div class="tiny muted">This chat is in Manual: Fallow asks you before commands that are not approved.</div>
@@ -664,7 +688,7 @@ const Fallow = (() => {
           <button class="btn" data-act="approve" data-id="${a.id}" data-answer="once">Allow once</button>
           ${a.always ? h`<button class="btn btn2" data-act="approve" data-id="${a.id}" data-answer="always" data-command="${a.always}">Always in this project</button>` : ""}
           <button class="btn btn2" data-act="approve" data-id="${a.id}" data-answer="deny">Deny</button>
-          <button class="btn btn2" data-act="approve" data-id="${a.id}" data-answer="auto" title="Allow this, and run every action without asking from now on (Auto; it still refuses, visibly, what is outside the agent's limits)">Switch to Auto</button>
+          <button class="btn btn2" data-act="approve" data-id="${a.id}" data-answer="auto" title="Allow this, and run every action without asking from now on (Auto; at the agent's fixed limits it still waits for your answer)">Switch to Auto</button>
         </div>
         ${a.always_not ? h`<div class="tiny muted mt-6">Not offered for always: ${a.always_not}.</div>` : a.always !== a.command ? h`<div class="tiny muted mt-6">"Always" would allow <span class="mono">${a.always}</span>, the plain command before the rest.</div>` : ""}</div>`);
     }
@@ -958,7 +982,21 @@ const Fallow = (() => {
     }
     if (name === "approve") {
       const body = { id: el.dataset.id, answer: el.dataset.answer };
-      if (body.answer === "always") {
+      if (body.answer === "always" && el.dataset.limit) {
+        // 015 (2026-11-24 amendment): past a limit, always, in this project: how much of the
+        // command (or which path or folder) the engineer chooses, the whole of it by default.
+        const edit = el.dataset.kind === "edit";
+        const prefix = await confirm({
+          title: el.dataset.limit === "target" ? "Always allow this past the target limit?" : "Always allow this past the folder limit?",
+          text: edit
+            ? "Changes to this path will go without asking, in this project's chats. End it with / to allow everything in that folder. The files that control the agents stay refused."
+            : "Commands starting with this will go past the limit without asking, in this project's chats, in Manual and in Auto. Shorten it to allow more. The files that control the agents stay refused.",
+          ok: "Always allow",
+          input: { label: edit ? "Allow changes to this path or folder" : "Allow commands starting with", value: el.dataset.command || "" },
+        });
+        if (!prefix) return true;
+        body.prefix = prefix;
+      } else if (body.answer === "always") {
         // The engineer chooses how much of the command to allow (research S-7); the whole
         // command by default.
         const prefix = await confirm({
@@ -1168,7 +1206,7 @@ const Fallow = (() => {
   }
 
   return { deleteSession, chatWide, expandBtn, saveFor, scopeOf, esc, h, raw, md, inline, LOGO, icon, api, get, post, watch, live, here, confirm, register, route, show, start, money,
-    MODE_LABEL, modeSwitch, modeNotes, focusMode, refusalCard, messages, composer, syncComposer, chatAct, sendSay, alertLine, atEnd, stagePill, filesRead, leadHead, leadNotice, working, leaveAsked, restamp, showWorking, closeAsked,
+    MODE_LABEL, modeSwitch, modeNotes, focusMode, refusalCard, limitCard, messages, composer, syncComposer, chatAct, sendSay, alertLine, atEnd, stagePill, filesRead, leadHead, leadNotice, working, leaveAsked, restamp, showWorking, closeAsked,
     get headerWatch() { return headerWatch; } };
 
 })();
