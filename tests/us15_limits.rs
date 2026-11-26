@@ -163,20 +163,76 @@ fn a_here_document_piped_to_a_shell_hides_nothing() {
     assert!(judge::split("cat > a <<'EOF' || true\nx\nEOF").is_ok());
 }
 
-/// Review 1: the raw text is read too, so a body taken out can never hide a control file or
-/// a push, whatever the stripping makes of it.
+/// Review 1, and the review of 0.3.2 (2): a here-document body that is run (fed to a shell or
+/// an interpreter, piped onward, through a process substitution, `source`d) is read as
+/// commands: its control writes are refused, its pushes held.
 #[test]
-fn a_stripped_here_document_s_raw_text_still_counts() {
-    let fx = Fixture::new("raw");
+fn a_here_document_that_is_run_is_read_as_commands() {
+    let fx = Fixture::new("run");
+    for open in [
+        "cat <<'EOF' | sh",
+        "cat <<'EOF' |& bash",
+        "bash <<'EOF'",
+        "python3 <<'EOF'",
+        "{ cat <<'EOF'; } | sh",
+        "tee x.sh <<'EOF' | sh",
+        "source /dev/stdin <<'EOF'",
+        "cat <<'EOF' > >(sh)",
+        "cat > >(sh) <<'EOF'",
+    ] {
+        for body in [
+            "echo x > .claude/settings.json",
+            "echo x > .git/hooks/pre-commit",
+            "echo x > .fallow/squad.toml",
+        ] {
+            let cmd = format!("{open}\n{body}\nEOF");
+            let d = fx.assistant(ChatMode::Auto, RequestKind::Run, &cmd);
+            assert!(refused(&d), "{cmd}: {d:?}");
+        }
+        let cmd = format!("{open}\ngit push origin main\nEOF");
+        let d = fx.assistant(ChatMode::Auto, RequestKind::Run, &cmd);
+        assert_eq!(held_at(&d), Some(Limit::Target), "{cmd}: {d:?}");
+    }
     for cmd in [
-        "cat > x.sh <<'EOF'\necho x > .claude/settings.json\nEOF\nsh x.sh",
-        "cat > x.sh <<'EOF'\necho x > .git/hooks/pre-commit\nEOF\nsh x.sh",
+        "sh <<< 'echo x > .claude/settings.json'",
+        "sh <<< 'echo x > .git/hooks/pre-commit'",
     ] {
         let d = fx.assistant(ChatMode::Auto, RequestKind::Run, cmd);
         assert!(refused(&d), "{cmd}: {d:?}");
     }
-    assert!(judge::pushes_onto(
-        "cat > x.sh <<'EOF'\ngit push origin main\nEOF\nsh x.sh",
+    let d = fx.assistant(
+        ChatMode::Auto,
+        RequestKind::Run,
+        "sh <<< 'git push origin main'",
+    );
+    assert_eq!(held_at(&d), Some(Limit::Target), "{d:?}");
+}
+
+/// Review of 0.3.2 (2): a here-document body that is only data (a file written, a commit
+/// message) is not scanned: naming a control file or `git push` in it is no write and no push.
+/// They run unasked in Auto, as on 0.3.1.
+#[test]
+fn a_here_document_that_is_data_is_not_scanned() {
+    let fx = Fixture::new("data");
+    for cmd in [
+        "cat > docs/setup.md <<'EOF'\nNever edit .claude/settings.json by hand.\nEOF",
+        "git commit -F - <<'EOF'\nfix: refuse writes to .git/hooks\nEOF",
+        "git commit -F- <<'EOF'\nfix: refuse writes to .fallow/squad.toml\nEOF",
+        "cat > README.md <<'EOF'\nRun git push origin main to publish.\nEOF",
+    ] {
+        assert_eq!(
+            fx.assistant(ChatMode::Auto, RequestKind::Run, cmd),
+            Decision::Allow,
+            "{cmd}"
+        );
+        let d = fx.assistant(ChatMode::Manual, RequestKind::Run, cmd);
+        assert!(
+            !refused(&d) && held_at(&d).is_none(),
+            "manual: {cmd}: {d:?}"
+        );
+    }
+    assert!(!judge::pushes_onto(
+        "cat > README.md <<'EOF'\nRun git push origin main to publish.\nEOF",
         "main"
     ));
 }
@@ -357,5 +413,63 @@ fn ordinary_work_still_runs() {
             Decision::Allow,
             "{cmd}"
         );
+    }
+}
+
+/// Review of 0.3.2 (1): the assistant's edit of a control file is refused however it is
+/// spelled: case (macOS's default filesystem folds it), and `\\` (Windows reads it as `/`).
+#[test]
+fn the_assistant_s_edit_of_a_control_file_is_refused_however_spelled() {
+    let fx = Fixture::new("case");
+    let wt = fx.wt.display().to_string().replace('\\', "/");
+    for path in [
+        ".Claude/settings.json".to_string(),
+        ".CLAUDE/Settings.json".to_string(),
+        ".fallow/SQUAD.toml".to_string(),
+        ".git\\hooks\\pre-commit".to_string(),
+        ".claude\\settings.local.json".to_string(),
+        format!("{wt}/.Claude/settings.json"),
+        format!("{wt}/.GIT/config"),
+    ] {
+        for mode in [ChatMode::Auto, ChatMode::Manual] {
+            let d = fx.assistant(mode, RequestKind::Edit, &path);
+            assert!(refused(&d), "{path}: {d:?}");
+        }
+    }
+    // An ordinary file in the copy still goes.
+    assert_eq!(
+        fx.assistant(ChatMode::Auto, RequestKind::Edit, "src/settings.json"),
+        Decision::Allow
+    );
+}
+
+/// Review of 0.3.2 (4): an Always-allow folder entry never reaches git's record or a control
+/// file inside that folder, however spelled; the assistant's edit there is refused anyway.
+#[test]
+fn always_allow_of_a_folder_never_reaches_a_control_file() {
+    let e = entry("edit", "edit", "/Users/me/proj/", None);
+    assert!(e.allows("edit", "edit", "/Users/me/proj/src/a.py"));
+    for path in [
+        "/Users/me/proj/.git/config",
+        "/Users/me/proj/.git/hooks/pre-commit",
+        "/Users/me/proj/.GIT/hooks/pre-commit",
+        "/Users/me/proj/.git\\hooks\\pre-commit",
+        "/Users/me/proj/.claude/settings.json",
+        "/Users/me/proj/.Claude/Settings.local.json",
+        "/Users/me/proj/.fallow/squad.toml",
+        "/Users/me/proj/sub/.fallow/agents/lead.md",
+    ] {
+        assert!(!e.allows("edit", "edit", path), "{path}");
+    }
+    let e = entry("edit", "edit", "/Users/me/proj/.git/config", None);
+    assert!(!e.allows("edit", "edit", "/Users/me/proj/.git/config"));
+    let fx = Fixture::new("folder-git");
+    let f = fx.folder.display().to_string().replace('\\', "/");
+    for path in [
+        format!("{f}/.git/config"),
+        format!("{f}/.git/hooks/pre-commit"),
+    ] {
+        let d = fx.assistant(ChatMode::Auto, RequestKind::Edit, &path);
+        assert!(refused(&d), "{path}: {d:?}");
     }
 }
