@@ -302,6 +302,10 @@ fn studio_route(
                 commands,
             })
         }
+        // The chat's `/` menu before the chat has a conversation (`PUT` is the approved commands).
+        ("GET", ["api", "projects", p, "commands"]) => r(Req::ProjectCommands {
+            project: p.to_string(),
+        }),
         ("GET", ["api", "projects", p, "git-init"]) => r(Req::GitScan { id: p.to_string() }),
         ("POST", ["api", "projects", p, "git-init"]) => Some(confirmed().map(|()| {
             Request::Studio(Req::GitInit {

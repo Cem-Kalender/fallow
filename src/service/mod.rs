@@ -1045,8 +1045,11 @@ pub fn engine_with_notify(
         &format!("{}-{suffix}", pipe::service_endpoint()?),
         Arc::new(move |conn| pipe_conn(conn, &tx_pipe, 0, "")),
     )?;
+    // The `/` menu reads a home of the test's own, never the engineer's `~/.claude`.
+    let home = data.with_file_name("home");
     let mut engine = Engine::load(data, ctx)?;
     engine.studio.endpoint = Some(suffix);
+    engine.studio.home = Some(home);
     if let Some(w) = approval_wait {
         engine.studio.approval_wait = w;
     }
