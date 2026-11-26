@@ -436,6 +436,11 @@ fn the_assistant_s_edit_of_a_control_file_is_refused_however_spelled() {
             assert!(refused(&d), "{path}: {d:?}");
         }
     }
+    // Manual too, never asked or held: refused.
+    for path in [".Claude/settings.json", ".CLAUDE/Settings.json"] {
+        let d = fx.assistant(ChatMode::Manual, RequestKind::Edit, path);
+        assert!(refused(&d), "manual: {path}: {d:?}");
+    }
     // An ordinary file in the copy still goes.
     assert_eq!(
         fx.assistant(ChatMode::Auto, RequestKind::Edit, "src/settings.json"),
@@ -471,5 +476,107 @@ fn always_allow_of_a_folder_never_reaches_a_control_file() {
     ] {
         let d = fx.assistant(ChatMode::Auto, RequestKind::Edit, &path);
         assert!(refused(&d), "{path}: {d:?}");
+    }
+}
+
+/// Review of 0.3.2, round 3 (1): `git commit -F -` reads its here-document as data only when
+/// written plainly; git can run the body otherwise (an alias, an editor), so it is read as
+/// commands.
+#[test]
+fn a_commit_message_from_stdin_is_data_only_when_written_plainly() {
+    let fx = Fixture::new("commit");
+    for open in [
+        "git -c 'alias.x=!sh -s' x commit -F - <<'EOF'",
+        "GIT_EDITOR=sh git commit --allow-empty -e -F - <<'EOF'",
+        "git commit -m x -F - <<'EOF'",
+    ] {
+        for body in [
+            "echo x > .claude/settings.json",
+            "echo x > .git/hooks/pre-commit",
+        ] {
+            let cmd = format!("{open}\n{body}\nEOF");
+            let d = fx.assistant(ChatMode::Auto, RequestKind::Run, &cmd);
+            assert!(refused(&d), "{cmd}: {d:?}");
+        }
+        let cmd = format!("{open}\ngit push origin main\nEOF");
+        let d = fx.assistant(ChatMode::Auto, RequestKind::Run, &cmd);
+        assert!(held_at(&d).is_some(), "{cmd}: {d:?}");
+        assert_ne!(d, Decision::Allow, "{cmd}");
+    }
+    let cmd = "git -c 'alias.x=!sh -s' x commit -F - <<'EOF'\necho PWNED > pwned.txt\nEOF";
+    assert!(judge::split(cmd).is_err(), "not read as data: {cmd}");
+    // Written plainly, it is still data.
+    for cmd in [
+        "git commit -F - <<'EOF'\nfix: refuse writes to .git/hooks\nEOF",
+        "git -C sub commit -q --allow-empty -F - <<'EOF'\nfix: .claude/settings.json\nEOF",
+    ] {
+        assert_eq!(
+            fx.assistant(ChatMode::Auto, RequestKind::Run, cmd),
+            Decision::Allow,
+            "{cmd}"
+        );
+    }
+}
+
+/// Review of 0.3.2, round 3 (2): a `#` starting a word starts a comment; a `<<` in it opens no
+/// here-document, so the lines after it are commands.
+#[test]
+fn a_here_document_in_a_comment_is_no_here_document() {
+    let fx = Fixture::new("comment");
+    let cmd = "cat x.txt # <<'EOF'\necho x > .claude/settings.json\nEOF";
+    let d = fx.assistant(ChatMode::Auto, RequestKind::Run, cmd);
+    assert!(refused(&d), "{cmd}: {d:?}");
+    let cmd = "cat x # c <<'EOF'\ngit push origin main\nEOF";
+    let d = fx.assistant(ChatMode::Auto, RequestKind::Run, cmd);
+    assert_eq!(held_at(&d), Some(Limit::Target), "{cmd}: {d:?}");
+    // A `#` inside a word or quotes is no comment.
+    assert_eq!(
+        fx.assistant(
+            ChatMode::Auto,
+            RequestKind::Run,
+            "cat > a#b.md <<'EOF'\nsee .claude/settings.json\nEOF"
+        ),
+        Decision::Allow
+    );
+}
+
+/// Review of 0.3.2, round 3 (3): a git invocation that may run another program waits in Auto
+/// and is asked in Manual; plain settings and `-C` still run.
+#[test]
+fn git_that_may_run_another_program_waits() {
+    let fx = Fixture::new("git-c");
+    for cmd in [
+        "git -c 'alias.x=!git push origin main' x",
+        "git -c core.sshCommand=sh status",
+        "git --config-env=core.hooksPath=X status",
+        "GIT_EDITOR=sh git commit --allow-empty",
+        "GIT_SSH_COMMAND=sh git fetch",
+        "env GIT_EXEC_PATH=/tmp/x git status",
+        "sh -c \"git -c 'alias.x=!sh' x\"",
+    ] {
+        let d = fx.assistant(ChatMode::Auto, RequestKind::Run, cmd);
+        assert!(held_at(&d).is_some(), "{cmd}: {d:?}");
+        let d = fx.lead(ChatMode::Auto, RequestKind::Run, cmd);
+        assert!(held_at(&d).is_some(), "lead: {cmd}: {d:?}");
+        let d = fx.assistant(ChatMode::Manual, RequestKind::Run, cmd);
+        assert!(matches!(d, Decision::Ask(_)), "manual: {cmd}: {d:?}");
+    }
+    // Never a way around a control-file refusal.
+    let cmd = "git -c 'alias.x=!echo x > .claude/settings.json' x";
+    assert!(
+        refused(&fx.assistant(ChatMode::Auto, RequestKind::Run, cmd)),
+        "{cmd}"
+    );
+    for cmd in [
+        "git -C sub status",
+        "git -c user.name=me -c user.email=me@example.com commit --allow-empty -m x",
+        "git -c color.ui=never log -1",
+        "git -c core.quotepath=off status",
+    ] {
+        assert_eq!(
+            fx.assistant(ChatMode::Auto, RequestKind::Run, cmd),
+            Decision::Allow,
+            "{cmd}"
+        );
     }
 }
