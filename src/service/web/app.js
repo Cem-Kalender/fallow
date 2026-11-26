@@ -992,7 +992,7 @@ const Fallow = (() => {
             ? "Changes to this path will go without asking, in this project's chats. End it with / to allow everything in that folder. The files that control the agents stay refused."
             : "This command will go past the limit without asking, in this project's chats, in Manual and in Auto. Shorten it to allow every command starting with it. The files that control the agents stay refused.",
           ok: "Always allow",
-          input: { label: edit ? "Allow changes to this path or folder" : "Allow commands starting with", value: el.dataset.command || "" },
+          input: { label: edit ? "Allow changes to this path or folder" : "Allow exactly this command (shortened: every command starting with it)", value: el.dataset.command || "" },
         });
         if (!prefix) return true;
         body.prefix = prefix;
