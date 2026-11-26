@@ -272,6 +272,22 @@ fn control_refusal(
     }
 }
 
+/// 015 (review of 0.3.2, round 3): in Auto, a git invocation that may run another program
+/// (`git -c 'alias.x=!git push origin main' x`, `GIT_EDITOR=sh git …`) waits for the engineer:
+/// its effect cannot be read from the text. After the control files (refused) and the target.
+/// Manual asks about it, even when an approved command (the lead's `git`) covers it.
+fn git_hold(mode: ChatMode, command: &str) -> Option<Decision> {
+    let reason = judge::git_runs_other(command)?;
+    Some(match mode {
+        ChatMode::Auto => Decision::Hold {
+            limit: Limit::Edit,
+            reason,
+            facts: None,
+        },
+        ChatMode::Manual => Decision::Ask(vec![reason]),
+    })
+}
+
 /// 015 (R-2): the assistant's request, decided. `folder_facts` gives 012's facts for a
 /// command that changes the engineer's folder (only called when it does).
 pub fn assistant(
@@ -355,6 +371,9 @@ pub fn assistant(
                 return r;
             }
             if let Some(r) = target_refusal(&command, cx.target) {
+                return r;
+            }
+            if let Some(r) = git_hold(mode, &command) {
                 return r;
             }
             if judge::runs_unasked(&command, cx.gates, cx.approved, ctx) {
@@ -560,6 +579,9 @@ pub fn lead(mode: ChatMode, req: &agent::PermissionRequest, cx: &LeadCx) -> Deci
                 return r;
             }
             if let Some(r) = target_refusal(&command, cx.target) {
+                return r;
+            }
+            if let Some(r) = git_hold(mode, &command) {
                 return r;
             }
             let limit = judge::limit_problem(&command, &ctx, control_files);
