@@ -217,6 +217,7 @@ impl Studio {
         mode: Option<super::mode::ChatMode>,
     ) -> Result<Value, String> {
         let text = text.trim();
+        let t0 = std::time::Instant::now();
         if text.is_empty() {
             return Err("say something to the assistant".into());
         }
@@ -263,6 +264,7 @@ impl Studio {
         let base = format!("fallow/solo/{}", slug(text));
         let (made, side) = std::thread::scope(|sc| {
             let side = sc.spawn(|| {
+                let _m = mark("side: status, squad, branch name");
                 let dirty = !git::folder_status(&repo).unwrap_or_default().is_empty();
                 let squad = squad_at_head(&root);
                 // The branch after the first message, never overwriting one (FR-015), nor the
@@ -275,11 +277,14 @@ impl Studio {
                 }
                 (dirty, squad, branch)
             });
+            let _m = mark("worktree add");
             let made = std::fs::create_dir_all(&placeholder)
                 .map_err(|e| e.to_string())
                 .and_then(|()| git::worktree_add_new(&repo, &wt, &first, &start_commit));
+            drop(_m);
             (made, side.join())
         });
+        bench_at("copy and side done", t0);
         let side = side.map_err(|_| "the session's start failed".to_string());
         let (dirty, squad, branch) = match (made, side) {
             (Ok(()), Ok(s)) => s,
@@ -294,6 +299,7 @@ impl Studio {
             self.forget_half_made(&id, &p.path, &wt, &first);
             return Err(format!("the session's branch could not be named: {e}"));
         }
+        bench_at("branch renamed", t0);
         let c = self.conv_mut(&id)?;
         c.append(CEvent::WorkdirSet {
             workdir: wt.clone(),
@@ -320,6 +326,7 @@ impl Studio {
         pm.sessions.push(id.clone());
         pm.last_session = Some(id.clone());
         self.store.save()?;
+        bench_at("session saved", t0);
         // For the first turn only, which takes it (issue #2 review: never left on a session).
         self.conv_mut(&id)?.fresh = Some(super::conv::Fresh { squad });
         // The session exists now: a first turn that cannot start is said with it, never hidden
@@ -328,6 +335,7 @@ impl Studio {
             Ok(v) => v,
             Err(e) => json!({ "error": e }),
         };
+        bench_at("first turn returned", t0);
         if let Some(c) = self.convs.get_mut(&id) {
             c.fresh = None;
             // Its first view with less git (issue #2): nothing changed in its copy yet.
@@ -549,7 +557,9 @@ impl Studio {
             .ok_or_else(|| format!("there is no agent {assistant}"))?;
         let runtime = agent::registry::runtime(&def.runtime, &ctx.settings)
             .map_err(|e| format!("the assistant cannot start: {e}"))?;
+        let _m = mark("solo_turn: judge context");
         let jc = self.judge_cx_with(conv, &def.runtime, fresh_squad)?;
+        drop(_m);
         // Without asking: the gates, and the approved prefixes the judge finds safe (R-6).
         let ctxj = judge::Ctx {
             wt: &jc.wt,
@@ -566,7 +576,9 @@ impl Studio {
         );
         // The project's instruction files: with a new agent session, and when they changed.
         let c = self.convs.get(conv).ok_or("there is no session")?;
+        let _m = mark("solo_turn: instructions");
         let instr = agent::instructions::read(&wt, &jc.extra);
+        drop(_m);
         let now: Vec<(String, String)> = instr
             .iter()
             .map(|i| (i.path.clone(), i.sha.clone()))
@@ -1390,6 +1402,7 @@ impl Studio {
         let Some(s) = c.state.solo.as_ref() else {
             return;
         };
+        let _m = mark("solo_view");
         // A session just made, nothing happened in it since: what its creation knew (issue #2).
         let primed = c
             .primed
@@ -1572,5 +1585,28 @@ mod tests {
         );
         assert_eq!(slug("¿?"), "session");
         assert_eq!(name_of("first line\nsecond"), "first line");
+    }
+}
+
+/// TEMPORARY (benchmark diagnosis, not to be merged): how long a step took, said in a
+/// benchmark run only.
+struct BenchMark(&'static str, std::time::Instant);
+
+fn mark(label: &'static str) -> BenchMark {
+    BenchMark(label, std::time::Instant::now())
+}
+
+impl Drop for BenchMark {
+    fn drop(&mut self) {
+        bench_at(self.0, self.1);
+    }
+}
+
+fn bench_at(label: &str, t0: std::time::Instant) {
+    if std::env::var_os("FALLOW_BENCH").is_some() {
+        eprintln!(
+            "bench step: {label}: {:.1} ms",
+            t0.elapsed().as_secs_f64() * 1000.0
+        );
     }
 }

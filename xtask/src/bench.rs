@@ -1030,6 +1030,10 @@ fn until(
 fn solo_start(args: &Args) -> Result<Vec<Measure>, String> {
     let dir = scratch("solo-start");
     let r = repo(&dir, "big")?;
+    // git's own cleanup is done before the clock starts, never during it: committing 10,000
+    // files would start `gc --auto` in the background, packing them while the session's working
+    // copy is made (the first message on a project of 10,000 files, not on one being packed).
+    git(&r, &["config", "gc.auto", "0"])?;
     for i in 0..10_000 {
         let d = r.join(format!("src/m{:03}", i / 100));
         if i % 100 == 0 {
@@ -1043,6 +1047,34 @@ fn solo_start(args: &Args) -> Result<Vec<Measure>, String> {
     let scenario =
         "[[step]]\nkind = \"assistant_turn\"\nsleep_ms = 20000\noutput = { reply = \"done\" }\n";
     let (svc, cookie, p) = solo_service(args, &dir, scenario, &r)?;
+    git(&r, &["gc", "-q"])?;
+    // TEMPORARY (benchmark diagnosis): plain `git worktree add` of the same project, three ways.
+    for (name, opts) in [
+        ("plain", &[][..]),
+        ("workers=0", &["-c", "checkout.workers=0"][..]),
+        (
+            "workers=0 fscache",
+            &["-c", "checkout.workers=0", "-c", "core.fscache=true"][..],
+        ),
+        ("plain again", &[][..]),
+    ] {
+        let wt = dir.join("diag-wt");
+        let t = Instant::now();
+        let mut a: Vec<String> = opts.iter().map(|o| o.to_string()).collect();
+        a.extend(["worktree", "add", "-q", "--detach"].map(String::from));
+        a.push(wt.display().to_string());
+        a.push("HEAD".into());
+        let a: Vec<&str> = a.iter().map(String::as_str).collect();
+        git(&r, &a)?;
+        eprintln!(
+            "bench: solo_start: diag git worktree add ({name}): {:.1} ms",
+            t.elapsed().as_secs_f64() * 1000.0
+        );
+        git(
+            &r,
+            &["worktree", "remove", "--force", &wt.display().to_string()],
+        )?;
+    }
     let t0 = Instant::now();
     let v = call(
         &svc,
@@ -1051,6 +1083,10 @@ fn solo_start(args: &Args) -> Result<Vec<Measure>, String> {
         &format!("/api/projects/{p}/sessions"),
         json!({ "text": "Fix the week" }),
     )?;
+    eprintln!(
+        "bench: solo_start: the POST returned after {:.1} ms",
+        t0.elapsed().as_secs_f64() * 1000.0
+    );
     let s = v["session"]
         .as_str()
         .ok_or_else(|| format!("no session: {v}"))?
@@ -1058,6 +1094,14 @@ fn solo_start(args: &Args) -> Result<Vec<Measure>, String> {
     let ms = until(&svc, &cookie, &s, t0, |v| {
         v["busy"] == true || v["turns"].as_array().is_some_and(|t| !t.is_empty())
     })?;
+    // TEMPORARY (benchmark diagnosis): the service's step times.
+    if let Ok(log) = svc.log.lock() {
+        while let Ok(line) = log.recv_timeout(Duration::from_millis(200)) {
+            if line.starts_with("bench step:") {
+                eprintln!("bench: solo_start: {line}");
+            }
+        }
+    }
     Ok(vec![("solo_start", ms, SOLO_START_MS, "ms")])
 }
 
