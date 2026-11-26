@@ -113,29 +113,32 @@ impl Feature {
 }
 
 /// 015 (2026-11-24 amendment): one "Always allow" past a limit: at `limit` (`edit` or
-/// `target`), a `run` request whose command is `prefix` or starts with it and a space (with no
-/// further command chained), or an `edit` request of the path `prefix`, or below it when it
-/// ends with `/`.
+/// `target`), a `run` request whose command is exactly `prefix` or, when the engineer shortened
+/// it (`starts`), starts with it and a space (with no further command chained); or an `edit`
+/// request of the path `prefix`, or below it when it ends with `/`, compared as paths.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PastLimit {
     pub limit: String,
     pub kind: String,
     pub prefix: String,
+    /// The engineer shortened the command when allowing it always: commands starting with
+    /// `prefix` match too. Entries stored before 0.3.2 have none and match exactly (review,
+    /// 6b: `git push origin main` allowed `git push origin main --force`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub starts: bool,
 }
 
 impl PastLimit {
     /// Whether this entry allows a `kind` request for `what` at `limit`.
     pub fn allows(&self, limit: &str, kind: &str, what: &str) -> bool {
-        if self.limit != limit || self.kind != kind || self.prefix.is_empty() {
+        if self.limit != limit || self.kind != kind || self.prefix.trim().is_empty() {
             return false;
         }
         let what = what.trim();
         match kind {
-            "edit" => {
-                what == self.prefix
-                    || (self.prefix.ends_with('/') && what.starts_with(&self.prefix))
-            }
-            _ => match what.strip_prefix(self.prefix.as_str()) {
+            "edit" => edit_allows(self.prefix.trim(), what),
+            _ if !self.starts => what == self.prefix.trim(),
+            _ => match what.strip_prefix(self.prefix.trim()) {
                 Some("") => true,
                 Some(rest) => {
                     rest.starts_with(' ')
@@ -144,6 +147,22 @@ impl PastLimit {
                 None => false,
             },
         }
+    }
+}
+
+/// An `edit` entry's match (review, 6a): the path as the entry, or below the entry's folder
+/// (ending in `/`), compared as paths read lexically (`\` and `/` alike on Windows, case as
+/// the filesystem reads it), never a path with a `..` in it, which could climb out of the
+/// entry's folder (`docs/../.git/hooks/pre-commit`).
+fn edit_allows(entry: &str, path: &str) -> bool {
+    let climbs = |p: &str| p.split(['/', '\\']).any(|c| c == "..");
+    if climbs(path) || climbs(entry) {
+        return false;
+    }
+    let folder = entry.ends_with(['/', '\\']);
+    match crate::studio::judge::within(Path::new(path), Path::new(entry)) {
+        Some(rel) => folder || rel.is_empty(),
+        None => false,
     }
 }
 

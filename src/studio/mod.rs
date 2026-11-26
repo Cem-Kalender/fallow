@@ -2510,8 +2510,16 @@ impl Studio {
                 .filter(|p| !p.is_empty())
                 .ok_or("name what to allow always")?
                 .to_string();
+            // A command allowed as a whole matches only itself; one the engineer shortened,
+            // the commands starting with it (review, 6b).
+            let entry = project::PastLimit {
+                limit: h.limit.name().to_string(),
+                kind: h.kind.to_string(),
+                starts: h.kind != "edit" && pre != command.trim(),
+                prefix: pre.clone(),
+            };
             let fits = if h.kind == "edit" {
-                command == pre || (pre.ends_with('/') && command.starts_with(&pre))
+                entry.allows(&entry.limit, &entry.kind, &command)
             } else {
                 command
                     .strip_prefix(pre.as_str())
@@ -2524,11 +2532,7 @@ impl Studio {
                     format!("{pre:?} is not the start of {command:?}")
                 });
             }
-            past = Some(project::PastLimit {
-                limit: h.limit.name().to_string(),
-                kind: h.kind.to_string(),
-                prefix: pre,
-            });
+            past = Some(entry);
         }
         let prefix = match (answer, prefix) {
             (ApprovalAnswer::Always, Some(pre)) if past.is_some() => Some(pre.trim().to_string()),

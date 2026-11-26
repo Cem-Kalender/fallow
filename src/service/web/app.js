@@ -990,7 +990,7 @@ const Fallow = (() => {
           title: el.dataset.limit === "target" ? "Always allow this past the target limit?" : "Always allow this past the folder limit?",
           text: edit
             ? "Changes to this path will go without asking, in this project's chats. End it with / to allow everything in that folder. The files that control the agents stay refused."
-            : "Commands starting with this will go past the limit without asking, in this project's chats, in Manual and in Auto. Shorten it to allow more. The files that control the agents stay refused.",
+            : "This command will go past the limit without asking, in this project's chats, in Manual and in Auto. Shorten it to allow every command starting with it. The files that control the agents stay refused.",
           ok: "Always allow",
           input: { label: edit ? "Allow changes to this path or folder" : "Allow commands starting with", value: el.dataset.command || "" },
         });
