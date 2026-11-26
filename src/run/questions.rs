@@ -35,6 +35,8 @@ pub struct StepTool {
 #[derive(Debug, Clone)]
 pub struct Lead {
     pub session: Option<String>,
+    /// The runtime's running total for `session`, handed to the fork (`Call.session_total_usd`).
+    pub session_total_usd: Option<f64>,
     pub workdir: PathBuf,
     pub approved: Vec<String>,
     /// The lead agent of the feature's spec session (009 US2).
@@ -390,6 +392,7 @@ fn start_lead(
         session,
         model: Some(def.model.clone()).filter(|m| !m.is_empty()),
         budget_usd: Some(def.limits.usd.map_or(remaining, |u| u.min(remaining))),
+        session_total_usd: lead.session.as_ref().and(lead.session_total_usd),
         cwd: wt,
         time_limit: Duration::from_secs(ctx.settings.defaults.lead_answer_sec.max(1)),
         system: Some(prompts::lead_system(&def.body)),

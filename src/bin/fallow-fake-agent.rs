@@ -67,6 +67,10 @@
 //! 012: with `FALLOW_FAKE_ARGS_LOG` set, each invocation appends its arguments to that file, one
 //! per line, then a line `---`, so tests can check the flags Fallow passed.
 //!
+//! Like Claude Code, its `total_cost_usd` is the session's running total: a resumed or forked
+//! session goes on from what it had cost (kept beside the scenario, in `<scenario>.totals`),
+//! a new one starts from 0. A step's `cost` is what that call adds.
+//!
 //! A resumed call (`--resume`) with no step left for it answers as Claude Code does for a
 //! session it does not know: "No conversation found with session ID: …". With `--fork-session`
 //! the call runs in a new session id, which its events report.
@@ -386,6 +390,8 @@ fn main() -> ExitCode {
         }
         i += 1;
     }
+    // The session whose running total the call goes on from.
+    let carried = resumed.then(|| session.clone());
     if fork {
         // A fork runs in a new session that remembers the old one.
         session = format!("{session}-fork-{}", std::process::id());
@@ -911,13 +917,42 @@ fn main() -> ExitCode {
         .collect();
     denials.extend(prompt_denials);
     let mut result = json!({"type": "result", "subtype": "success", "is_error": step.is_error,
-        "session_id": session, "total_cost_usd": step.cost, "num_turns": 1,
+        "session_id": session, "total_cost_usd": running_total(&scenario, carried.as_deref(), &session, step.cost), "num_turns": 1,
         "result": step.result.as_deref().unwrap_or("done"), "permission_denials": denials});
     if let Some(o) = output {
         result["structured_output"] = o;
     }
     emit(result);
     ExitCode::SUCCESS
+}
+
+/// The session's running total after a call that cost `cost`, as Claude Code reports it: what
+/// the `carried` session (the one resumed or forked) had cost, plus `cost`.
+fn running_total(scenario: &Path, carried: Option<&str>, session: &str, cost: f64) -> f64 {
+    let path = scenario.with_extension("totals");
+    let _lock = Lock::take(&scenario.with_extension("totals.lock"));
+    let mut totals: Vec<(String, f64)> = std::fs::read_to_string(&path)
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|l| {
+            let (s, t) = l.split_once('\t')?;
+            Some((s.to_string(), t.parse().ok()?))
+        })
+        .collect();
+    let before = carried
+        .and_then(|c| totals.iter().find(|(s, _)| s == c))
+        .map_or(0.0, |(_, t)| *t);
+    let total = before + cost;
+    totals.retain(|(s, _)| s != session);
+    totals.push((session.to_string(), total));
+    let _ = std::fs::write(
+        &path,
+        totals
+            .iter()
+            .map(|(s, t)| format!("{s}\t{t}\n"))
+            .collect::<String>(),
+    );
+    total
 }
 
 /// The `sh` that runs `exec` commands. On Windows, `sh` is often not on the PATH (only Git's

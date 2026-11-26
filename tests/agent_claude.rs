@@ -17,6 +17,7 @@ fn call(cwd: &std::path::Path, limit: Duration) -> Call {
         session: Session::New("sess-1".into()),
         model: None,
         budget_usd: Some(1.0),
+        session_total_usd: None,
         cwd: cwd.to_path_buf(),
         time_limit: limit,
         system: None,
@@ -152,5 +153,47 @@ fn a_session_the_runtime_does_not_know_is_named_from_stderr() {
         why.contains("No conversation found with session ID: never-started"),
         "{why}"
     );
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+/// Claude Code's `total_cost_usd` is the session's running total, which goes on across a resume
+/// (and a fork); the fake agent reports it the same way. The outcome's cost is the call's own,
+/// from the total recorded before; a new session starts from 0.
+#[test]
+fn a_resumed_session_costs_only_what_the_call_added() {
+    let (d, rt) = setup(
+        "resume-cost",
+        "[[step]]\nkind = \"build\"\noutput = { status = \"done\", summary = \"ok\" }\ncost = 0.5\n\
+         [[step]]\nkind = \"build\"\noutput = { status = \"done\", summary = \"ok\" }\ncost = 0.25\n\
+         [[step]]\nkind = \"build\"\noutput = { status = \"done\", summary = \"ok\" }\ncost = 0.125\n\
+         [[step]]\nkind = \"build\"\noutput = { status = \"done\", summary = \"ok\" }\ncost = 0.0625\n",
+    );
+    let mut c = call(&d, Duration::from_secs(30));
+    let (o, _) = run(&rt, &c);
+    assert_eq!(o.cost_usd, Some(0.5));
+    assert_eq!(o.session_total_usd, Some(0.5));
+
+    c.session = Session::Resume("sess-1".into());
+    c.session_total_usd = o.session_total_usd;
+    let (o, _) = run(&rt, &c);
+    assert_eq!(
+        o.session_total_usd,
+        Some(0.75),
+        "the runtime reports the total"
+    );
+    assert_eq!(o.cost_usd, Some(0.25), "the turn's own cost");
+
+    // A fork goes on from the session it copies.
+    c.session = Session::Fork("sess-1".into());
+    c.session_total_usd = o.session_total_usd;
+    let (o, _) = run(&rt, &c);
+    assert_eq!(o.cost_usd, Some(0.125));
+
+    // A new session starts from 0.
+    c.session = Session::New("sess-2".into());
+    c.session_total_usd = None;
+    let (o, _) = run(&rt, &c);
+    assert_eq!(o.cost_usd, Some(0.0625));
+    assert_eq!(o.session_total_usd, Some(0.0625));
     let _ = std::fs::remove_dir_all(&d);
 }

@@ -135,6 +135,15 @@ pub enum Event {
         /// 012: this turn's commit also holds turn `folded_into`'s changes.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         folded_into: Option<u32>,
+        /// The runtime's running total for `session` after the turn (`Outcome.session_total_usd`),
+        /// handed back when the session is resumed or forked; none for a runtime that reports
+        /// each call's own cost.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        session_total_usd: Option<f64>,
+        /// `cost_usd` is the turn's own cost. False in turns recorded before 2026-11-25, whose
+        /// `cost_usd` holds Claude Code's running total as it came: see `State::turn_cost`.
+        #[serde(default)]
+        own_cost: bool,
     },
     /// The engineer cancelled turn `n` (008 T047): where the lead's working copy stood when the
     /// turn began, and the engineer's edited documents as they were then.
@@ -346,9 +355,23 @@ pub struct State {
     pub origin: Option<String>,
     /// 012: a solo session's own state.
     pub solo: Option<super::solo::Solo>,
+    /// The runtime's last running total per agent session, for `Call.session_total_usd`.
+    #[serde(skip)]
+    pub session_totals: std::collections::HashMap<String, f64>,
+    /// The running turn resumes its session (not a new one or a fork).
+    #[serde(skip)]
+    pub resuming: bool,
 }
 
 impl State {
+    /// What to hand a call as `Call.session_total_usd` for `session`.
+    pub fn session_total(&self, session: &crate::agent::Session) -> Option<f64> {
+        match session {
+            crate::agent::Session::New(_) => None,
+            s => self.session_totals.get(s.id()).copied(),
+        }
+    }
+
     pub fn fold(id: &str, events: &[Logged<Event>]) -> Result<State, String> {
         let Some(first) = events.first() else {
             return Err(format!("conversation {id}: no events"));
@@ -390,11 +413,48 @@ impl State {
             agent: agent.clone(),
             origin: origin.clone(),
             solo: (*kind == Kind::Solo).then(super::solo::Solo::default),
+            session_totals: Default::default(),
+            resuming: false,
         };
         for l in &events[1..] {
             s.apply(l);
         }
         Ok(s)
+    }
+
+    /// The turn's own cost, and the session's running total kept for the next call.
+    ///
+    /// A turn recorded with `own_cost` already holds its own cost. One recorded before holds
+    /// what the runtime reported, which for Claude Code was the
+    /// session's running total. It is corrected only where it is clearly a running total: the
+    /// turn resumed its session (not a new session or a fork), an earlier turn of that same
+    /// session reported a total, and this one is at least that total. Then the turn cost the
+    /// difference. Anything else (a first turn, a fork, a total that went down) is taken as
+    /// the turn's own cost, as it was shown before, so no record is ever made smaller than a
+    /// difference of two totals the runtime itself reported.
+    fn turn_cost(
+        &mut self,
+        session: Option<&str>,
+        cost: Option<f64>,
+        total: Option<f64>,
+        own: bool,
+    ) -> Option<f64> {
+        let Some(s) = session else {
+            return cost;
+        };
+        if own {
+            if let Some(t) = total {
+                self.session_totals.insert(s.to_string(), t);
+            }
+            return cost;
+        }
+        let c = cost?;
+        let before = self
+            .resuming
+            .then(|| self.session_totals.get(s).copied())
+            .flatten();
+        self.session_totals.insert(s.to_string(), c);
+        Some(crate::agent::turn_cost(c, before))
     }
 
     pub fn apply(&mut self, l: &Logged<Event>) {
@@ -415,6 +475,7 @@ impl State {
                 ..
             } => {
                 self.busy = true;
+                self.resuming = !*new_session;
                 self.pending_edits.clear();
                 self.lead_pending = new_session.then(|| (runtime.clone(), model.clone()));
                 self.turns.push(Turn {
@@ -457,8 +518,12 @@ impl State {
                 changed,
                 cut,
                 folded_into,
+                session_total_usd,
+                own_cost,
             } => {
                 self.busy = false;
+                let cost_usd =
+                    &self.turn_cost(session.as_deref(), *cost_usd, *session_total_usd, *own_cost);
                 if let Some(solo) = self.solo.as_mut() {
                     solo.turn_finished(
                         *n,
@@ -702,6 +767,64 @@ mod tests {
         }
     }
 
+    /// A conversation's log as JSON lines: a new session, its resumes, then a new session.
+    fn costs_log(turns: &[(bool, &str, f64)], own: bool) -> Vec<Logged<Event>> {
+        let mut lines = vec![serde_json::json!({"seq": 1, "at": "2026-11-24T17:26:32Z",
+            "type": "conversation_created", "kind": "solo", "project": "shop", "feature": null,
+            "forked_from": null, "workdir": "w", "lead": null, "agent": "assistant"})];
+        for (i, (new, session, cost)) in turns.iter().enumerate() {
+            let n = i + 1;
+            lines.push(
+                serde_json::json!({"seq": 2 * n, "at": "2026-11-24T17:27:00Z",
+                "type": "turn_started", "n": n, "said": "hi", "edits": [], "mode": "auto",
+                "session": session, "runtime": "claude", "model": "opus", "new_session": new}),
+            );
+            let mut f = serde_json::json!({"seq": 2 * n + 1, "at": "2026-11-24T17:28:00Z",
+                "type": "turn_finished", "n": n, "reply": "ok", "result": null,
+                "session": session, "documents_changed": [], "commit": null, "discarded": [],
+                "cost_usd": cost, "failure": null});
+            if own {
+                f["own_cost"] = true.into();
+            }
+            lines.push(f);
+        }
+        lines
+            .into_iter()
+            .map(|l| serde_json::from_value(l).unwrap())
+            .collect()
+    }
+
+    /// Turns recorded before 2026-11-25 hold Claude Code's running total: on load, a resumed
+    /// turn's total at least the session's last is corrected to the difference.
+    #[test]
+    fn an_old_log_of_running_totals_is_corrected_on_load() {
+        let reported = crate::agent::cost_tests::REPORTED;
+        let mut turns: Vec<(bool, &str, f64)> = reported
+            .iter()
+            .enumerate()
+            .map(|(i, c)| (i == 0, "s1", *c))
+            .collect();
+        let s = State::fold("c6571178e", &costs_log(&turns, false)).unwrap();
+        assert!((s.cost_usd - 3.0137).abs() < 1e-9, "{}", s.cost_usd);
+        assert!((s.turns[1].cost_usd.unwrap() - 2.0577).abs() < 1e-9);
+        assert_eq!(s.turns[0].cost_usd, Some(0.5675));
+        assert_eq!(s.session_totals.get("s1"), Some(&3.0137));
+
+        // A new session starts from 0, whatever the old one had cost; and a total lower than
+        // the session's last is the turn's own cost.
+        turns.push((true, "s2", 0.75));
+        turns.push((false, "s2", 1.0));
+        turns.push((false, "s2", 0.125));
+        let s = State::fold("c", &costs_log(&turns, false)).unwrap();
+        let t: Vec<f64> = s.turns.iter().map(|t| t.cost_usd.unwrap()).collect();
+        assert_eq!(&t[13..], &[0.75, 0.25, 0.125]);
+        assert!((s.cost_usd - (3.0137 + 1.125)).abs() < 1e-9);
+
+        // A turn recorded since holds its own cost, as written.
+        let s = State::fold("c", &costs_log(&turns, true)).unwrap();
+        assert!((s.cost_usd - (34.2825 + 1.875)).abs() < 1e-9);
+    }
+
     #[test]
     fn a_solo_sessions_events_sit_in_the_conversation_log() {
         use crate::conversation::solo::SoloEvent;
@@ -809,6 +932,8 @@ mod tests {
                     changed: Vec::new(),
                     cut: false,
                     folded_into: None,
+                    session_total_usd: None,
+                    own_cost: true,
                 },
             ),
             logged(
@@ -905,6 +1030,8 @@ mod tests {
                 changed: Vec::new(),
                 cut: false,
                 folded_into: None,
+                session_total_usd: None,
+                own_cost: true,
             },
         )
     }

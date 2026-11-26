@@ -58,6 +58,11 @@ pub struct Call {
     pub session: Session,
     pub model: Option<String>,
     pub budget_usd: Option<f64>,
+    /// The running total the runtime last reported for the session resumed or forked (its
+    /// `Outcome.session_total_usd`), as Fallow recorded it; none for a new session, or when the
+    /// runtime reports no running total. A runtime whose cost is a running total for the whole
+    /// session subtracts it, so `Outcome.cost_usd` is the call's own cost.
+    pub session_total_usd: Option<f64>,
     pub cwd: PathBuf,
     pub time_limit: Duration,
     pub system: Option<String>,
@@ -321,12 +326,29 @@ pub struct Outcome {
     pub result: Option<Value>,
     /// Why there is no usable result.
     pub failure: Option<String>,
+    /// What this call alone cost, whatever the runtime reports: callers add these up.
     pub cost_usd: Option<f64>,
+    /// The running total for the session the runtime reported, when its cost is one (Claude
+    /// Code's `total_cost_usd` keeps growing across `--resume`). Fallow records it and hands it
+    /// back as `Call.session_total_usd` when the session is resumed or forked; it is never
+    /// added up. None for a runtime that reports each call's own cost.
+    pub session_total_usd: Option<f64>,
     /// The session the call ran in (for a fork, the new one).
     pub session: Option<String>,
     /// The commands the agent's rights refused.
     pub denials: Vec<String>,
     pub duration: Duration,
+}
+
+/// A call's own cost from a runtime's running total for the session (`reported`) and the total
+/// it reported before for the session resumed or forked (`before`; none for a new session).
+/// A total that went down is a new count (the runtime started the session's count again, or
+/// reports per call): it is the call's own cost.
+pub fn turn_cost(reported: f64, before: Option<f64>) -> f64 {
+    match before {
+        Some(b) if reported >= b => reported - b,
+        _ => reported,
+    }
 }
 
 /// Whether a runtime can be used, as the page shows it.
@@ -543,5 +565,41 @@ mod login_tests {
             "the agent ended with an error: tests failed"
         ));
         assert!(!login_failure("the agent gave no structured result"));
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod cost_tests {
+    use super::turn_cost;
+
+    /// The running totals Claude Code reported for one solo chat's thirteen turns
+    /// (2026-11-24): the chat cost the last, not their sum ($34.28).
+    pub(crate) const REPORTED: [f64; 13] = [
+        0.5675, 2.6252, 2.6719, 2.7024, 2.7301, 2.7613, 2.7921, 2.8248, 2.8540, 2.8825, 2.9139,
+        2.9431, 3.0137,
+    ];
+
+    #[test]
+    fn a_turns_cost_is_the_difference_from_the_sessions_last_total() {
+        let mut before = None;
+        let mut turns = Vec::new();
+        for t in REPORTED {
+            turns.push(turn_cost(t, before));
+            before = Some(t);
+        }
+        assert!((REPORTED.iter().sum::<f64>() - 34.2825).abs() < 1e-9);
+        assert!((turns.iter().sum::<f64>() - 3.0137).abs() < 1e-9);
+        assert!((turns[0] - 0.5675).abs() < 1e-9);
+        assert!((turns[1] - 2.0577).abs() < 1e-9);
+        for i in 1..13 {
+            assert!((turns[i] - (REPORTED[i] - REPORTED[i - 1])).abs() < 1e-12);
+        }
+    }
+
+    #[test]
+    fn a_new_session_or_a_lower_total_starts_from_zero() {
+        assert_eq!(turn_cost(0.4, None), 0.4, "a new session");
+        assert_eq!(turn_cost(0.4, Some(3.0)), 0.4, "the count started again");
+        assert_eq!(turn_cost(3.0, Some(3.0)), 0.0);
     }
 }

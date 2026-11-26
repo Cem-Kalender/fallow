@@ -318,6 +318,8 @@ fn step(run: &mut Run, ctx: &Ctx) -> Result<(), String> {
                         cost_usd: None,
                         duration_ms: 0,
                         denials: Vec::new(),
+                        session_total_usd: None,
+                        own_cost: true,
                     })?;
                     return Ok(());
                 }
@@ -2534,6 +2536,7 @@ fn start(run: &mut Run, ctx: &Ctx, n: u32) -> Result<(), String> {
         session: session.clone(),
         model: Some(def.model.clone()).filter(|m| !m.is_empty()),
         budget_usd: Some(budget),
+        session_total_usd: run.state.session_total(&session),
         cwd: worktree.clone(),
         time_limit: Duration::from_secs(minutes * 60),
         system: Some(def.body.clone()),

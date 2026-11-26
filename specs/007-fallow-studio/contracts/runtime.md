@@ -25,6 +25,7 @@ pub trait Runtime: Send + Sync {
 | mcp | The bridge configuration that gives the step `ask`, `progress` and, in chats, `approve` |
 | model | From the definition |
 | limits | Time, turns and cost |
+| session_total_usd | The running total the runtime last reported for the session resumed or forked (`Outcome.session_total_usd`, as Fallow recorded it); none for a new session |
 
 **Rights are given as data.** Each runtime turns them into its own enforcement. For Claude Code (research S-7, verified by T001):
 - `--allowedTools` rules under `--permission-mode dontAsk`, with each command allowed for both `Bash` and `PowerShell`;
@@ -51,8 +52,11 @@ Thinking is never passed up (spec, out of scope). The Claude runtime drops `thin
 
 ```text
 Outcome { result: Option<Value>, failure: Option<String>, cost_usd: Option<f64>,
-          session: Option<String>, denials: Vec<String>, duration: Duration }
+          session_total_usd: Option<f64>, session: Option<String>, denials: Vec<String>,
+          duration: Duration }
 ```
+
+- `cost_usd` is what this call alone cost; Fallow adds these up (a chat's total, a loop's spend and its limits). A runtime whose reported cost is a running total for the whole session says so in its adapter, returns that total as `session_total_usd`, and gives the call's own cost as the difference from the call's `session_total_usd` (`agent::turn_cost`). A total lower than that is a new count and is the call's own cost. Claude Code is such a runtime: its `total_cost_usd` goes on across `--resume` and `--fork-session` (2026-11-25). The adapter passes `--max-budget-usd` as the call's budget, unchanged: whether Claude Code checks it against the carried total is unverified, and raising it could let a resumed call spend more than its budget. A runtime that reports each call's own cost leaves `session_total_usd` empty.
 
 - `result` is the structured result, when it parses; `failure` says why there is none (a time-out, a crash, an error).
 - `session` is the session the call ran in: for a fork, the new id from the stream.

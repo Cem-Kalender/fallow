@@ -287,6 +287,10 @@ pub fn args(c: &Call) -> Vec<String> {
             .unwrap_or_else(|| super::registry::models("claude")[0].to_string()),
     );
     if let Some(b) = c.budget_usd {
+        // Unverified: whether Claude Code checks this flag against the session's running total
+        // carried over a resume or fork (`REPORTS_SESSION_TOTAL`) or against the call's own
+        // spend. The budget is given as it is, never raised by `c.session_total_usd`: if the
+        // check is on the carried total, a resumed call stops early, never spends more.
         a.push("--max-budget-usd".into());
         a.push(format!("{:.2}", b.max(0.01)));
     }
@@ -630,8 +634,14 @@ fn relative(e: Event, cwd: &Path) -> Event {
     }
 }
 
-/// The final `result` event: the structured result, why there is none, the cost, the session
-/// and the refused commands.
+/// Claude Code's `total_cost_usd` is a running total for the whole session: a resumed session
+/// (and a fork) goes on counting from what it had cost before (seen 2026-11-24 in a solo chat
+/// whose thirteen turns reported $0.57, $2.63, $2.67 … $3.01). The adapter turns it into the
+/// call's own cost with `Call.session_total_usd` (contracts/runtime.md, constitution IX).
+pub const REPORTS_SESSION_TOTAL: bool = true;
+
+/// The final `result` event: the structured result, why there is none, the cost (the
+/// session's running total, `REPORTS_SESSION_TOTAL`), the session and the refused commands.
 pub type Final = (
     Option<Value>,
     Option<String>,
@@ -686,6 +696,7 @@ pub fn run(agent: &Agent, c: &Call, sink: &mut dyn FnMut(Event), stop: &AtomicBo
         result: None,
         failure: Some(why),
         cost_usd: None,
+        session_total_usd: None,
         session: None,
         denials: Vec::new(),
         duration: started.elapsed(),
@@ -874,10 +885,18 @@ pub fn run(agent: &Agent, c: &Call, sink: &mut dyn FnMut(Event), stop: &AtomicBo
                     ));
                 }
             }
+            // The session's running total, and this call's own part of it.
+            let (cost_usd, session_total_usd) = match cost_usd {
+                Some(t) if REPORTS_SESSION_TOTAL => {
+                    (Some(super::turn_cost(t, c.session_total_usd)), Some(t))
+                }
+                other => (other, None),
+            };
             Outcome {
                 result,
                 failure,
                 cost_usd,
+                session_total_usd,
                 session: session.or(session_now),
                 denials,
                 duration,
@@ -928,6 +947,7 @@ mod tests {
             session: Session::New("s".into()),
             model: None,
             budget_usd: None,
+            session_total_usd: None,
             cwd: std::env::temp_dir(),
             time_limit: std::time::Duration::from_secs(5),
             system: None,
@@ -1013,6 +1033,7 @@ mod tests {
             session: Session::New("u-1".into()),
             model: Some("sonnet".into()),
             budget_usd: Some(4.5),
+            session_total_usd: None,
             cwd: ".".into(),
             time_limit: Duration::from_secs(60),
             system: Some("rules".into()),
@@ -1026,6 +1047,16 @@ mod tests {
 
     fn has(a: &[String], s: &str) -> bool {
         a.iter().any(|x| x == s)
+    }
+
+    /// A resumed session's budget is the call's own, never raised by the session's running
+    /// total (whether Claude Code checks the flag against that total is unverified).
+    #[test]
+    fn a_resumed_sessions_budget_is_never_raised_by_its_running_total() {
+        let mut c = call();
+        c.session = Session::Resume("u-1".into());
+        c.session_total_usd = Some(2.0);
+        assert!(args(&c).join(" ").contains("--max-budget-usd 4.50"));
     }
 
     #[test]

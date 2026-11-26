@@ -665,6 +665,8 @@ impl Studio {
                             changed: Vec::new(),
                             cut: false,
                             folded_into: None,
+                            session_total_usd: None,
+                            own_cost: true,
                         });
                     } else if c.state.busy {
                         if let Some(t) = c.state.turns.last() {
@@ -687,6 +689,8 @@ impl Studio {
                                 changed: Vec::new(),
                                 cut: false,
                                 folded_into: None,
+                                session_total_usd: None,
+                                own_cost: true,
                             });
                         }
                     }
@@ -821,6 +825,8 @@ impl Studio {
             lead_runtime: None,
             lead_model: None,
             lead_pending: None,
+            session_totals: Default::default(),
+            resuming: false,
             agent: agent.clone(),
             origin: origin.clone(),
             solo: (kind == Kind::Solo).then(crate::conversation::solo::Solo::default),
@@ -1412,6 +1418,17 @@ impl Studio {
             .map(|i| (i.path.clone(), i.sha.clone()))
             .collect();
         let hand = !matches!(session, Session::Resume(_)) || now != c.state.last_instructions();
+        // The runtime's running total for the session resumed, or for the project
+        // conversation's session forked.
+        let session_total = match &session {
+            Session::Fork(_) => c
+                .state
+                .forked_from
+                .as_ref()
+                .and_then(|f| self.convs.get(f))
+                .and_then(|f| f.state.session_total(&session)),
+            s => c.state.session_total(s),
+        };
         let instr_text = if hand {
             agent::instructions::block(&instr)
         } else {
@@ -1485,6 +1502,7 @@ impl Studio {
             session: session.clone(),
             model: Some(def.model.clone()).filter(|m| !m.is_empty()),
             budget_usd: Some(def.limits.usd.unwrap_or(2.0)),
+            session_total_usd: session_total,
             // 012 (R-18): Spec Kit runs from its own root, a subfolder for a moved project.
             cwd: workdir.join(&p.spec_root),
             time_limit: Duration::from_secs(def.limits.minutes.unwrap_or(20) * 60),
@@ -1785,6 +1803,8 @@ impl Studio {
             changed: Vec::new(),
             cut: false,
             folded_into: None,
+            session_total_usd: outcome.session_total_usd,
+            own_cost: true,
         })?;
         c.live.clear();
         c.answered.clear();
@@ -1826,6 +1846,8 @@ impl Studio {
             changed: Vec::new(),
             cut: false,
             folded_into: None,
+            session_total_usd: outcome.session_total_usd,
+            own_cost: true,
         })?;
         c.live.clear();
         c.answered.clear();
@@ -2009,8 +2031,12 @@ impl Studio {
                 })
             })
             .and_then(|c| c.state.session.clone());
+        let session_total_usd = session
+            .as_ref()
+            .and_then(|s| conv.and_then(|c| c.state.session_totals.get(s).copied()));
         Ok(crate::run::questions::Lead {
             session,
+            session_total_usd,
             workdir: wd,
             approved: p.approved_commands.clone(),
             agent,

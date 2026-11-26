@@ -180,6 +180,8 @@ pub fn resume(run: &mut Run) -> Result<(), String> {
             cost_usd: None,
             duration_ms: 0,
             denials: Vec::new(),
+            session_total_usd: None,
+            own_cost: true,
         })?;
     }
     Ok(())
@@ -378,6 +380,8 @@ pub fn on_done(run: &mut Run, ctx: &Ctx, done: Done) -> Result<(), String> {
                 cost_usd: outcome.cost_usd,
                 duration_ms: outcome.duration.as_millis() as u64,
                 denials: outcome.denials,
+                session_total_usd: outcome.session_total_usd,
+                own_cost: true,
             })?;
             if run.state.stage.is_final() {
                 return run.append(Event::Verified {
