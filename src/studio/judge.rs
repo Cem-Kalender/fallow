@@ -295,8 +295,6 @@ fn strip_heredocs(command: &str) -> Option<String> {
     let mut found = false;
     // Where the current simple command starts in `out`.
     let mut seg = 0usize;
-    // The current simple command reads a here-document taken out.
-    let mut fed = false;
     let mut i = 0;
     while i < c.len() {
         let ch = c[i];
@@ -326,6 +324,10 @@ fn strip_heredocs(command: &str) -> Option<String> {
                 }
                 i += 2;
             }
+            '(' if !open.is_empty() => {
+                // A process substitution or a subshell on its line (`cat <<'EOF' > >(sh)`).
+                return None;
+            }
             '(' => {
                 depth += 1;
                 out.push(ch);
@@ -336,34 +338,38 @@ fn strip_heredocs(command: &str) -> Option<String> {
                 out.push(ch);
                 i += 1;
             }
-            '|' if c.get(i + 1) != Some(&'|') && fed => {
-                // Its output piped onward (`cat <<'EOF' | sh`): the body may be run, so it is
-                // not read as data (review, 1).
+            '|' if c.get(i + 1) != Some(&'|') && !open.is_empty() => {
+                // A pipe on a here-document's line (`cat <<'EOF' | sh`, `{ cat <<'EOF'; } |
+                // sh`, `tee x.sh <<'EOF' | sh`): the body may be run, so it is not data
+                // (review, 1).
                 return None;
             }
             '|' if c.get(i + 1) == Some(&'|') => {
                 out.push_str("||");
                 seg = out.len();
-                fed = false;
                 i += 2;
             }
             ';' | '&' | '|' => {
                 out.push(ch);
                 seg = out.len();
-                fed = false;
                 i += 1;
             }
             '<' if c.get(i + 1) == Some(&'<') && c.get(i + 2) != Some(&'<') => {
                 if depth > 0 {
                     return None;
                 }
-                // The program it feeds: the first word of the command, after assignments.
-                let prog = out[seg..]
-                    .split_whitespace()
+                // The program it feeds: the first word of the command, after assignments. A
+                // process substitution before it (`cat > >(sh) <<'EOF'`) may run the body.
+                let words: Vec<&str> = out[seg..].split_whitespace().collect();
+                let prog = words
+                    .iter()
                     .find(|w| !w.contains('='))
-                    .map(program)
+                    .map(|w| program(w))
                     .unwrap_or_default();
-                if !HEREDOC_DATA.contains(&prog.as_str()) {
+                if out[seg..].contains('(')
+                    || !(HEREDOC_DATA.contains(&prog.as_str())
+                        || (prog == "git" && commit_message_from_stdin(&words)))
+                {
                     return None;
                 }
                 let mut j = i + 2;
@@ -385,13 +391,11 @@ fn strip_heredocs(command: &str) -> Option<String> {
                 open.push((tag, quoted, dash));
                 out.push_str(" </dev/null ");
                 found = true;
-                fed = true;
                 i = j;
             }
             '\n' if !open.is_empty() => {
                 out.push('\n');
                 seg = out.len();
-                fed = false;
                 i += 1;
                 // The bodies, in order, each up to its tag's line.
                 for (tag, quoted, dash) in std::mem::take(&mut open) {
@@ -422,7 +426,6 @@ fn strip_heredocs(command: &str) -> Option<String> {
             '\n' => {
                 out.push(ch);
                 seg = out.len();
-                fed = false;
                 i += 1;
             }
             _ => {
@@ -439,6 +442,16 @@ fn strip_heredocs(command: &str) -> Option<String> {
         out.push_str(&e);
     }
     Some(out)
+}
+
+/// `git commit -F -` (`-F-`, `--file=-`, `--file -`): the here-document is the commit
+/// message, data (review of 0.3.2, 2).
+fn commit_message_from_stdin(words: &[&str]) -> bool {
+    words.contains(&"commit")
+        && words.iter().enumerate().any(|(i, w)| {
+            matches!(*w, "-F-" | "--file=-")
+                || (matches!(*w, "-F" | "--file") && words.get(i + 1) == Some(&"-"))
+        })
 }
 
 /// The here-document delimiter word starting at `chars[j]`: the tag after quote removal,
@@ -480,13 +493,6 @@ fn heredoc_word(chars: &[char], mut j: usize) -> Option<(String, bool, usize)> {
         }
     }
     (!tag.is_empty()).then_some((tag, quoted, j))
-}
-
-/// 015 (review, 1): whether `command` holds a here-document `split` reads without its body.
-/// The checks that must never miss a control file or a push read such a command's raw text
-/// too, so a body taken out can only spare a false alarm, never hide one.
-pub(crate) fn strips_heredoc(command: &str) -> bool {
-    strip_heredocs(command).is_some()
 }
 
 /// The commands of the `$(…)` and backtick expansions in an unquoted here-document's body;
@@ -873,11 +879,12 @@ fn looks_like_path(w: &str) -> bool {
         || (w.len() >= 2 && w.as_bytes()[1] == b':')
 }
 
-/// Protected paths, compared without regard to case on Windows (review M2).
+/// Protected paths, compared without regard to case on every platform (review M2): Windows'
+/// and macOS's default filesystems read `.Claude/settings.json` as `.claude/settings.json`.
 fn protected(ctx: &Ctx, rel: &str) -> bool {
     ctx.protect.iter().any(|g| {
         globset::GlobBuilder::new(g)
-            .case_insensitive(cfg!(windows))
+            .case_insensitive(true)
             .build()
             .map(|g| g.compile_matcher().is_match(rel))
             .unwrap_or(false)
@@ -2535,21 +2542,12 @@ fn control_write(cmd: &str, ctx: &Ctx, control_files: &[String]) -> Option<Strin
         .map(str::to_string)
         .collect()
     };
-    let raw = || {
-        pieces(cmd).iter().find_map(|w| hits(ctx.wt, w)).map(|f| {
-            format!("it names {f}, the runtime's own settings, in a command Fallow cannot read")
-        })
-    };
     let Ok(parts) = split(cmd) else {
         // Unreadable as written: any word naming a control file or its folder counts.
-        return raw();
+        return pieces(cmd).iter().find_map(|w| hits(ctx.wt, w)).map(|f| {
+            format!("it names {f}, the runtime's own settings, in a command Fallow cannot read")
+        });
     };
-    // A here-document's body read as data: its raw text counts too (review, 1).
-    if strips_heredoc(cmd) {
-        if let Some(why) = raw() {
-            return Some(why);
-        }
-    }
     let mut base = canon(ctx.wt);
     for p in &parts {
         for t in &p.redirects {
@@ -2864,10 +2862,6 @@ fn pushes_onto_at(cmd: &str, target: &str, depth: usize) -> bool {
     let Ok(parts) = split(cmd) else {
         return names_git_push(cmd);
     };
-    // A here-document's body read as data: the raw text counts too (review, 1).
-    if strips_heredoc(cmd) && names_git_push(cmd) {
-        return true;
-    }
     parts.iter().any(|p| {
         if part_pushes_onto(&p.words, target, depth) {
             return true;
