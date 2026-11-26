@@ -312,6 +312,17 @@ fn strip_heredocs(command: &str) -> Option<String> {
             continue;
         }
         match ch {
+            '#' if i == 0
+                || c[i - 1].is_whitespace()
+                || matches!(c[i - 1], ';' | '&' | '|' | '(' | ')') =>
+            {
+                // A comment, to the end of the line: a `<<` in it opens no here-document
+                // (`cat x.txt # <<'EOF'` runs the lines after it; review of 0.3.2, round 3).
+                // Kept as written, so the command is read as before.
+                let end = (i..c.len()).find(|k| c[*k] == '\n').unwrap_or(c.len());
+                out.extend(c[i..end].iter());
+                i = end;
+            }
             '\'' | '"' => {
                 quote = Some(ch);
                 out.push(ch);
@@ -366,9 +377,19 @@ fn strip_heredocs(command: &str) -> Option<String> {
                     .find(|w| !w.contains('='))
                     .map(|w| program(w))
                     .unwrap_or_default();
+                // The whole simple command, the words after the here-document on its line too
+                // (`git commit -F - <<'EOF' -e`).
+                let line_end = (i..c.len())
+                    .find(|k| matches!(c[*k], '\n' | ';' | '&' | '|'))
+                    .unwrap_or(c.len());
+                let after: String = c[i..line_end].iter().collect();
+                let all: Vec<&str> = words
+                    .iter()
+                    .copied()
+                    .chain(after.split_whitespace().skip(1))
+                    .collect();
                 if out[seg..].contains('(')
-                    || !(HEREDOC_DATA.contains(&prog.as_str())
-                        || (prog == "git" && commit_message_from_stdin(&words)))
+                    || !(HEREDOC_DATA.contains(&prog.as_str()) || commit_message_from_stdin(&all))
                 {
                     return None;
                 }
@@ -445,13 +466,150 @@ fn strip_heredocs(command: &str) -> Option<String> {
 }
 
 /// `git commit -F -` (`-F-`, `--file=-`, `--file -`): the here-document is the commit
-/// message, data (review of 0.3.2, 2).
+/// message, data (review of 0.3.2, 2). Only as written plainly: `git`, an optional `-C <dir>`,
+/// `commit` and flags that run nothing (`ALLOWED`); no assignment before it, no `-c`, no
+/// `--edit`, no alias: git can run the body otherwise (`git -c 'alias.x=!sh -s' x commit -F -`,
+/// `GIT_EDITOR=sh git commit -e -F -`; round 3, 1).
 fn commit_message_from_stdin(words: &[&str]) -> bool {
-    words.contains(&"commit")
-        && words.iter().enumerate().any(|(i, w)| {
-            matches!(*w, "-F-" | "--file=-")
-                || (matches!(*w, "-F" | "--file") && words.get(i + 1) == Some(&"-"))
+    const ALLOWED: &[&str] = &[
+        "-q",
+        "--quiet",
+        "-s",
+        "--signoff",
+        "--allow-empty",
+        "--amend",
+        "--no-verify",
+        "-n",
+        "-a",
+        "--all",
+        "-v",
+        "--verbose",
+    ];
+    let mut w = words.iter().copied().peekable();
+    if w.next() != Some("git") {
+        return false;
+    }
+    if w.peek() == Some(&"-C") {
+        w.next();
+        if w.next().is_none_or(|d| d.starts_with('-')) {
+            return false;
+        }
+    }
+    if w.next() != Some("commit") {
+        return false;
+    }
+    let mut stdin = false;
+    while let Some(x) = w.next() {
+        match x {
+            "-F-" | "--file=-" => stdin = true,
+            "-F" | "--file" if w.peek() == Some(&"-") => {
+                w.next();
+                stdin = true;
+            }
+            x if ALLOWED.contains(&x) => {}
+            x if x.starts_with("--author=")
+                && !x.contains(['$', '`', '\'', '"', '\\', '(', ')', '<', '>']) => {}
+            x if x.starts_with("<<") => {}
+            _ => return false,
+        }
+    }
+    stdin
+}
+
+/// 015 (review of 0.3.2, round 3): a git invocation that may run another program, or change
+/// what git runs or where: a `-c` setting (an alias with `!`, `core.sshCommand`,
+/// `core.hooksPath`, …) other than a few that only change what is shown or recorded,
+/// `--config-env`, `--exec-path=`, `--git-dir=`, `--work-tree=`, or a `GIT_*` variable set before
+/// it (`GIT_EDITOR=sh`). Read in each part, in a string handed to a shell, and, for a command
+/// Fallow cannot read, in its raw words. Auto holds it (`mode`).
+pub fn git_runs_other(cmd: &str) -> Option<String> {
+    git_runs_other_at(cmd, 0)
+}
+
+fn git_runs_other_at(cmd: &str, depth: usize) -> Option<String> {
+    let Ok(parts) = split(cmd) else {
+        let words: Vec<&str> = cmd
+            .split(|c: char| c.is_whitespace() || matches!(c, ';' | '&' | '|' | '(' | ')' | '`'))
+            .map(|w| w.trim_matches(['"', '\'']))
+            .filter(|w| !w.is_empty())
+            .collect();
+        return git_words_run_other(&words);
+    };
+    parts.iter().find_map(|p| {
+        let words: Vec<&str> = p.words.iter().map(String::as_str).collect();
+        git_words_run_other(&words).or_else(|| {
+            if depth >= 3 {
+                return None;
+            }
+            let sh = words.iter().position(|w| {
+                let prog = program(w);
+                SHELLS.contains(&prog.as_str())
+                    || matches!(prog.as_str(), "eval" | "xargs" | "pwsh" | "powershell")
+            })?;
+            words[sh + 1..]
+                .iter()
+                .find_map(|w| git_runs_other_at(w, depth + 1))
         })
+    })
+}
+
+/// `git_runs_other` on one run of words: each `git` in them, with what is set before it.
+fn git_words_run_other(words: &[&str]) -> Option<String> {
+    let plain_setting = |kv: &str| {
+        let key = kv
+            .split_once('=')
+            .map_or(kv, |(k, _)| k)
+            .to_ascii_lowercase();
+        matches!(
+            key.as_str(),
+            "user.name" | "user.email" | "core.quotepath" | "init.defaultbranch"
+        ) || key.starts_with("color.")
+            || key.starts_with("advice.")
+    };
+    for (g, _) in words
+        .iter()
+        .enumerate()
+        .filter(|(_, w)| program(w) == "git")
+    {
+        if let Some(v) = words[..g].iter().find(|w| {
+            w.split_once('=')
+                .is_some_and(|(k, _)| k.to_ascii_uppercase().starts_with("GIT_"))
+        }) {
+            return Some(format!(
+                "it runs git with {v} set, which can make git run another program"
+            ));
+        }
+        let mut i = g + 1;
+        while let Some(a) = words.get(i) {
+            if !a.starts_with('-') {
+                break;
+            }
+            match *a {
+                "-C" | "--namespace" => i += 2,
+                "-c" => {
+                    let kv = words.get(i + 1).copied().unwrap_or_default();
+                    if !plain_setting(kv) {
+                        return Some(format!(
+                            "it runs git with -c {kv}, which can make git run another program"
+                        ));
+                    }
+                    i += 2;
+                }
+                x if x.starts_with("-c")
+                    || x.starts_with("--config-env")
+                    || x.starts_with("--exec-path=")
+                    || x.starts_with("--git-dir")
+                    || x.starts_with("--work-tree") =>
+                {
+                    return Some(format!(
+                        "it runs git with {x}, which can change what git runs or where"
+                    ));
+                }
+                _ => i += 1,
+            }
+        }
+    }
+    None
 }
 
 /// The here-document delimiter word starting at `chars[j]`: the tag after quote removal,
