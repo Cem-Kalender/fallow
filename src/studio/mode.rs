@@ -286,11 +286,22 @@ pub fn assistant(
         RequestKind::Web => Decision::Allow,
         RequestKind::Edit => {
             let path = req.path.clone().unwrap_or_default();
+            // The files that control the agents, and git's own record, however spelled (case,
+            // `\\`): refused before anything else, as the lead's (review of 0.3.2, 1).
+            if control_file(&path, cx.control_files, ctx.wt) || git_record(&path, ctx.wt) {
+                return Decision::Refuse {
+                    limit: Limit::Control,
+                    reason: format!(
+                        "the assistant may not change {path}: it controls what agents may do (the runtime's or Fallow's own settings, or git's own record)"
+                    ),
+                    facts: None,
+                };
+            }
             let Some(why) = judge::edit_problem(&path, ctx) else {
                 return Decision::Allow;
             };
             let reason = format!("the assistant may not change {path}: {why}");
-            // The files that control the agents, and git's own record: never (constitution VI).
+            // Anything else the judge names inside the copy: never (constitution VI).
             let opaque = path.trim().starts_with('~') || path.contains('$');
             let protected = control_file(&path, cx.control_files, ctx.wt)
                 || (!opaque && judge::rel_inside(ctx.wt, &path).is_some());
@@ -385,6 +396,11 @@ fn folder_limit(command: &str, ctx: &judge::Ctx) -> Option<String> {
 /// default macOS filesystem reads `.CLAUDE/settings.json` as `.claude/settings.json` (015
 /// hardening).
 pub fn control_file(path: &str, control_files: &[String], base: &Path) -> bool {
+    // `\` read as a separator too, as Windows reads it.
+    let slashed = path.replace('\\', "/");
+    if slashed != path && control_file(&slashed, control_files, base) {
+        return true;
+    }
     let Some(rel) = judge::rel_inside(base, path) else {
         return false;
     };
@@ -407,7 +423,7 @@ pub fn control_file(path: &str, control_files: &[String], base: &Path) -> bool {
 /// Whether `path`, read from `base`, is in a git record: a `.git` folder (or file) below
 /// `base`, or anywhere in a path outside it (a moved spec root's copy), compared without
 /// regard to case. `..` is resolved first, so `docs/../.git/config` counts.
-fn git_record(path: &str, base: &Path) -> bool {
+pub(crate) fn git_record(path: &str, base: &Path) -> bool {
     let parts = |s: &str| -> Vec<String> {
         let s = judge::plain(s.trim()).replace('\\', "/");
         let mut out: Vec<String> = Vec::new();
@@ -422,8 +438,10 @@ fn git_record(path: &str, base: &Path) -> bool {
         }
         out
     };
+    // `\` is a separator here on every platform: a name with one in it is refused rather
+    // than read differently from Windows.
     let p = judge::plain(path.trim()).replace('\\', "/");
-    let base_s = base.to_string_lossy();
+    let base_s = base.to_string_lossy().replace('\\', "/");
     let b = parts(&base_s);
     let abs = if Path::new(&p).is_absolute() || p.starts_with('/') {
         parts(&p)
@@ -433,6 +451,36 @@ fn git_record(path: &str, base: &Path) -> bool {
     let below = abs.len() >= b.len() && abs.iter().zip(&b).all(|(x, y)| x.eq_ignore_ascii_case(y));
     let rest = if below { &abs[b.len()..] } else { &abs[..] };
     rest.iter().any(|c| c.eq_ignore_ascii_case(".git"))
+}
+
+/// Whether `path` names a file that controls the agents at any depth, read lexically (`\\`
+/// and `/` alike, `..` resolved, case folded): a `.git` part, one of Fallow's control files
+/// (`rights::CONTROL_GLOBS`) or one of `control_files` below any folder. For "Always allow"
+/// entries, which never reach such a file wherever it lies (review of 0.3.2, 4).
+pub fn control_anywhere(path: &str, control_files: &[&str]) -> bool {
+    let mut parts: Vec<String> = Vec::new();
+    for c in path.trim().replace('\\', "/").split('/') {
+        match c {
+            "" | "." => {}
+            ".." => {
+                parts.pop();
+            }
+            x => parts.push(x.to_ascii_lowercase()),
+        }
+    }
+    if parts.iter().any(|c| c == ".git") {
+        return true;
+    }
+    (0..parts.len()).any(|i| {
+        let rel = parts[i..].join("/");
+        control_files.iter().any(|f| f.eq_ignore_ascii_case(&rel))
+            || crate::agent::rights::CONTROL_GLOBS
+                .iter()
+                .any(|g| match g.strip_suffix("/**") {
+                    Some(dir) => rel.starts_with(&format!("{dir}/")),
+                    None => rel == *g,
+                })
+    })
 }
 
 /// The lead's context: where it works, the runtime's settings files, the commands that run
@@ -986,9 +1034,14 @@ impl super::Studio {
                 .get(conv)
                 .and_then(|c| self.project(&c.state.project).ok())
                 .is_some_and(|p| {
-                    p.allowed_past_limits
-                        .iter()
-                        .any(|e| e.allows(limit.name(), kind, &what))
+                    // Never a file that controls the agents, wherever it is (review of 0.3.2, 4).
+                    let control =
+                        agent::registry::capabilities(runtime, &self.settings).control_files;
+                    let control: Vec<&str> = control.iter().map(String::as_str).collect();
+                    !(kind == "edit" && control_anywhere(&what, &control))
+                        && p.allowed_past_limits
+                            .iter()
+                            .any(|e| e.allows(limit.name(), kind, &what))
                 }),
             _ => false,
         };

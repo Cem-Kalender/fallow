@@ -182,7 +182,8 @@ const ASKED: [&str; 9] = [
 ];
 
 /// 012: the files in a working copy through which Claude Code reads settings of its own.
-const CONTROL_FILES: [&str; 2] = [".claude/settings.json", ".claude/settings.local.json"];
+/// Claude Code's own settings files, relative to a project (`Capabilities::control_files`).
+pub const CONTROL_FILES: [&str; 2] = [".claude/settings.json", ".claude/settings.local.json"];
 
 /// The arguments after the agent's own leading arguments (research R-3, S-5, S-7). The
 /// instruction goes on stdin, which also keeps it off the command line.

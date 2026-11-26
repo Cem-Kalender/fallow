@@ -153,10 +153,16 @@ impl PastLimit {
 /// An `edit` entry's match (review, 6a): the path as the entry, or below the entry's folder
 /// (ending in `/`), compared as paths read lexically (`\` and `/` alike on Windows, case as
 /// the filesystem reads it), never a path with a `..` in it, which could climb out of the
-/// entry's folder (`docs/../.git/hooks/pre-commit`).
+/// entry's folder (`docs/../.git/hooks/pre-commit`), nor a path holding a `.git` part or a
+/// control file.
 fn edit_allows(entry: &str, path: &str) -> bool {
     let climbs = |p: &str| p.split(['/', '\\']).any(|c| c == "..");
     if climbs(path) || climbs(entry) {
+        return false;
+    }
+    // Never git's record nor a file that controls the agents, below the entry's folder or
+    // named by it (review of 0.3.2, 4).
+    if crate::studio::mode::control_anywhere(path, &crate::agent::claude::CONTROL_FILES) {
         return false;
     }
     let folder = entry.ends_with(['/', '\\']);
