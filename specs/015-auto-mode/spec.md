@@ -48,6 +48,7 @@ There is no second model and no reviewer. Fallow keeps no list of exceptions tha
 - Accept-edits, plan, read-only or approved-only modes.
 - Auto for loops: they run unattended under the gates and the locked plan.
 - New runtimes.
+- Still open, for a later spec about commands a text check cannot see: a script written and then run (`cat > x.sh <<'EOF'` … `EOF` then `sh x.sh` or `. ./x.sh`, the same as `printf … > x.sh; sh x.sh`), an encoded command (`echo <base64> | base64 -d | sh`), and a body fed to a shell that changes the engineer's folder. Their control-file writes and pushes are not seen by Auto's text checks; the runtime never loads settings from the working copy (`--setting-sources`), so such a write cannot switch Fallow's checks off.
 
 ## Clarifications
 
