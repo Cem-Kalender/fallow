@@ -44,10 +44,22 @@ pub fn writes(command: &str, wt: &Path, folder: &Path, globs: &[String]) -> Opti
         globs,
     };
     let named = |text: &str| names(text, command, &f);
+    // Unquoted too, so `.cla""ude` reads as `.claude`.
+    let raw = || named(command).or_else(|| named(&command.replace(['"', '\''], "")));
     let Ok(parts) = judge::split(command) else {
-        // Unquoted too, so `.cla""ude` reads as `.claude`.
-        return named(command).or_else(|| named(&command.replace(['"', '\''], "")));
+        return raw();
     };
+    // A here-document `split` reads without its body: the raw text counts too, so a body
+    // misread as data never hides a write (review, 1). Only the paths it names as written
+    // (escapes, case and braces read): a body is mostly prose or code, where the guesses for
+    // an unreadable command (`> $X` and a protected name anywhere) would refuse ordinary
+    // scripts (r13).
+    if judge::strips_heredoc(command) {
+        let plain = command.replace(['"', '\''], " ");
+        if let Some(rel) = names_literally(command, &f).or_else(|| names_literally(&plain, &f)) {
+            return Some(rel);
+        }
+    }
     for p in &parts {
         if let Some(rel) = p.redirects.iter().find_map(|r| named(r)) {
             return Some(rel);
@@ -269,6 +281,28 @@ fn names(text: &str, command: &str, f: &Places) -> Option<String> {
                     .find_map(|t| could_name(t, command, f))
             })
         })
+    })
+}
+
+/// The protected path (or folder holding one) `text` names as written: `names` without its
+/// guesses for globs and expansions.
+fn names_literally(text: &str, f: &Places) -> Option<String> {
+    text.split(|c: char| {
+        c.is_whitespace()
+            || matches!(
+                c,
+                '"' | '\'' | ';' | '&' | '|' | '<' | '>' | '(' | ')' | '`' | '=' | '$'
+            )
+    })
+    .filter(|t| !t.is_empty() && !t.starts_with('-'))
+    .flat_map(expand_braces)
+    .flat_map(|t| t.split(',').map(str::to_string).collect::<Vec<_>>())
+    .filter(|t| !t.is_empty() && !t.starts_with('-'))
+    .find_map(|t| {
+        let unescaped = judge::bash_unescape(&t);
+        [t.as_str(), unescaped.as_str()]
+            .into_iter()
+            .find_map(|t| protected_path(t, f).or_else(|| protected_folder(t, f)))
     })
 }
 

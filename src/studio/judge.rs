@@ -295,6 +295,8 @@ fn strip_heredocs(command: &str) -> Option<String> {
     let mut found = false;
     // Where the current simple command starts in `out`.
     let mut seg = 0usize;
+    // The current simple command reads a here-document taken out.
+    let mut fed = false;
     let mut i = 0;
     while i < c.len() {
         let ch = c[i];
@@ -334,9 +336,21 @@ fn strip_heredocs(command: &str) -> Option<String> {
                 out.push(ch);
                 i += 1;
             }
+            '|' if c.get(i + 1) != Some(&'|') && fed => {
+                // Its output piped onward (`cat <<'EOF' | sh`): the body may be run, so it is
+                // not read as data (review, 1).
+                return None;
+            }
+            '|' if c.get(i + 1) == Some(&'|') => {
+                out.push_str("||");
+                seg = out.len();
+                fed = false;
+                i += 2;
+            }
             ';' | '&' | '|' => {
                 out.push(ch);
                 seg = out.len();
+                fed = false;
                 i += 1;
             }
             '<' if c.get(i + 1) == Some(&'<') && c.get(i + 2) != Some(&'<') => {
@@ -360,47 +374,24 @@ fn strip_heredocs(command: &str) -> Option<String> {
                 while c.get(j) == Some(&' ') {
                     j += 1;
                 }
-                let (tag, quoted) = match c.get(j) {
-                    Some(q @ ('\'' | '"')) => {
-                        let q = *q;
-                        let start = j + 1;
-                        let end = (start..c.len()).find(|k| c[*k] == q)?;
-                        j = end + 1;
-                        (c[start..end].iter().collect::<String>(), true)
-                    }
-                    Some('\\') => {
-                        let start = j + 1;
-                        j = start;
-                        while c
-                            .get(j)
-                            .is_some_and(|x| x.is_ascii_alphanumeric() || *x == '_')
-                        {
-                            j += 1;
-                        }
-                        (c[start..j].iter().collect::<String>(), true)
-                    }
-                    _ => {
-                        let start = j;
-                        while c
-                            .get(j)
-                            .is_some_and(|x| x.is_ascii_alphanumeric() || *x == '_')
-                        {
-                            j += 1;
-                        }
-                        (c[start..j].iter().collect::<String>(), false)
-                    }
-                };
+                // The delimiter is one shell word: bash removes its quotes across the whole
+                // word (`E"O"F` is `EOF`) and expands nothing in it. A word Fallow cannot read
+                // that way (an unclosed quote, `$`, a backtick) is not stripped (review, 2).
+                let (tag, quoted, end) = heredoc_word(&c, j)?;
+                j = end;
                 if tag.is_empty() {
                     return None;
                 }
                 open.push((tag, quoted, dash));
                 out.push_str(" </dev/null ");
                 found = true;
+                fed = true;
                 i = j;
             }
             '\n' if !open.is_empty() => {
                 out.push('\n');
                 seg = out.len();
+                fed = false;
                 i += 1;
                 // The bodies, in order, each up to its tag's line.
                 for (tag, quoted, dash) in std::mem::take(&mut open) {
@@ -431,6 +422,7 @@ fn strip_heredocs(command: &str) -> Option<String> {
             '\n' => {
                 out.push(ch);
                 seg = out.len();
+                fed = false;
                 i += 1;
             }
             _ => {
@@ -447,6 +439,54 @@ fn strip_heredocs(command: &str) -> Option<String> {
         out.push_str(&e);
     }
     Some(out)
+}
+
+/// The here-document delimiter word starting at `chars[j]`: the tag after quote removal,
+/// whether any of it was quoted (the body is then not expanded), and where the word ends.
+/// `None` when it is empty, has an unclosed quote, or holds a `$` or a backtick.
+fn heredoc_word(chars: &[char], mut j: usize) -> Option<(String, bool, usize)> {
+    let mut tag = String::new();
+    let mut quoted = false;
+    while let Some(&ch) = chars.get(j) {
+        match ch {
+            '\'' | '"' => {
+                quoted = true;
+                let end = (j + 1..chars.len()).find(|k| chars[*k] == ch)?;
+                for &x in &chars[j + 1..end] {
+                    if x == '$' || x == '`' || (ch == '"' && x == '\\') {
+                        return None;
+                    }
+                    tag.push(x);
+                }
+                j = end + 1;
+            }
+            '\\' => {
+                quoted = true;
+                let x = *chars.get(j + 1)?;
+                if x == '\n' {
+                    return None;
+                }
+                tag.push(x);
+                j += 2;
+            }
+            '$' | '`' => return None,
+            x if x.is_whitespace() || matches!(x, ';' | '&' | '|' | '<' | '>' | '(' | ')') => {
+                break;
+            }
+            x => {
+                tag.push(x);
+                j += 1;
+            }
+        }
+    }
+    (!tag.is_empty()).then_some((tag, quoted, j))
+}
+
+/// 015 (review, 1): whether `command` holds a here-document `split` reads without its body.
+/// The checks that must never miss a control file or a push read such a command's raw text
+/// too, so a body taken out can only spare a false alarm, never hide one.
+pub(crate) fn strips_heredoc(command: &str) -> bool {
+    strip_heredocs(command).is_some()
 }
 
 /// The commands of the `$(…)` and backtick expansions in an unquoted here-document's body;
@@ -2199,10 +2239,10 @@ pub fn protected_write(cmd: &str, ctx: &Ctx) -> Option<String> {
         .map(|w| format!("it changes a file the agent may not change ({w})"))
 }
 
-/// 015 (2026-11-24 amendment): a command Fallow cannot read as written (a here-document, a
-/// substitution) that names a place controlling the agents: it may write there or not, so it
-/// waits for the engineer rather than being refused for good (the runtime's own settings
-/// files stay refused, `limit_problem`).
+/// 015 (2026-11-24 amendment; review, 4): a command Fallow cannot read as written (a
+/// here-document, a substitution) that names a place controlling the agents. It may write
+/// there, and a control file is never allowed, not even always: Auto refuses it like a write
+/// (`mode::control_refusal`), never holds it.
 pub fn protected_unread(cmd: &str, ctx: &Ctx) -> Option<String> {
     if split(cmd).is_ok() {
         return None;
@@ -2495,12 +2535,21 @@ fn control_write(cmd: &str, ctx: &Ctx, control_files: &[String]) -> Option<Strin
         .map(str::to_string)
         .collect()
     };
+    let raw = || {
+        pieces(cmd).iter().find_map(|w| hits(ctx.wt, w)).map(|f| {
+            format!("it names {f}, the runtime's own settings, in a command Fallow cannot read")
+        })
+    };
     let Ok(parts) = split(cmd) else {
         // Unreadable as written: any word naming a control file or its folder counts.
-        return pieces(cmd).iter().find_map(|w| hits(ctx.wt, w)).map(|f| {
-            format!("it names {f}, the runtime's own settings, in a command Fallow cannot read")
-        });
+        return raw();
     };
+    // A here-document's body read as data: its raw text counts too (review, 1).
+    if strips_heredoc(cmd) {
+        if let Some(why) = raw() {
+            return Some(why);
+        }
+    }
     let mut base = canon(ctx.wt);
     for p in &parts {
         for t in &p.redirects {
@@ -2815,6 +2864,10 @@ fn pushes_onto_at(cmd: &str, target: &str, depth: usize) -> bool {
     let Ok(parts) = split(cmd) else {
         return names_git_push(cmd);
     };
+    // A here-document's body read as data: the raw text counts too (review, 1).
+    if strips_heredoc(cmd) && names_git_push(cmd) {
+        return true;
+    }
     parts.iter().any(|p| {
         if part_pushes_onto(&p.words, target, depth) {
             return true;
@@ -3095,6 +3148,43 @@ mod tests {
             "cat > a <<'EOF'\nno end",
         ] {
             assert!(split(c).is_err(), "{c}");
+        }
+    }
+
+    /// Review 2: a here-document's tag is one shell word, read with quote removal across it;
+    /// a tag Fallow cannot read that way is not stripped, and a piped one is not either.
+    #[test]
+    fn a_here_document_tag_is_the_whole_word() {
+        let c = |s: &str| s.chars().collect::<Vec<char>>();
+        assert_eq!(
+            heredoc_word(&c("E\"O\"F rest"), 0),
+            Some(("EOF".to_string(), true, 5))
+        );
+        assert_eq!(
+            heredoc_word(&c("'EOF'>x"), 0),
+            Some(("EOF".to_string(), true, 5))
+        );
+        assert_eq!(
+            heredoc_word(&c("\\EOF"), 0),
+            Some(("EOF".to_string(), true, 4))
+        );
+        assert_eq!(
+            heredoc_word(&c("END_1.x;"), 0),
+            Some(("END_1.x".to_string(), false, 7))
+        );
+        for bad in ["$X", "E`x`", "\"E", "E\"$x\"", ""] {
+            assert_eq!(heredoc_word(&c(bad), 0), None, "{bad}");
+        }
+        assert_eq!(
+            split("cat <<-E'O'F > a\n\tx\n\tEOF\nls")
+                .unwrap()
+                .iter()
+                .map(|p| p.text.as_str())
+                .collect::<Vec<_>>(),
+            ["cat  </dev/null  > a", "ls"]
+        );
+        for piped in ["cat <<'EOF' | sh\nls\nEOF", "cat <<EOF |& bash\nls\nEOF"] {
+            assert!(strip_heredocs(piped).is_none(), "{piped}");
         }
     }
 
