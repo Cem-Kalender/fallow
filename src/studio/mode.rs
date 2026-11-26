@@ -241,6 +241,37 @@ fn target_refusal(command: &str, target: Option<&Target>) -> Option<Decision> {
     })
 }
 
+/// 015: a command that writes a file controlling the agents, refused for good, checked before
+/// any other limit (review, 3): the runtime's own settings files in either mode (final review,
+/// 1); in Auto also git's own record and Fallow's control files, written as far as the text
+/// tells (`judge::protected_write`) or named in a command Fallow cannot read
+/// (`judge::protected_unread`: refused too, never held, review 4). Manual asks about those.
+fn control_refusal(
+    mode: ChatMode,
+    command: &str,
+    ctx: &judge::Ctx,
+    control_files: &[String],
+) -> Option<Decision> {
+    let refuse = |reason: String| {
+        Some(Decision::Refuse {
+            limit: Limit::Control,
+            reason,
+            facts: None,
+        })
+    };
+    if let Some((true, why)) = judge::limit_problem(command, ctx, control_files) {
+        return refuse(format!("it changes the runtime's own settings: {why}"));
+    }
+    let why =
+        judge::protected_write(command, ctx).or_else(|| judge::protected_unread(command, ctx))?;
+    match mode {
+        ChatMode::Auto => refuse(why),
+        // Manual asks first, with the reason: never a hold at the target limit that could be
+        // allowed always past it.
+        ChatMode::Manual => Some(Decision::Ask(vec![why])),
+    }
+}
+
 /// 015 (R-2): the assistant's request, decided. `folder_facts` gives 012's facts for a
 /// command that changes the engineer's folder (only called when it does).
 pub fn assistant(
@@ -307,41 +338,19 @@ pub fn assistant(
         },
         RequestKind::Run => {
             let command = req.command.clone().unwrap_or_default();
-            if let Some(r) = target_refusal(&command, cx.target) {
+            // The control files first, anywhere in the command: a write of one is refused
+            // even beside a push onto the target, which could be allowed always (review, 3).
+            if let Some(r) = control_refusal(mode, &command, ctx, cx.control_files) {
                 return r;
             }
-            // The fixed limits, read from the command as written (final review, 1): a runtime
-            // settings file in either mode; the rest in Auto (Manual asks, with 012's facts).
-            let limit = judge::limit_problem(&command, ctx, cx.control_files);
-            if let Some((true, why)) = &limit {
-                return Decision::Refuse {
-                    limit: Limit::Control,
-                    reason: format!("it changes the runtime's own settings: {why}"),
-                    facts: None,
-                };
+            if let Some(r) = target_refusal(&command, cx.target) {
+                return r;
             }
             if judge::runs_unasked(&command, cx.gates, cx.approved, ctx) {
                 return Decision::Allow;
             }
-            // 015 (2026-11-24 amendment): in Auto, git's own record and Fallow's control files
-            // written are never allowed; the engineer's folder changed waits for the engineer,
-            // in both modes. Reads, `cd` and writes elsewhere (the temp folder) are not limits.
-            if mode == ChatMode::Auto {
-                if let Some(why) = judge::protected_write(&command, ctx) {
-                    return Decision::Refuse {
-                        limit: Limit::Control,
-                        reason: why,
-                        facts: None,
-                    };
-                }
-                if let Some(reason) = judge::protected_unread(&command, ctx) {
-                    return Decision::Hold {
-                        limit: Limit::Edit,
-                        reason,
-                        facts: None,
-                    };
-                }
-            }
+            // The engineer's folder changed waits for the engineer, in both modes. Reads, `cd`
+            // and writes elsewhere (the temp folder) are not limits.
             if let Some(reason) = folder_limit(&command, ctx) {
                 return Decision::Hold {
                     limit: Limit::Edit,
@@ -395,6 +404,37 @@ pub fn control_file(path: &str, control_files: &[String], base: &Path) -> bool {
     fallow(&rel) || rel.match_indices('/').any(|(i, _)| fallow(&rel[i + 1..]))
 }
 
+/// Whether `path`, read from `base`, is in a git record: a `.git` folder (or file) below
+/// `base`, or anywhere in a path outside it (a moved spec root's copy), compared without
+/// regard to case. `..` is resolved first, so `docs/../.git/config` counts.
+fn git_record(path: &str, base: &Path) -> bool {
+    let parts = |s: &str| -> Vec<String> {
+        let s = judge::plain(s.trim()).replace('\\', "/");
+        let mut out: Vec<String> = Vec::new();
+        for c in s.split('/') {
+            match c {
+                "" | "." => {}
+                ".." => {
+                    out.pop();
+                }
+                x => out.push(x.to_string()),
+            }
+        }
+        out
+    };
+    let p = judge::plain(path.trim()).replace('\\', "/");
+    let base_s = base.to_string_lossy();
+    let b = parts(&base_s);
+    let abs = if Path::new(&p).is_absolute() || p.starts_with('/') {
+        parts(&p)
+    } else {
+        parts(&format!("{base_s}/{p}"))
+    };
+    let below = abs.len() >= b.len() && abs.iter().zip(&b).all(|(x, y)| x.eq_ignore_ascii_case(y));
+    let rest = if below { &abs[b.len()..] } else { &abs[..] };
+    rest.iter().any(|c| c.eq_ignore_ascii_case(".git"))
+}
+
 /// The lead's context: where it works, the runtime's settings files, the commands that run
 /// without asking, the remote's target and the project's folder.
 pub struct LeadCx<'a> {
@@ -417,7 +457,10 @@ pub fn lead(mode: ChatMode, req: &agent::PermissionRequest, cx: &LeadCx) -> Deci
         RequestKind::Read | RequestKind::Web => Decision::Allow,
         RequestKind::Edit => {
             let path = req.path.clone().unwrap_or_default();
-            if control_file(&path, control_files, workdir) {
+            // Git's own record (`.git/hooks`, `.git/config`, …), as its commands read it
+            // (`protect` below): a control file too, wherever the copy's `.git` is from its
+            // spec root (review, 5).
+            if control_file(&path, control_files, workdir) || git_record(&path, workdir) {
                 Decision::Refuse {
                     limit: Limit::Control,
                     reason: format!(
@@ -447,9 +490,6 @@ pub fn lead(mode: ChatMode, req: &agent::PermissionRequest, cx: &LeadCx) -> Deci
         },
         RequestKind::Run => {
             let command = req.command.clone().unwrap_or_default();
-            if let Some(r) = target_refusal(&command, cx.target) {
-                return r;
-            }
             // The lead's copy is its working copy; what a command writes there outside the spec
             // documents is thrown away at the turn's end and listed in the chat (research R-3).
             // What it writes beyond that copy, in the runtime's settings, in Fallow's control
@@ -467,14 +507,14 @@ pub fn lead(mode: ChatMode, req: &agent::PermissionRequest, cx: &LeadCx) -> Deci
                 folder: cx.folder,
                 protect: &protect,
             };
-            let limit = judge::limit_problem(&command, &ctx, control_files);
-            if let Some((true, why)) = &limit {
-                return Decision::Refuse {
-                    limit: Limit::Control,
-                    reason: format!("it changes the runtime's own settings: {why}"),
-                    facts: None,
-                };
+            // The control files first, as the assistant's (review, 3).
+            if let Some(r) = control_refusal(mode, &command, &ctx, control_files) {
+                return r;
             }
+            if let Some(r) = target_refusal(&command, cx.target) {
+                return r;
+            }
+            let limit = judge::limit_problem(&command, &ctx, control_files);
             // The approved commands, gates and Spec Kit scripts, and a bare `cd` inside its
             // copy, run in both modes, within the limits: an approved `git` does not write
             // `.git/hooks` or Fallow's control files unasked.
@@ -482,23 +522,6 @@ pub fn lead(mode: ChatMode, req: &agent::PermissionRequest, cx: &LeadCx) -> Deci
                 && (lead_approved(&command, cx.approved) || moves_within(&command, workdir))
             {
                 return Decision::Allow;
-            }
-            // 015 (2026-11-24 amendment): as the assistant's (`assistant`).
-            if mode == ChatMode::Auto {
-                if let Some(why) = judge::protected_write(&command, &ctx) {
-                    return Decision::Refuse {
-                        limit: Limit::Control,
-                        reason: why,
-                        facts: None,
-                    };
-                }
-                if let Some(reason) = judge::protected_unread(&command, &ctx) {
-                    return Decision::Hold {
-                        limit: Limit::Edit,
-                        reason,
-                        facts: None,
-                    };
-                }
             }
             if let Some(reason) = folder_limit(&command, &ctx) {
                 return Decision::Hold {
