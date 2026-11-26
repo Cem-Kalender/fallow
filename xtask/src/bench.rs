@@ -1030,6 +1030,10 @@ fn until(
 fn solo_start(args: &Args) -> Result<Vec<Measure>, String> {
     let dir = scratch("solo-start");
     let r = repo(&dir, "big")?;
+    // git's own cleanup is done before the clock starts, never during it: committing 10,000
+    // files would start `gc --auto` in the background, packing them while the session's working
+    // copy is made.
+    git(&r, &["config", "gc.auto", "0"])?;
     for i in 0..10_000 {
         let d = r.join(format!("src/m{:03}", i / 100));
         if i % 100 == 0 {
@@ -1043,6 +1047,7 @@ fn solo_start(args: &Args) -> Result<Vec<Measure>, String> {
     let scenario =
         "[[step]]\nkind = \"assistant_turn\"\nsleep_ms = 20000\noutput = { reply = \"done\" }\n";
     let (svc, cookie, p) = solo_service(args, &dir, scenario, &r)?;
+    git(&r, &["gc", "-q"])?;
     let t0 = Instant::now();
     let v = call(
         &svc,
