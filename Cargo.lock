@@ -385,7 +385,7 @@ checksum = "00d174d5400e5e8fd687ad1049e2f578285fa914201b1af7e8b112a4546bd826"
 
 [[package]]
 name = "fallow"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "block2",
  "globset",
