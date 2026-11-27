@@ -22,8 +22,8 @@ description: "Task list for 018 Pipelines as an orchestration system"
 
 ## Phase 1: Setup
 
-- [ ] T001 Add the empty module `src/run/groups.rs` (a module comment naming 018 research R-5, R-6, R-11) and `pub mod groups;` in `src/run/mod.rs`; the crate builds.
-- [ ] T002 [P] Add test helpers to `tests/common/mod.rs`: `pub const PIPELINE_040_STANDARD/TEST_FIRST/SOLO: &str` holding the 0.4.0 shipped texts exactly as `assets/pipelines/*.toml` are at origin/main (copied byte for byte); `pub fn parallel_tasks_feature(root, n_parallel, shared: &[(&str, &str)])` writing a calc feature whose phase 2 has `n_parallel` consecutive `- [ ] T00x [P] [US1] …` tasks followed by one plain task (the files each task changes given by the caller, so two tasks can share one); `pub fn pipeline_with(builders: u32, extra_steps: &str) -> String` building Standard with `[caps] builders` and extra `[[step]]` text.
+- [X] T001 Add the empty module `src/run/groups.rs` (a module comment naming 018 research R-5, R-6, R-11) and `pub mod groups;` in `src/run/mod.rs`; the crate builds.
+- [X] T002 [P] Add test helpers to `tests/common/mod.rs`: `pub const PIPELINE_040_STANDARD/TEST_FIRST/SOLO: &str` holding the 0.4.0 shipped texts exactly as `assets/pipelines/*.toml` are at origin/main (copied byte for byte); `pub fn parallel_tasks_feature(root, n_parallel, shared: &[(&str, &str)])` writing a calc feature whose phase 2 has `n_parallel` consecutive `- [ ] T00x [P] [US1] …` tasks followed by one plain task (the files each task changes given by the caller, so two tasks can share one); `pub fn pipeline_with(builders: u32, extra_steps: &str) -> String` building Standard with `[caps] builders` and extra `[[step]]` text.
 
 ---
 

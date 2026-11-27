@@ -893,3 +893,208 @@ pub fn start_studio_settings(root: &Path, settings: Settings) -> fallow::service
     )
     .unwrap()
 }
+
+// ---- 018: pipelines as an orchestration system -------------------------------------------
+
+/// The shipped pipelines of 0.4.0, byte for byte as `assets/pipelines/*.toml` were then (US5).
+pub const PIPELINE_040_STANDARD: &str = r#"name = "standard"
+description = "One builder task by task, the gates after every task, and a review at every user story's checkpoint"
+
+[caps]
+task_repairs = 3
+review_rounds = 3
+
+[[step]]
+agent = "builder"
+when = "task"
+on_fail = "repair"
+
+[[step]]
+agent = "fallow:gates"
+when = "task"
+on_fail = "repair"
+
+[[step]]
+agent = "reviewer"
+when = "checkpoint"
+on_fail = "repair"
+"#;
+pub const PIPELINE_040_TEST_FIRST: &str = r#"name = "test-first"
+description = "Standard, with each user story's acceptance tests written first by the test-writer"
+
+[caps]
+task_repairs = 3
+review_rounds = 3
+
+[[step]]
+agent = "test-writer"
+when = "checkpoint"
+at = "start"
+on_fail = "engineer"
+
+[[step]]
+agent = "builder"
+when = "task"
+on_fail = "repair"
+
+[[step]]
+agent = "fallow:gates"
+when = "task"
+on_fail = "repair"
+
+[[step]]
+agent = "reviewer"
+when = "checkpoint"
+on_fail = "repair"
+"#;
+pub const PIPELINE_040_SOLO: &str = r#"name = "solo"
+description = "One builder task by task with the gates, and no review: results are not verified by Fallow"
+
+[caps]
+task_repairs = 3
+review_rounds = 3
+
+[[step]]
+agent = "builder"
+when = "task"
+on_fail = "repair"
+
+[[step]]
+agent = "fallow:gates"
+when = "task"
+on_fail = "repair"
+"#;
+
+/// A one-story Calc spec for `parallel_tasks_feature` (the US1 of `CALC_SPEC`).
+pub const PAR_SPEC: &str = "# Feature Specification: Calc\n\n## User Scenarios & Testing\n\n### User Story 1 - Add (Priority: P1)\n\n**Acceptance Scenarios**:\n\n1. **Given** two numbers, **When** adding 2 and 3, **Then** the result is 5.\n2. **Given** a string, **When** adding 'a' and 1, **Then** a TypeError is raised (must fail)\n";
+
+/// 018: a Calc feature (`specs/001-calc`) whose phase 2 holds `[P]` tasks (see
+/// `parallel_tasks_feature`).
+pub struct ParallelFeature {
+    /// The repository (`repo(root)`).
+    pub repo: PathBuf,
+    /// The locked `tasks.md`.
+    pub tasks: String,
+    /// The lead's two turns writing the documents (as `lead_writes_calc`).
+    pub lead: String,
+    /// The `[P]` tasks of phase 2, in order (`T004`, …).
+    pub parallel: Vec<String>,
+    /// The plain task after them.
+    pub last: String,
+    /// Each task with the files its build writes, in `tasks.md` order.
+    pub files: Vec<(String, Vec<(String, String)>)>,
+}
+
+impl ParallelFeature {
+    /// The scripted build of `task`, writing its files (`extra` as for `task_step`, for example
+    /// `sleep_ms = 2000`).
+    pub fn build(&self, task: &str, extra: &str) -> String {
+        let (_, files) = self
+            .files
+            .iter()
+            .find(|(t, _)| t == task)
+            .unwrap_or_else(|| panic!("no task {task}"));
+        let files: Vec<(&str, &str)> = files
+            .iter()
+            .map(|(p, t)| (p.as_str(), t.as_str()))
+            .collect();
+        task_step(task, &files, extra)
+    }
+
+    /// Every build of phase 1 (`T001`-`T003`) with its handover: the package with `add` and its
+    /// tests.
+    pub fn phase_1(&self) -> String {
+        [
+            self.build("T001", ""),
+            self.build("T002", ""),
+            self.build("T003", ""),
+            handover_step(1, ""),
+        ]
+        .concat()
+    }
+}
+
+/// 018: a repository at `root/repo` and a Calc feature for it, one story: phase 1 (Setup:
+/// `T001`-`T003`, the package with `add` and its tests); phase 2 (User Story 1) with `n_parallel`
+/// consecutive `- [ ] T00x [P] [US1] …` tasks from `T004`, each writing its own
+/// `calc/t00x.py`, then one plain task writing `calc/all.py`. `shared` adds files to tasks
+/// (`("T005", "calc/shared.py")`), each with text of its own, so two tasks can change one file.
+/// The lead's turns (`lead`) write the documents; lock it with `lock_calc_in`.
+pub fn parallel_tasks_feature(
+    root: &Path,
+    n_parallel: u32,
+    shared: &[(&str, &str)],
+) -> ParallelFeature {
+    let repo = repo(root);
+    let id = |n: u32| format!("T{n:03}");
+    let parallel: Vec<String> = (4..4 + n_parallel).map(id).collect();
+    let last = id(4 + n_parallel);
+    let mut tasks = String::from(
+        "# Tasks: Calc\n\n## Phase 1: Setup\n\n- [ ] T001 Create the calc package\n- [ ] T002 add() in calc/__init__.py\n- [ ] T003 Tests for add\n\n## Phase 2: User Story 1 - Add\n\n",
+    );
+    let mut files: Vec<(String, Vec<(String, String)>)> = vec![
+        (
+            "T001".into(),
+            vec![("calc/__init__.py".into(), String::new())],
+        ),
+        (
+            "T002".into(),
+            vec![("calc/__init__.py".into(), CALC_INIT.into())],
+        ),
+        (
+            "T003".into(),
+            vec![
+                ("tests/__init__.py".into(), String::new()),
+                ("tests/test_add.py".into(), TEST_ADD.into()),
+            ],
+        ),
+    ];
+    for t in &parallel {
+        let own = format!("calc/{}.py", t.to_lowercase());
+        let mut fs = vec![(own.clone(), format!("NAME = {t:?}\n"))];
+        for (task, file) in shared.iter().filter(|(task, _)| task == t) {
+            fs.push((file.to_string(), format!("BY = {task:?}\n")));
+        }
+        let names: Vec<&str> = fs.iter().map(|(p, _)| p.as_str()).collect();
+        tasks.push_str(&format!(
+            "- [ ] {t} [P] [US1] Write {}\n",
+            names.join(" and ")
+        ));
+        files.push((t.clone(), fs));
+    }
+    tasks.push_str(&format!("- [ ] {last} [US1] Join them in calc/all.py\n"));
+    files.push((
+        last.clone(),
+        vec![("calc/all.py".into(), "ALL = True\n".into())],
+    ));
+    let lead = format!(
+        "[[step]]\nkind = \"lead_turn\"\nfiles = [{{ path = \"specs/001-calc/spec.md\", text = {} }}, {{ path = \"specs/001-calc/plan.md\", text = {} }}, {{ path = \"specs/001-calc/tasks.md\", text = {} }}]\noutput = {{ reply = \"Written.\", step = \"tasks\" }}\n\n[[step]]\nkind = \"lead_turn\"\noutput = {{ reply = \"Analyzed.\", step = \"analyze\", findings = [] }}\n\n",
+        lit(PAR_SPEC),
+        lit(CALC_PLAN),
+        lit(&tasks)
+    );
+    ParallelFeature {
+        repo,
+        tasks,
+        lead,
+        parallel,
+        last,
+        files,
+    }
+}
+
+/// 018: Standard (0.4.0's text, named `builders`: write it as `pipelines/builders.toml`) with
+/// `[caps] builders` set and `extra_steps` (`[[step]]` text) after its steps.
+pub fn pipeline_with(builders: u32, extra_steps: &str) -> String {
+    let text = PIPELINE_040_STANDARD
+        .replace("name = \"standard\"", "name = \"builders\"")
+        .replace(
+            "review_rounds = 3\n",
+            &format!("review_rounds = 3\nbuilders = {builders}\n"),
+        );
+    if extra_steps.is_empty() {
+        text
+    } else {
+        format!("{text}\n{}", extra_steps.trim_start())
+    }
+}
