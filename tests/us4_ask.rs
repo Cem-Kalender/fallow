@@ -791,8 +791,9 @@ fn an_overrule_repair_mid_phase_is_not_charged_a_later_tasks_failure() {
         "T003's repair {fixed} passed: {t003:?}"
     );
     // The story is never charged: every gate run of US1 counts as passed by Fallow's own rule
-    // (`gate_ok`: a pass, or no tests yet when the baseline had none either). Whether the
-    // overrule repair is gated before or after T003 adds its tests is timing, not behaviour.
+    // (`gate_ok`: a pass, or no tests yet when the baseline had none either). The overrule
+    // repair is gated before T003 adds tests, so that run has no tests: Python 3.12 and later
+    // report an empty suite as "NO TESTS RAN" (no_tests), older versions as "OK" (passed).
     let us1: Vec<&&Value> = gates.iter().filter(|g| g["part"] == "US1").collect();
     assert!(!us1.is_empty());
     assert!(
