@@ -143,145 +143,6 @@ fn value(raw: &str) -> Result<Value, String> {
     Ok(Value::Str(unquote(raw)?))
 }
 
-/// A frontmatter field the page's agent form may set (008 contracts/agents-api.md).
-pub const FIELD_KEYS: &[&str] = &[
-    "description",
-    "runtime",
-    "model",
-    "kind",
-    "may_run",
-    "returns",
-];
-
-/// A new value for a field: a string, or a list of strings.
-#[derive(Debug, Clone, PartialEq)]
-pub enum FieldValue {
-    Str(String),
-    List(Vec<String>),
-}
-
-/// A value written so that [`parse`] reads it back unchanged: quoted only when it would not
-/// otherwise read the same. Refused when no form reads it back (a quote inside it).
-fn write_value(v: &FieldValue) -> Result<String, String> {
-    let plain_ok = |s: &str, in_list: bool| {
-        !s.is_empty()
-            && s.trim() == s
-            && !s.starts_with(['\'', '&', '*', '|', '>', '!', '%', '@', '`', '[', '{', '#'])
-            && !s.contains(" #")
-            && !(in_list && s.contains([',', ']', ' ', ':']))
-    };
-    let one = |s: &str, in_list: bool| -> Result<String, String> {
-        if s.contains('\n') || s.contains('\r') {
-            return Err(format!("{s:?}: a value cannot hold a line break"));
-        }
-        // A quote can stand in a plain value (`Checks the "happy path"`), never in a quoted one
-        // nor in a list item, which the reader splits on quotes. Quotes come in pairs: an odd one
-        // would hide a comment kept after the value (`5" screen # note`) from the reader.
-        if s.contains('"') {
-            let paired = s.matches('"').count() % 2 == 0;
-            return if !in_list && paired && !s.starts_with('"') && plain_ok(s, false) {
-                Ok(s.to_string())
-            } else {
-                Err(format!(
-                    "{s:?}: quotes can stand only in pairs, inside a plain value"
-                ))
-            };
-        }
-        Ok(if plain_ok(s, in_list) {
-            s.to_string()
-        } else {
-            format!("\"{s}\"")
-        })
-    };
-    match v {
-        FieldValue::Str(s) => one(s, false),
-        FieldValue::List(items) => Ok(format!(
-            "[{}]",
-            items
-                .iter()
-                .map(|i| one(i, true))
-                .collect::<Result<Vec<_>, _>>()?
-                .join(", ")
-        )),
-    }
-}
-
-/// `text` with only the given fields' frontmatter lines changed (008 FR-008, contracts/
-/// agents-api.md): an existing key's line keeps its place and its comment; an absent key is
-/// added as the frontmatter's last line; every other line, and the body, stay as they are.
-pub fn set_fields(text: &str, fields: &[(String, FieldValue)]) -> Result<String, String> {
-    // A byte-order mark is kept as it was.
-    let (bom, text) = match text.strip_prefix('\u{feff}') {
-        Some(t) => ("\u{feff}", t),
-        None => ("", text),
-    };
-    let nl = if text.contains("\r\n") { "\r\n" } else { "\n" };
-    let mut lines: Vec<String> = text
-        .split('\n')
-        .map(|l| l.trim_end_matches('\r').to_string())
-        .collect();
-    if lines.first().map(|l| l.trim_end()) != Some("---") {
-        return Err("a definition starts with a `---` line".into());
-    }
-    let mut end = lines
-        .iter()
-        .skip(1)
-        .position(|l| l.trim_end() == "---")
-        .map(|i| i + 1)
-        .ok_or("the frontmatter has no closing `---` line")?;
-    for (key, value) in fields {
-        if !FIELD_KEYS.contains(&key.as_str()) {
-            return Err(format!("{key} cannot be set as a field"));
-        }
-        let v = write_value(value)?;
-        let at = (1..end).find(|&i| {
-            let code = strip_comment(&lines[i]);
-            !code.starts_with([' ', '\t'])
-                && code.split_once(':').is_some_and(|(k, _)| k.trim() == key)
-        });
-        match at {
-            Some(i) => {
-                let code_len = strip_comment(&lines[i]).len();
-                let comment = lines[i][code_len..].trim().to_string();
-                lines[i] = if comment.is_empty() {
-                    format!("{key}: {v}")
-                } else {
-                    format!("{key}: {v} {comment}")
-                };
-            }
-            None => {
-                lines.insert(end, format!("{key}: {v}"));
-                end += 1;
-            }
-        }
-    }
-    Ok(format!("{bom}{}", lines.join(nl)))
-}
-
-/// `text` with its body (everything after the frontmatter) replaced by `body`, in the file's own
-/// line endings; the frontmatter stays as it is (008: the form's instructions).
-pub fn set_body(text: &str, body: &str) -> Result<String, String> {
-    let nl = if text.contains("\r\n") { "\r\n" } else { "\n" };
-    let lines: Vec<&str> = text.split('\n').collect();
-    let end = lines
-        .iter()
-        .skip(1)
-        .position(|l| l.trim_end() == "---")
-        .map(|i| i + 1)
-        .ok_or("the frontmatter has no closing `---` line")?;
-    let front = lines[..=end]
-        .iter()
-        .map(|l| l.trim_end_matches('\r'))
-        .collect::<Vec<_>>()
-        .join(nl);
-    let body = body.replace("\r\n", "\n");
-    let body = body.trim_matches('\n');
-    Ok(format!(
-        "{front}{nl}{nl}{}{nl}",
-        body.split('\n').collect::<Vec<_>>().join(nl)
-    ))
-}
-
 const KEYS: &[&str] = &[
     "name",
     "description",
@@ -610,6 +471,52 @@ pub fn parse(
     })
 }
 
+/// 017 (FR-012, research R-5): the text a new agent starts from. Every required key, `name`
+/// filled in and the others without a value, each followed by a comment saying what to write;
+/// the model's comment gives each runtime's form (`runtimes`, [`crate::defs::runtimes`]).
+/// Saved untouched, [`parse`] refuses it with the six missing fields and the empty instructions.
+pub fn template(name: &str, runtimes: &[(&str, ModelNaming)]) -> String {
+    let names: Vec<&str> = runtimes.iter().map(|(n, _)| *n).collect();
+    let one_of = match names.split_last() {
+        Some((last, [])) => last.to_string(),
+        Some((last, rest)) => format!("{} or {last}", rest.join(", ")),
+        None => String::new(),
+    };
+    let models = runtimes
+        .iter()
+        .map(|(n, m)| format!("{n}: {}.", m.hint()))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let line = |code: String, comment: &str| format!("{code:<24} # {comment}\n");
+    let mut t = String::from("---\n");
+    t += &line(
+        format!("name: {name}"),
+        "the file's name, in a-z, 0-9 and -",
+    );
+    t += &line("description:".into(), "one line: what this agent does");
+    t += &line(
+        "runtime:".into(),
+        &format!("which program runs it: {one_of}"),
+    );
+    t += &line("model:".into(), &format!("the model's full name. {models}"));
+    t += &line(
+        "kind:".into(),
+        "maker (changes files), checker (only runs and verifies), lead or assistant",
+    );
+    t += &line(
+        "may_run:".into(),
+        "the commands it may run, as a list: [gates, plan.commands, \"npm test\"]; [] for none; always [] for a lead or an assistant",
+    );
+    t += &line(
+        "returns:".into(),
+        "work for a maker, verdict for a checker, reply for a lead, assistant_reply for an assistant",
+    );
+    t += "# limits: {minutes: 30, turns: 60, usd: 2}   (optional: per step)\n";
+    t += "# Below the closing --- line: the agent's instructions, in plain text.\n";
+    t += "---\n\n";
+    t
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -640,111 +547,6 @@ mod tests {
             e.iter().any(|p| p.message.contains("an assistant returns")),
             "{e:?}"
         );
-    }
-
-    #[test]
-    fn fields_change_only_their_lines() {
-        let text = "---\nname: reviewer\ndescription: Checks every story # by running\nruntime: claude\nmodel: claude-sonnet-5-5 # the default\nkind: checker\nmay_run: [gates]\nreturns: verdict\n---\n\nThe body.\n";
-        let out = set_fields(
-            text,
-            &[
-                ("model".into(), FieldValue::Str("claude-opus-5-5".into())),
-                (
-                    "may_run".into(),
-                    FieldValue::List(vec!["gates".into(), "npm audit".into()]),
-                ),
-            ],
-        )
-        .unwrap();
-        let changed: Vec<(&str, &str)> = text
-            .lines()
-            .zip(out.lines())
-            .filter(|(a, b)| a != b)
-            .collect();
-        assert_eq!(
-            changed,
-            vec![
-                (
-                    "model: claude-sonnet-5-5 # the default",
-                    "model: claude-opus-5-5 # the default"
-                ),
-                ("may_run: [gates]", "may_run: [gates, \"npm audit\"]"),
-            ]
-        );
-        // It reads back as written.
-        let d = parse(
-            "reviewer.md",
-            "reviewer",
-            &out,
-            Source::User,
-            &crate::defs::runtimes(),
-        )
-        .unwrap();
-        assert_eq!(d.model, "claude-opus-5-5");
-        assert_eq!(
-            d.may_run,
-            vec!["gates".to_string(), "npm audit".to_string()]
-        );
-        assert_eq!(d.description, "Checks every story");
-        assert!(out.ends_with("The body.\n"));
-    }
-
-    #[test]
-    fn an_absent_field_is_added_and_others_are_refused() {
-        let bare = "---\r\nname: x\r\ndescription: d\r\nruntime: claude\r\nkind: maker\r\nmay_run: []\r\nreturns: work\r\n---\r\nBody\r\n";
-        let out = set_fields(
-            bare,
-            &[("model".into(), FieldValue::Str("claude-haiku-4-5".into()))],
-        )
-        .unwrap();
-        assert!(
-            out.contains("returns: work\r\nmodel: claude-haiku-4-5\r\n---\r\nBody"),
-            "{out:?}"
-        );
-        let text = out.as_str();
-        assert!(set_fields(text, &[("name".into(), FieldValue::Str("y".into()))]).is_err());
-        assert!(set_fields(text, &[("limits".into(), FieldValue::Str("1".into()))]).is_err());
-        // A quote stands in a plain value, as the reader takes it; never in a list item.
-        let out = set_fields(
-            text,
-            &[("description".into(), FieldValue::Str("say \"hi\"".into()))],
-        )
-        .unwrap();
-        let d = parse("x.md", "x", &out, Source::User, &crate::defs::runtimes()).unwrap();
-        assert_eq!(d.description, "say \"hi\"");
-        assert!(
-            set_fields(
-                text,
-                &[("may_run".into(), FieldValue::List(vec!["a \"b\"".into()]))]
-            )
-            .is_err()
-        );
-        // A lone quote is refused: with a comment kept after it, the reader would take the
-        // comment as part of the value.
-        let commented = text.replace("description: d\r\n", "description: d # note\r\n");
-        assert!(commented.contains("# note"));
-        assert!(
-            set_fields(
-                &commented,
-                &[("description".into(), FieldValue::Str("5\" screen".into()))]
-            )
-            .is_err()
-        );
-        // A byte-order mark stays.
-        let out = set_fields(
-            &format!("\u{feff}{text}"),
-            &[("model".into(), FieldValue::Str("claude-opus-5-5".into()))],
-        )
-        .unwrap();
-        assert!(out.starts_with("\u{feff}---"));
-        // A value the reader would misread is quoted.
-        let out = set_fields(
-            text,
-            &[("description".into(), FieldValue::Str("[draft] # 2".into()))],
-        )
-        .unwrap();
-        let d = parse("x.md", "x", &out, Source::User, &crate::defs::runtimes()).unwrap();
-        assert_eq!(d.description, "[draft] # 2");
     }
 
     fn parse_ok(stem: &str, text: &str) -> AgentDef {
@@ -1066,5 +868,115 @@ mod tests {
         );
         let want = "x.md:7: returns is required: work for a maker, verdict for a checker, reply for a lead, assistant_reply for an assistant";
         assert!(e.contains(&want.to_string()), "{e:?}");
+    }
+
+    // ---- 017 US2 (FR-012, research R-5): the template a new agent starts from ----
+
+    #[test]
+    fn the_template_says_what_belongs_in_every_field() {
+        let rts = crate::defs::runtimes();
+        let t = template("ui-checker", &rts);
+        let lines: Vec<&str> = t.lines().collect();
+        assert_eq!(lines[0], "---");
+        assert!(lines[1].starts_with("name: ui-checker "), "{t}");
+        // Every other required key: written without a value, with a comment saying what to write.
+        for key in [
+            "description",
+            "runtime",
+            "model",
+            "kind",
+            "may_run",
+            "returns",
+        ] {
+            let l = lines
+                .iter()
+                .find(|l| l.starts_with(&format!("{key}:")))
+                .unwrap_or_else(|| panic!("{key} is missing from\n{t}"));
+            let (code, comment) = l.split_once(" #").unwrap_or_else(|| panic!("{l}"));
+            assert_eq!(code.trim(), format!("{key}:"), "{l}");
+            assert!(comment.trim().len() > 5, "{l}");
+        }
+        let model = lines.iter().find(|l| l.starts_with("model:")).unwrap();
+        for (name, naming) in &rts {
+            assert!(model.contains(&naming.hint()), "{name}: {model}");
+        }
+        let runtime = lines.iter().find(|l| l.starts_with("runtime:")).unwrap();
+        assert!(
+            runtime.contains("claude") && runtime.contains("fake"),
+            "{runtime}"
+        );
+        assert!(lines.iter().any(|l| l.starts_with("# limits:")), "{t}");
+        let close = lines
+            .iter()
+            .skip(1)
+            .position(|l| *l == "---")
+            .map(|i| i + 1)
+            .unwrap();
+        assert!(
+            lines[1..close]
+                .iter()
+                .any(|l| l.starts_with('#') && l.contains("instructions") && l.contains("---")),
+            "{t}"
+        );
+        assert!(
+            lines[close + 1..].iter().all(|l| l.trim().is_empty()),
+            "{t}"
+        );
+
+        // Saved untouched: the six fields missing at their own lines, and the empty instructions.
+        let e: Vec<String> = parse("ui-checker.md", "ui-checker", &t, Source::User, &rts)
+            .unwrap_err()
+            .iter()
+            .map(|p| p.to_string())
+            .collect();
+        assert_eq!(e.len(), 7, "{e:#?}");
+        for key in [
+            "description",
+            "runtime",
+            "model",
+            "kind",
+            "may_run",
+            "returns",
+        ] {
+            let at = lines
+                .iter()
+                .position(|l| l.starts_with(&format!("{key}:")))
+                .unwrap()
+                + 1;
+            let want = format!("ui-checker.md:{at}: {key} is required: ");
+            assert!(e.iter().any(|x| x.starts_with(&want)), "{want}: {e:#?}");
+        }
+        assert!(
+            e.contains(&format!(
+                "ui-checker.md:{}: the instructions after the frontmatter are empty: write what the agent does, below the closing ---",
+                close + 1
+            )),
+            "{e:#?}"
+        );
+
+        // Filled in from its comments: it parses.
+        let filled = t
+            .lines()
+            .map(|l| {
+                let v = match l.split_once(':').map(|(k, _)| k) {
+                    Some("description") if !l.starts_with('#') => "Checks the pages",
+                    Some("runtime") => "claude",
+                    Some("model") => "claude-sonnet-5-5",
+                    Some("kind") => "checker",
+                    Some("may_run") => "[gates]",
+                    Some("returns") => "verdict",
+                    _ => return format!("{l}\n"),
+                };
+                let (k, comment) = l.split_once(':').unwrap();
+                format!("{k}: {v} {}\n", comment.trim())
+            })
+            .collect::<String>()
+            + "Open every page and check it.\n";
+        let d = parse("ui-checker.md", "ui-checker", &filled, Source::User, &rts)
+            .unwrap_or_else(|e| panic!("{e:?}\n{filled}"));
+        assert_eq!(d.model, "claude-sonnet-5-5");
+        assert_eq!(d.may_run, ["gates"]);
+        assert_eq!(d.kind, Kind::Checker);
+        assert_eq!(d.body, "Open every page and check it.");
     }
 }

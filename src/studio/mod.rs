@@ -389,12 +389,9 @@ pub enum Req {
         scope: String,
         text: String,
     },
-    /// 008: only these frontmatter fields (contracts/agents-api.md).
-    PutAgentFields {
+    /// 017 (contracts/web-api.md): the text a new agent named `name` starts from.
+    AgentTemplate {
         name: String,
-        scope: String,
-        fields: serde_json::Map<String, Value>,
-        body: Option<String>,
     },
     DeleteAgent {
         name: String,

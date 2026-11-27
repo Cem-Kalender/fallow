@@ -4038,7 +4038,6 @@ impl Engine {
             | Req::Pipelines { project }
             | Req::CheckPipeline { project, .. } => project.clone(),
             Req::PutAgent { scope, .. }
-            | Req::PutAgentFields { scope, .. }
             | Req::DeleteAgent { scope, .. }
             | Req::PutPipeline { scope, .. }
             | Req::DeletePipeline { scope, .. } => {
@@ -4430,17 +4429,7 @@ impl Engine {
                 let live = self.live_pipelines();
                 self.studio.put_agent(&name, &scope, &text, &live)
             }
-            Req::PutAgentFields {
-                name,
-                scope,
-                fields,
-                body,
-            } => {
-                let scope = crate::studio::defs::Scope::parse(&scope)?;
-                let live = self.live_pipelines();
-                self.studio
-                    .put_agent_fields(&name, &scope, &fields, body.as_deref(), &live)
-            }
+            Req::AgentTemplate { name } => self.studio.agent_template(&name),
             Req::DeleteAgent { name, scope } => {
                 let scope = crate::studio::defs::Scope::parse(&scope)?;
                 let live = self.live_pipelines();

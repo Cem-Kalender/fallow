@@ -211,17 +211,14 @@ fn studio_route(
         ("GET", ["api", "agents"]) => r(Req::Agents {
             project: query_arg(url, "project").filter(|p| !p.is_empty()),
         }),
-        // 008: only the fields the page's agent form changed (contracts/agents-api.md).
-        ("PUT", ["api", "agents", name]) if body.get("fields").is_some() => {
-            match body.get("fields").and_then(Value::as_object) {
-                Some(fields) => r(Req::PutAgentFields {
-                    name: name.to_string(),
-                    scope: query_arg(url, "scope").unwrap_or_else(|| "user".into()),
-                    fields: fields.clone(),
-                    body: s("body"),
-                }),
-                None => Some(Err("fields is a map of field names to values".into())),
-            }
+        // 017 (contracts/web-api.md): the template a new agent starts from.
+        ("GET", ["api", "agents", "template"]) => match query_arg(url, "name") {
+            Some(name) => r(Req::AgentTemplate { name }),
+            None => Some(Err("name is required".into())),
+        },
+        // 017: 008's form save is gone; an agent is saved as its whole text.
+        ("PUT", ["api", "agents", _]) if body.get("fields").is_some() => {
+            Some(Err("an agent is saved as its whole text".into()))
         }
         ("PUT", ["api", "agents", name]) => match need("text") {
             Ok(text) => r(Req::PutAgent {

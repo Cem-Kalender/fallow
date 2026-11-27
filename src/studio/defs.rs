@@ -264,66 +264,11 @@ impl Studio {
         }
     }
 
-    /// 008: saves only the given frontmatter fields of an agent at `scope`, and its body when
-    /// given, in one write (contracts/agents-api.md): on the definition at that scope, or a copy
-    /// of the one in force there.
-    pub fn put_agent_fields(
-        &mut self,
-        name: &str,
-        scope: &Scope,
-        fields: &serde_json::Map<String, Value>,
-        body: Option<&str>,
-        live: &[(PathBuf, String)],
-    ) -> Result<Value, String> {
+    /// 017 `GET /api/agents/template?name=<n>` (contracts/web-api.md): the text a new agent
+    /// starts from, every required key with a comment saying what to write.
+    pub fn agent_template(&self, name: &str) -> Result<Value, String> {
         check_name(name)?;
-        let mut changes = Vec::new();
-        for (k, v) in fields {
-            let value = match v {
-                Value::String(s) => agent::FieldValue::Str(s.clone()),
-                Value::Array(a) => agent::FieldValue::List(
-                    a.iter()
-                        .map(|x| {
-                            x.as_str()
-                                .map(str::to_string)
-                                .ok_or(format!("{k}: a list of strings"))
-                        })
-                        .collect::<Result<_, _>>()?,
-                ),
-                _ => return Err(format!("{k}: a string or a list of strings")),
-            };
-            changes.push((k.clone(), value));
-        }
-        if changes.is_empty()
-            && body.is_none()
-            && std::fs::metadata(self.scope_dir(scope, "agents")?.join(format!("{name}.md")))
-                .is_ok()
-        {
-            return Err("nothing to save".into());
-        }
-        let here = self.scope_dir(scope, "agents")?.join(format!("{name}.md"));
-        let base = match std::fs::read_to_string(&here) {
-            Ok(t) => t,
-            Err(_) => {
-                let path = match scope {
-                    Scope::User => None,
-                    Scope::Project(p) => Some(self.project(p)?.root_dir()),
-                };
-                let lib = self.library(path.as_deref());
-                let a = lib
-                    .agent(name)
-                    .ok_or_else(|| format!("there is no agent {name}: save a new one as text"))?;
-                let file = self.file_of(path.as_deref(), a.source, "agents", &format!("{name}.md"));
-                std::fs::read_to_string(&file)
-                    .ok()
-                    .or_else(|| shipped(DEFAULT_AGENTS, name).map(str::to_string))
-                    .ok_or_else(|| format!("{name}: its definition cannot be read"))?
-            }
-        };
-        let mut text = agent::set_fields(&base, &changes)?;
-        if let Some(b) = body {
-            text = agent::set_body(&text, b)?;
-        }
-        self.put_agent(name, scope, &text, live)
+        Ok(json!({ "text": agent::template(name, &defs::runtimes()) }))
     }
 
     /// `PUT /api/agents/<name>`: checked as Fallow reads it; refused with the problems at their
