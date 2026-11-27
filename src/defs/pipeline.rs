@@ -935,4 +935,312 @@ on_fail = "repair"
             ]
         );
     }
+
+    // ---- 018 US5 (T050): every 0.4.0 pipeline reads the same ------------------------------
+
+    /// 007's contract example, verbatim (`git show v0.4.0:specs/007-fallow-studio/contracts/pipeline.md`).
+    const CONTRACT_007: &str = r#"name = "standard-security"
+description = "Standard, plus a security review when api/ or auth/ changes"
+
+[caps]
+task_repairs = 3        # gate failures per task before asking the engineer
+review_rounds = 3       # failed checkpoints per story before asking the engineer
+
+[[step]]
+agent = "builder"
+when = "task"           # task | phase | checkpoint | once
+on_fail = "repair"
+
+[[step]]
+agent = "fallow:gates"  # built in: Fallow runs the project's gates against the baseline
+when = "task"
+on_fail = "repair"
+
+[[step]]
+agent = "reviewer"
+when = "checkpoint"
+on_fail = "repair"
+
+[[step]]
+agent = "security-reviewer"
+when = "checkpoint"
+paths = ["api/**", "auth/**"]
+parallel_with = ["reviewer"]
+on_fail = "repair"
+
+[[step]]
+agent = "docs-writer"
+when = "once"
+at = "end"
+on_fail = "engineer"
+"#;
+    /// The engineer's edited copy of Test first, as 0.4.0 took it.
+    const TEST_FIRST_EDITED_040: &str = r#"name = "test-first"
+description = "Our test first: acceptance tests first, two review rounds"
+
+[caps]
+task_repairs = 5
+review_rounds = 2
+
+[[step]]
+agent = "test-writer"
+when = "checkpoint"
+at = "start"
+on_fail = "engineer"
+
+[[step]]
+agent = "builder"
+when = "task"
+on_fail = "repair"
+
+[[step]]
+agent = "fallow:gates"
+when = "task"
+on_fail = "repair"
+
+[[step]]
+agent = "reviewer"
+when = "checkpoint"
+on_fail = "repair"
+"#;
+    /// The engineer's own pipeline: a path-limited security reviewer alongside the reviewer.
+    const SECURE_040: &str = r#"name = "secure"
+description = "Standard, plus a security review when api/ or auth/ changes"
+
+[[step]]
+agent = "builder"
+when = "task"
+on_fail = "repair"
+
+[[step]]
+agent = "fallow:gates"
+when = "task"
+on_fail = "repair"
+
+[[step]]
+agent = "reviewer"
+when = "checkpoint"
+on_fail = "repair"
+
+[[step]]
+agent = "security-reviewer"
+when = "checkpoint"
+paths = ["api/**", "auth/**"]
+parallel_with = ["reviewer"]
+on_fail = "repair"
+"#;
+    /// A project's pipeline: a docs-writer once at the end.
+    const WITH_DOCS_040: &str = r#"name = "with-docs"
+description = "Standard, and the docs written once at the end"
+
+[caps]
+task_repairs = 3
+review_rounds = 3
+
+[[step]]
+agent = "builder"
+when = "task"
+on_fail = "repair"
+
+[[step]]
+agent = "fallow:gates"
+when = "task"
+on_fail = "repair"
+
+[[step]]
+agent = "reviewer"
+when = "checkpoint"
+on_fail = "repair"
+
+[[step]]
+agent = "docs-writer"
+when = "once"
+at = "end"
+on_fail = "engineer"
+"#;
+    /// What 0.4.0's `to_toml()` wrote for `CONTRACT_007` (captured by running v0.4.0's `parse`).
+    const CONTRACT_007_TOML_040: &str = r#"name = "standard-security"
+description = "Standard, plus a security review when api/ or auth/ changes"
+
+[caps]
+task_repairs = 3
+review_rounds = 3
+
+[[step]]
+agent = "builder"
+when = "task"
+on_fail = "repair"
+
+[[step]]
+agent = "fallow:gates"
+when = "task"
+on_fail = "repair"
+
+[[step]]
+agent = "reviewer"
+when = "checkpoint"
+on_fail = "repair"
+
+[[step]]
+agent = "security-reviewer"
+when = "checkpoint"
+paths = ["api/**", "auth/**"]
+on_fail = "repair"
+parallel_with = ["reviewer"]
+
+[[step]]
+agent = "docs-writer"
+when = "once"
+at = "end"
+on_fail = "engineer"
+"#;
+    /// What 0.4.0's `to_toml()` wrote for `SECURE_040`: the caps written out, `parallel_with` last.
+    const SECURE_TOML_040: &str = r#"name = "secure"
+description = "Standard, plus a security review when api/ or auth/ changes"
+
+[caps]
+task_repairs = 3
+review_rounds = 3
+
+[[step]]
+agent = "builder"
+when = "task"
+on_fail = "repair"
+
+[[step]]
+agent = "fallow:gates"
+when = "task"
+on_fail = "repair"
+
+[[step]]
+agent = "reviewer"
+when = "checkpoint"
+on_fail = "repair"
+
+[[step]]
+agent = "security-reviewer"
+when = "checkpoint"
+paths = ["api/**", "auth/**"]
+on_fail = "repair"
+parallel_with = ["reviewer"]
+"#;
+
+    /// A stem, a text, and v0.4.0's steps, `verifying`, `missing` and `to_toml()` for it.
+    type Case040 = (
+        &'static str,
+        &'static str,
+        &'static str,
+        bool,
+        &'static [&'static str],
+        &'static str,
+    );
+
+    /// Each 0.4.0 pipeline: its file's stem, its text, and what v0.4.0's `parse` gave for it
+    /// (captured by running v0.4.0's code on these texts): the steps (`{:?}`, the `Step` type is
+    /// unchanged), `verifying`, `missing`, and `to_toml()`. 0.4.0 wrote the shipped texts, the
+    /// edited Test first and the docs-writer pipeline back byte for byte.
+    fn cases_040() -> [Case040; 7] {
+        [
+            (
+                "standard",
+                PIPELINE_040_STANDARD,
+                r#"[Step { agent: "builder", when: Task, at: None, paths: [], on_fail: Repair, parallel_with: [] }, Step { agent: "fallow:gates", when: Task, at: None, paths: [], on_fail: Repair, parallel_with: [] }, Step { agent: "reviewer", when: Checkpoint, at: None, paths: [], on_fail: Repair, parallel_with: [] }]"#,
+                true,
+                &[],
+                PIPELINE_040_STANDARD,
+            ),
+            (
+                "test-first",
+                PIPELINE_040_TEST_FIRST,
+                r#"[Step { agent: "test-writer", when: Checkpoint, at: Some(Start), paths: [], on_fail: Engineer, parallel_with: [] }, Step { agent: "builder", when: Task, at: None, paths: [], on_fail: Repair, parallel_with: [] }, Step { agent: "fallow:gates", when: Task, at: None, paths: [], on_fail: Repair, parallel_with: [] }, Step { agent: "reviewer", when: Checkpoint, at: None, paths: [], on_fail: Repair, parallel_with: [] }]"#,
+                true,
+                &[],
+                PIPELINE_040_TEST_FIRST,
+            ),
+            (
+                "solo",
+                PIPELINE_040_SOLO,
+                r#"[Step { agent: "builder", when: Task, at: None, paths: [], on_fail: Repair, parallel_with: [] }, Step { agent: "fallow:gates", when: Task, at: None, paths: [], on_fail: Repair, parallel_with: [] }]"#,
+                false,
+                &["no review at checkpoints"],
+                PIPELINE_040_SOLO,
+            ),
+            (
+                "standard-security",
+                CONTRACT_007,
+                r#"[Step { agent: "builder", when: Task, at: None, paths: [], on_fail: Repair, parallel_with: [] }, Step { agent: "fallow:gates", when: Task, at: None, paths: [], on_fail: Repair, parallel_with: [] }, Step { agent: "reviewer", when: Checkpoint, at: None, paths: [], on_fail: Repair, parallel_with: [] }, Step { agent: "security-reviewer", when: Checkpoint, at: None, paths: ["api/**", "auth/**"], on_fail: Repair, parallel_with: ["reviewer"] }, Step { agent: "docs-writer", when: Once, at: Some(End), paths: [], on_fail: Engineer, parallel_with: [] }]"#,
+                true,
+                &[],
+                CONTRACT_007_TOML_040,
+            ),
+            (
+                "test-first",
+                TEST_FIRST_EDITED_040,
+                r#"[Step { agent: "test-writer", when: Checkpoint, at: Some(Start), paths: [], on_fail: Engineer, parallel_with: [] }, Step { agent: "builder", when: Task, at: None, paths: [], on_fail: Repair, parallel_with: [] }, Step { agent: "fallow:gates", when: Task, at: None, paths: [], on_fail: Repair, parallel_with: [] }, Step { agent: "reviewer", when: Checkpoint, at: None, paths: [], on_fail: Repair, parallel_with: [] }]"#,
+                true,
+                &[],
+                TEST_FIRST_EDITED_040,
+            ),
+            (
+                "secure",
+                SECURE_040,
+                r#"[Step { agent: "builder", when: Task, at: None, paths: [], on_fail: Repair, parallel_with: [] }, Step { agent: "fallow:gates", when: Task, at: None, paths: [], on_fail: Repair, parallel_with: [] }, Step { agent: "reviewer", when: Checkpoint, at: None, paths: [], on_fail: Repair, parallel_with: [] }, Step { agent: "security-reviewer", when: Checkpoint, at: None, paths: ["api/**", "auth/**"], on_fail: Repair, parallel_with: ["reviewer"] }]"#,
+                true,
+                &[],
+                SECURE_TOML_040,
+            ),
+            (
+                "with-docs",
+                WITH_DOCS_040,
+                r#"[Step { agent: "builder", when: Task, at: None, paths: [], on_fail: Repair, parallel_with: [] }, Step { agent: "fallow:gates", when: Task, at: None, paths: [], on_fail: Repair, parallel_with: [] }, Step { agent: "reviewer", when: Checkpoint, at: None, paths: [], on_fail: Repair, parallel_with: [] }, Step { agent: "docs-writer", when: Once, at: Some(End), paths: [], on_fail: Engineer, parallel_with: [] }]"#,
+                true,
+                &[],
+                WITH_DOCS_040,
+            ),
+        ]
+    }
+
+    #[test]
+    fn every_0_4_0_pipeline_reads_the_same() {
+        // The shipped texts are 0.4.0's, byte for byte.
+        for (stem, text) in [
+            ("standard", PIPELINE_040_STANDARD),
+            ("test-first", PIPELINE_040_TEST_FIRST),
+            ("solo", PIPELINE_040_SOLO),
+        ] {
+            let shipped = super::super::DEFAULT_PIPELINES
+                .iter()
+                .find(|(n, _)| *n == stem)
+                .unwrap()
+                .1;
+            assert_eq!(shipped, text, "{stem}: the shipped text did not change");
+        }
+        for (stem, text, steps, verifying, missing, toml) in cases_040() {
+            let pl = parse("x", stem, text, Source::User, &kinds)
+                .unwrap_or_else(|e| panic!("{stem}: valid in 0.4.0, refused now: {e:?}"));
+            assert_eq!(format!("{:?}", pl.steps), steps, "{stem}: the same steps");
+            assert_eq!(pl.caps.builders, 1, "{stem}: one builder");
+            assert_eq!(pl.verifying, verifying, "{stem}");
+            assert_eq!(pl.missing, missing, "{stem}");
+            assert_eq!(pl.builder().unwrap().agent, "builder", "{stem}");
+            assert_eq!(pl.to_toml(), toml, "{stem}: 0.4.0's TOML, byte for byte");
+            // What a loop records reads back as the same pipeline.
+            let again = parse("x", stem, &pl.to_toml(), Source::User, &kinds).unwrap();
+            assert_eq!(again.steps, pl.steps, "{stem}");
+            assert_eq!(again.caps, pl.caps, "{stem}");
+        }
+        // A file 0.4.0 refused for an unknown agent is still refused, with the same words.
+        let unknown = "name = \"u\"\n[[step]]\nagent = \"builder\"\nwhen = \"task\"\non_fail = \"repair\"\n[[step]]\nagent = \"ghost\"\nwhen = \"checkpoint\"\non_fail = \"repair\"\n";
+        assert_eq!(
+            parse("u.toml", "u", unknown, Source::User, &kinds).unwrap_err(),
+            ["u.toml: step 2: there is no agent named \"ghost\""]
+        );
+        // A misspelt key, refused as in 0.4.0.
+        let e = p(&PIPELINE_040_STANDARD.replace(
+            "on_fail = \"repair\"\n\n[[step]]\nagent = \"fallow:gates\"",
+            "on_fial = \"repair\"\n\n[[step]]\nagent = \"fallow:gates\"",
+        ))
+        .unwrap_err();
+        assert!(e[0].contains("unknown field `on_fial`"), "{e:?}");
+    }
 }
