@@ -790,9 +790,19 @@ fn an_overrule_repair_mid_phase_is_not_charged_a_later_tasks_failure() {
             .any(|g| g["result"]["commit"] == fixed.as_str() && g["class"] == "pass"),
         "T003's repair {fixed} passed: {t003:?}"
     );
+    // The story is never charged: every gate run of US1 counts as passed by Fallow's own rule
+    // (`gate_ok`: a pass, or no tests yet when the baseline had none either). Whether the
+    // overrule repair is gated before or after T003 adds its tests is timing, not behaviour.
     let us1: Vec<&&Value> = gates.iter().filter(|g| g["part"] == "US1").collect();
     assert!(!us1.is_empty());
-    assert!(us1.iter().all(|g| g["class"] == "pass"), "{us1:?}");
+    assert!(
+        us1.iter().all(|g| g["class"] == "pass"
+            || (g["result"]["outcome"]["state"] == "no_tests"
+                && g["result"]["failing"]
+                    .as_array()
+                    .is_some_and(|f| f.is_empty()))),
+        "{us1:?}"
+    );
     drop(e);
     let _ = std::fs::remove_dir_all(&root);
 }
