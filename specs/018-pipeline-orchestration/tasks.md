@@ -150,14 +150,14 @@ description: "Task list for 018 Pipelines as an orchestration system"
 
 ### Tests for User Story 4 (write first, see them fail)
 
-- [ ] T045 [P] [US4] Unit tests in `src/run/groups.rs`: `lock_statement(builders, phases, max_parallel)` for builders 1 (no line), 3 with no `[P]` ("No [P] tasks: the pipeline's 3 builders will work as 1."), 3 with a group of 4 in phase 3 ("Phase 3 has 4 [P] tasks: up to 3 builders at a time."), 3 with a group of 2 ("… up to 2 builders at a time."), two groups in one phase (two lines), a single `[P]` task (no group: counts as none), and `max_parallel = 2` ("Your setting allows 2 agents at once: at most 2 builders.").
-- [ ] T046 [P] [US4] Integration test `tests/us18_lock.rs`: the feature view's `pipelines[]` carry `builders` and `statement` for a feature with 0 and with 4 `[P]` tasks; after locking with `parallel` and running on the fake runtime, the most group builds observed at once equals the number the statement gave (SC-007); `spec.js` renders the chosen pipeline's statement under the Pipeline field (checked as text in the served script: it reads `statement` and re-renders on `change` of `#lk-pipeline`).
+- [X] T045 [P] [US4] Unit tests in `src/run/groups.rs`: `lock_statement(builders, phases, max_parallel)` for builders 1 (no line), 3 with no `[P]` ("No [P] tasks: the pipeline's 3 builders will work as 1."), 3 with a group of 4 in phase 3 ("Phase 3 has 4 [P] tasks: up to 3 builders at a time."), 3 with a group of 2 ("… up to 2 builders at a time."), two groups in one phase (two lines), a single `[P]` task (no group: counts as none), and `max_parallel = 2` ("Your setting allows 2 agents at once: at most 2 builders.").
+- [X] T046 [P] [US4] Integration test `tests/us18_lock.rs`: the feature view's `pipelines[]` carry `builders` and `statement` for a feature with 0 and with 4 `[P]` tasks; after locking with `parallel` and running on the fake runtime, the most group builds observed at once equals the number the statement gave (SC-007); `spec.js` renders the chosen pipeline's statement under the Pipeline field (checked as text in the served script: it reads `statement` and re-renders on `change` of `#lk-pipeline`).
 
 ### Implementation for User Story 4
 
-- [ ] T047 [US4] `lock_statement` in `src/run/groups.rs` (research R-11). Make T045 pass.
-- [ ] T048 [US4] In `src/run/engine.rs` `feature_view`: each `pipelines` entry adds `builders` and `statement` from the feature's `tasks.md` (as `budget_suggestion` reads it) and `settings.defaults.max_parallel`.
-- [ ] T049 [US4] In `src/service/web/screens/spec.js`: under the Pipeline field of the lock form, the chosen pipeline's `statement` lines (`role="status"`), updated when the select changes; the option text keeps " (not verified)". Make T046 pass.
+- [X] T047 [US4] `lock_statement` in `src/run/groups.rs` (research R-11). Make T045 pass.
+- [X] T048 [US4] In `src/run/engine.rs` `feature_view`: each `pipelines` entry adds `builders` and `statement` from the feature's `tasks.md` (as `budget_suggestion` reads it) and `settings.defaults.max_parallel`.
+- [X] T049 [US4] In `src/service/web/screens/spec.js`: under the Pipeline field of the lock form, the chosen pipeline's `statement` lines (`role="status"`), updated when the select changes; the option text keeps " (not verified)". Make T046 pass.
 
 **Checkpoint**: US4 complete.
 

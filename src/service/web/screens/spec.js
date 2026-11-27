@@ -18,6 +18,8 @@
   // 010: the engineer chose "When verified" by hand; until then it follows the autonomy level.
   let whenTouched = false;
   let whenChoice = null;
+  // 018 (FR-022): the pipeline chosen in the lock form, kept when the form is drawn again.
+  let pipelineChoice = null;
   const whenPreset = (level) => (level === "free" ? "pull_request" : "wait");
 
   const STEP_LABEL = { constitution: "Constitution", specify: "Specify", clarify: "Clarify", plan: "Plan", tasks: "Tasks", analyze: "Analyze" };
@@ -78,6 +80,13 @@
     return h`<div class="tabs">${tabs}${later}<div class="grow"></div><span class="row gap-8">${filesBtn}${status}</span></div><div id="doc-pane">${docPane()}</div>`;
   }
 
+  // 018 (FR-022, research R-11): what the chosen pipeline's builders will do for this feature,
+  // as the feature view gives it (the groups the runner forms).
+  function statementLines(f, name) {
+    const p = f.pipelines.find((x) => x.name === name);
+    return h`${((p && p.statement) || []).map((l) => h`<div>${l}</div>`)}`;
+  }
+
   function lockBar(f) {
     const lc = f.lock_check || {};
     if (f.stage !== "spec_session") {
@@ -86,8 +95,10 @@
     }
     if (lockForm) {
       const s = f.budget_suggestion;
+      const chosen = f.pipelines.some((p) => p.name === pipelineChoice) ? pipelineChoice : f.pipeline;
       return h`<form class="lock-bar" data-submit="lock">
-        <div class="field"><label for="lk-pipeline">Pipeline</label><select id="lk-pipeline">${f.pipelines.map((p) => h`<option value="${p.name}"${raw(p.name === f.pipeline ? " selected" : "")}>${p.name}${p.verifying ? "" : " (not verified)"}</option>`)}</select></div>
+        <div class="field"><label for="lk-pipeline">Pipeline</label><select id="lk-pipeline" data-change="lk-pipeline" aria-describedby="lk-statement">${f.pipelines.map((p) => h`<option value="${p.name}"${raw(p.name === chosen ? " selected" : "")}>${p.name}${p.verifying ? "" : " (not verified)"}</option>`)}</select>
+          <div id="lk-statement" class="small body-ink lh" role="status">${statementLines(f, chosen)}</div></div>
         <div class="field"><label for="lk-autonomy">Autonomy</label><select id="lk-autonomy" data-change="lk-level">${["strict", "normal", "free"].map((a) => h`<option value="${a}"${raw(a === f.autonomy ? " selected" : "")}>${a[0].toUpperCase() + a.slice(1)}</option>`)}</select></div>
         <div class="field"><label for="lk-when" title="Only when the project has a remote Fallow can publish to">When verified</label><select id="lk-when" data-change="lk-when">${[["wait", "Wait for me"], ["pull_request", "Open a pull request"]].map(([v, l]) => h`<option value="${v}"${raw(v === (whenTouched && whenChoice ? whenChoice : whenPreset(f.autonomy)) ? " selected" : "")}>${l}</option>`)}</select></div>
         <div class="field"><label for="lk-limit" title="Updates in a row overtaken by changes of the target from outside Fallow, before the loop asks you">Updates overtaken before I decide</label><input id="lk-limit" type="text" inputmode="numeric" value="3"></div>
@@ -377,7 +388,7 @@
         if (name === "keep-theirs") { conflict = null; await openDoc(tab); return render(appEl); }
         if (name === "step") { await post(`${base()}/step`, { to: el.dataset.to }); return again(); }
         if (name === "lock-open") {
-          lockForm = true; whenTouched = false; runAfter = null; overlaps = [];
+          lockForm = true; whenTouched = false; runAfter = null; overlaps = []; pipelineChoice = null;
           try { overlaps = (await get(`${base()}/overlap`)).overlaps || []; } catch (_) { overlaps = []; }
           return render(appEl);
         }
@@ -385,7 +396,7 @@
         if (name === "lk-now") { runAfter = null; return render(appEl); }
         if (name === "lock-step") {
           if (state.lock_check && state.lock_check.ok) {
-            lockForm = true; whenTouched = false; runAfter = null; overlaps = [];
+            lockForm = true; whenTouched = false; runAfter = null; overlaps = []; pipelineChoice = null;
             try { overlaps = (await get(`${base()}/overlap`)).overlaps || []; } catch (_) { overlaps = []; }
             render(appEl);
           }
@@ -404,6 +415,13 @@
           return;
         }
         if (name === "lk-when") { whenTouched = true; whenChoice = el.value; return; }
+        // 018 (FR-022): the statement follows the chosen pipeline before the lock.
+        if (name === "lk-pipeline") {
+          pipelineChoice = el.value;
+          const st = document.getElementById("lk-statement");
+          if (st) st.innerHTML = statementLines(state, el.value).s;
+          return;
+        }
         // 012 (FR-034): back to the session the feature was started from.
         if (name === "origin-open") {
           const f = state && state.feature ? state.feature : state;

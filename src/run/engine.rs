@@ -3955,11 +3955,14 @@ impl Engine {
             }
             Err(problems) => json!({ "ok": false, "problems": problems }),
         };
-        let tasks: usize = std::fs::read_to_string(wd.join(&f.dir).join("tasks.md"))
+        let phases = std::fs::read_to_string(wd.join(&f.dir).join("tasks.md"))
             .ok()
             .and_then(|t| crate::speckit::tasks::read("tasks.md", &t).ok())
-            .map(|ps| ps.iter().map(|p| p.tasks.len()).sum())
-            .unwrap_or(0);
+            .unwrap_or_default();
+        let tasks: usize = phases.iter().map(|p| p.tasks.len()).sum();
+        // 018 (FR-022, research R-11): what each pipeline's builders will do over these tasks,
+        // from the groups the runner forms, under the setting that bounds the slots.
+        let max_parallel = self.ctx.settings.defaults.max_parallel;
         let lib = self.studio.library(Some(&p.path));
         let mut v = self.feature_summary(p, f);
         v["documents"] = json!(docs);
@@ -3977,7 +3980,11 @@ impl Engine {
         v["pipelines"] = json!(lib
             .pipelines
             .values()
-            .map(|pl| json!({ "name": pl.name, "verifying": pl.verifying, "missing": pl.missing }))
+            .map(|pl| json!({
+                "name": pl.name, "verifying": pl.verifying, "missing": pl.missing,
+                "builders": pl.caps.builders,
+                "statement": super::groups::lock_statement(pl.caps.builders, &phases, max_parallel),
+            }))
             .collect::<Vec<_>>());
         v["budget_suggestion"] = json!({
             "tasks": tasks,

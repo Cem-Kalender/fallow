@@ -36,6 +36,45 @@ pub fn groups(phase: &PhaseSpec, builders: u32) -> Vec<Vec<String>> {
     out
 }
 
+/// The lock statement (FR-022, research R-11): what the pipeline's `builders` will do over the
+/// feature's `phases`, from the very groups the runner forms (`groups`), so what the lock says is
+/// what runs. Nothing with one builder; "work as 1" with no group; a line per group, with
+/// `min(builders, its tasks)` builders at a time; and, when the setting for agents at once
+/// (`max_parallel`) is lower than what a group would run, that it limits them.
+pub fn lock_statement(builders: u32, phases: &[PhaseSpec], max_parallel: u32) -> Vec<String> {
+    if builders <= 1 {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    let mut most = 0usize;
+    for p in phases {
+        let label = if p.label.is_empty() {
+            p.n.to_string()
+        } else {
+            p.label.clone()
+        };
+        for g in groups(p, builders) {
+            let at_once = g.len().min(builders as usize);
+            most = most.max(at_once);
+            out.push(format!(
+                "Phase {label} has {} [P] tasks: up to {at_once} builders at a time.",
+                g.len()
+            ));
+        }
+    }
+    if out.is_empty() {
+        return vec![format!(
+            "No [P] tasks: the pipeline's {builders} builders will work as 1."
+        )];
+    }
+    if (max_parallel as usize) < most {
+        out.push(format!(
+            "Your setting allows {max_parallel} agents at once: at most {max_parallel} builders."
+        ));
+    }
+    out
+}
+
 /// The files both a group task (`mine`) and the build branch (`theirs`) changed since the
 /// task's base, sorted, without the feature's `tasks.md` (Fallow's own ticks; research R-6).
 pub fn overlap(mine: &[String], theirs: &[String], tasks_md: &str) -> Vec<String> {
@@ -533,6 +572,105 @@ mod tests {
         assert_eq!(left.len(), 1, "{left:?}");
         assert!(left[0].starts_with("the branch b-T005"), "{left:?}");
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    fn phase_n(n: u32, tasks: &[(&str, bool)]) -> PhaseSpec {
+        let mut p = phase(tasks);
+        p.n = n;
+        p.label = n.to_string();
+        p
+    }
+
+    /// T045 (FR-022, research R-11): the lock statement, from the groups the runner forms.
+    #[test]
+    fn the_lock_statement_says_what_the_builders_will_do() {
+        let plain = vec![
+            phase_n(1, &[("T001", false), ("T002", false)]),
+            phase_n(2, &[("T003", false)]),
+        ];
+        let four = vec![
+            phase_n(1, &[("T001", false)]),
+            phase_n(2, &[("T002", false)]),
+            phase_n(
+                3,
+                &[
+                    ("T003", true),
+                    ("T004", true),
+                    ("T005", true),
+                    ("T006", true),
+                    ("T007", false),
+                ],
+            ),
+        ];
+        // One builder: nothing about builders.
+        assert!(lock_statement(1, &plain, 4).is_empty());
+        assert!(lock_statement(1, &four, 4).is_empty());
+        // No [P] tasks.
+        assert_eq!(
+            lock_statement(3, &plain, 4),
+            ["No [P] tasks: the pipeline's 3 builders will work as 1."]
+        );
+        // A group of 4 in phase 3.
+        assert_eq!(
+            lock_statement(3, &four, 4),
+            ["Phase 3 has 4 [P] tasks: up to 3 builders at a time."]
+        );
+        // A group of 2: as many builders as tasks.
+        let two = vec![phase_n(3, &[("T003", true), ("T004", true)])];
+        assert_eq!(
+            lock_statement(3, &two, 4),
+            ["Phase 3 has 2 [P] tasks: up to 2 builders at a time."]
+        );
+        // Two groups in one phase: two lines, in order.
+        let both = vec![phase_n(
+            2,
+            &[
+                ("T003", true),
+                ("T004", true),
+                ("T005", false),
+                ("T006", true),
+                ("T007", true),
+                ("T008", true),
+                ("T009", true),
+            ],
+        )];
+        assert_eq!(
+            lock_statement(3, &both, 4),
+            [
+                "Phase 2 has 2 [P] tasks: up to 2 builders at a time.",
+                "Phase 2 has 4 [P] tasks: up to 3 builders at a time.",
+            ]
+        );
+        // A single [P] task is no group: it counts as none.
+        let single = vec![phase_n(2, &[("T003", true), ("T004", false)])];
+        assert_eq!(
+            lock_statement(3, &single, 4),
+            ["No [P] tasks: the pipeline's 3 builders will work as 1."]
+        );
+        // The setting for agents at once is lower than the builders: it limits them.
+        assert_eq!(
+            lock_statement(3, &four, 2),
+            [
+                "Phase 3 has 4 [P] tasks: up to 3 builders at a time.",
+                "Your setting allows 2 agents at once: at most 2 builders.",
+            ]
+        );
+        // ... and only when it does: a group of 2 or no group at all is not limited by 2.
+        assert_eq!(
+            lock_statement(3, &two, 2),
+            ["Phase 3 has 2 [P] tasks: up to 2 builders at a time."]
+        );
+        assert_eq!(
+            lock_statement(3, &plain, 2),
+            ["No [P] tasks: the pipeline's 3 builders will work as 1."]
+        );
+        // A phase's own label (3a) is the one named.
+        let mut a = phase_n(4, &[("T003", true), ("T004", true), ("T005", true)]);
+        a.label = "3a".into();
+        assert_eq!(
+            lock_statement(3, &[a], 4),
+            ["Phase 3a has 3 [P] tasks: up to 3 builders at a time."]
+        );
     }
 
     #[test]
