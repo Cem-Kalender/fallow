@@ -11,7 +11,7 @@ use common::*;
 use fallow::run::engine::Request;
 use serde_json::Value;
 use std::path::Path;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 /// `pipelines/builders.toml` (Standard with `builders` builders) and settings.
 fn setup(root: &Path, builders: u32, settings: Option<&str>) {
@@ -134,23 +134,34 @@ fn whole(f: &ParallelFeature, extra: &str) -> String {
     s
 }
 
-/// From the first group task's build starting to the plain task after the group being queued.
-fn group_time(tx: &std::sync::mpsc::Sender<fallow::run::engine::Msg>, id: u64) -> Duration {
-    wait_for(tx, id, "T004 building", |v| {
-        of(v, "build", "T004")
-            .first()
-            .is_some_and(|s| !s["started"].is_null())
-    });
-    let from = Instant::now();
-    wait_for(tx, id, "T008 queued", |v| {
-        !of(v, "build", "T008").is_empty()
-    });
-    from.elapsed()
+/// The span of the builds of `tasks` (from the first one's start to the last one's finish), from
+/// their own `step_started` and `step_finished` events in the log: neither Fallow's work before
+/// and after them nor the machine's load outside them counts (US4 review 1).
+fn build_span(ev: &[Value], tasks: &[String]) -> Duration {
+    let at = |e: &Value| fallow::run::time::parse_rfc3339(e["at"].as_str().unwrap()).unwrap();
+    let builds: std::collections::BTreeSet<u64> = ev
+        .iter()
+        .filter(|e| {
+            e["type"] == "step_queued"
+                && e["kind"] == "build"
+                && tasks.iter().any(|t| e["task"].as_str() == Some(t.as_str()))
+        })
+        .filter_map(|e| e["n"].as_u64())
+        .collect();
+    let of = |t: &str| -> Vec<u64> {
+        ev.iter()
+            .filter(|e| e["type"] == t && e["n"].as_u64().is_some_and(|n| builds.contains(&n)))
+            .map(at)
+            .collect()
+    };
+    let (starts, ends) = (of("step_started"), of("step_finished"));
+    assert_eq!(starts.len(), tasks.len(), "a build per task");
+    assert_eq!(ends.len(), tasks.len(), "each build finished");
+    Duration::from_secs(ends.iter().max().unwrap() - starts.iter().min().unwrap())
 }
 
-/// A loop over the feature with `builders` builders, each build taking 12 s (so Fallow's own
-/// fixed work, the gates and merges, is a small share of the group's time even on a slow
-/// machine; review 1); returns the engine, the loop and the group's time (`group_time`).
+/// A loop over the feature with `builders` builders, each build taking 12 s, run until it is
+/// ready; returns the engine, the loop and the span of the group's builds (`build_span`).
 fn timed(
     name: &'static str,
     builders: u32,
@@ -165,7 +176,8 @@ fn timed(
     setup(&root, builders, None);
     let f = parallel_tasks_feature(&root, 4, &[]);
     let (e, id) = lock(&root, &f, &whole(&f, "sleep_ms = 12000"), (5.0, 60));
-    let took = group_time(&e.tx, id);
+    wait_for(&e.tx, id, "ready", |v| v["stage"] == "ready");
+    let took = build_span(&events(&root, id), &f.parallel);
     (root, f, e, id, took)
 }
 
@@ -289,7 +301,8 @@ fn three_builders_run_four_parallel_tasks_and_merge_them_in_order() {
     assert_eq!(v["feature_loop"]["outcome"][0], true);
     drop(e);
     let (root1, _f1, e1, _id1, one) = serial.join().unwrap();
-    // SC-002: with 3 builders the group takes at most 60 % of its time with one.
+    // SC-002: with 3 builders the group's builds take at most 60 % of their time with one,
+    // measured from the builds' own start and finish in each loop's log (US4 review 1).
     assert!(
         took.as_secs_f64() <= 0.6 * one.as_secs_f64(),
         "3 builders: {took:?}; 1 builder: {one:?}"

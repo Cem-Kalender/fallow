@@ -3986,6 +3986,12 @@ impl Engine {
                 "statement": super::groups::lock_statement(pl.caps.builders, &phases, max_parallel),
             }))
             .collect::<Vec<_>>());
+        // US4 review 1 (decision 1): a new lock of a feature whose loop is live keeps the loop's
+        // recorded pipeline; the form shows it, and what it will do for what is left.
+        v["relock"] = self
+            .live_loop(project, feature)
+            .and_then(|id| self.relock_statement(project, feature, id, &phases, max_parallel))
+            .unwrap_or(Value::Null);
         v["budget_suggestion"] = json!({
             "tasks": tasks,
             "usd": (tasks as f64 * p.budget_per_task.usd * 100.0).round() / 100.0,
@@ -4579,6 +4585,61 @@ impl Engine {
         )?;
         let a = super::relock::affected(&docs);
         Ok(json!({ "affected": a.stories, "why": a.why }))
+    }
+
+    /// US4 review 1 (decision 1): what a new lock of the feature would go on with in loop `id`:
+    /// the pipeline the loop recorded (`pipeline_of`, not the library's current definition), and
+    /// its statement over the phases still to come, from the loop as the new lock (`phases`, the
+    /// feature's `tasks.md` now) would leave it: a done phase and a task already on the build
+    /// branch are skipped by the runner, so not counted.
+    fn relock_statement(
+        &self,
+        project: &str,
+        feature: &str,
+        id: u64,
+        phases: &[PhaseSpec],
+        max_parallel: u32,
+    ) -> Option<Value> {
+        let r = self.runs.get(&id)?;
+        let lib = super::feature::library(r, &self.ctx);
+        let pl = super::feature::pipeline_of(r, &lib).ok()?;
+        let affected: Vec<String> = self
+            .relock_preview(project, feature)
+            .ok()
+            .and_then(|v| serde_json::from_value(v["affected"].clone()).ok())
+            .unwrap_or_default();
+        // The new lock applied to a copy of the loop's state, as `relock` will record it.
+        let mut st = r.state.clone();
+        let lock = st.feature_loop.as_ref()?.lock + 1;
+        st.apply(&Logged {
+            seq: st.seq + 1,
+            at: super::time::rfc3339(super::time::unix_now()),
+            event: Event::Relocked {
+                lock,
+                commit: String::new(),
+                affected,
+                phases: phases.to_vec(),
+                reconciled_target: None,
+            },
+        });
+        let l = st.feature_loop.as_ref()?;
+        let to_come: Vec<PhaseSpec> = l
+            .phases
+            .iter()
+            .filter(|p| p.state != PhaseState::Done)
+            .map(|p| p.spec.clone())
+            .collect();
+        Some(json!({
+            "name": pl.name,
+            "verifying": pl.verifying,
+            "builders": pl.caps.builders,
+            "statement": super::groups::relock_statement(
+                pl.caps.builders,
+                &to_come,
+                max_parallel,
+                |t| l.merged_into_build(t),
+            ),
+        }))
     }
 
     /// A new lock of an unlocked feature: the loop goes on, with the affected stories reopened

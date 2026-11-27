@@ -38,15 +38,39 @@ pub fn groups(phase: &PhaseSpec, builders: u32) -> Vec<Vec<String>> {
 
 /// The lock statement (FR-022, research R-11): what the pipeline's `builders` will do over the
 /// feature's `phases`, from the very groups the runner forms (`groups`), so what the lock says is
-/// what runs. Nothing with one builder; "work as 1" with no group; a line per group, with
-/// `min(builders, its tasks)` builders at a time; and, when the setting for agents at once
-/// (`max_parallel`) is lower than what a group would run, that it limits them.
+/// what runs. Nothing with one builder; "work as 1" with no group; a line per group, with the
+/// builders that will work on it at a time: `min(builders, its tasks, max_parallel)`, the
+/// setting for agents at once named in that line when it is what lowers the number (US4
+/// review 1: each line true on its own).
 pub fn lock_statement(builders: u32, phases: &[PhaseSpec], max_parallel: u32) -> Vec<String> {
+    statement(builders, phases, max_parallel, |_| false, "")
+}
+
+/// The statement at a new lock of a feature whose loop is live (US4 review 1, decision 1): the
+/// loop keeps its recorded pipeline (`builders`), and goes on with `phases`, the phases still to
+/// come; in them, a task already on the build branch (`built`) is skipped by the runner and not
+/// counted. The groups are the runner's (`groups`) over those phases.
+pub fn relock_statement(
+    builders: u32,
+    phases: &[PhaseSpec],
+    max_parallel: u32,
+    built: impl Fn(&str) -> bool,
+) -> Vec<String> {
+    statement(builders, phases, max_parallel, built, " still to build")
+}
+
+fn statement(
+    builders: u32,
+    phases: &[PhaseSpec],
+    max_parallel: u32,
+    built: impl Fn(&str) -> bool,
+    still: &str,
+) -> Vec<String> {
     if builders <= 1 {
         return Vec::new();
     }
+    let slots = max_parallel.max(1) as usize;
     let mut out = Vec::new();
-    let mut most = 0usize;
     for p in phases {
         let label = if p.label.is_empty() {
             p.n.to_string()
@@ -54,27 +78,36 @@ pub fn lock_statement(builders: u32, phases: &[PhaseSpec], max_parallel: u32) ->
             p.label.clone()
         };
         for g in groups(p, builders) {
-            let at_once = g.len().min(builders as usize);
-            most = most.max(at_once);
-            out.push(format!(
-                "Phase {label} has {} [P] tasks: up to {at_once} builders at a time.",
-                g.len()
-            ));
+            // The runner starts builders only for the tasks of a group not yet on the build
+            // branch; with fewer than two, nothing runs alongside.
+            let k = g.iter().filter(|t| !built(t)).count();
+            if k < 2 {
+                continue;
+            }
+            let by_tasks = k.min(builders as usize);
+            let at_once = by_tasks.min(slots);
+            out.push(if at_once < by_tasks {
+                format!(
+                    "Phase {label} has {k} [P] tasks{still}: up to {at_once} builders at a time, as your setting allows {slots} agents at once."
+                )
+            } else {
+                format!("Phase {label} has {k} [P] tasks{still}: up to {at_once} builders at a time.")
+            });
         }
     }
     if out.is_empty() {
         // Honest about a lone [P] task: it is there, but nothing runs alongside it.
-        let marked = phases.iter().flat_map(|p| &p.tasks).any(|t| t.parallel);
+        let marked = phases
+            .iter()
+            .flat_map(|p| &p.tasks)
+            .any(|t| t.parallel && !built(&t.id));
         return vec![if marked {
-            format!("No two [P] tasks in a row: the pipeline's {builders} builders will work as 1.")
+            format!(
+                "No two [P] tasks{still} in a row: the pipeline's {builders} builders will work as 1."
+            )
         } else {
-            format!("No [P] tasks: the pipeline's {builders} builders will work as 1.")
+            format!("No [P] tasks{still}: the pipeline's {builders} builders will work as 1.")
         }];
-    }
-    if (max_parallel as usize) < most {
-        out.push(format!(
-            "Your setting allows {max_parallel} agents at once: at most {max_parallel} builders."
-        ));
     }
     out
 }
@@ -652,12 +685,21 @@ mod tests {
             lock_statement(3, &single, 4),
             ["No two [P] tasks in a row: the pipeline's 3 builders will work as 1."]
         );
-        // The setting for agents at once is lower than the builders: it limits them.
+        // The setting for agents at once is lower than the builders: the group's line gives the
+        // number that will run, and says the setting lowered it (US4 review 1: each line is true
+        // on its own).
         assert_eq!(
             lock_statement(3, &four, 2),
             [
-                "Phase 3 has 4 [P] tasks: up to 3 builders at a time.",
-                "Your setting allows 2 agents at once: at most 2 builders.",
+                "Phase 3 has 4 [P] tasks: up to 2 builders at a time, as your setting allows 2 agents at once."
+            ]
+        );
+        // Per group: a group of 2 is not lowered by a setting of 2, a group of 4 is.
+        assert_eq!(
+            lock_statement(3, &both, 2),
+            [
+                "Phase 2 has 2 [P] tasks: up to 2 builders at a time.",
+                "Phase 2 has 4 [P] tasks: up to 2 builders at a time, as your setting allows 2 agents at once.",
             ]
         );
         // ... and only when it does: a group of 2 or no group at all is not limited by 2.
@@ -675,6 +717,58 @@ mod tests {
         assert_eq!(
             lock_statement(3, &[a], 4),
             ["Phase 3a has 3 [P] tasks: up to 3 builders at a time."]
+        );
+    }
+
+    /// US4 review 1 (decision 1): at a new lock of a feature with a live loop, the statement
+    /// covers only the phases still to come, and in a group only the tasks still to build.
+    #[test]
+    fn the_relock_statement_counts_only_what_is_still_to_build() {
+        let p = phase_n(
+            2,
+            &[
+                ("T004", true),
+                ("T005", true),
+                ("T006", true),
+                ("T007", true),
+                ("T008", false),
+            ],
+        );
+        let none = |_: &str| false;
+        // Nothing built yet: as at a first lock, the tasks are said to be still to build.
+        assert_eq!(
+            relock_statement(3, std::slice::from_ref(&p), 4, none),
+            ["Phase 2 has 4 [P] tasks still to build: up to 3 builders at a time."]
+        );
+        // T004 and T007 are on the build branch: two left, two at a time.
+        let built = |t: &str| t == "T004" || t == "T007";
+        assert_eq!(
+            relock_statement(3, std::slice::from_ref(&p), 4, built),
+            ["Phase 2 has 2 [P] tasks still to build: up to 2 builders at a time."]
+        );
+        // One left: nothing runs alongside it.
+        let three = |t: &str| t != "T005";
+        assert_eq!(
+            relock_statement(3, std::slice::from_ref(&p), 4, three),
+            ["No two [P] tasks still to build in a row: the pipeline's 3 builders will work as 1."]
+        );
+        // All built, or no phase still to come.
+        let all = |_: &str| true;
+        assert_eq!(
+            relock_statement(3, std::slice::from_ref(&p), 4, all),
+            ["No [P] tasks still to build: the pipeline's 3 builders will work as 1."]
+        );
+        assert_eq!(
+            relock_statement(3, &[], 4, none),
+            ["No [P] tasks still to build: the pipeline's 3 builders will work as 1."]
+        );
+        // One builder: nothing; the setting lowers it as at a first lock.
+        assert!(relock_statement(1, std::slice::from_ref(&p), 4, none).is_empty());
+        assert_eq!(
+            relock_statement(3, std::slice::from_ref(&p), 2, none),
+            [
+                "Phase 2 has 4 [P] tasks still to build: up to 2 builders at a time, as your setting allows 2 agents at once."
+            ]
         );
     }
 

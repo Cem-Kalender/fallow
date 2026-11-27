@@ -84,7 +84,22 @@
   // as the feature view gives it (the groups the runner forms).
   function statementLines(f, name) {
     const p = f.pipelines.find((x) => x.name === name);
-    return h`${((p && p.statement) || []).map((l) => h`<div>${l}</div>`)}`;
+    return statementHtml((p && p.statement) || []);
+  }
+  const statementHtml = (ls) => h`${ls.map((l) => h`<div>${l}</div>`)}`;
+
+  // US4 review 1 (decision 1): a new lock of a feature whose loop is live keeps the loop's
+  // pipeline. It is shown as text, not a choice, with what it will do for what is left.
+  function pipelineField(f, chosen) {
+    const r = f.relock;
+    if (r) {
+      return h`<div class="field" role="group" aria-labelledby="lk-pipeline-label"><span id="lk-pipeline-label">Pipeline</span>
+          <div id="lk-pipeline-kept" class="body-ink"><b>${r.name}${r.verifying ? "" : " (not verified)"}</b></div>
+          <div id="lk-pipeline-note" class="small muted lh">A new lock keeps the loop's pipeline.</div>
+          <div id="lk-statement" class="small body-ink lh" role="status">${statementHtml(r.statement || [])}</div></div>`;
+    }
+    return h`<div class="field"><label for="lk-pipeline">Pipeline</label><select id="lk-pipeline" data-change="lk-pipeline" aria-describedby="lk-statement">${f.pipelines.map((p) => h`<option value="${p.name}"${raw(p.name === chosen ? " selected" : "")}>${p.name}${p.verifying ? "" : " (not verified)"}</option>`)}</select>
+          <div id="lk-statement" class="small body-ink lh" role="status">${statementLines(f, chosen)}</div></div>`;
   }
 
   function lockBar(f) {
@@ -97,8 +112,7 @@
       const s = f.budget_suggestion;
       const chosen = f.pipelines.some((p) => p.name === pipelineChoice) ? pipelineChoice : f.pipeline;
       return h`<form class="lock-bar" data-submit="lock">
-        <div class="field"><label for="lk-pipeline">Pipeline</label><select id="lk-pipeline" data-change="lk-pipeline" aria-describedby="lk-statement">${f.pipelines.map((p) => h`<option value="${p.name}"${raw(p.name === chosen ? " selected" : "")}>${p.name}${p.verifying ? "" : " (not verified)"}</option>`)}</select>
-          <div id="lk-statement" class="small body-ink lh" role="status">${statementLines(f, chosen)}</div></div>
+        ${pipelineField(f, chosen)}
         <div class="field"><label for="lk-autonomy">Autonomy</label><select id="lk-autonomy" data-change="lk-level">${["strict", "normal", "free"].map((a) => h`<option value="${a}"${raw(a === f.autonomy ? " selected" : "")}>${a[0].toUpperCase() + a.slice(1)}</option>`)}</select></div>
         <div class="field"><label for="lk-when" title="Only when the project has a remote Fallow can publish to">When verified</label><select id="lk-when" data-change="lk-when">${[["wait", "Wait for me"], ["pull_request", "Open a pull request"]].map(([v, l]) => h`<option value="${v}"${raw(v === (whenTouched && whenChoice ? whenChoice : whenPreset(f.autonomy)) ? " selected" : "")}>${l}</option>`)}</select></div>
         <div class="field"><label for="lk-limit" title="Updates in a row overtaken by changes of the target from outside Fallow, before the loop asks you">Updates overtaken before I decide</label><input id="lk-limit" type="text" inputmode="numeric" value="3"></div>
@@ -442,7 +456,8 @@
           const out = await post(`${base()}/lock`, {
             update_limit: isFinite(limit) ? limit : undefined,
             run_after: runAfter === null ? undefined : runAfter,
-            pipeline: document.getElementById("lk-pipeline").value,
+            // At a new lock the loop keeps its pipeline: there is no choice to send.
+            pipeline: document.getElementById("lk-pipeline") ? document.getElementById("lk-pipeline").value : undefined,
             autonomy: document.getElementById("lk-autonomy").value,
             when_verified: document.getElementById("lk-when").value,
             budget: { usd: isFinite(usd) ? usd : undefined, minutes: isFinite(minutes) ? minutes : undefined },
