@@ -43,6 +43,8 @@ Unknown keys, nesting, multi-line values and anchors are refused, with the file 
 | returns | yes | `work` for a maker, `verdict` for a checker, `reply` for the lead |
 | limits | no | Per step. Defaults: 30 minutes, the runtime's turn default, and the loop's remaining budget |
 
+> Replaced by 017 (specs/017-agent-file-fields/contracts/agent-definition.md): `model` and `may_run` are required; `model` is the model's full name in the form the runtime declares, and there is no runtime default ("empty means the runtime's default" no longer holds); `kind` is `maker`, `checker`, `lead` or `assistant`.
+
 **The body** is required and not empty. It is added to the agent's system prompt, after Fallow's own rules for its kind.
 
 ## What Fallow adds, whatever the definition says (FR-026)
@@ -67,6 +69,8 @@ Unknown keys, nesting, multi-line values and anchors are refused, with the file 
 | test-writer | maker | claude, sonnet | Writes a story's failing acceptance tests before its tasks (Test first) |
 | security-reviewer | checker | claude, opus | Security checks of a story's changes, each proven by running something |
 | docs-writer | maker | claude, sonnet | Updates the README and quickstart once, at the end |
+
+> Replaced by 017 (specs/017-agent-file-fields/contracts/agent-definition.md#the-defaults): the defaults name full model names (`claude-opus-5-5`, `claude-sonnet-5-5`) and their `may_run`.
 
 On first start, each default is copied to `~/.fallow/agents/`. The engineer's changes are never overwritten (FR-025). When an update of Fallow changes a default:
 - a copy the engineer never edited is replaced by the new default;

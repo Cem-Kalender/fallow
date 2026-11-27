@@ -94,6 +94,8 @@ The global events are `project`, `feature`, `loop_progress`, `needs_you` and `ne
 | `DELETE /api/pipelines/<name>?scope=...` | `{confirm: true}` | |
 | `GET /api/runtimes` | | `[{name, installed, version, models}]` |
 
+> Replaced by 017 (specs/017-agent-file-fields/contracts/web-api.md#get-apiruntimes): `GET /api/runtimes` gives `model_naming` instead of `models`; `PUT /api/agents/<name>` takes only `{text}`, and `GET /api/agents` adds `unusable`.
+
 A definition or pipeline that does not pass is refused like any other request (`{ok: false, error}`), the error holding one problem per line, each `file:line: message` for a definition and `file: step N: message` for a pipeline. A default is reset to what Fallow ships rather than deleted. A change to an agent, or its deletion, is refused when a pipeline it reaches (in any project, or recorded by a loop still going) would no longer parse or no longer verify; a pipeline that a project, or a feature not locked or unlocked, chooses cannot be deleted. `PATCH /api/projects/<p>` accepts only a `pipeline` in force for the project.
 
 ## Since 009

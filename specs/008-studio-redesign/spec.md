@@ -86,6 +86,7 @@ The engineer's controls sit together in the loop page's header: a note for the n
 
 1. **Given** the Agents tab, **When** the engineer clicks one agent and then another, **Then** the editor shows the second agent's definition.
 2. **Given** an agent selected in Agents, **When** the engineer changes its model in the form and saves for "this project only", **Then** the project's own definition holds the new model and the rest of the file is unchanged.
+   > Replaced by 017 (specs/017-agent-file-fields/spec.md FR-010, FR-011): there is no form; the model is changed in the file's text.
 3. **Given** the Pipelines tab, **When** the engineer selects a step, **Then** the step's agent is shown in brief with a link that opens it in Agents.
 4. **Given** a project is selected, **When** the engineer saves an agent or a pipeline, **Then** "Save for" defaults to "this project only".
 5. **Given** an agent change that would stop a pipeline in use from verifying, **When** the engineer saves it, **Then** the save is refused with the reason, as in 007. (must fail)
@@ -158,6 +159,7 @@ When a pipeline marks steps to run alongside each other at a story's checkpoint,
 - **One of two parallel checkers fails to start**: the other still runs; the failed start is retried as in 007, then the engineer is asked.
 - **A graph too wide for the window**: it scales down to fit, or scrolls inside its own box; the page never scrolls sideways.
 - **An agent's form field cannot show a value written in the file by hand** (an unknown model, for example): the field shows it as written and the save keeps it; the definition's checks decide whether it is valid.
+  > Replaced by 017 (specs/017-agent-file-fields/spec.md FR-010): the Agents page shows the whole file in one text editor; there are no form fields.
 - **Two pages save the same agent or pipeline at once**: the later save wins, as in 007 (agent and pipeline saves carry no version; only documents do).
 
 ## Requirements *(mandatory)*
@@ -176,7 +178,9 @@ When a pipeline marks steps to run alongside each other at a story's checkpoint,
 
 - **FR-006**: The navigation MUST offer Pipelines and Agents as separate tabs; each keeps the selected project.
 - **FR-007**: The Agents tab MUST list the agents grouped by kind (lead, makers, checkers), each with its source and the number of pipelines that use it, and MUST show the selected agent in an editor with links to those pipelines. Selecting another agent MUST always show that agent's definition.
+  > Replaced by 017 (specs/017-agent-file-fields/spec.md FR-014): the agent list scrolls on its own at every window width, keeping the editor and its Save button in view.
 - **FR-008**: The agent editor MUST offer the runtime, model, kind, the commands the agent may run and its result shape as form fields, and the instructions as text. "Edit as text" MUST show the whole definition. Saving MUST change only what the engineer changed, and keep any value written by hand.
+  > Replaced by 017 (specs/017-agent-file-fields/spec.md FR-010, FR-011, FR-012): the editor is the whole file in one text editor, saved only as whole text; a new agent starts from a template.
 - **FR-009**: The Pipelines tab MUST list the pipelines, each marked verifying or not with what is missing, and mark the one the selected project uses. Selecting a step MUST show its agent in brief (name, kind, runtime and model) with a link to it in Agents.
 - **FR-010**: Saving an agent or a pipeline MUST offer "Save for: all my projects / this project only", defaulting to "this project only" when a project is selected. Folder paths appear only in a tooltip.
 
@@ -213,6 +217,7 @@ When a pipeline marks steps to run alongside each other at a story's checkpoint,
 - **SC-001**: From the loop page, the engineer can say which criteria of a story failed and what the reviewer ran for them within 10 seconds, without opening `spec.md`.
 - **SC-002**: The engineer reaches every steering control of a loop without scrolling, on a 1440 × 900 window.
 - **SC-003**: Changing an agent's model takes at most 3 actions in the Agents tab (select, change, save), and the saved file differs from the old one in that line only.
+  > Replaced by 017 (specs/017-agent-file-fields/spec.md): no form; changing the model is an edit of its line in the file's text, and the saved file differs in that line only.
 - **SC-004**: A checkpoint with two checkers running alongside each other takes no longer than the slower of the two plus 10% (with a concurrency cap of at least 2).
 - **SC-005**: Every changed screen passes the visual check against 008's mockup at 1440 px and 390 px, approved by the engineer.
 - **SC-006**: Everything 007 measured still holds: the page ready within 500 ms of start, under 60 MB idle and under 200 MB with 4 agents running.

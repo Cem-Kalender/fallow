@@ -1,5 +1,7 @@
 # Contract: saving an agent's fields
 
+> Replaced by 017 (specs/017-agent-file-fields/contracts/web-api.md): `PUT /api/agents/<name>` accepts only `{text}`; the `{fields, body?}` body below is refused.
+
 `PUT /api/agents/<name>?scope=user|project:<p>` (007) accepts either body:
 
 | Body | Meaning |

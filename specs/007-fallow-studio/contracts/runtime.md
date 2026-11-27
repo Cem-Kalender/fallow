@@ -74,6 +74,8 @@ Outcome { result: Option<Value>, failure: Option<String>, cost_usd: Option<f64>,
 
 `agent::registry::runtime(name, settings)` gives the runtime a definition names. Its program comes from the settings' `[agents.<name>]` profile; `claude` falls back to the `claude` program on the PATH. A runtime Fallow does not know, one without a profile, or one whose program is not found is refused with a message that names it; the step does not start and the loop asks the engineer. `GET /api/runtimes` lists every runtime with `installed`, `version` (the first line of its `--version`) and the models a definition may name.
 
+> Replaced by 017 (specs/017-agent-file-fields/contracts/runtime-model-naming.md): `GET /api/runtimes` no longer lists the models a definition may name; it gives each runtime's `model_naming`. A call without a model is refused; there is no fallback.
+
 ## 012 amendments
 
 Feature 012 (solo sessions) amends this contract; [012's runtime contract](../../012-solo-session/contracts/runtime.md) has the details:
