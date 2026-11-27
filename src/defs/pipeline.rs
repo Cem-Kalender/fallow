@@ -172,9 +172,9 @@ impl Pipeline {
 
     /// 018 (research R-12, spec FR-002): what the pipeline checks, as plain sentences, in the
     /// order of its steps: the builders on `[P]` tasks when more than one, the gates, and each
-    /// agent with where it runs. A checker named in an earlier checker's `parallel_with` at the
-    /// same point is said with it ("alongside the security reviewer"), unless it has `paths` of
-    /// its own. The builder is not named.
+    /// agent with where it runs. A checker alongside an earlier checker at the same point
+    /// (whichever of the two names the other in `parallel_with`) is said with it ("alongside
+    /// the security reviewer"), unless it has `paths` of its own. The builder is not named.
     pub fn checks(&self) -> Vec<String> {
         let mut out = Vec::new();
         if self.caps.builders > 1 {
@@ -199,8 +199,11 @@ impl Pipeline {
             let checker = self.kinds.get(i).copied().flatten() == Some(Kind::Checker);
             let folded = checker
                 && st.paths.is_empty()
-                && self.steps[..i].iter().any(|o| {
-                    o.point_at() == (when, at) && o.parallel_with.iter().any(|p| p == &st.agent)
+                && self.steps[..i].iter().enumerate().any(|(j, o)| {
+                    o.point_at() == (when, at)
+                        && self.kinds.get(j).copied().flatten() == Some(Kind::Checker)
+                        && (o.parallel_with.iter().any(|p| p == &st.agent)
+                            || st.parallel_with.iter().any(|p| p == &o.agent))
                 });
             if folded {
                 continue;
@@ -892,6 +895,19 @@ on_fail = "repair"
             "The reviewer checks every user story's acceptance scenarios at its checkpoint, alongside the security reviewer."
         );
         assert_eq!(alongside.checks().len(), 2, "{:?}", alongside.checks());
+        // Named the other way round (the later checker names the earlier): the same sentences.
+        let back = p(&standard_with(
+            "",
+            &step(
+                "security-reviewer",
+                "checkpoint",
+                None,
+                "repair",
+                "parallel_with = [\"reviewer\"]\n",
+            ),
+        ))
+        .unwrap();
+        assert_eq!(back.checks(), alongside.checks());
     }
 
     #[test]

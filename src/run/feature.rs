@@ -653,7 +653,8 @@ impl Point {
 
     /// Where a failure of a unit at this point is repaired (data-model "Unit"): the task after
     /// it (counted against the task's repairs); the point itself for checkers alongside each
-    /// other; a unit of one, as 0.4.0, under its own part.
+    /// other; a unit of one, as 0.4.0, under its own part. At a start nothing is repaired
+    /// (FR-009): the point's own name, per task before a task, only names the unit.
     fn repair(&self, own: &str, several: bool) -> (String, Option<String>) {
         match self {
             Point::TaskEnd(t, _) => (t.clone(), Some(t.clone())),
@@ -662,9 +663,30 @@ impl Point {
             Point::OnceEnd => ("once-end".into(), None),
             Point::PhaseStart(n) | Point::CheckpointStart(n) => (format!("phase-{n}-start"), None),
             Point::PhaseEnd(n) => (format!("phase-{n}-end"), None),
-            // Before the task nothing of it is built: its own part, never the task's repairs
-            // (a repair of the task before its build would stand for the build).
-            Point::TaskStart(..) => (own.to_string(), None),
+            // Before the task nothing of it is built: never the task's repairs (a repair of
+            // the task before its build would stand for the build).
+            Point::TaskStart(t, _) => (format!("{t}-start"), None),
+        }
+    }
+
+    /// Whether nothing of this point's work is built yet: its checkers ask the engineer and
+    /// are never repaired (FR-009).
+    fn start(&self) -> bool {
+        matches!(
+            self,
+            Point::OnceStart
+                | Point::PhaseStart(_)
+                | Point::CheckpointStart(_)
+                | Point::TaskStart(..)
+        )
+    }
+
+    /// The task before or after which this point runs: a new lock that changed it starts its
+    /// steps again (FR-008, research S-17).
+    fn task(&self) -> Option<&str> {
+        match self {
+            Point::TaskStart(t, _) | Point::TaskEnd(t, _) => Some(t),
+            _ => None,
         }
     }
 }
@@ -687,6 +709,9 @@ struct Spot {
     part: String,
     repair: String,
     task: Option<String>,
+    /// The task before or after which it runs (its round starts again when a new lock
+    /// changed the task).
+    of_task: Option<String>,
     phase: u32,
     at_phase: Option<u32>,
     what: String,
@@ -809,6 +834,7 @@ fn point(
                 part,
                 repair,
                 task,
+                of_task: pt.task().map(str::to_string),
                 phase,
                 at_phase,
                 what: what.clone(),
@@ -830,9 +856,23 @@ fn point(
         if touched.is_empty() {
             continue;
         }
-        let (repair, task) = pt.repair("", true);
+        let (mut repair, task) = pt.repair("", true);
+        // A loop of 0.4.0 ran these checkers one after the other, each repaired under its own
+        // part: when its latest repair at this point is under one of those, the unit goes on
+        // under it, its round and its repairs counted as before (US5 AS4).
+        if task.is_none() && !pt.start() {
+            let parts: Vec<String> = touched.iter().map(|(_, p)| p.clone()).collect();
+            if let Some(r) = run.state.steps.values().rev().find(|x| {
+                x.kind == StepKind::Repair
+                    && x.part
+                        .as_deref()
+                        .is_some_and(|p| p == repair || parts.iter().any(|o| o == p))
+            }) {
+                repair = r.part.clone().unwrap_or(repair);
+            }
+        }
         let since = round_start(run, l, &repair).max(
-            task.as_deref()
+            pt.task()
                 .and_then(|t| l.tasks.get(t))
                 .map_or(0, |t| t.since),
         );
@@ -844,6 +884,7 @@ fn point(
             at_phase,
             cap: pl.caps.task_repairs,
             since,
+            start: pt.start(),
         };
         let prompt = |run: &Run, s: &pipeline::Step, part: &str| -> Result<String, String> {
             let may = may_of(run, lib, &s.agent);
@@ -876,6 +917,9 @@ struct Unit {
     cap: u32,
     /// Where the current round starts: checks queued before are stale.
     since: u64,
+    /// At a start: nothing is built yet, so a finding goes to the engineer, never to a repair
+    /// (FR-009), as for a checker there on its own.
+    start: bool,
 }
 
 /// One unit of checkers alongside each other: all queued at once after the unit's repair is
@@ -1099,6 +1143,56 @@ fn unit(
             })
         })
         .collect();
+    if u.start {
+        // As `extra()` for a checker at a start: a question is answered, the engineer's
+        // "retry" since checks again, otherwise the engineer decides.
+        if let Some((c, _, rs)) = failing
+            .iter()
+            .find(|(_, _, rs)| rs.first().is_some_and(|r| r.starts_with(BLOCKED)))
+        {
+            run.append(Event::NeedsEngineer {
+                why: format!(
+                    "The {} of {label} asks: {}",
+                    c.agent,
+                    rs[0].trim_start_matches(BLOCKED)
+                ),
+                options: vec!["answer".into(), "stop".into()],
+            })?;
+            return Ok(false);
+        }
+        let again: Vec<(String, Step)> = failing
+            .iter()
+            .filter(|(_, s, _)| s.queued_seq < fresh)
+            .map(|(c, s, _)| (c.agent.clone(), (*s).clone()))
+            .collect();
+        if !again.is_empty() {
+            for (agent, s) in again {
+                let text = machine::own_instruction(run, &s);
+                queue(
+                    run,
+                    StepKind::Review,
+                    s.part.as_deref(),
+                    None,
+                    u.at_phase,
+                    &agent,
+                    None,
+                    &format!("{agent} checks {label} again"),
+                    text,
+                )?;
+            }
+            return Ok(false);
+        }
+        let who: Vec<&str> = failing.iter().map(|(c, ..)| c.agent.as_str()).collect();
+        run.append(Event::NeedsEngineer {
+            why: format!(
+                "{} found problems in {label}: {}",
+                who.join(" and "),
+                reasons.join("; ")
+            ),
+            options: vec!["retry".into(), "stop".into()],
+        })?;
+        return Ok(false);
+    }
     let go = last_go(run);
     let ask_engineer = failing
         .iter()
@@ -1171,7 +1265,13 @@ fn extra(
         .filter(|x| x.kind == StepKind::Repair && x.part.as_deref() == Some(rp))
         .find(|x| rt.is_none_or(|t| l.tasks.get(t).is_none_or(|ts| x.queued_seq > ts.since)))
         .cloned();
-    let since = repair.as_ref().map_or(0, |r| r.queued_seq);
+    // A new lock that changed the task starts its steps before and after it again (FR-008).
+    let since = repair.as_ref().map_or(0, |r| r.queued_seq).max(
+        spot.of_task
+            .as_deref()
+            .and_then(|t| l.tasks.get(t))
+            .map_or(0, |t| t.since),
+    );
     let last = run
         .state
         .steps
@@ -2334,6 +2434,7 @@ fn checkpoint(
         at_phase: Some(n),
         cap: pl.caps.review_rounds,
         since: round_start(run, l, story),
+        start: false,
     };
     let prompt = |run: &Run, c: &pipeline::Step, _: &str| -> Result<String, String> {
         let spec_text = doc_at(run, &l.lock_commit, "spec.md").unwrap_or_default();

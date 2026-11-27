@@ -229,6 +229,9 @@
         for (const n of bc.nodes) edges.push({ d: curve(jx, cy, bx - 2, n.y + n.h / 2), arrow: true });
       }
       if (ci === 0) continue; // nothing runs between the spec session and the lock
+      // Nor between the builder and its gates: a step after each task runs after the gates,
+      // so its + sits after them (below, or before the next column).
+      if (a.region === "task" && bc.region === "task") continue;
       plus.push(Object.assign({ x: jx, y: cy }, presetOf(a.region, bc.region, has)));
     }
     // Groups around their columns; the task group inside the phase group.

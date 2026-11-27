@@ -422,3 +422,344 @@ on_fail = "engineer"
     drop(e);
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// The reviewer and the security reviewer alongside each other at `when`'s start, the first
+/// failing once at `first`: as for a checker at a start on its own, the engineer is asked
+/// with retry or stop, nothing is repaired, and the unit is named after its point (FR-009).
+fn alongside_at_a_start(name: &str, when: &str, parts: &[String], first: &str) {
+    let root = scratch(name);
+    setup(
+        &root,
+        &pipeline(&format!(
+            "[[step]]\nagent = \"reviewer\"\nwhen = \"{when}\"\nat = \"start\"\non_fail = \"engineer\"\nparallel_with = [\"security-reviewer\"]\n\n[[step]]\nagent = \"security-reviewer\"\nwhen = \"{when}\"\nat = \"start\"\non_fail = \"engineer\"\n"
+        )),
+    );
+    let mut steps = String::new();
+    steps.push_str(&findings(
+        &format!("reviewer@{first}"),
+        Some("no plan for it yet"),
+        "",
+    ));
+    for p in parts {
+        steps.push_str(&findings(&format!("reviewer@{p}"), None, ""));
+        steps.push_str(&findings(&format!("security-reviewer@{p}"), None, ""));
+    }
+    steps.push_str(&calc_loop_ok());
+    let (e, _repo, id) = locked_calc(&root, &steps, Some("points"));
+    let tx = &e.tx;
+    let v = wait_for(tx, id, "the engineer asked", |v| {
+        !v["needs_engineer"].is_null()
+    });
+    let needs = &v["needs"];
+    assert_eq!(
+        needs["options"],
+        serde_json::json!(["retry", "stop"]),
+        "{needs}"
+    );
+    let why = needs["why"].as_str().unwrap();
+    assert!(
+        why.contains(&format!(" {first}:")) && why.contains("no plan for it yet"),
+        "{why}"
+    );
+    let repairs: Vec<&Value> = in_order(&v)
+        .into_iter()
+        .filter(|s| s["kind"] == "repair")
+        .collect();
+    assert!(
+        repairs.is_empty(),
+        "nothing is repaired at a start: {repairs:?}"
+    );
+    assert!(of(&v, "build", "T001").is_empty(), "nothing is built yet");
+    // Retry: the failing checker checks again; the other's verdict stands.
+    ask(tx, fallow::run::engine::Request::Retry { id }).unwrap();
+    let v = wait_for(tx, id, "ready", |v| {
+        v["stage"] == "ready" || !v["needs_engineer"].is_null()
+    });
+    assert_eq!(v["stage"], "ready", "{}", v["needs_engineer"]);
+    assert_eq!(of(&v, "review", &format!("reviewer@{first}")).len(), 2);
+    assert_eq!(
+        of(&v, "review", &format!("security-reviewer@{first}")).len(),
+        1
+    );
+    // Every other point's unit checked once, its own (nothing shared between points).
+    for p in parts.iter().filter(|p| *p != first) {
+        assert_eq!(of(&v, "review", &format!("reviewer@{p}")).len(), 1, "{p}");
+        assert_eq!(
+            of(&v, "review", &format!("security-reviewer@{p}")).len(),
+            1,
+            "{p}"
+        );
+    }
+    assert!(
+        in_order(&v).iter().all(|s| s["kind"] != "repair"),
+        "nothing was repaired"
+    );
+    drop(e);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn checkers_alongside_each_other_before_a_task_ask_the_engineer_and_are_never_repaired() {
+    let parts: Vec<String> = ["T001", "T002", "T003", "T004"]
+        .iter()
+        .map(|t| format!("{t}-start"))
+        .collect();
+    alongside_at_a_start("points-alongside-task-start", "task", &parts, "T001-start");
+}
+
+#[test]
+fn checkers_alongside_each_other_at_a_phase_start_ask_the_engineer_and_are_never_repaired() {
+    let parts: Vec<String> = (1..=3).map(|n| format!("phase-{n}-start")).collect();
+    alongside_at_a_start(
+        "points-alongside-phase-start",
+        "phase",
+        &parts,
+        "phase-1-start",
+    );
+}
+
+/// FR-008 (research S-17): a new lock that changes a task runs the steps before and after it
+/// again, with its new build; the tasks it did not change keep theirs.
+#[test]
+fn a_new_lock_that_changes_a_task_runs_the_steps_around_it_again() {
+    use fallow::run::engine::Request;
+    use fallow::studio::Req;
+    let root = scratch("points-relock");
+    setup(
+        &root,
+        &pipeline(
+            "[[step]]\nagent = \"docs-writer\"\nwhen = \"task\"\nat = \"start\"\non_fail = \"engineer\"\n\n[[step]]\nagent = \"lint-checker\"\nwhen = \"task\"\nat = \"end\"\non_fail = \"repair\"\n",
+        ),
+    );
+    let mut steps = String::new();
+    for t in ["T001", "T002", "T003", "T004"] {
+        steps.push_str(&make(
+            &format!("docs-writer@{t}-start"),
+            &format!("notes/{t}.md"),
+        ));
+        steps.push_str(&findings(&format!("lint-checker@{t}-end"), None, ""));
+    }
+    steps.push_str(&calc_loop_ok());
+    // After the new lock: T004 again, with the steps around it.
+    steps.push_str(
+        &task_step(
+            "US2",
+            &[("calc/__init__.py", &format!("{CALC_INIT_SUB}# ints only\n"))],
+            "when = \"lock 2\"",
+        )
+        .replacen("kind = \"build\"", "kind = \"repair\"", 1),
+    );
+    steps.push_str(&make("docs-writer@T004-start", "notes/T004-again.md"));
+    steps.push_str(&task_step(
+        "T004",
+        &[(
+            "calc/__init__.py",
+            &format!("{CALC_INIT_SUB}# ints only, again\n"),
+        )],
+        "",
+    ));
+    steps.push_str(&findings("lint-checker@T004-end", None, ""));
+    steps.push_str(&handover_step(3, ""));
+    steps.push_str(&check_step("US2", true, ""));
+    steps.push_str(LEAD_ANALYZES_AGAIN);
+    let (e, _repo, id) = locked_calc(&root, &steps, Some("points"));
+    let tx = &e.tx;
+    let v = wait_for(tx, id, "ready", |v| {
+        v["stage"] == "ready" || !v["needs_engineer"].is_null()
+    });
+    assert_eq!(v["stage"], "ready", "{}", v["needs_engineer"]);
+    let project = v["feature_loop"]["project"].as_str().unwrap().to_string();
+    let feature = "001-calc".to_string();
+    ask(tx, Request::Pause { id }).unwrap();
+    wait_for(tx, id, "paused", |v| v["stage"] == "paused");
+    ask(
+        tx,
+        Request::Unlock {
+            project: project.clone(),
+            feature: feature.clone(),
+        },
+    )
+    .unwrap();
+    let path = "specs/001-calc/tasks.md".to_string();
+    let doc = sreq(
+        tx,
+        Req::Doc {
+            project: project.clone(),
+            feature: feature.clone(),
+            path: path.clone(),
+        },
+    )
+    .unwrap();
+    let text = doc["text"].as_str().unwrap().replace(
+        "T004 [US2] sub() with its tests",
+        "T004 [US2] sub() for ints only, with its tests",
+    );
+    sreq(
+        tx,
+        Req::PutDoc {
+            project: project.clone(),
+            feature: feature.clone(),
+            path,
+            text,
+            version: doc["version"].as_str().unwrap().to_string(),
+        },
+    )
+    .unwrap();
+    analyze_again(tx, &project, &feature);
+    ask(
+        tx,
+        Request::Lock {
+            project,
+            feature,
+            pipeline: None,
+            level: None,
+            budget_usd: None,
+            budget_minutes: None,
+            when_verified: None,
+            update_limit: None,
+            run_after: None,
+        },
+    )
+    .unwrap();
+    ask(tx, Request::GoOn { id }).unwrap();
+    let v = wait_for(tx, id, "ready again", |v| {
+        (v["stage"] == "ready" && of(v, "build", "T004").len() == 2)
+            || !v["needs_engineer"].is_null()
+    });
+    assert_eq!(v["stage"], "ready", "{}", v["needs_engineer"]);
+    let b = of(&v, "build", "T004");
+    let m = of(&v, "make", "docs-writer@T004-start");
+    let r = of(&v, "review", "lint-checker@T004-end");
+    assert_eq!(m.len(), 2, "the maker before T004 ran again: {m:?}");
+    assert_eq!(r.len(), 2, "the checker after T004 ran again: {r:?}");
+    assert!(m[1]["n"].as_u64() < b[1]["n"].as_u64(), "the maker first");
+    assert_eq!(
+        r[1]["base"], b[1]["verified_commit"],
+        "on T004's new commit"
+    );
+    for t in ["T001", "T002", "T003"] {
+        assert_eq!(
+            of(&v, "make", &format!("docs-writer@{t}-start")).len(),
+            1,
+            "{t}"
+        );
+        assert_eq!(
+            of(&v, "review", &format!("lint-checker@{t}-end")).len(),
+            1,
+            "{t}"
+        );
+    }
+    drop(e);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// US5 AS4: a loop of 0.4.0 whose checkers alongside each other at a phase's end ran one after
+/// the other, stopped while the reviewer's repair (under `reviewer@phase-1-end`) ran, resumes
+/// under 018 without a second repair and without starting the repair cap again.
+#[test]
+fn a_0_4_0_loop_stopped_after_a_repair_at_a_phase_end_resumes_without_a_second() {
+    use fallow::run::engine::Msg;
+    let root = scratch("points-040-resume");
+    // As 0.4.0 recorded it: the two checkers, each on its own (no `parallel_with` yet; it is
+    // put in the log's pipeline below, as 0.4.0 accepted and ignored it there).
+    let pl = pipeline(
+        "[[step]]\nagent = \"reviewer\"\nwhen = \"phase\"\nat = \"end\"\non_fail = \"repair\"\n\n[[step]]\nagent = \"security-reviewer\"\nwhen = \"phase\"\nat = \"end\"\non_fail = \"repair\"\n",
+    )
+    .replace("task_repairs = 3", "task_repairs = 1");
+    setup(&root, &pl);
+    let steps = [
+        task_step("T001", &[("calc/__init__.py", "")], ""),
+        handover_step(1, ""),
+        findings("reviewer@phase-1-end", Some("no docstring"), ""),
+        repair(
+            "reviewer@phase-1-end",
+            &[("calc/__init__.py", "\"\"\"Calc.\"\"\"\n")],
+        )
+        .replacen("[[step]]\n", "[[step]]\nsleep_ms = 30000\n", 1),
+        repair(
+            "reviewer@phase-1-end",
+            &[("calc/__init__.py", "\"\"\"Calc.\"\"\"\n")],
+        )
+        .replacen(
+            "[[step]]\n",
+            "[[step]]\nwhen = \"You were interrupted\"\n",
+            1,
+        ),
+        findings("reviewer@phase-1-end", Some("still no tests"), ""),
+        findings("security-reviewer@phase-1-end", None, ""),
+        // Never used: no second repair.
+        repair(
+            "phase-1-end",
+            &[("calc/__init__.py", "\"\"\"Calc!\"\"\"\n")],
+        ),
+    ]
+    .concat();
+    let (e, _repo, id) = locked_calc(&root, &steps, Some("points"));
+    wait_for(&e.tx, id, "the repair running", |v| {
+        of(v, "repair", "reviewer@phase-1-end")
+            .iter()
+            .any(|s| !s["started"].is_null())
+    });
+    e.tx.send(Msg::Shutdown).unwrap();
+    let fallow::service::ToolEngine { handle, .. } = e;
+    handle.join().unwrap();
+    // The log's pipeline: the reviewer alongside the security reviewer.
+    let log = root
+        .join("data/runs")
+        .join(id.to_string())
+        .join("events.jsonl");
+    let text = std::fs::read_to_string(&log).unwrap();
+    let mut put = false;
+    let lines: Vec<String> = text
+        .lines()
+        .map(|line| {
+            let mut ev: Value = serde_json::from_str(line).unwrap();
+            if let Some(p) = ev.get("pipeline").and_then(|p| p.as_str()) {
+                let from = "agent = \"reviewer\"\nwhen = \"phase\"\nat = \"end\"\n";
+                if p.contains(from) {
+                    let p = p.replacen(
+                        from,
+                        &format!("{from}parallel_with = [\"security-reviewer\"]\n"),
+                        1,
+                    );
+                    ev["pipeline"] = Value::String(p);
+                    put = true;
+                }
+            }
+            ev.to_string()
+        })
+        .collect();
+    assert!(put, "the pipeline in the log: {text}");
+    std::fs::write(&log, lines.join("\n") + "\n").unwrap();
+    let e = start_studio(&root, &root.join("scenario.toml"), None);
+    let v = wait_for(&e.tx, id, "the engineer asked", |v| {
+        !v["needs_engineer"].is_null()
+    });
+    // (Which of the reviewer's scripted findings the fake gives in round 2 varied in runs under
+    // load; the cap is what counts.)
+    let why = v["needs"]["why"].as_str().unwrap();
+    assert!(
+        why.starts_with("reviewer@phase-1-end still fails after 1 repair"),
+        "the cap counts 0.4.0's repair: {why}"
+    );
+    assert!(
+        of(&v, "repair", "phase-1-end").is_empty(),
+        "no second repair: {:?}",
+        of(&v, "repair", "phase-1-end")
+    );
+    let r = of(&v, "repair", "reviewer@phase-1-end");
+    assert_eq!(
+        r.len(),
+        2,
+        "the interrupted repair and its resumption: {r:?}"
+    );
+    // Both checked once after the repair, together.
+    let rv = of(&v, "review", "reviewer@phase-1-end");
+    let sec = of(&v, "review", "security-reviewer@phase-1-end");
+    assert_eq!(rv.len(), 2, "{rv:?}");
+    assert_eq!(sec.len(), 1, "{sec:?}");
+    assert!(rv[1]["n"].as_u64() > r[1]["n"].as_u64());
+    assert!(sec[0]["n"].as_u64() > r[1]["n"].as_u64());
+    drop(e);
+    let _ = std::fs::remove_dir_all(&root);
+}
