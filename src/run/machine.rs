@@ -263,7 +263,9 @@ pub fn drive(run: &mut Run, ctx: &Ctx) -> Result<(), String> {
         }
         return Ok(());
     }
-    if run.state.needs.is_some() {
+    // 018 (FR-018, research R-4): a question from a task of the group in progress holds only
+    // that task; anything else the engineer must decide holds the whole loop.
+    if run.state.needs.is_some() && super::feature::held_task(run).is_none() {
         return Ok(());
     }
     super::feature::drive(run, ctx)

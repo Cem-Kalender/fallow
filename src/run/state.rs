@@ -35,6 +35,8 @@ pub struct Step {
     pub queued_seq: u64,
     /// The event number of its start (0 until it starts).
     pub started_seq: u64,
+    /// 018: the event number of its end (0 until it ends), for how many ran at once.
+    pub finished_seq: u64,
     /// 007: a loop step's task (`T014`), phase and agent definition (`builder`).
     pub task: Option<String>,
     pub phase: Option<u32>,
@@ -331,6 +333,9 @@ pub struct GroupTask {
     pub working: Option<String>,
     /// Each overlap found, in order.
     pub overlaps: Vec<GroupOverlap>,
+    /// When it was merged, and when each overlap was found (the loop's history).
+    pub merged_at: Option<String>,
+    pub overlaps_at: Vec<String>,
 }
 
 /// 018: files a group task changed that tasks merged before it changed too.
@@ -764,6 +769,7 @@ impl RunState {
                         verified_commit: None,
                         queued_seq: l.seq,
                         started_seq: 0,
+                        finished_seq: 0,
                         task: task.clone(),
                         phase: *phase,
                         def: def.clone(),
@@ -802,6 +808,7 @@ impl RunState {
                 if let Some(st) = self.steps.get_mut(n) {
                     st.end = Some(end.clone());
                     st.finished = Some(l.at.clone());
+                    st.finished_seq = l.seq;
                     st.cost_usd = *cost_usd;
                     st.duration_ms = Some(*duration_ms);
                     st.denials = denials.clone();
@@ -1729,6 +1736,8 @@ impl RunState {
                                 merged: None,
                                 working: None,
                                 overlaps: Vec::new(),
+                                merged_at: None,
+                                overlaps_at: Vec::new(),
                             })
                             .collect(),
                         done: false,
@@ -1742,6 +1751,7 @@ impl RunState {
                     .and_then(|f| f.group_task_mut(task))
                 {
                     t.merged = Some(commit.clone());
+                    t.merged_at = Some(l.at.clone());
                     t.working = None;
                 }
             }
@@ -1757,6 +1767,7 @@ impl RunState {
                     .and_then(|f| f.group_task_mut(task))
                 {
                     t.working = Some(working.clone());
+                    t.overlaps_at.push(l.at.clone());
                     t.overlaps.push(GroupOverlap {
                         files: files.clone(),
                         with: with.clone(),

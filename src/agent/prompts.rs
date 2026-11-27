@@ -289,11 +289,14 @@ fn may_run_line(may: &[String]) -> String {
 
 /// A task of the locked `tasks.md` for the phase's builder. The first task of a phase starts a
 /// new session from the locked documents and the handovers only (FR-010a).
+/// 018 (research R-5): `alongside` names the other tasks of its group, built at the same time
+/// in other working copies.
 pub fn loop_task(
     cx: &LoopCx,
     phase: (&str, &str),
     task: (&str, &str),
     first_in_session: bool,
+    alongside: &[String],
 ) -> String {
     let mut s = header("build", Some(task.0));
     if first_in_session {
@@ -313,6 +316,14 @@ pub fn loop_task(
                     .join(", ")
             ));
         }
+    }
+    if !alongside.is_empty() {
+        s.push_str(&format!(
+            "{} {} built at the same time in other working copies: do only {}, and change nothing they are for.\n\n",
+            and_list(alongside),
+            if alongside.len() == 1 { "is" } else { "are" },
+            task.0
+        ));
     }
     s.push_str(&format!(
         "Task {}:\n{}\n\nDo this task only. Write the tests it names before its code, and run them. {}\n\nIf the spec or plan does not settle something, use the `ask` tool instead of guessing; if the answer is that the question waits for the engineer, return `status: blocked` with the question id.\n\nReturn `status`, `task` ({}), the `files` you changed, the `commands` you ran with their results, and a `summary`.",
@@ -415,6 +426,47 @@ Return `status: done`, the `files` you changed and a `summary`.",
     s
 }
 
+/// 018 (research R-6, FR-015): a group task held back because it changed files a task merged
+/// before it changed too. The build branch is merged into its working copy (with conflict
+/// markers where both changed the same lines); its builder makes both tasks' work keep working.
+pub fn loop_overlap(task: &str, files: &[UpdateConflictCx], with: &[String]) -> String {
+    let mut s = header("repair", Some(task));
+    s.push_str(&format!(
+        "Fallow did not merge {task}: it changed files that {} changed too, and {} already merged into the build branch. Fallow merged the build branch as it is now into your working copy.\n\nMake both tasks' work keep working: both tasks' work must keep working in each of these files.\n\n",
+        and_list(with),
+        if with.len() == 1 { "that task is" } else { "those tasks are" }
+    ));
+    for c in files {
+        if c.text {
+            s.push_str(&format!(
+                "- `{}`: both changed the same lines; the file holds conflict markers (`<<<<<<<`, `=======`, `>>>>>>>`). Keep what both need and remove every marker.\n",
+                c.path
+            ));
+        } else {
+            s.push_str(&format!(
+                "- `{}`: both changed it; git merged the changes. Check that both tasks' changes work together.\n",
+                c.path
+            ));
+        }
+        if !c.ours.is_empty() {
+            s.push_str(&format!("  {task} changed it in:\n"));
+            for l in c.ours.iter().take(10) {
+                s.push_str(&format!("    {l}\n"));
+            }
+        }
+        if !c.theirs.is_empty() {
+            s.push_str("  The build branch changed it in:\n");
+            for l in c.theirs.iter().take(10) {
+                s.push_str(&format!("    {l}\n"));
+            }
+        }
+    }
+    s.push_str(&format!(
+        "\nRun the tests. Do not change the feature's spec documents. Fallow commits your changes when the step ends, checks that no conflict marker is left, runs the gates, and merges {task} when nothing overlaps any more.\n\nReturn `status: done`, `task: \"{task}\"`, the `files` you changed and a `summary`."
+    ));
+    s
+}
+
 /// A story reopened by a new lock (research S-17): a fresh session, with the change.
 pub fn loop_relock(cx: &LoopCx, story: &str, lock: u32, change: &str) -> String {
     let mut s = header("repair", Some(story));
@@ -440,9 +492,35 @@ pub fn loop_relock(cx: &LoopCx, story: &str, lock: u32, change: &str) -> String 
     s
 }
 
-/// The handover at the end of a phase (FR-010a).
-pub fn loop_handover(cx: &LoopCx, phase_n: u32, phase: (&str, &str), path: &str) -> String {
+/// "A", "A and B", "A, B and C".
+fn and_list(items: &[String]) -> String {
+    match items {
+        [] => String::new(),
+        [a] => a.clone(),
+        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+    }
+}
+
+/// The handover at the end of a phase (FR-010a). 018 (FR-016a): `alongside` names the tasks of
+/// the phase built alongside each other, each with the commit it was merged in.
+pub fn loop_handover(
+    cx: &LoopCx,
+    phase_n: u32,
+    phase: (&str, &str),
+    path: &str,
+    alongside: &[(String, String)],
+) -> String {
     let mut s = header("handover", Some(&format!("phase-{phase_n}")));
+    if !alongside.is_empty() {
+        let names: Vec<String> = alongside
+            .iter()
+            .map(|(t, c)| format!("{t} (merged in {})", &c[..c.len().min(7)]))
+            .collect();
+        s.push_str(&format!(
+            "In this phase, {} were built alongside each other, each by a builder of its own in its own working copy, and merged into the build branch; read their changes in those commits before you write.\n\n",
+            and_list(&names)
+        ));
+    }
     s.push_str(&format!(
         "Phase {} (\"{}\") of \"{}\" is done and verified. Write its handover to `{path}`, for the builder of the next phase, who starts from the locked documents in `{}` and the handovers only. Use exactly these sections:\n\n## Built\nWhat this phase built, and where.\n\n## Decisions\nThe choices you made, and the questions answered on the way.\n\n## For the next phase\nWhat the next builder should know.\n\nChange nothing else. Return `status: done`, `path` and a `summary`.",
         phase.0, phase.1, cx.title, cx.feature_dir
@@ -595,6 +673,72 @@ pub fn loop_overrule(part: &str, question: &str, old: &str, new: &str, tasks: &[
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn cx() -> LoopCx<'static> {
+        LoopCx {
+            feature_dir: "specs/001-calc",
+            title: "Calc",
+            may_run: &[],
+            handovers: &[],
+        }
+    }
+
+    #[test]
+    fn a_group_task_is_told_what_is_built_alongside_it() {
+        let others = vec!["T005".to_string(), "T006".into(), "T007".into()];
+        let t = loop_task(&cx(), ("2", "Add"), ("T004", "Write t004"), true, &others);
+        assert!(
+            t.contains("T005, T006 and T007 are built at the same time in other working copies: do only T004"),
+            "{t}"
+        );
+        let alone = loop_task(&cx(), ("2", "Add"), ("T004", "Write t004"), true, &[]);
+        assert!(!alone.contains("at the same time"), "{alone}");
+    }
+
+    #[test]
+    fn the_handover_names_the_tasks_built_alongside_with_their_merges() {
+        let h = loop_handover(
+            &cx(),
+            2,
+            ("2", "Add"),
+            "specs/001-calc/handover/phase-2.md",
+            &[
+                ("T004".into(), "abcdef0123".into()),
+                ("T005".into(), "1234567890".into()),
+            ],
+        );
+        assert!(
+            h.contains(
+                "T004 (merged in abcdef0) and T005 (merged in 1234567) were built alongside"
+            ),
+            "{h}"
+        );
+        assert!(!loop_handover(&cx(), 2, ("2", "Add"), "p", &[]).contains("alongside"));
+    }
+
+    #[test]
+    fn an_overlap_repair_names_each_file_both_sides_and_the_tasks() {
+        let ours = vec!["a1 build T007: did T007".to_string()];
+        let theirs = vec!["b2 build T005: did T005".to_string()];
+        let files = [UpdateConflictCx {
+            path: "calc/shared.py",
+            text: true,
+            ours: &ours,
+            theirs: &theirs,
+        }];
+        let p = loop_overlap("T007", &files, &["T005".into()]);
+        assert!(p.starts_with("Fallow step: repair (part T007)"), "{p}");
+        for want in [
+            "calc/shared.py",
+            "conflict markers",
+            "did T007",
+            "did T005",
+            "that T005 changed too",
+            "both tasks' work must keep working",
+        ] {
+            assert!(p.contains(want), "{want}: {p}");
+        }
+    }
 
     fn turn(command: Option<CommandUse>) -> String {
         lead_turn(&LeadTurn {

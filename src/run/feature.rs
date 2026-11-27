@@ -17,6 +17,7 @@ use serde_json::Value;
 
 use super::engine::{Ctx, Done, Msg, Run};
 use super::events::*;
+use super::groups;
 use super::machine::{self, BLOCKED, INTERRUPTED, NOT_STARTED, SESSION_LOST};
 use super::state::{LoopState, PhaseStatus, Step};
 use crate::agent::{self, Call, Session, prompts, rights};
@@ -174,6 +175,15 @@ fn phase_session(run: &Run, phase: u32) -> Option<String> {
         .and_then(|l| l.phases.iter().find(|p| p.spec.n == phase))
         .and_then(|p| p.reopened)
         .unwrap_or(0);
+    // 018 (research R-5): the steps of a group's tasks have sessions of their own.
+    let grouped = |t: &Option<String>| {
+        t.as_ref().is_some_and(|t| {
+            run.state
+                .feature_loop
+                .as_ref()
+                .is_some_and(|l| l.group_of(t).is_some())
+        })
+    };
     run.state
         .steps
         .values()
@@ -185,8 +195,18 @@ fn phase_session(run: &Run, phase: u32) -> Option<String> {
                     s.kind,
                     StepKind::Build | StepKind::Repair | StepKind::Handover
                 )
+                && !grouped(&s.task)
         })
         .find_map(|s| s.session.clone())
+        .filter(|s| !run.state.lost_sessions.contains(s))
+}
+
+/// 018: a group task's own session: the latest of its build and repairs that can still be
+/// resumed (research R-5).
+fn task_session(run: &Run, task: &str) -> Option<String> {
+    task_steps(run, task)
+        .filter_map(|s| s.session.clone())
+        .last()
         .filter(|s| !run.state.lost_sessions.contains(s))
 }
 
@@ -204,9 +224,15 @@ pub fn drive(run: &mut Run, ctx: &Ctx) -> Result<(), String> {
     for _ in 0..64 {
         let before = run.state.seq;
         step(run, ctx)?;
+        // 018 (research R-4): a group in progress decides while its steps run.
+        let in_group = run
+            .state
+            .feature_loop
+            .as_ref()
+            .is_some_and(|l| groups::active(l).is_some());
         if run.busy.is_some()
-            || (!run.running.is_empty() && machine::queued(run).is_none())
-            || run.state.needs.is_some()
+            || (!run.running.is_empty() && machine::queued(run).is_none() && !in_group)
+            || (run.state.needs.is_some() && held_task(run).is_none())
             || run.state.seq == before
             || !(run.state.stage == Stage::Building || updating_published(run))
         {
@@ -237,6 +263,11 @@ fn step(run: &mut Run, ctx: &Ctx) -> Result<(), String> {
     }
     // A question that waits for the engineer holds the loop: its later work depends on it
     // (FR-021). Other loops and conversations go on.
+    // 018 (FR-018, research R-4): a question from a task of the group in progress holds only
+    // that task and what comes after the group; the group's other tasks go on.
+    let held = super::questions::waiting(&l)
+        .and_then(|q| q.task.clone())
+        .filter(|t| groups::active_of(&l, t).is_some());
     if let Some(q) = super::questions::waiting(&l).cloned() {
         if run.state.needs.is_none() {
             if let Some(t) = q.task.as_ref().filter(|t| l.tasks.contains_key(*t)) {
@@ -268,7 +299,9 @@ fn step(run: &mut Run, ctx: &Ctx) -> Result<(), String> {
                 options: vec!["answer".into(), "stop".into()],
             })?;
         }
-        return Ok(());
+        if held.is_none() {
+            return Ok(());
+        }
     }
     if let Some(n) = machine::queued(run) {
         if let Some((w, u)) = machine::limit_hit(run) {
@@ -330,9 +363,19 @@ fn step(run: &mut Run, ctx: &Ctx) -> Result<(), String> {
         };
     }
     // While steps run (checkers alongside each other, 008 R-7), nothing new is decided: the
-    // checkpoint is judged when the last of them has finished.
-    if !run.running.is_empty() {
-        return Ok(());
+    // checkpoint is judged when the last of them has finished. 018 (research R-4): only within
+    // the group in progress, whose tasks go on while others run or one waits for an answer.
+    if !run.running.is_empty() || held.is_some() {
+        let Some(g) = groups::active(&l).cloned() else {
+            return Ok(());
+        };
+        let Some(p) = l.phases.iter().find(|p| p.spec.n == g.phase).cloned() else {
+            return Ok(());
+        };
+        let lib = library(run, ctx);
+        let pl = pipeline_of(run, &lib)?;
+        let tasks: Vec<String> = g.tasks.iter().map(|t| t.id.clone()).collect();
+        return group(run, ctx, &l, &pl, &lib, &p, &tasks, held.as_deref());
     }
     let lib = library(run, ctx);
     let pl = pipeline_of(run, &lib)?;
@@ -760,11 +803,20 @@ fn paths_touched(
             .and_then(|x| x.base.clone())
             .unwrap_or_else(|| l.lock_commit.clone()),
     };
-    let head = git::head(&build_wt(run))?;
+    let head = git::head(&wt_of_part(run, l, part))?;
     Ok(match git::files_between(&run.state.repo, &from, &head) {
         Ok(changed) => paths_match(&s.paths, &changed),
         Err(_) => true,
     })
+}
+
+/// 018 (research R-8): the working copy a step at `part` looks at: a group task's own for the
+/// points of a task of the group in progress, otherwise the build worktree.
+fn wt_of_part(run: &Run, l: &LoopState, part: &str) -> PathBuf {
+    match groups::task_of_step(l, None, Some(part)) {
+        Some(t) => groups::worktree(run, &t),
+        None => build_wt(run),
+    }
 }
 
 /// 018 (research R-2): runs the steps of one point, unit by unit in pipeline order: a unit of
@@ -889,7 +941,7 @@ fn point(
         let prompt = |run: &Run, s: &pipeline::Step, part: &str| -> Result<String, String> {
             let may = may_of(run, lib, &s.agent);
             let hand = handovers_before(l, phase + 1);
-            let head = git::head(&build_wt(run))?;
+            let head = git::head(&wt_of_part(run, l, part))?;
             Ok(prompts::loop_check_findings(
                 &loop_cx(l, &may, &hand),
                 part,
@@ -1338,7 +1390,7 @@ fn extra(
             let hand = handovers_before(l, phase + 1);
             let cx = loop_cx(l, &may, &hand);
             let text = if checker {
-                let head = git::head(&build_wt(run))?;
+                let head = git::head(&wt_of_part(run, l, part))?;
                 prompts::loop_check_findings(&cx, part, &s.agent, what, &head)
             } else {
                 prompts::loop_make(&cx, part, &s.agent, what)
@@ -1777,6 +1829,22 @@ fn repair_or_ask(
     def: &str,
     reasons: Vec<String>,
 ) -> Result<(), String> {
+    repair_with(run, part, task, phase, cap, def, reasons, None)
+}
+
+/// `repair_or_ask` with the repair's own instruction (`prompt`), else the usual one. 018: a
+/// task of a group in progress is repaired in its own session, never the phase's (research R-5).
+#[allow(clippy::too_many_arguments)]
+fn repair_with(
+    run: &mut Run,
+    part: &str,
+    task: Option<&str>,
+    phase: u32,
+    cap: u32,
+    def: &str,
+    reasons: Vec<String>,
+    prompt: Option<String>,
+) -> Result<(), String> {
     let first = reasons.first().cloned().unwrap_or_default();
     if let Some(q) = first.strip_prefix(BLOCKED) {
         if let Some(t) = task {
@@ -1810,22 +1878,45 @@ fn repair_or_ask(
             options: vec!["allow one more repair".into(), "stop".into()],
         });
     }
-    let session = phase_session(run, phase);
-    let text = prompts::loop_repair(part, &reasons);
+    let l = lp(run)?;
+    let in_group = task.filter(|t| groups::active_of(&l, t).is_some());
+    let session = match in_group {
+        Some(t) => task_session(run, t),
+        None => phase_session(run, phase),
+    };
+    let text = prompt.unwrap_or_else(|| prompts::loop_repair(part, &reasons));
     let text = match &session {
         Some(_) => text,
-        None => format!(
-            "{}\n\n{text}",
-            machine::instruction_of(
-                run,
-                run.state
+        None => {
+            // A fresh session gets the work's own instruction first: the task's first build,
+            // else the phase's latest build of a task of its own, else the phase's.
+            let first = match in_group {
+                Some(t) => task_steps(run, t)
+                    .find(|s| s.kind == StepKind::Build)
+                    .map(|s| s.n),
+                None => run
+                    .state
                     .steps
                     .values()
                     .rev()
-                    .find(|s| s.phase == Some(phase) && s.kind == StepKind::Build)
-                    .map_or(0, |s| s.n)
-            )
-        ),
+                    .find(|s| {
+                        s.phase == Some(phase)
+                            && s.kind == StepKind::Build
+                            && s.task.as_ref().is_none_or(|t| l.group_of(t).is_none())
+                    })
+                    .map(|s| s.n),
+            };
+            let intro = match first {
+                Some(n) => machine::instruction_of(run, n),
+                None if l.groups.iter().any(|g| g.phase == phase) => format!(
+                    "Fallow step: repair (part {part})\n\nYou are the builder of phase {phase} of the locked feature \"{}\". Its documents are in `{}`: spec.md, plan.md and tasks.md, locked: never change them. Fallow commits your work when the step ends and runs the project's gates.",
+                    l.feature,
+                    l.dir()
+                ),
+                None => machine::instruction_of(run, 0),
+            };
+            format!("{intro}\n\n{text}")
+        }
     };
     queue(
         run,
@@ -2056,12 +2147,20 @@ fn phase(
     {
         return Ok(());
     }
-    let gates_per_task = pl
-        .steps
-        .iter()
-        .any(|s| s.agent == pipeline::GATES && s.when == When::Task);
-    // The tasks, in order.
+    // The tasks, in order. 018: a group of [P] tasks runs as a whole (research R-5); the task
+    // after it starts only when the group is merged and gated (FR-017).
+    let gs = groups::groups(&p.spec, pl.caps.builders);
     for t in &p.spec.tasks {
+        if let Some(g) = gs.iter().find(|g| g.contains(&t.id)) {
+            let done = l
+                .groups
+                .iter()
+                .any(|x| x.done && x.phase == n && x.tasks.first().map(|t| &t.id) == g.first());
+            if done {
+                continue;
+            }
+            return group(run, ctx, l, pl, lib, p, g, None);
+        }
         let status = l.tasks.get(&t.id).cloned();
         if status
             .as_ref()
@@ -2069,104 +2168,7 @@ fn phase(
         {
             continue;
         }
-        let last = task_steps(run, &t.id).last().cloned();
-        let Some(last) = last else {
-            // 018: the steps before the task first; the builder starts from what they made.
-            if !point(
-                run,
-                ctx,
-                l,
-                pl,
-                lib,
-                &Point::TaskStart(t.id.clone(), n),
-                Some(p),
-            )? {
-                return Ok(());
-            }
-            let session = phase_session(run, n);
-            let may = may_of(run, lib, &builder);
-            let hand = handovers_before(l, n);
-            let text = prompts::loop_task(
-                &loop_cx(l, &may, &hand),
-                (&p.spec.label, &p.spec.title),
-                (&t.id, &t.text),
-                session.is_none(),
-            );
-            run.append(Event::Task {
-                id: t.id.clone(),
-                state: TaskState::Current,
-                commit: None,
-                repairs: 0,
-            })?;
-            queue(
-                run,
-                StepKind::Build,
-                Some(&t.id),
-                Some(&t.id),
-                Some(n),
-                &builder,
-                session,
-                &format!("task {}", t.id),
-                text,
-            )?;
-            return Ok(());
-        };
-        match &last.verified {
-            None => return Ok(()),
-            Some((false, reasons)) => {
-                let reasons = reasons.clone();
-                return repair_or_ask(
-                    run,
-                    &t.id,
-                    Some(&t.id),
-                    n,
-                    pl.caps.task_repairs,
-                    &builder,
-                    reasons,
-                );
-            }
-            Some((true, _)) => {
-                let c = last
-                    .verified_commit
-                    .clone()
-                    .ok_or_else(|| format!("step {} was accepted without a commit", last.n))?;
-                if gates_per_task {
-                    match gated(run, ctx, &t.id, &c)? {
-                        None => return Ok(()),
-                        Some(failed) if !failed.is_empty() => {
-                            return repair_or_ask(
-                                run,
-                                &t.id,
-                                Some(&t.id),
-                                n,
-                                pl.caps.task_repairs,
-                                &builder,
-                                failed,
-                            );
-                        }
-                        Some(_) => {}
-                    }
-                }
-                // 018: the task is accepted only once the steps after it passed (FR-008).
-                if !point(
-                    run,
-                    ctx,
-                    l,
-                    pl,
-                    lib,
-                    &Point::TaskEnd(t.id.clone(), n),
-                    Some(p),
-                )? {
-                    return Ok(());
-                }
-                return run.append(Event::Task {
-                    id: t.id.clone(),
-                    state: TaskState::Accepted,
-                    commit: Some(c),
-                    repairs: repairs_of(run, &t.id),
-                });
-            }
-        }
+        return one_task(run, ctx, l, pl, lib, p, t, &[]);
     }
     // Gates per phase, when the pipeline runs them so.
     if pl
@@ -2224,6 +2226,7 @@ fn phase(
                     n,
                     (&p.spec.label, &p.spec.title),
                     &path,
+                    &built_alongside(l, n),
                 );
                 queue(
                     run,
@@ -2262,6 +2265,7 @@ fn phase(
                     n,
                     (&p.spec.label, &p.spec.title),
                     &handover_path(l, n),
+                    &built_alongside(l, n),
                 );
                 text.push_str(&format!(
                     "\n\nThe last handover was not accepted: {}",
@@ -2308,6 +2312,414 @@ fn phase(
         session: None,
         handover: None,
     })
+}
+
+/// One task of a phase: the steps before it, its build, its repairs, its gates and the steps
+/// after it, until it is accepted (FR-010, FR-011). 018: a task of a group (`alongside` names
+/// the group's other tasks) is built in its own working copy and session (research R-5); after
+/// an overlap, its accepted work is repaired on top of the build branch first (R-6).
+#[allow(clippy::too_many_arguments)]
+fn one_task(
+    run: &mut Run,
+    ctx: &Ctx,
+    l: &LoopState,
+    pl: &Pipeline,
+    lib: &Library,
+    p: &PhaseStatus,
+    t: &TaskSpec,
+    alongside: &[String],
+) -> Result<(), String> {
+    let n = p.spec.n;
+    let builder = builder_of(pl);
+    let grouped = !alongside.is_empty();
+    let gates_per_task = pl
+        .steps
+        .iter()
+        .any(|s| s.agent == pipeline::GATES && s.when == When::Task);
+    let last = task_steps(run, &t.id).last().cloned();
+    let Some(last) = last else {
+        // 018: the steps before the task first; the builder starts from what they made.
+        if !point(
+            run,
+            ctx,
+            l,
+            pl,
+            lib,
+            &Point::TaskStart(t.id.clone(), n),
+            Some(p),
+        )? {
+            return Ok(());
+        }
+        // A group task's builder starts a session of its own (research R-5).
+        let session = if grouped { None } else { phase_session(run, n) };
+        let may = may_of(run, lib, &builder);
+        let hand = handovers_before(l, n);
+        let text = prompts::loop_task(
+            &loop_cx(l, &may, &hand),
+            (&p.spec.label, &p.spec.title),
+            (&t.id, &t.text),
+            session.is_none(),
+            alongside,
+        );
+        run.append(Event::Task {
+            id: t.id.clone(),
+            state: TaskState::Current,
+            commit: None,
+            repairs: 0,
+        })?;
+        queue(
+            run,
+            StepKind::Build,
+            Some(&t.id),
+            Some(&t.id),
+            Some(n),
+            &builder,
+            session,
+            &format!("task {}", t.id),
+            text,
+        )?;
+        return Ok(());
+    };
+    match &last.verified {
+        None => Ok(()),
+        Some((false, reasons)) => {
+            let reasons = reasons.clone();
+            repair_or_ask(
+                run,
+                &t.id,
+                Some(&t.id),
+                n,
+                pl.caps.task_repairs,
+                &builder,
+                reasons,
+            )
+        }
+        Some((true, _)) => {
+            let c = last
+                .verified_commit
+                .clone()
+                .ok_or_else(|| format!("step {} was accepted without a commit", last.n))?;
+            // 018 (R-6): held back by an overlap, its work goes on from the working commit.
+            if grouped {
+                if let Some(w) = group_task(l, &t.id).and_then(|x| x.working.clone()) {
+                    if !git::is_ancestor(&run.state.repo, &w, &c) {
+                        return overlap_repair(run, l, &t.id, n, pl, &builder);
+                    }
+                }
+            }
+            if gates_per_task {
+                match gated(run, ctx, &t.id, &c)? {
+                    None => return Ok(()),
+                    Some(failed) if !failed.is_empty() => {
+                        return repair_or_ask(
+                            run,
+                            &t.id,
+                            Some(&t.id),
+                            n,
+                            pl.caps.task_repairs,
+                            &builder,
+                            failed,
+                        );
+                    }
+                    Some(_) => {}
+                }
+            }
+            // 018: the task is accepted only once the steps after it passed (FR-008).
+            if !point(
+                run,
+                ctx,
+                l,
+                pl,
+                lib,
+                &Point::TaskEnd(t.id.clone(), n),
+                Some(p),
+            )? {
+                return Ok(());
+            }
+            run.append(Event::Task {
+                id: t.id.clone(),
+                state: TaskState::Accepted,
+                commit: Some(c),
+                repairs: repairs_of(run, &t.id),
+            })
+        }
+    }
+}
+
+/// 018 (FR-016a): the tasks of phase `n` built alongside each other, each with the commit it
+/// was merged in, for the phase's handover.
+fn built_alongside(l: &LoopState, n: u32) -> Vec<(String, String)> {
+    l.groups
+        .iter()
+        .filter(|g| g.phase == n)
+        .flat_map(|g| g.tasks.iter())
+        .filter_map(|t| t.merged.clone().map(|c| (t.id.clone(), c)))
+        .collect()
+}
+
+/// 018: the state of a group task (in the latest group holding it).
+fn group_task<'a>(l: &'a LoopState, task: &str) -> Option<&'a super::state::GroupTask> {
+    l.group_of(task)?.tasks.iter().find(|x| x.id == task)
+}
+
+/// 018: whether a group task's accepted work still waits for its repair on top of the build
+/// branch (an overlap found after it was accepted).
+fn overlap_pending(run: &Run, l: &LoopState, task: &str) -> bool {
+    let Some(w) = group_task(l, task).and_then(|x| x.working.clone()) else {
+        return false;
+    };
+    l.tasks
+        .get(task)
+        .and_then(|t| t.commit.clone())
+        .is_none_or(|c| !git::is_ancestor(&run.state.repo, &w, &c))
+}
+
+/// 018 (research R-6, FR-015): the repair of a group task held back by an overlap, by its
+/// builder in its session, on the working commit: each shared file with what each side changed.
+/// Counted against the task's repairs.
+fn overlap_repair(
+    run: &mut Run,
+    l: &LoopState,
+    task: &str,
+    phase: u32,
+    pl: &Pipeline,
+    builder: &str,
+) -> Result<(), String> {
+    let g = l.group_of(task).ok_or("not a group task")?;
+    let gt = group_task(l, task).ok_or("not a group task")?;
+    let working = gt.working.clone().ok_or("no overlap to repair")?;
+    let ov = gt.overlaps.last().cloned().ok_or("no overlap to repair")?;
+    let repo = run.state.repo.clone();
+    let parents = git::parents(&repo, &working)?;
+    let (Some(mine), Some(theirs)) = (parents.first(), parents.get(1)) else {
+        return Err(format!("the working commit {working} is not a merge"));
+    };
+    let base = git::merge_base(&repo, mine, theirs).unwrap_or_else(|_| g.base.clone());
+    let logs: Vec<(String, bool, Vec<String>, Vec<String>)> = ov
+        .files
+        .iter()
+        .map(|f| {
+            (
+                f.clone(),
+                !git::marker_lines(&repo, &working, std::slice::from_ref(f)).is_empty(),
+                git::log_paths(&repo, &base, mine, f),
+                git::log_paths(&repo, &base, theirs, f),
+            )
+        })
+        .collect();
+    let cx: Vec<prompts::UpdateConflictCx> = logs
+        .iter()
+        .map(|(path, text, ours, theirs)| prompts::UpdateConflictCx {
+            path,
+            text: *text,
+            ours,
+            theirs,
+        })
+        .collect();
+    let text = prompts::loop_overlap(task, &cx, &ov.with);
+    let reason = format!(
+        "{task} changed {}, which {} changed",
+        ov.files.join(", "),
+        ov.with.join(" and ")
+    );
+    repair_with(
+        run,
+        task,
+        Some(task),
+        phase,
+        pl.caps.task_repairs,
+        builder,
+        vec![reason],
+        Some(text),
+    )
+}
+
+/// Whether a task's work has begun since a new lock changed it: a step before it, its build.
+fn task_begun(run: &Run, l: &LoopState, task: &str) -> bool {
+    let since = l.tasks.get(task).map_or(0, |t| t.since);
+    let start = format!("@{task}-start");
+    run.state.steps.values().any(|s| {
+        s.queued_seq > since
+            && (s.task.as_deref() == Some(task)
+                || s.part.as_deref().is_some_and(|p| p.ends_with(&start)))
+    })
+}
+
+/// 018: the engineer's attention is held only by a question from a task of the group in
+/// progress (FR-018, research R-4): the group's other tasks go on. Its task, then.
+pub(crate) fn held_task(run: &Run) -> Option<String> {
+    let l = run.state.feature_loop.as_ref()?;
+    let q = super::questions::waiting(l)?;
+    let t = q
+        .task
+        .as_deref()
+        .filter(|t| groups::active_of(l, t).is_some())?;
+    // Only while the engineer's question is that one: a cap, a limit or a failed start holds
+    // the whole loop.
+    let why = &run.state.needs.as_ref()?.why;
+    why.contains(&format!(" asks ({}): ", q.id))
+        .then(|| t.to_string())
+}
+
+/// 018 (research R-5, R-6; FR-012 to FR-017): a group of [P] tasks. It starts once (its base:
+/// the build head); at most `builders` of its tasks are between their first step and their
+/// acceptance, each in its own working copy; accepted tasks are merged in `tasks.md` order after
+/// the touched-files check; an overlap is repaired on top; when all are merged, the merged result
+/// is gated (a failure: a repair of the group); then `GroupDone`, and its working copies and
+/// branches are removed. `held`: a task whose question waits for the engineer (FR-018).
+#[allow(clippy::too_many_arguments)]
+fn group(
+    run: &mut Run,
+    ctx: &Ctx,
+    l: &LoopState,
+    pl: &Pipeline,
+    lib: &Library,
+    p: &PhaseStatus,
+    tasks: &[String],
+    held: Option<&str>,
+) -> Result<(), String> {
+    let n = p.spec.n;
+    let builder = builder_of(pl);
+    let bwt = build_wt(run);
+    let Some(g) = l
+        .groups
+        .iter()
+        .rev()
+        .find(|g| !g.done && g.phase == n && g.tasks.first().map(|t| &t.id) == tasks.first())
+        .cloned()
+    else {
+        let head = git::head(&bwt)?;
+        return groups::start_group(run, l, n, tasks, &head);
+    };
+    // Working copies gone (a restart, a removal): back on their branches.
+    for gt in g.tasks.iter().filter(|t| t.merged.is_none()) {
+        groups::ensure_worktree(run, l, &gt.id, &g.base)?;
+    }
+    let holds =
+        |run: &Run| run.busy.is_some() || (run.state.needs.is_some() && held_task(run).is_none());
+    // The tasks: started up to the builders allowed, each processed as a task.
+    let specs: Vec<&TaskSpec> = tasks
+        .iter()
+        .filter_map(|t| p.spec.tasks.iter().find(|x| &x.id == t))
+        .collect();
+    let mut working = specs
+        .iter()
+        .filter(|t| {
+            group_task(l, &t.id).is_some_and(|x| x.merged.is_none())
+                && task_begun(run, l, &t.id)
+                && !(l
+                    .tasks
+                    .get(&t.id)
+                    .is_some_and(|s| s.state == TaskState::Accepted)
+                    && !overlap_pending(run, l, &t.id))
+        })
+        .count() as u32;
+    // New tasks first, while builders are free (so a finished task's place is taken at once),
+    // then the work of the tasks begun.
+    for starting in [true, false] {
+        // New steps start before anything else is decided (a gate run holds starts).
+        if !starting && machine::queued(run).is_some() {
+            return Ok(());
+        }
+        for t in &specs {
+            if group_task(l, &t.id).is_some_and(|x| x.merged.is_some())
+                || held == Some(t.id.as_str())
+            {
+                continue;
+            }
+            let accepted = l
+                .tasks
+                .get(&t.id)
+                .is_some_and(|s| s.state == TaskState::Accepted);
+            if accepted && !overlap_pending(run, l, &t.id) {
+                continue;
+            }
+            let begun = task_begun(run, l, &t.id);
+            if begun == starting || (starting && working >= pl.caps.builders) {
+                continue;
+            }
+            let alongside: Vec<String> = tasks.iter().filter(|x| **x != t.id).cloned().collect();
+            let before = run.state.seq;
+            let now = lp(run)?;
+            one_task(run, ctx, &now, pl, lib, p, t, &alongside)?;
+            if starting && run.state.seq != before {
+                working += 1;
+            }
+            // One decision of a task begun at a time: a task accepted frees a builder, whose
+            // next task starts first.
+            if holds(run) || (!starting && run.state.seq != before) {
+                return Ok(());
+            }
+        }
+    }
+    // Merges, in tasks.md order: each accepted task once every task before it is merged.
+    for t in tasks {
+        let now = lp(run)?;
+        let Some(gt) = group_task(&now, t) else {
+            break;
+        };
+        if gt.merged.is_some() {
+            continue;
+        }
+        let status = now.tasks.get(t);
+        let Some(head) = status
+            .filter(|s| s.state == TaskState::Accepted)
+            .and_then(|s| s.commit.clone())
+        else {
+            return Ok(());
+        };
+        if overlap_pending(run, &now, t) {
+            return Ok(());
+        }
+        match groups::try_merge(run, &now, &bwt, t, &head)? {
+            groups::Merge::Merged => continue,
+            groups::Merge::Overlap => {
+                let now = lp(run)?;
+                return overlap_repair(run, &now, t, n, pl, &builder);
+            }
+        }
+    }
+    if !run.running.is_empty() {
+        return Ok(());
+    }
+    // Every task merged: the merged result is gated before anything after the group (FR-016).
+    let part = groups::part(tasks);
+    if pl.steps.iter().any(|s| s.agent == pipeline::GATES) {
+        let fresh = fresh_since(run);
+        let repair = run
+            .state
+            .steps
+            .values()
+            .rev()
+            .find(|s| {
+                s.kind == StepKind::Repair
+                    && s.part.as_deref() == Some(part.as_str())
+                    && s.queued_seq > fresh
+            })
+            .cloned();
+        match repair.as_ref().map(|r| &r.verified) {
+            Some(None) => return Ok(()),
+            Some(Some((false, reasons))) => {
+                let reasons = reasons.clone();
+                return repair_or_ask(run, &part, None, n, pl.caps.task_repairs, &builder, reasons);
+            }
+            _ => {}
+        }
+        let head = git::head(&bwt)?;
+        match gated(run, ctx, &part, &head)? {
+            None => return Ok(()),
+            Some(failed) if !failed.is_empty() => {
+                return repair_or_ask(run, &part, None, n, pl.caps.task_repairs, &builder, failed);
+            }
+            Some(_) => {}
+        }
+    }
+    run.append(Event::GroupDone {
+        phase: n,
+        first: tasks.first().cloned().unwrap_or_default(),
+    })?;
+    groups::clean_up(run, l, tasks);
+    Ok(())
 }
 
 /// The stories a phase works on: its own, and its tasks'.
@@ -2866,9 +3278,18 @@ fn start(run: &mut Run, ctx: &Ctx, n: u32) -> Result<(), String> {
             git::checkout_detach(&wt, &working)?;
         }
     }
+    // 018 (research R-5, R-8): a step of a group task works, or checks, in that task's working
+    // copy.
+    let own_wt = match groups::task_of_step(&l, step.task.as_deref(), step.part.as_deref()) {
+        Some(t) => {
+            let base = l.group_of(&t).map(|g| g.base.clone()).unwrap_or_default();
+            groups::ensure_worktree(run, &l, &t, &base)?
+        }
+        None => build_wt(run),
+    };
     let (worktree, base) = match step.kind {
         StepKind::Review => {
-            let commit = git::head(&build_wt(run))?;
+            let commit = git::head(&own_wt)?;
             // One folder per checker and part, so a checker asked again resumes its session in
             // the folder it ran in.
             let name: String =
@@ -2894,9 +3315,8 @@ fn start(run: &mut Run, ctx: &Ctx, n: u32) -> Result<(), String> {
             (wt, commit)
         }
         _ => {
-            let wt = build_wt(run);
-            let base = git::head(&wt)?;
-            (wt, base)
+            let base = git::head(&own_wt)?;
+            (own_wt.clone(), base)
         }
     };
     let may = commands(run, &def.may_run);
@@ -2981,7 +3401,9 @@ fn start(run: &mut Run, ctx: &Ctx, n: u32) -> Result<(), String> {
         worktree,
         base,
     })?;
-    if let Some(ph) = step.phase {
+    // A group task's session is its own, never the phase's (research R-5).
+    let of_group = step.task.as_ref().is_some_and(|t| l.group_of(t).is_some());
+    if let Some(ph) = step.phase.filter(|_| !of_group) {
         if matches!(step.kind, StepKind::Build | StepKind::Repair)
             && l.phases
                 .iter()
@@ -3220,6 +3642,14 @@ fn tidy(run: &Run, l: &LoopState, step: &Step) -> Result<Vec<String>, String> {
     let Some(wt) = step.worktree.clone() else {
         return Ok(Vec::new());
     };
+    // 018 (research R-10): a group task's working copy gone while Fallow was stopped is made
+    // again on its branch first.
+    if !wt.join(".git").exists() {
+        if let Some(t) = groups::task_of_step(l, step.task.as_deref(), step.part.as_deref()) {
+            let base = l.group_of(&t).map(|g| g.base.clone()).unwrap_or_default();
+            groups::ensure_worktree(run, l, &t, &base)?;
+        }
+    }
     let base = step.base.clone().unwrap_or_else(|| l.lock_commit.clone());
     let mut reasons: Vec<String> = own_history(run, &wt, &base)?.into_iter().collect();
     let touched: Vec<String> = git::changes_all(&wt)
@@ -3332,8 +3762,11 @@ fn work_done(run: &mut Run, step: &Step, value: &Value) -> Result<(), String> {
                 );
             };
             let base = step.base.clone().unwrap_or_else(|| l.lock_commit.clone());
+            // 018: a step of a group task works on the task's own branch; Fallow ticks the task
+            // when it merges it, not in its commit (research R-5, R-6).
+            let grouped = groups::task_of_step(&l, step.task.as_deref(), step.part.as_deref());
             // Fallow ticks the task in tasks.md, in the task's own commit (research S-8).
-            if matches!(step.kind, StepKind::Build | StepKind::Repair) {
+            if matches!(step.kind, StepKind::Build | StepKind::Repair) && grouped.is_none() {
                 if let Some(t) = &step.task {
                     let p = wt.join(format!("{}/tasks.md", l.dir()));
                     if let Ok(text) = std::fs::read_to_string(&p) {
@@ -3386,12 +3819,45 @@ fn work_done(run: &mut Run, step: &Step, value: &Value) -> Result<(), String> {
                     }
                 }
                 None => {
-                    if !git::on_branch(&run.state.repo, &commit, &l.build_branch) {
-                        reasons.push(format!("commit {commit} is not on {}", l.build_branch));
+                    let branch = match &grouped {
+                        Some(t) => groups::branch(&l, t),
+                        None => l.build_branch.clone(),
+                    };
+                    if !git::on_branch(&run.state.repo, &commit, &branch) {
+                        reasons.push(format!("commit {commit} is not on {branch}"));
                     }
                 }
             }
-            let locked = locked_changes(run, &l, &base, &commit, step.task.as_deref());
+            // 018 (FR-015): a repair of a task held back by an overlap is checked as 011's
+            // update repair: built on the working commit, no conflict marker left, no file git
+            // added beside a conflict.
+            if let Some(gt) = grouped
+                .as_deref()
+                .and_then(|t| group_task(&l, t))
+                .filter(|_| step.kind == StepKind::Repair)
+            {
+                if let (Some(w), Some(ov)) = (&gt.working, gt.overlaps.last()) {
+                    if !git::is_ancestor(&run.state.repo, w, &commit) {
+                        reasons.push(format!(
+                            "commit {commit} does not build on the working commit {w}"
+                        ));
+                    }
+                    for (p, line) in git::marker_lines(&run.state.repo, &commit, &ov.files) {
+                        reasons.push(format!("{p} still holds a conflict marker: {line}"));
+                    }
+                    for f in git::side_files(&run.state.repo, &commit, &ov.files) {
+                        reasons.push(format!(
+                            "{f} is a file git added beside a conflict: remove it"
+                        ));
+                    }
+                }
+            }
+            let tick_of = if grouped.is_some() {
+                None
+            } else {
+                step.task.as_deref()
+            };
+            let locked = locked_changes(run, &l, &base, &commit, tick_of);
             if !locked.is_empty() {
                 reasons.push(format!(
                     "the locked documents were changed: {}",

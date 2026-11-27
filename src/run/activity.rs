@@ -330,6 +330,34 @@ fn fallow_lines(run: &Run, last_line: &BTreeMap<u32, u64>) -> Vec<Value> {
             }
         }
     }
+    // 018 (FR-015, FR-024): the merges and overlaps of groups of [P] tasks.
+    if let Some(l) = run.state.feature_loop.as_ref() {
+        for t in l.groups.iter().flat_map(|g| g.tasks.iter()) {
+            for (o, at) in t.overlaps.iter().zip(&t.overlaps_at) {
+                let with = o.with.join(" and ");
+                out.push(check(
+                    ms_of(at),
+                    Some(t.id.clone()),
+                    format!(
+                        "{} changed {}, which {with} changed: repaired on top of {with}",
+                        t.id,
+                        o.files.join(", ")
+                    ),
+                    Some("fail"),
+                    String::new(),
+                ));
+            }
+            if let (Some(c), Some(at)) = (&t.merged, &t.merged_at) {
+                out.push(check(
+                    ms_of(at),
+                    Some(t.id.clone()),
+                    format!("{} merged into the build branch (built alongside)", t.id),
+                    Some("ok"),
+                    format!("Merge commit {}", &c[..c.len().min(7)]),
+                ));
+            }
+        }
+    }
     for st in &run.state.steering {
         if st.kind == SteeringKind::Answer
             && (by_engineer.contains(&st.detail.as_deref().unwrap_or("").trim())
@@ -786,6 +814,21 @@ pub fn view(run: &Run, ctx: &Ctx) -> Result<Value, String> {
             "reviews": pl.steps.iter().any(|st| st.when == When::Checkpoint && st.at() == At::End),
         })
     });
+    // 018 (contracts/web-api.md "The loop view"): the groups of [P] tasks, a row per task.
+    let groups: Vec<Value> = l
+        .groups
+        .iter()
+        .map(|g| {
+            json!({
+                "phase": g.phase, "done": g.done,
+                "tasks": g.tasks.iter().map(|t| json!({
+                    "id": t.id, "state": group_task_state(run, t),
+                    "worktree": format!("task-{}", t.id), "merged": t.merged,
+                    "overlaps": t.overlaps.iter().map(|o| json!({ "files": o.files, "with": o.with })).collect::<Vec<_>>(),
+                })).collect::<Vec<_>>(),
+            })
+        })
+        .collect();
     let questions: Vec<Value> = l
         .questions
         .values()
@@ -833,7 +876,45 @@ pub fn view(run: &Run, ctx: &Ctx) -> Result<Value, String> {
         "paused_by_engineer": feature::paused_by_engineer(run),
         "questions": questions,
         "level": l.level,
+        "groups": groups,
     }))
+}
+
+/// 018: where a task of a group stands (contracts/web-api.md): `queued | building | repairing |
+/// accepted | merged | waiting`.
+fn group_task_state(run: &Run, t: &super::state::GroupTask) -> &'static str {
+    if t.merged.is_some() {
+        return "merged";
+    }
+    let Some(l) = run.state.feature_loop.as_ref() else {
+        return "queued";
+    };
+    let status = l.tasks.get(&t.id);
+    match status.map(|s| s.state) {
+        Some(TaskState::Waiting) => return "waiting",
+        Some(TaskState::Accepted) if t.working.is_none() => return "accepted",
+        _ => {}
+    }
+    if t.working.is_some() {
+        return "repairing";
+    }
+    let since = status.map_or(0, |s| s.since);
+    match run
+        .state
+        .steps
+        .values()
+        .rev()
+        .find(|s| {
+            s.task.as_deref() == Some(t.id.as_str())
+                && s.queued_seq > since
+                && matches!(s.kind, StepKind::Build | StepKind::Repair)
+        })
+        .map(|s| s.kind)
+    {
+        None => "queued",
+        Some(StepKind::Repair) => "repairing",
+        Some(_) => "building",
+    }
 }
 
 /// What a failed criterion expected: its scenario's **Then** part, without the emphasis and the

@@ -170,3 +170,82 @@ fn a_loop_survives_stops_at_every_kind_of_step_and_at_ready() {
     drop(e);
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// 018 US3 AS12 (T031; FR-020, research R-10): Fallow stops while three builders of a group of
+/// [P] tasks run; after the restart each task resumes in its own session and working copy, no
+/// task is merged twice and no accepted task is built again.
+#[test]
+fn a_restart_while_builders_run_resumes_each_task() {
+    let root = scratch("resume-builders");
+    let dir = root.join("config").join("pipelines");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("builders.toml"), pipeline_with(3, "")).unwrap();
+    let f = parallel_tasks_feature(&root, 4, &[]);
+    let mut steps = f.phase_1();
+    for t in &f.parallel[..3] {
+        // At work when Fallow stops: each has said something, so its program surely ran.
+        steps.push_str(&f.build(t, &format!("say = \"Working\"\n{SLOW}")));
+        steps.push_str(&f.build(t, AGAIN));
+    }
+    steps.push_str(&f.build("T007", ""));
+    steps.push_str(&f.build(&f.last, ""));
+    steps.push_str(&handover_step(2, ""));
+    steps.push_str(&check_step("US1", true, ""));
+    let scenario = root.join("scenario.toml");
+    std::fs::write(&scenario, format!("{}{steps}", f.lead)).unwrap();
+    let e = start_studio(&root, &scenario, None);
+    let id = lock_calc_in(&e.tx, &f.repo, Some("builders"), Some((5.0, 60)), None);
+    for t in ["T004", "T005", "T006"] {
+        working(&e.tx, id, "build", t);
+    }
+    e.tx.send(Msg::Shutdown).unwrap();
+    let fallow::service::ToolEngine { handle, .. } = e;
+    handle.join().unwrap();
+    // A working copy gone while Fallow was stopped is made again on its branch, with the
+    // interrupted work committed there or not (research R-10).
+    let wt = root.join("data/runs").join(id.to_string()).join("wt");
+    std::fs::remove_dir_all(wt.join("task-T005")).unwrap();
+    let e = start_studio(&root, &root.join("scenario.toml"), None);
+    let v = wait_for(&e.tx, id, "ready", |v| v["stage"] == "ready");
+    for t in ["T004", "T005", "T006"] {
+        let mut s = steps_of(&v, "build", t);
+        s.sort_by_key(|x| x["n"].as_u64());
+        assert_eq!(s.len(), 2, "{t}: the interrupted build and its resumption");
+        assert!(
+            s[0]["end"]["why"]
+                .as_str()
+                .unwrap_or("")
+                .starts_with("interrupted"),
+            "{}",
+            s[0]
+        );
+        assert_eq!(
+            s[1]["resume"], s[0]["session"],
+            "{t} resumed in its session"
+        );
+        for s in s {
+            let wt = s["worktree"].as_str().unwrap().replace('\\', "/");
+            assert!(wt.ends_with(&format!("/task-{t}")), "{t}: {wt}");
+        }
+    }
+    // T007 and T008: built once.
+    for t in ["T007", "T008"] {
+        assert_eq!(steps_of(&v, "build", t).len(), 1, "{t}");
+    }
+    let log = std::fs::read_to_string(
+        root.join("data/runs")
+            .join(id.to_string())
+            .join("events.jsonl"),
+    )
+    .unwrap();
+    let merged: Vec<String> = log
+        .lines()
+        .map(|l| serde_json::from_str::<Value>(l).unwrap())
+        .filter(|e| e["type"] == "task_merged")
+        .map(|e| e["task"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(merged, ["T004", "T005", "T006", "T007"], "each merged once");
+    assert_eq!(v["feature_loop"]["outcome"][0], true);
+    drop(e);
+    let _ = std::fs::remove_dir_all(&root);
+}

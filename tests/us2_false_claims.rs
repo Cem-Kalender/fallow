@@ -317,3 +317,78 @@ fn an_agents_own_commit_is_undone_even_when_its_step_fails() {
     drop(e);
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// 018 US3 (T032; FR-019; constitution CI gate I): a builder of a group task is held to the same
+/// checks in its own working copy: a file claimed but not changed is refused; an edit to the
+/// locked spec is undone there and refused; neither reaches the build branch.
+#[test]
+fn a_group_builder_claiming_files_it_did_not_change_is_refused() {
+    let root = scratch("claims-group");
+    let dir = root.join("config").join("pipelines");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("builders.toml"), pipeline_with(3, "")).unwrap();
+    let f = parallel_tasks_feature(&root, 3, &[]);
+    let steps = [
+        f.phase_1(),
+        // T004 claims a file it did not write.
+        f.build("T004", "").replace(
+            "files = [\"calc/t004.py\"]",
+            "files = [\"calc/t004.py\", \"calc/ghost.py\"]",
+        ),
+        repair_step("T004", &[("calc/t004.py", "NAME = 'T004'  # again\n")]),
+        // T005 also edits the locked spec.
+        task_step(
+            "T005",
+            &[
+                ("calc/t005.py", "NAME = 'T005'\n"),
+                ("specs/001-calc/spec.md", "hacked\n"),
+            ],
+            "",
+        ),
+        repair_step("T005", &[("calc/t005.py", "NAME = 'T005'  # again\n")]),
+        f.build("T006", ""),
+        f.build(&f.last, ""),
+        handover_step(2, ""),
+        check_step("US1", true, ""),
+    ]
+    .concat();
+    let scenario = root.join("scenario.toml");
+    std::fs::write(&scenario, format!("{}{steps}", f.lead)).unwrap();
+    let e = start_studio(&root, &scenario, None);
+    let id = lock_calc_in(&e.tx, &f.repo, Some("builders"), Some((5.0, 60)), None);
+    let v = wait_for(&e.tx, id, "ready to merge", |v| v["stage"] == "ready");
+    let in_own = |s: &Value, t: &str| {
+        s["task"] == t
+            && s["worktree"]
+                .as_str()
+                .is_some_and(|w| w.replace('\\', "/").ends_with(&format!("/task-{t}")))
+    };
+    let t4 = refused(&v, |s| in_own(s, "T004"));
+    assert!(
+        t4.iter()
+            .any(|r| r.contains("files claimed but not changed") && r.contains("calc/ghost.py")),
+        "{t4:?}"
+    );
+    let t5 = refused(&v, |s| in_own(s, "T005"));
+    assert!(
+        t5.iter().any(
+            |r| r.contains("locked documents were changed (Fallow undid it)")
+                && r.contains("spec.md")
+        ),
+        "{t5:?}"
+    );
+    let spec_now = git(
+        &f.repo,
+        &["show", "fallow/001-calc/build:specs/001-calc/spec.md"],
+    );
+    assert!(spec_now.contains("User Story 1"), "{spec_now}");
+    let log = std::fs::read_to_string(
+        root.join("data/runs")
+            .join(id.to_string())
+            .join("events.jsonl"),
+    )
+    .unwrap();
+    assert!(log.contains("\"type\":\"group_started\""), "a group ran");
+    drop(e);
+    let _ = std::fs::remove_dir_all(&root);
+}
