@@ -19,9 +19,8 @@ fn on_runtime(repo: &std::path::Path, agents: &[&str], runtime: &str, model: &st
             .find(|(n, _)| n == a)
             .unwrap()
             .1;
-        let text = shipped
-            .replace("runtime: claude", &format!("runtime: {runtime}"))
-            .replace("model: sonnet", &format!("model: {model}"));
+        let text = replace_found(shipped, "runtime: claude", &format!("runtime: {runtime}"));
+        let text = replace_found(&text, "model: sonnet", &format!("model: {model}"));
         std::fs::write(dir.join(format!("{a}.md")), text).unwrap();
     }
 }

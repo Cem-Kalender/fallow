@@ -211,7 +211,7 @@ impl Studio {
                     }
                 }
             }
-            let kinds = |n: &str| lib.agents.get(n).map(|a| a.kind);
+            let kinds = |n: &str| lib.kind_of(n);
             for pl in lib
                 .pipelines
                 .values()
@@ -239,7 +239,7 @@ impl Studio {
                     .unwrap_or_default();
                 // Nor may a loop still going stop verifying (FR-015).
                 let now_lib = self.library(root.as_deref());
-                let now_kinds = |a: &str| now_lib.agents.get(a).map(|d| d.kind);
+                let now_kinds = |a: &str| now_lib.kind_of(a);
                 let before =
                     pipeline::parse("the loop's pipeline", &n, toml, Source::Default, &now_kinds);
                 match pipeline::parse("the loop's pipeline", &n, toml, Source::Default, &kinds) {
@@ -342,7 +342,7 @@ impl Studio {
             Scope::User => Source::User,
             Scope::Project(_) => Source::Project,
         };
-        let d = agent::parse(&file, name, text, source, defs::RUNTIMES).map_err(|ps| {
+        let d = agent::parse(&file, name, text, source, &defs::runtimes()).map_err(|ps| {
             ps.iter()
                 .map(|p| p.to_string())
                 .collect::<Vec<_>>()
@@ -381,7 +381,7 @@ impl Studio {
                     name,
                     t,
                     Source::Default,
-                    defs::RUNTIMES,
+                    &defs::runtimes(),
                 )
             })
             .transpose()
@@ -405,7 +405,7 @@ impl Studio {
         let name = toml::from_str::<pipeline::Raw>(text)
             .map(|r| r.name)
             .unwrap_or_default();
-        let kinds = |n: &str| lib.agents.get(n).map(|a| a.kind);
+        let kinds = |n: &str| lib.kind_of(n);
         let p = pipeline::parse(&format!("{name}.toml"), &name, text, Source::User, &kinds)
             .map_err(|ps| ps.join("\n"))?;
         Ok(json!(p))
@@ -417,7 +417,7 @@ impl Studio {
         let dir = self.scope_dir(scope, "pipelines")?;
         let file = format!("{name}.toml");
         let lib = self.library_for(scope)?;
-        let kinds = |n: &str| lib.agents.get(n).map(|a| a.kind);
+        let kinds = |n: &str| lib.kind_of(n);
         let source = match scope {
             Scope::User => Source::User,
             Scope::Project(_) => Source::Project,

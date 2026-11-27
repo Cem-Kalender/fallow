@@ -3,6 +3,7 @@
 
 use serde::Serialize;
 
+use crate::agent::ModelNaming;
 use crate::project::commands::command_problem;
 use crate::speckit::Problem;
 
@@ -293,14 +294,15 @@ const KEYS: &[&str] = &[
 ];
 
 /// Parses the definition in `text` (the file `file`, named `<name>.md`). `runtimes` are the
-/// runtime names Fallow knows.
+/// runtimes Fallow knows, each with its model naming ([`crate::defs::runtimes`]).
 pub fn parse(
     file: &str,
     stem: &str,
     text: &str,
     source: Source,
-    runtimes: &[&str],
+    runtimes: &[(&str, ModelNaming)],
 ) -> Result<AgentDef, Vec<Problem>> {
+    let names: Vec<&str> = runtimes.iter().map(|(n, _)| *n).collect();
     let p = |line: usize, m: String| Problem::new(file, line, m);
     let text = text.strip_prefix('\u{feff}').unwrap_or(text);
     let lines: Vec<&str> = text.lines().collect();
@@ -388,12 +390,12 @@ pub fn parse(
     };
     let runtime = match str_of("runtime", &mut problems) {
         Some((r, at)) => {
-            if !runtimes.contains(&r.as_str()) {
+            if !names.contains(&r.as_str()) {
                 problems.push(p(
                     at,
                     format!(
                         "runtime {r:?} is not one Fallow knows ({})",
-                        runtimes.join(", ")
+                        names.join(", ")
                     ),
                 ));
             }
@@ -545,7 +547,7 @@ mod tests {
             "assistant",
             text,
             Source::Default,
-            &["claude"],
+            &crate::defs::runtimes(),
         )
         .unwrap();
         assert_eq!(d.kind, Kind::Assistant);
@@ -556,7 +558,7 @@ mod tests {
             "assistant",
             &wrong,
             Source::Default,
-            &["claude"],
+            &crate::defs::runtimes(),
         )
         .unwrap_err();
         assert!(
@@ -592,7 +594,14 @@ mod tests {
             ]
         );
         // It reads back as written.
-        let d = parse("reviewer.md", "reviewer", &out, Source::User, &["claude"]).unwrap();
+        let d = parse(
+            "reviewer.md",
+            "reviewer",
+            &out,
+            Source::User,
+            &crate::defs::runtimes(),
+        )
+        .unwrap();
         assert_eq!(d.model, "opus");
         assert_eq!(
             d.may_run,
@@ -618,7 +627,7 @@ mod tests {
             &[("description".into(), FieldValue::Str("say \"hi\"".into()))],
         )
         .unwrap();
-        let d = parse("x.md", "x", &out, Source::User, &["claude"]).unwrap();
+        let d = parse("x.md", "x", &out, Source::User, &crate::defs::runtimes()).unwrap();
         assert_eq!(d.description, "say \"hi\"");
         assert!(
             set_fields(
@@ -651,18 +660,16 @@ mod tests {
             &[("description".into(), FieldValue::Str("[draft] # 2".into()))],
         )
         .unwrap();
-        let d = parse("x.md", "x", &out, Source::User, &["claude"]).unwrap();
+        let d = parse("x.md", "x", &out, Source::User, &crate::defs::runtimes()).unwrap();
         assert_eq!(d.description, "[draft] # 2");
     }
 
-    const RT: &[&str] = &["claude", "fake"];
-
     fn parse_ok(stem: &str, text: &str) -> AgentDef {
-        parse("x.md", stem, text, Source::User, RT).unwrap()
+        parse("x.md", stem, text, Source::User, &crate::defs::runtimes()).unwrap()
     }
 
     fn errors(stem: &str, text: &str) -> Vec<String> {
-        parse("x.md", stem, text, Source::User, RT)
+        parse("x.md", stem, text, Source::User, &crate::defs::runtimes())
             .unwrap_err()
             .iter()
             .map(|p| p.to_string())
@@ -686,8 +693,14 @@ mod tests {
     #[test]
     fn the_shipped_defaults_parse() {
         for (stem, text) in super::super::DEFAULT_AGENTS {
-            let d = parse("x.md", stem, text, Source::Default, RT)
-                .unwrap_or_else(|e| panic!("{stem}: {e:?}"));
+            let d = parse(
+                "x.md",
+                stem,
+                text,
+                Source::Default,
+                &crate::defs::runtimes(),
+            )
+            .unwrap_or_else(|e| panic!("{stem}: {e:?}"));
             assert_eq!(d.returns, d.kind.returns());
         }
     }

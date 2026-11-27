@@ -595,13 +595,53 @@ pub fn second_lead(repo: &Path, name: &str, runtime: &str, model: &str, marker: 
         .find(|(n, _)| *n == "lead")
         .unwrap()
         .1;
-    let text = shipped
-        .replacen("name: lead", &format!("name: {name}"), 1)
-        .replacen("runtime: claude", &format!("runtime: {runtime}"), 1)
-        .replacen("model: opus", &format!("model: {model}"), 1)
-        // The first "\n---" closes the frontmatter (the opening "---" starts the file).
-        .replacen("\n---", &format!("\n---\n\n{marker}\n"), 1);
+    let text = replace_found(shipped, "name: lead", &format!("name: {name}"));
+    let text = replace_found(&text, "runtime: claude", &format!("runtime: {runtime}"));
+    let text = set_field(&text, "model", model);
+    // The first "\n---" closes the frontmatter (the opening "---" starts the file).
+    let text = replace_found(&text, "\n---", &format!("\n---\n\n{marker}\n"));
     std::fs::write(dir.join(format!("{name}.md")), text).unwrap();
+}
+
+/// `text` with the first `from` replaced by `to`; panics, naming `from`, when it is not there
+/// (017 research R-10: a replace that matches nothing would leave the file silently unchanged).
+pub fn replace_found(text: &str, from: &str, to: &str) -> String {
+    assert!(
+        text.contains(from),
+        "the pattern {from:?} was not found in:\n{text}"
+    );
+    text.replacen(from, to, 1)
+}
+
+/// `text` (an agent file) with its frontmatter line `key: …` set to `key: value`; panics when
+/// the file has no such line.
+pub fn set_field(text: &str, key: &str, value: &str) -> String {
+    let prefix = format!("{key}:");
+    let mut found = false;
+    let out: Vec<String> = text
+        .split('\n')
+        .map(|l| {
+            if !found && l.starts_with(&prefix) {
+                found = true;
+                format!("{key}: {value}")
+            } else {
+                l.to_string()
+            }
+        })
+        .collect();
+    assert!(found, "no `{key}:` line in:\n{text}");
+    out.join("\n")
+}
+
+/// 017: an agent file moved to the `fake` runtime: `runtime: claude` becomes `runtime: fake` and
+/// the model becomes `model` (a model must have its runtime's form, `fake-…`). Panics when either
+/// line is not there.
+pub fn on_fake(text: &str, model: &str) -> String {
+    set_field(
+        &replace_found(text, "runtime: claude", "runtime: fake"),
+        "model",
+        model,
+    )
 }
 
 /// An editor for "Open in my editor": the fake agent's `--record` mode. Returns the program and
@@ -787,7 +827,7 @@ pub fn assistant_on_fake(repo: &Path) {
         .1;
     std::fs::write(
         dir.join("assistant.md"),
-        shipped.replacen("runtime: claude", "runtime: fake", 1),
+        replace_found(shipped, "runtime: claude", "runtime: fake"),
     )
     .unwrap();
     git(repo, &["add", "."]);

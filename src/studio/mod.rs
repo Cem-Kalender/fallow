@@ -723,6 +723,10 @@ impl Studio {
     pub fn lead_problem(&self, path: &Path, name: &str) -> Option<String> {
         let lib = self.library(Some(path));
         let Some(def) = lib.agent(name) else {
+            // 017 (FR-019): a lead whose file cannot be used says why.
+            if lib.unusable.iter().any(|u| u.name == name) {
+                return Some(lib.why_not(name));
+            }
             return Some(format!(
                 "the lead {name} is gone: there is no agent of that name"
             ));

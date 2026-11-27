@@ -22,8 +22,8 @@ description: "Task list for 017 Agent files are complete and say what they need"
 
 ## Phase 1: Setup
 
-- [ ] T001 [P] Reproduce the list's scrolling with 20 agents before changing it (research R-7, "To verify first"): add a `FALLOW_VISUAL_AGENTS=<n>` option to the visual fixture in `tests/visual_fixture.rs` that writes `<n>` valid checker agents (`agent-01` … `agent-<n>`, `runtime: claude`, `model: claude-sonnet-5-5`, `may_run: [gates]`) to the fixture's user `agents/` folder; open the Agents page in Fallow's window at 1440 × 900 and at 390 × 844 and record in `specs/017-agent-file-fields/checks/README.md` whether the list scrolls on its own and, if not over 900 px, why (the element that breaks `position: sticky` or the height).
-- [ ] T002 [P] Make every test helper that rewrites a shipped agent assert its pattern was found (research R-10, last line), in `tests/common/mod.rs` (`second_lead`, `assistant_on_fake`) and `tests/us7_runtime.rs` (`on_runtime`): a `replace` that matches nothing panics naming the pattern. Add `pub fn on_fake(text: &str, model: &str) -> String` to `tests/common/mod.rs`, replacing `runtime: claude` with `runtime: fake` and the `model:` line's value with `model` (asserting both were found).
+- [X] T001 [P] Reproduce the list's scrolling with 20 agents before changing it (research R-7, "To verify first"): add a `FALLOW_VISUAL_AGENTS=<n>` option to the visual fixture in `tests/visual_fixture.rs` that writes `<n>` valid checker agents (`agent-01` … `agent-<n>`, `runtime: claude`, `model: claude-sonnet-5-5`, `may_run: [gates]`) to the fixture's user `agents/` folder; open the Agents page in Fallow's window at 1440 × 900 and at 390 × 844 and record in `specs/017-agent-file-fields/checks/README.md` whether the list scrolls on its own and, if not over 900 px, why (the element that breaks `position: sticky` or the height).
+- [X] T002 [P] Make every test helper that rewrites a shipped agent assert its pattern was found (research R-10, last line), in `tests/common/mod.rs` (`second_lead`, `assistant_on_fake`) and `tests/us7_runtime.rs` (`on_runtime`): a `replace` that matches nothing panics naming the pattern. Add `pub fn on_fake(text: &str, model: &str) -> String` to `tests/common/mod.rs`, replacing `runtime: claude` with `runtime: fake` and the `model:` line's value with `model` (asserting both were found).
 
 ---
 
@@ -31,20 +31,20 @@ description: "Task list for 017 Agent files are complete and say what they need"
 
 **No user story can start before this phase is done.**
 
-- [ ] T003 `ModelNaming` in the runtime contract (research R-1, contracts/runtime-model-naming.md), in `src/agent/mod.rs`:
+- [X] T003 `ModelNaming` in the runtime contract (research R-1, contracts/runtime-model-naming.md), in `src/agent/mod.rs`:
   - `#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)] pub struct ModelNaming { prefix, example, lookup, lookup_url: Option<&'static str> }`;
   - `fn fits(&self, name: &str) -> bool`: "starts with `prefix`; at most 64 characters; the rest non-empty, only `a-z 0-9 . -`";
   - `fn hint(&self) -> String`, worded as in contracts/runtime-model-naming.md "The hint";
   - `registry::model_naming(name) -> Option<ModelNaming>` (no settings);
   - unit tests: `claude-opus-5-5`, `claude-sonnet-5-5`, `claude-fable-5-2` fit `claude`; `opus`, `claude-`, `Claude-Opus-5-5`, `claude opus`, `claude-opus-5-5[1m]`, `anthropic.claude-opus-5-5`, a 65-character name do not; `fake-1` fits `fake` and not `claude`.
-- [ ] T004 [P] The adapters' constants: `pub const MODEL_NAMING` in `src/agent/claude.rs` (`prefix: "claude-"`, `example: "claude-sonnet-5-5"`, `lookup: "Anthropic's models overview"`, `lookup_url: Some("https://platform.claude.com/docs/en/models/overview")`) and in `src/agent/fake.rs` (`prefix: "fake-"`, `example: "fake-1"`, `lookup: "the fake runtime's scenario"`, `lookup_url: None`), wired into `registry::model_naming` in `src/agent/mod.rs`.
-- [ ] T005 `defs::runtimes() -> Vec<(&'static str, ModelNaming)>` in `src/defs/mod.rs`, built from `RUNTIMES` and `registry::model_naming`; change `defs::agent::parse`'s last parameter to `runtimes: &[(&str, ModelNaming)]` in `src/defs/agent.rs` (no new rule yet) and update every caller: `Library::load` in `src/defs/mod.rs`, `put_agent` in `src/studio/defs.rs`, the tests' `RT` in `src/defs/agent.rs`. `cargo test` passes unchanged.
-- [ ] T006 `Unusable` and `why_not` (research R-3, data-model "Library"), in `src/defs/mod.rs`:
+- [X] T004 [P] The adapters' constants: `pub const MODEL_NAMING` in `src/agent/claude.rs` (`prefix: "claude-"`, `example: "claude-sonnet-5-5"`, `lookup: "Anthropic's models overview"`, `lookup_url: Some("https://platform.claude.com/docs/en/models/overview")`) and in `src/agent/fake.rs` (`prefix: "fake-"`, `example: "fake-1"`, `lookup: "the fake runtime's scenario"`, `lookup_url: None`), wired into `registry::model_naming` in `src/agent/mod.rs`.
+- [X] T005 `defs::runtimes() -> Vec<(&'static str, ModelNaming)>` in `src/defs/mod.rs`, built from `RUNTIMES` and `registry::model_naming`; change `defs::agent::parse`'s last parameter to `runtimes: &[(&str, ModelNaming)]` in `src/defs/agent.rs` (no new rule yet) and update every caller: `Library::load` in `src/defs/mod.rs`, `put_agent` in `src/studio/defs.rs`, the tests' `RT` in `src/defs/agent.rs`. `cargo test` passes unchanged.
+- [X] T006 `Unusable` and `why_not` (research R-3, data-model "Library"), in `src/defs/mod.rs`:
   - `pub struct Unusable { name, file, source: Source, text, problems: Vec<Problem>, in_force: Option<Source> }`, `Serialize`;
   - `Library.unusable: Vec<Unusable>`, filled in `load` for every agent file that fails, `in_force` set after all places are read (the source of `lib.agents[name]`, or `None`); `lib.problems` keeps its strings;
   - `Library::why_not(&self, name) -> String`: "there is no agent named \"X\"" when no file of that name exists, else "X cannot be used: <file>:<line>: <message>" plus " (and N more)" when there are more;
   - unit tests in `src/defs/mod.rs`: a broken user copy of `reviewer` gives `in_force: Some(Default)`; a broken own `ui-checker` gives `None`; a broken project copy with a valid user copy gives `Some(User)`; `why_not` for each.
-- [ ] T007 The reason at every lookup (FR-019, research R-3):
+- [X] T007 The reason at every lookup (FR-019, research R-3):
   - `src/defs/pipeline.rs`: `kind_of: &dyn Fn(&str) -> Result<Kind, String>`; the `None` arm becomes the error text, at the step; update `Library::load` in `src/defs/mod.rs`, `studio/defs.rs` (`would_break`, `check_pipeline`, `put_pipeline`, `delete_agent`) and `run/feature.rs:57`, passing `lib.why_not`; update the tests in `src/defs/pipeline.rs` (`no agent named` still for a name with no file);
   - `src/run/feature.rs` (~646, ~2396): `ok_or_else(|| lib.why_not(...))`;
   - `src/studio/mod.rs` `lead_problem` (~725): `lib.why_not(name)` instead of "the lead X is gone" when the name has an unusable file.

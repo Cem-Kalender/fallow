@@ -14,6 +14,15 @@ use super::{
     Agent, Availability, Call, Capabilities, Event, Outcome, Runtime, Session, ToolKind, clip,
 };
 
+/// 017 (contracts/runtime-model-naming.md): Anthropic's full model names, as its models overview
+/// lists them.
+pub const MODEL_NAMING: super::ModelNaming = super::ModelNaming {
+    prefix: "claude-",
+    example: "claude-sonnet-5-5",
+    lookup: "Anthropic's models overview",
+    lookup_url: Some("https://platform.claude.com/docs/en/models/overview"),
+};
+
 /// The runtime for an agent program that speaks `claude -p`: Claude Code itself, or
 /// `fallow-fake-agent` in tests.
 #[derive(Debug, Clone)]

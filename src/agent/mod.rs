@@ -372,6 +372,48 @@ pub struct Capabilities {
     pub control_files: Vec<String>,
 }
 
+/// 017 (contracts/runtime-model-naming.md): how a runtime's provider names its models, and where
+/// the engineer looks the names up. Each adapter declares one; Fallow keeps no list of models.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct ModelNaming {
+    /// What every full name of this runtime's provider starts with.
+    pub prefix: &'static str,
+    /// One full name, for the hint.
+    pub example: &'static str,
+    /// Where the names are listed, in words.
+    pub lookup: &'static str,
+    /// That place's address, if it has one.
+    pub lookup_url: Option<&'static str>,
+}
+
+impl ModelNaming {
+    /// Whether `name` has this runtime's form: it starts with `prefix`, has at most 64
+    /// characters, and the rest is non-empty and only lowercase letters, digits, `.` and `-`.
+    /// Whether the provider has a model of that name is not checked.
+    pub fn fits(&self, name: &str) -> bool {
+        name.len() <= 64
+            && name.strip_prefix(self.prefix).is_some_and(|rest| {
+                !rest.is_empty()
+                    && rest.chars().all(|c| {
+                        c.is_ascii_lowercase() || c.is_ascii_digit() || c == '.' || c == '-'
+                    })
+            })
+    }
+
+    /// What a name of this runtime looks like and where to look it up, for messages, the
+    /// template and `GET /api/runtimes`.
+    pub fn hint(&self) -> String {
+        let place = match self.lookup_url {
+            Some(u) => format!("{} ({u})", self.lookup),
+            None => self.lookup.to_string(),
+        };
+        format!(
+            "{} followed by lowercase letters, digits, . and -, for example {}; look the name up in {place}",
+            self.prefix, self.example
+        )
+    }
+}
+
 /// A provider that runs agent calls (FR-029).
 pub trait Runtime: Send + Sync {
     fn name(&self) -> &str;
@@ -396,6 +438,17 @@ pub mod registry {
         match name {
             "claude" => &["opus", "sonnet", "haiku"],
             _ => &[],
+        }
+    }
+
+    /// 017: how the runtime called `name` names its models, as its adapter declares it; `None`
+    /// for a runtime Fallow does not know. Needs no settings: a definition is checked without
+    /// a configured profile.
+    pub fn model_naming(name: &str) -> Option<super::ModelNaming> {
+        match name {
+            "claude" => Some(super::claude::MODEL_NAMING),
+            "fake" => Some(super::fake::MODEL_NAMING),
+            _ => None,
         }
     }
 
@@ -539,6 +592,50 @@ pub mod registry {
             });
         }
         list
+    }
+}
+
+#[cfg(test)]
+mod model_naming_tests {
+    use super::registry::model_naming;
+
+    #[test]
+    fn a_name_fits_its_runtimes_form_only() {
+        let claude = model_naming("claude").unwrap();
+        let fake = model_naming("fake").unwrap();
+        for ok in ["claude-opus-5-5", "claude-sonnet-5-5", "claude-fable-5-2"] {
+            assert!(claude.fits(ok), "{ok}");
+        }
+        let long = format!("claude-{}", "a".repeat(58));
+        assert_eq!(long.len(), 65);
+        for bad in [
+            "opus",
+            "claude-",
+            "Claude-Opus-5-5",
+            "claude opus",
+            "claude-opus-5-5[1m]",
+            "anthropic.claude-opus-5-5",
+            long.as_str(),
+        ] {
+            assert!(!claude.fits(bad), "{bad}");
+        }
+        assert!(claude.fits(&long[..64]));
+        assert!(fake.fits("fake-1"));
+        assert!(!claude.fits("fake-1"));
+        assert!(!fake.fits("claude-sonnet-5-5"));
+        assert_eq!(model_naming("gpt"), None);
+    }
+
+    #[test]
+    fn the_hint_says_the_form_and_where_to_look() {
+        assert_eq!(
+            model_naming("claude").unwrap().hint(),
+            "claude- followed by lowercase letters, digits, . and -, for example claude-sonnet-5-5; look the name up in Anthropic's models overview (https://platform.claude.com/docs/en/models/overview)"
+        );
+        assert_eq!(
+            model_naming("fake").unwrap().hint(),
+            "fake- followed by lowercase letters, digits, . and -, for example fake-1; look the name up in the fake runtime's scenario"
+        );
     }
 }
 

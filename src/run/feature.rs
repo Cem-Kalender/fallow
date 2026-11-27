@@ -54,7 +54,7 @@ pub(crate) fn library(run: &Run, ctx: &Ctx) -> Library {
 
 pub(crate) fn pipeline_of(run: &Run, lib: &Library) -> Result<Pipeline, String> {
     let l = lp(run)?;
-    let kinds = |n: &str| lib.agent(n).map(|a| a.kind);
+    let kinds = |n: &str| lib.kind_of(n);
     pipeline::parse(
         "the loop's pipeline",
         "",
@@ -643,7 +643,7 @@ fn extra(
     let def = lib
         .agent(&s.agent)
         .cloned()
-        .ok_or_else(|| format!("there is no agent named {:?}", s.agent))?;
+        .ok_or_else(|| lib.why_not(&s.agent))?;
     let checker = def.kind == Kind::Checker;
     let kind = if checker {
         StepKind::Review
@@ -2393,7 +2393,7 @@ fn start(run: &mut Run, ctx: &Ctx, n: u32) -> Result<(), String> {
     let def = lib
         .agent(&defname)
         .cloned()
-        .ok_or_else(|| format!("there is no agent named {defname:?}"))?;
+        .ok_or_else(|| lib.why_not(&defname))?;
     // The definition's runtime (FR-029): one that is not there stops the loop here, naming it,
     // before anything is prepared for the step.
     let runtime = agent::registry::runtime(&def.runtime, &ctx.settings)
