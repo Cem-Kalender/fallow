@@ -10,7 +10,8 @@
 //   speaks of verifying (FR-001);
 // - a + at every point (FR-028): the +s, by the point a step added there gets, cover once at the
 //   start, each phase's start, before and after each task, each phase's end, each checkpoint's
-//   start and end, and once at the end;
+//   start and end, and once at the end; each labelled with exactly its point, and opening the
+//   add form preset to it;
 // - from a +, the add form's "Runs" and "At" reach every point, the checkpoint's start too;
 // - units of checkers alongside each other drawn as branches (FR-028): the members of a unit
 //   are one column (same x, each its own row), each reached by its own edge from the junction
@@ -96,6 +97,10 @@ async function target() {
   };
   // What each pipeline is expected to draw: the units (checkers alongside each other) by size.
   const PIPELINES = { standard: [], solo: [], parallel: [2], "every-point": [2, 2, 2] };
+  const SAYS = {
+    "once/start": "once, at the start", "phase/start": "at each phase, at the start", "task/start": "before each task", "task/end": "after each task",
+    "phase/end": "at each phase, at the end", "checkpoint/start": "at each story's checkpoint, at the start", "checkpoint/end": "at each story's checkpoint, at the end", "once/end": "once, at the end",
+  };
   const POINTS = ["once/start", "phase/start", "task/start", "task/end", "phase/end", "checkpoint/start", "checkpoint/end", "once/end"];
 
   for (const [w, hgt] of [[1440, 900], [390, 844]]) {
@@ -124,6 +129,24 @@ async function target() {
       const at = new Set(plus.map((p) => p.p));
       const missing = POINTS.filter((p) => !at.has(p));
       check(`${name}: a + at every point`, missing.length === 0, `${plus.length} +: ${[...new Set(plus.map((p) => p.p))].join(", ")}${missing.length ? `; none for ${missing.join(", ")}` : ""}`);
+      // Each point's + says exactly that point, and opens the add form preset to it.
+      const wrong = POINTS.flatMap((pt) => plus.filter((p) => p.p === pt && p.label !== `Add a step here (${SAYS[pt]})`).map((p) => `${pt}: ${p.label}`));
+      check(`${name}: each point's + is labelled with exactly that point`, wrong.length === 0, wrong.join(" | "));
+      const preset = await ev(`
+        const out = [];
+        for (const id of ${JSON.stringify(plus.filter((p) => POINTS.includes(p.p)).map((p) => p.id))}) {
+          const g = document.getElementById(id);
+          const want = g.dataset.when + "/" + g.dataset.at;
+          g.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+          await sleep(150);
+          const w = document.getElementById("add-when"), a = document.getElementById("add-at");
+          const got = (w ? w.value : "no form") + "/" + (a ? a.value : "");
+          if (got !== want) out.push(want + " opens " + got);
+          const c = document.querySelector("[data-act=add-cancel]"); if (c) c.click();
+          await sleep(100);
+        }
+        return out.join(", ");`);
+      check(`${name}: each point's + opens the add form preset to that point`, preset === "", preset);
       check(`${name}: every + is labelled for screen readers`, plus.every((p) => /^Add a step here \(.+\)$/.test(p.label || "")), plus.map((p) => p.label).join(" | "));
 
       // FR-028: units drawn as branches.
@@ -169,8 +192,7 @@ async function target() {
       check(`${name}: each focused + is drawn as focused`, plain.length === 0, plain.join(", "));
       check(`${name}: each focused + is in view (at least 3/4 of it inside the window and the graph's box)`, unseen.length === 0, unseen.length ? unseen.join(", ") : `the least shown: ${Math.round(least * 100)} %`);
 
-      // Where a point has no + of its own (no step there yet: R-13 draws one + per junction
-      // between columns), the add form a + opens reaches it through "Runs" and "At".
+      // The add form a + opens reaches every point through "Runs" and "At" as well.
       const reach = await ev(`
         document.querySelector(".pl-graph .gplus").dispatchEvent(new MouseEvent("click", { bubbles: true }));
         await sleep(200);

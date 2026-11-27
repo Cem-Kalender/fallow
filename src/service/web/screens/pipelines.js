@@ -129,46 +129,72 @@
     return [...units.values()];
   }
 
-  function layout(d, kind) {
+  // The eight points of contracts/pipeline.md "Points", in the order they run, with the region
+  // and groups their columns sit in; "task/" is the task itself (the builder and the gates).
+  const IN_TASK = ["phase", "task"];
+  const POINTS = [
+    ["once/start", "once-start", []],
+    ["phase/start", "phase-start", ["phase"]],
+    ["task/start", "task-start", IN_TASK],
+    ["task/", "task", IN_TASK],
+    ["task/end", "task-end", IN_TASK],
+    ["phase/end", "phase-end", ["phase"]],
+    ["checkpoint/start", "checkpoint", ["checkpoint"]],
+    ["checkpoint/end", "checkpoint", ["checkpoint"]],
+    ["once/end", "once-end", []],
+  ];
+  // A point with no step of its own is, with `slots`, a narrow column holding just its +.
+  const SLOT = 24;
+
+  // `opts.slots` (the designer, 018 FR-028): every point gets a + of its own at its place, a
+  // point with no step as a slot column of its own. Without it (the loop page) only the points
+  // with steps are drawn.
+  function layout(d, kind, opts) {
+    const slots = !!(opts && opts.slots);
     const steps = d.steps.map((st, i) => ({ st, i }));
     const b = builderOf(d.steps, kind);
     // 018 (research R-13): every point holds units, checkers alongside each other stacked.
     const at = (key) => unitsOf(steps.filter((x) => pointKey(x.st, x.i, b) === key));
-    const col = (region, nodes, groups) => ({ region, nodes, groups });
-    const units = (key, region, groups) => at(key).map((u) => col(region, u, groups));
-    const IN_TASK = ["phase", "task"];
+    const col = (region, nodes, groups, point) => ({ region, nodes, groups, point });
     const cols = [
       col("fixed", [{ key: "spec" }], []),
       col("fixed", [{ key: "lock" }], []),
-      ...units("once/start", "once-start", []),
-      ...units("phase/start", "phase-start", ["phase"]),
-      // The task group inside the phase group: before each task, the task, after it.
-      ...units("task/start", "task-start", IN_TASK),
-      ...steps.filter((x) => coreOf(x.st, x.i, b)).map((x) => col("task", [x], IN_TASK)),
-      ...units("task/end", "task-end", IN_TASK),
-      ...units("phase/end", "phase-end", ["phase"]),
-      ...units("checkpoint/start", "checkpoint", ["checkpoint"]),
-      ...units("checkpoint/end", "checkpoint", ["checkpoint"]),
-      ...units("once/end", "once-end", []),
+      ...POINTS.flatMap(([key, region, groups]) => {
+        // The builder and the gates are a column each; any other point's units a column each.
+        const us = key === "task/" ? steps.filter((x) => coreOf(x.st, x.i, b)).map((x) => [x]) : at(key);
+        if (us.length) return us.map((u) => col(region, u, groups, key));
+        return slots ? [col(region, [], groups, key)] : [];
+      }),
       col("fixed", [{ key: "merge" }], []),
     ];
     const groups = ["phase", "task", "checkpoint"].filter((g) => cols.some((c) => c.groups.includes(g)));
-    // Inside the task group, room for a + before and after its columns.
-    const padOf = (g) => (g === "task" ? 30 : PAD);
+    // Inside the task group, without slots, room for a + before and after its columns.
+    const padOf = (g) => (g === "task" && !slots ? 30 : PAD);
+    const full = cols.filter((c) => c.nodes.length).length;
     // Node width: what fits, at most 150; many steps also bring the columns closer. Below 70
     // the drawing grows wider instead, and the box scrolls.
-    const GAP = cols.length > 9 ? 30 : 44;
+    const GAP = full > 9 ? 30 : 44;
+    // Between a slot and a single node, a shorter gap: the + is the junction itself.
+    const gapAt = (ci) => {
+      const a = cols[ci], bc = cols[ci + 1];
+      return a.nodes.length === 1 && bc.nodes.length === 1 || a.nodes.length > 1 || bc.nodes.length > 1 ? GAP : 22;
+    };
+    const widthOf = (c, w) => (c.nodes.length ? w : SLOT);
+    // The width of the columns of `list` (consecutive) and the gaps between them.
+    const spanOf = (list, w) => list.reduce((a, c, k) => a + widthOf(c, w) + (k ? gapAt(cols.indexOf(c) - 1) : 0), 0);
     // A group is at least as wide as its label: a narrow one gets room on both sides.
     const LABEL = { phase: "FOR EACH PHASE IN tasks.md", task: "FOR EACH TASK", checkpoint: "AT EACH STORY'S CHECKPOINT" };
     const roomFor = (w) => Object.fromEntries(groups.map((g) => {
-      const n = cols.filter((c) => c.groups.includes(g)).length;
-      return [g, Math.max(0, Math.ceil((LABEL[g].length * 6.8 + 28 - (n * w + (n - 1) * GAP + 2 * padOf(g))) / 2))];
+      const inner = spanOf(cols.filter((c) => c.groups.includes(g)), w);
+      return [g, Math.max(0, Math.ceil((LABEL[g].length * 6.8 + 28 - (inner + 2 * padOf(g))) / 2))];
     }));
-    const widthWith = (room) => Math.max(70, Math.min(150, Math.floor((GW - 40 - (cols.length - 1) * GAP - groups.reduce((a, g) => a + 2 * (padOf(g) + room[g]), 0)) / cols.length)));
+    const pads = (room) => groups.reduce((a, g) => a + 2 * (padOf(g) + room[g]), 0);
+    // spanOf(cols, 0): the gaps and the slots, what is left of the width is for the nodes.
+    const widthWith = (room) => Math.max(70, Math.min(150, Math.floor((GW - 40 - spanOf(cols, 0) - pads(room)) / full)));
     let nw = widthWith(roomFor(150));
     const room = roomFor(nw);
     nw = Math.min(nw, widthWith(room));
-    const total = cols.length * nw + (cols.length - 1) * GAP + groups.reduce((a, g) => a + 2 * (padOf(g) + room[g]), 0);
+    const total = spanOf(cols, nw) + pads(room);
     const gw = Math.max(GW, total + 40);
     // A tall stack of checkers alongside each other makes the drawing taller, more so inside
     // the task group (two labels above it).
@@ -203,7 +229,7 @@
         nodes.push(node);
         c.nodes[r] = node;
       });
-      x += nw;
+      x += widthOf(c, nw);
       // Groups left here, the inner first.
       for (const g of [...c.groups].reverse()) {
         if (!next || !next.groups.includes(g)) {
@@ -211,29 +237,42 @@
           span[g].x1 = x;
         }
       }
-      x += GAP;
+      if (next) x += gapAt(ci);
     });
     // Forward edges: from each node of a column to a junction in the gap, and from there to
-    // each node of the next; a + sits on the junction.
+    // each node of the next. A point's + sits on the junction before its first column, or, for
+    // a point with no step (a slot), is the slot itself; the edge runs through it.
     const edges = [];
     const plus = [];
-    const has = (r) => cols.some((c) => c.region === r);
+    const R = 10;
     for (let ci = 0; ci + 1 < cols.length; ci++) {
       const a = cols[ci], bc = cols[ci + 1];
-      const ax = a.x + nw, bx = bc.x;
-      const jx = Math.round((ax + bx) / 2);
-      if (a.nodes.length === 1 && bc.nodes.length === 1 && a.nodes[0].y === bc.nodes[0].y) {
-        edges.push({ d: `M${ax} ${cy} H${bx - 2}`, arrow: true });
+      const outs = a.nodes.length ? a.nodes.map((n) => [a.x + nw, n.y + n.h / 2]) : [[a.x + SLOT / 2 + R, cy]];
+      const ins = bc.nodes.length ? bc.nodes.map((n) => [bc.x - 2, n.y + n.h / 2]) : [[bc.x + SLOT / 2 - R, cy]];
+      const arrow = bc.nodes.length > 0;
+      const jx = Math.round((a.x + widthOf(a, nw) + bc.x) / 2);
+      if (outs.length === 1 && ins.length === 1 && outs[0][1] === ins[0][1]) {
+        edges.push({ d: `M${outs[0][0]} ${outs[0][1]} H${ins[0][0]}`, arrow });
       } else {
-        for (const n of a.nodes) edges.push({ d: curve(ax, n.y + n.h / 2, jx, cy), arrow: false });
-        for (const n of bc.nodes) edges.push({ d: curve(jx, cy, bx - 2, n.y + n.h / 2), arrow: true });
+        for (const [ox, oy] of outs) edges.push({ d: curve(ox, oy, jx, cy), arrow: false });
+        for (const [ix, iy] of ins) edges.push({ d: curve(jx, cy, ix, iy), arrow });
       }
-      if (ci === 0) continue; // nothing runs between the spec session and the lock
-      // Nor between the builder and its gates: a step after each task runs after the gates,
-      // so its + sits after them (below, or before the next column).
-      if (a.region === "task" && bc.region === "task") continue;
-      plus.push(Object.assign({ x: jx, y: cy }, presetOf(a.region, bc.region, has)));
+      // A + for the point that begins here: none before the lock (nothing runs between the
+      // spec session and it), the builder's gates, or a point's second column.
+      if (!bc.point || bc.point === a.point) continue;
+      if (bc.point === "task/" && bc.nodes.length) continue;
+      const [when, pat] = bc.point.split("/");
+      plus.push({ x: bc.nodes.length ? jx : bc.x + SLOT / 2, y: cy, when, at: pat });
     }
+    // Without slots, within the task group, a + before its first column and after its last when
+    // nothing runs there yet: a step before or after each task.
+    const has = (p) => cols.some((c) => c.point === p);
+    if (span.task && !slots) {
+      if (!has("task/start")) plus.push({ x: span.task.x0 + Math.round(padOf("task") / 2), y: cy, when: "task", at: "start" });
+      if (!has("task/end")) plus.push({ x: span.task.x1 - Math.round(padOf("task") / 2), y: cy, when: "task", at: "end" });
+    }
+    // In the order they sit, for Tab.
+    plus.sort((p1, p2) => p1.x - p2.x);
     // Groups around their columns; the task group inside the phase group.
     const inGroup = (g) => cols.filter((c) => c.groups.includes(g)).flatMap((c) => c.nodes);
     const taskNodes = inGroup("task");
@@ -252,17 +291,9 @@
       }
       return { group: g, x: span[g].x0, y: top, w: span[g].x1 - span[g].x0, h: bottom - top, label: LABEL[g] };
     });
-    // Within the task group, a + before its first column and after its last when nothing runs
-    // there yet: a step before or after each task.
-    if (span.task) {
-      if (!has("task-start")) plus.push({ x: span.task.x0 + Math.round(padOf("task") / 2), y: cy, when: "task", at: "start" });
-      if (!has("task-end")) plus.push({ x: span.task.x1 - Math.round(padOf("task") / 2), y: cy, when: "task", at: "end" });
-    }
-    // In the order they sit, for Tab.
-    plus.sort((p1, p2) => p1.x - p2.x);
-    // Back-edges: the next task (over the whole task group), and what a failure leads to.
+    // Back-edges: the next task (over the task group's steps), and what a failure leads to.
     const back = [];
-    const tcols = cols.filter((c) => c.groups.includes("task"));
+    const tcols = cols.filter((c) => c.groups.includes("task") && c.nodes.length);
     if (tcols.length) {
       const f = tcols[0].nodes[0], l = tcols[tcols.length - 1].nodes[0];
       const x1 = f.x + Math.min(30, nw / 3), x2 = l.x + l.w - Math.min(30, nw / 3);
@@ -294,29 +325,6 @@
   function curve(x1, y1, x2, y2) {
     const m = Math.round((x1 + x2) / 2);
     return `M${x1} ${y1} C ${m} ${y1}, ${m} ${y2}, ${x2} ${y2}`;
-  }
-
-  // What a + adds by default, from where it sits; the form lets the engineer change it. 018:
-  // every point, before and after each task included.
-  function presetOf(left, right, has) {
-    const inPhase = (r) => ["phase-start", "task-start", "task", "task-end", "phase-end"].includes(r);
-    switch (right) {
-      case "once-start": return { when: "once", at: "start" };
-      case "phase-start": return { when: "phase", at: "start" };
-      case "task-start": return left === "task-start" ? { when: "task", at: "start" } : { when: "phase", at: "start" };
-      case "task":
-        if (left === "task-start") return { when: "task", at: "start" };
-        if (left === "task") return { when: "task", at: "end" };
-        return { when: "phase", at: "start" };
-      case "task-end": return { when: "task", at: "end" };
-      case "phase-end": return { when: "phase", at: "end" };
-      case "checkpoint": return { when: "checkpoint", at: "end" };
-      default:
-        // Before the once-steps at the end or Merge: what is missing there, in model order.
-        if (inPhase(left) && !has("checkpoint")) return { when: "checkpoint", at: "end" };
-        if (!inPhase(left) && left !== "checkpoint" && left !== "once-end" && !has("task")) return { when: "task", at: "" };
-        return { when: "once", at: "end" };
-    }
   }
 
   const FIXED = {
@@ -363,7 +371,7 @@
   }
 
   function graph() {
-    const g = layout(s.draft, kindOf);
+    const g = layout(s.draft, kindOf, { slots: true });
     const node = (n) => {
       const f = n.st ? null : FIXED[n.key];
       const k = f ? f.k : nodeKind(n.st, n.builder || n.st.agent === GATES);
@@ -380,7 +388,8 @@
         ${you ? h`<text class="you" x="${n.x + 14}" y="${n.y + n.h + 14}">fails → you</text>` : ""}
         <title>${sub}</title></g>`;
     };
-    const where = (p) => (p.when === "task" && p.at ? (p.at === "start" ? "before each task" : "after each task") : `${WHEN_LONG[p.when]}${p.at ? `, at the ${p.at}` : ""}`);
+    // Exactly the point a step added there gets (018 FR-028).
+    const where = (p) => (p.when === "task" ? { start: "before each task", end: "after each task" }[p.at] || "for each task" : `${WHEN_LONG[p.when]}, at the ${p.at || "end"}`);
     const plus = (p, i) => h`<g class="gplus" id="gp-${i}" tabindex="0" role="button" data-act="plus" data-when="${p.when}" data-at="${p.at}" aria-label="${`Add a step here (${where(p)})`}">
       <circle cx="${p.x}" cy="${p.y}" r="10"></circle><path d="M${p.x - 5} ${p.y}h10M${p.x} ${p.y - 5}v10"></path></g>`;
     return h`<div class="pl-graph${g.w > GW ? " wide" : ""}"><svg viewBox="0 0 ${g.w} ${g.h}" preserveAspectRatio="xMidYMid meet" role="group" aria-label="${`The pipeline ${s.draft.name}`}">
@@ -839,8 +848,11 @@
       const all = [...document.querySelectorAll(".pl-graph .gn")];
       const col = +el.dataset.col;
       const back = ev.key === "ArrowLeft" || ev.key === "ArrowUp";
+      // The nearest column with steps that way (a point with no step is a column without).
+      const side = all.filter((o) => (back ? +o.dataset.col < col : +o.dataset.col > col));
+      const near = side.length ? (back ? Math.max : Math.min)(...side.map((o) => +o.dataset.col)) : null;
       const next = ev.key === "ArrowLeft" || ev.key === "ArrowRight"
-        ? all.find((o) => +o.dataset.col === col + (back ? -1 : 1))
+        ? side.find((o) => +o.dataset.col === near)
         : all[all.indexOf(el) + (back ? -1 : 1)];
       if (next && (ev.key === "ArrowLeft" || ev.key === "ArrowRight" || +next.dataset.col === col)) next.focus();
     } else if ((ev.key === "Delete" || ev.key === "Backspace") && /^\d+$/.test(el.dataset.key || "")) {

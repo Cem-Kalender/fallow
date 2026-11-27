@@ -12,38 +12,36 @@ problem; then `node specs/018-pipeline-orchestration/checks/pipelines.js <root>`
 Standard, Solo, `parallel` and `every-point`. Not in Fallow's own window: the builder does not
 start Fallow.app; the window's web view lays the page out with the same CSS.
 
-**Result**: 88 checks pass, 8 fail, the same at both sizes. The 8 are one finding, "a + at every
-point", for all four pipelines.
+**Result (2026-11-27, after the designer fix)**: all 112 checks pass, at both sizes. The check
+now also asserts that each point's + is labelled with exactly that point and opens the add form
+preset to it (16 checks more than the first run's 96).
 
 | | 1440 × 900 | 390 × 844 |
 |---|---|---|
 | "verifying" / "not verifying" text anywhere on the page; a pill about verifying (FR-001) | none, all four | none, all four |
 | units of checkers alongside each other | `parallel`: 1 of 2; `every-point`: 3 of 2; Standard, Solo: none | the same |
 | each unit drawn as branches: one column, each member its own edge in from the junction and out to the next | yes, every unit | yes |
-| every + reachable by Tab (FR-029a) | 5, 4, 5, 10 of 5, 4, 5, 10 | the same |
+| **a + at every point** (FR-028): once at the start, each phase's start, before and after each task, each phase's end, each checkpoint's start and end, once at the end | **yes**, 8 +s for each of the four | **yes** |
+| each point's + labelled with exactly that point ("Add a step here (at each story's checkpoint, at the start)") | yes | yes |
+| each point's + opens the add form preset to that point (Runs and At) | yes | yes |
+| every + reachable by Tab (FR-029a) | 8 of 8, all four | the same |
 | each focused + drawn as focused (`:focus-visible`, stroke 2.5 px in the accent) | yes | yes |
-| each focused + in view in the window and the graph's box | 100 % of each | at least 81 % (Solo's first +, at the edge of the graph's scrolling box once scrolled to it); the others 100 % |
-| every + labelled ("Add a step here (<point>)") | yes | yes |
-| from a +, the add form's Runs and At reach every point, the checkpoint's start too | yes, all four | yes |
+| each focused + in view in the window and the graph's box | 100 % of each | 100 % of each |
+| from a +, the add form's Runs and At reach every point | yes, all four | yes |
 | the page scrolls sideways | no (0 px) | no (0 px) |
-| **a + at every point** (FR-028) | **no** (below) | **no** |
 
-**The finding: a + only where a column meets another, not at every point.** The graph puts one +
-on each junction between two columns (research R-13), with the point of the column after it as
-the + 's preset; a point with no step of its own has no column, so it shares the junction with
-its neighbours and gets no + of its own. Seen:
+**What changed** (research R-13, amended): a point with no step is now a narrow slot column
+holding its own +, inside its groups, the edge running through it; a point with steps has its +
+on the junction before its first column; each + says exactly its point. Only the designer page
+(`src/service/web/screens/pipelines.js`) changed; the loop page's graph, the pipeline format and
+the TOML the designer writes are as before (`us18_designer`, `us18_existing` pass unchanged).
 
-- Standard and `parallel`: +s for a phase's start, before and after each task, a checkpoint's
-  end and once at the end; **none for once at the start, a phase's end, a checkpoint's start**;
-- Solo: as Standard, and **none for once at the end** either;
-- `every-point` (a step at every point): a + for every point **but a checkpoint's start**; the +
-  before its checkpoint-start step is labelled "at each story's checkpoint, at the end", as is
-  the one after it (`presetOf` gives every + before a checkpoint column the checkpoint's end).
-
-Every point can still be reached: any + opens the add form, whose "Runs" and "At" offer all
-eight points, and Fallow places the step by when it runs. Whether that meets FR-028's "a + at
-each point" is for the spec's owner to decide; this polish phase changes no page behaviour, so
-the check is left strict and failing, and the finding is reported, not fixed.
+**The first run (before the fix)**: 88 checks passed, 8 failed, the same at both sizes, one
+finding, "a + at every point", for all four pipelines: the graph put one + on each junction
+between two columns, so a point with no step had no + of its own (Standard and `parallel`: once
+at the start, a phase's end, a checkpoint's start; Solo also once at the end; `every-point`: a
+checkpoint's start, the + before its checkpoint-start step being labelled "at each story's
+checkpoint, at the end").
 
 ## T057: the quickstart (2026-11-27)
 
@@ -54,7 +52,10 @@ Run from the builder's shell with a scratch `HOME`, on the fake runtime:
 - **3**: `us18_points` 8 passed (three runs in a row on their own). One earlier run, while the
   headless-Chrome check and seven other test binaries ran at the same time, failed
   `checkers_alongside_each_other_at_a_phase_end_overlap_and_are_judged_together` at its
-  "they overlap in time" assertion (line 269): a timing assertion under load, not reproduced.
+  "they overlap in time" assertion (line 269): a timing assertion under load. Fixed: each
+  checker now takes 8 s (was 2 s) and the overlap is measured from the steps' own
+  `step_started` / `step_finished` in the loop's log, as `us18_builders`' SC-002 test is;
+  `us18_points` then passed 5 runs in a row.
 - **4**: `us18_builders` 17 passed.
 - **5**: `us18_lock` 11 passed; `cargo test --lib` 243 passed (`run::groups` among them).
 - **6**: `us18_existing` 4 passed (the two new tests among them); `defs::pipeline` in the lib run.
