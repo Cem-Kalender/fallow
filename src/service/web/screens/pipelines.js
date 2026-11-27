@@ -25,28 +25,42 @@
   const agentOf = (name) => s.agents.find((a) => a.name === name);
   const kindOf = (name) => (name === GATES ? "gates" : (agentOf(name) || {}).kind);
 
+  // 018 (contracts/pipeline.md "Points"): the builder is the one maker per task without `at`
+  // (the loop view marks it); it and the gates are the task itself. Every other task step runs
+  // before or after each task.
+  function builderOf(steps, kind) {
+    const marked = steps.findIndex((st) => st.builder);
+    if (marked >= 0) return marked;
+    return steps.findIndex((st) => st.when === "task" && st.agent !== GATES && !st.at && kind(st.agent) !== "checker");
+  }
+  const coreOf = (st, i, b) => st.when === "task" && (i === b || st.agent === GATES);
+  // The point a step runs at, as a key: steps with the same key run at the same point.
+  const pointKey = (st, i, b) => (st.when === "task" ? (coreOf(st, i, b) ? "task/" : `task/${st.at || "end"}`) : `${st.when}/${st.at || "end"}`);
+
   // ---- The pipeline as TOML (contracts/pipeline.md) ------------------------------------
   const str = (v) => JSON.stringify(String(v));
   function toToml(d) {
+    const b = builderOf(d.steps, kindOf);
     const out = [`name = ${str(d.name)}`];
     if (d.description) out.push(`description = ${str(d.description)}`);
     out.push("", "[caps]", `task_repairs = ${d.caps.task_repairs}`, `review_rounds = ${d.caps.review_rounds}`);
     // 018: written only when not 1, as the service writes it.
     if (d.caps.builders && +d.caps.builders !== 1) out.push(`builders = ${d.caps.builders}`);
-    for (const st of d.steps) {
+    d.steps.forEach((st, i) => {
       out.push("", "[[step]]", `agent = ${str(st.agent)}`, `when = ${str(st.when)}`);
-      if (st.at && st.when !== "task") out.push(`at = ${str(st.at)}`);
+      // 018: `at` on every step but the builder and the gates, before or after each task too.
+      if (st.at && !coreOf(st, i, b)) out.push(`at = ${str(st.at)}`);
       if ((st.paths || []).length) out.push(`paths = [${st.paths.map(str).join(", ")}]`);
       out.push(`on_fail = ${str(st.on_fail)}`);
       if ((st.parallel_with || []).length) out.push(`parallel_with = [${st.parallel_with.map(str).join(", ")}]`);
-    }
+    });
     return out.join("\n") + "\n";
   }
 
   function draftOf(pl, extra) {
     return Object.assign({
       name: pl.name, description: pl.description || "",
-      caps: Object.assign({ task_repairs: 3, review_rounds: 3 }, pl.caps || {}),
+      caps: Object.assign({ task_repairs: 3, review_rounds: 3, builders: 1 }, pl.caps || {}),
       steps: JSON.parse(JSON.stringify(pl.steps || [])),
       source: pl.source || null, saved: !!pl.source, proposed: false,
       verifying: pl.verifying, missing: pl.missing || [], checks: pl.checks || [], problems: [],
@@ -117,46 +131,64 @@
 
   function layout(d, kind) {
     const steps = d.steps.map((st, i) => ({ st, i }));
-    const pick = (when, at) => steps.filter((x) => x.st.when === when && (at === null || atOf(x.st) === at));
-    const col = (region, nodes, group) => ({ region, nodes, group });
-    const one = (region, group) => (x) => col(region, [x], group);
+    const b = builderOf(d.steps, kind);
+    // 018 (research R-13): every point holds units, checkers alongside each other stacked.
+    const at = (key) => unitsOf(steps.filter((x) => pointKey(x.st, x.i, b) === key));
+    const col = (region, nodes, groups) => ({ region, nodes, groups });
+    const units = (key, region, groups) => at(key).map((u) => col(region, u, groups));
+    const IN_TASK = ["phase", "task"];
     const cols = [
-      col("fixed", [{ key: "spec" }], null),
-      col("fixed", [{ key: "lock" }], null),
-      ...pick("once", "start").map(one("once-start", null)),
-      ...pick("phase", "start").map(one("phase-start", "phase")),
-      ...pick("task", null).map(one("task", "phase")),
-      ...pick("phase", "end").map(one("phase-end", "phase")),
-      ...pick("checkpoint", "start").map(one("checkpoint", "checkpoint")),
-      ...unitsOf(pick("checkpoint", "end")).map((u) => col("checkpoint", u, "checkpoint")),
-      ...pick("once", "end").map(one("once-end", null)),
-      col("fixed", [{ key: "merge" }], null),
+      col("fixed", [{ key: "spec" }], []),
+      col("fixed", [{ key: "lock" }], []),
+      ...units("once/start", "once-start", []),
+      ...units("phase/start", "phase-start", ["phase"]),
+      // The task group inside the phase group: before each task, the task, after it.
+      ...units("task/start", "task-start", IN_TASK),
+      ...steps.filter((x) => coreOf(x.st, x.i, b)).map((x) => col("task", [x], IN_TASK)),
+      ...units("task/end", "task-end", IN_TASK),
+      ...units("phase/end", "phase-end", ["phase"]),
+      ...units("checkpoint/start", "checkpoint", ["checkpoint"]),
+      ...units("checkpoint/end", "checkpoint", ["checkpoint"]),
+      ...units("once/end", "once-end", []),
+      col("fixed", [{ key: "merge" }], []),
     ];
-    const groups = ["phase", "checkpoint"].filter((g) => cols.some((c) => c.group === g));
+    const groups = ["phase", "task", "checkpoint"].filter((g) => cols.some((c) => c.groups.includes(g)));
+    // Inside the task group, room for a + before and after its columns.
+    const padOf = (g) => (g === "task" ? 30 : PAD);
     // Node width: what fits, at most 150; many steps also bring the columns closer. Below 70
     // the drawing grows wider instead, and the box scrolls.
     const GAP = cols.length > 9 ? 30 : 44;
     // A group is at least as wide as its label: a narrow one gets room on both sides.
-    const LABEL = { phase: "FOR EACH PHASE IN tasks.md", checkpoint: "AT EACH STORY'S CHECKPOINT" };
+    const LABEL = { phase: "FOR EACH PHASE IN tasks.md", task: "FOR EACH TASK", checkpoint: "AT EACH STORY'S CHECKPOINT" };
     const roomFor = (w) => Object.fromEntries(groups.map((g) => {
-      const n = cols.filter((c) => c.group === g).length;
-      return [g, Math.max(0, Math.ceil((LABEL[g].length * 6.8 + 28 - (n * w + (n - 1) * GAP + 2 * PAD)) / 2))];
+      const n = cols.filter((c) => c.groups.includes(g)).length;
+      return [g, Math.max(0, Math.ceil((LABEL[g].length * 6.8 + 28 - (n * w + (n - 1) * GAP + 2 * padOf(g))) / 2))];
     }));
-    const widthWith = (room) => Math.max(70, Math.min(150, Math.floor((GW - 40 - (cols.length - 1) * GAP - groups.reduce((a, g) => a + 2 * (PAD + room[g]), 0)) / cols.length)));
+    const widthWith = (room) => Math.max(70, Math.min(150, Math.floor((GW - 40 - (cols.length - 1) * GAP - groups.reduce((a, g) => a + 2 * (padOf(g) + room[g]), 0)) / cols.length)));
     let nw = widthWith(roomFor(150));
     const room = roomFor(nw);
     nw = Math.min(nw, widthWith(room));
-    const total = cols.length * nw + (cols.length - 1) * GAP + groups.reduce((a, g) => a + 2 * (PAD + room[g]), 0);
+    const total = cols.length * nw + (cols.length - 1) * GAP + groups.reduce((a, g) => a + 2 * (padOf(g) + room[g]), 0);
     const gw = Math.max(GW, total + 40);
-    // A tall stack of checkers alongside each other makes the drawing taller.
+    // A tall stack of checkers alongside each other makes the drawing taller, more so inside
+    // the task group (two labels above it).
     const most = Math.max(...cols.map((c) => c.nodes.length));
-    const gh = Math.max(GH, most * 34 + (most - 1) * 14 + 130);
+    const mostInTask = Math.max(0, ...cols.filter((c) => c.groups.includes("task")).map((c) => c.nodes.length));
+    const gh = Math.max(GH, most * 34 + (most - 1) * 14 + 130, mostInTask > 1 ? mostInTask * 34 + (mostInTask - 1) * 14 + 190 : 0);
     const cy = Math.round(gh / 2);
     let x = Math.round((gw - total) / 2);
     const nodes = [];
+    const span = {};
     cols.forEach((c, ci) => {
       const prev = cols[ci - 1];
-      if (c.group && (!prev || prev.group !== c.group)) x += PAD + room[c.group];
+      const next = cols[ci + 1];
+      // Groups entered here, the outer first.
+      for (const g of c.groups) {
+        if (!prev || !prev.groups.includes(g)) {
+          span[g] = { x0: x };
+          x += padOf(g) + room[g];
+        }
+      }
       c.x = x;
       const k = c.nodes.length;
       const nh = k === 1 ? 70 : Math.min(70, Math.floor((gh - 130 - (k - 1) * 14) / k));
@@ -166,13 +198,19 @@
         if (n.st) {
           node.key = String(n.i);
           node.role = n.st.agent === GATES ? "gates" : kind(n.st.agent) || "unknown";
+          node.builder = n.i === b;
         } else node.role = "fixed";
         nodes.push(node);
         c.nodes[r] = node;
       });
       x += nw;
-      const next = cols[ci + 1];
-      if (c.group && (!next || next.group !== c.group)) x += PAD + room[c.group];
+      // Groups left here, the inner first.
+      for (const g of [...c.groups].reverse()) {
+        if (!next || !next.groups.includes(g)) {
+          x += padOf(g) + room[g];
+          span[g].x1 = x;
+        }
+      }
       x += GAP;
     });
     // Forward edges: from each node of a column to a junction in the gap, and from there to
@@ -181,42 +219,59 @@
     const plus = [];
     const has = (r) => cols.some((c) => c.region === r);
     for (let ci = 0; ci + 1 < cols.length; ci++) {
-      const a = cols[ci], b = cols[ci + 1];
-      const ax = a.x + nw, bx = b.x;
+      const a = cols[ci], bc = cols[ci + 1];
+      const ax = a.x + nw, bx = bc.x;
       const jx = Math.round((ax + bx) / 2);
-      if (a.nodes.length === 1 && b.nodes.length === 1 && a.nodes[0].y === b.nodes[0].y) {
+      if (a.nodes.length === 1 && bc.nodes.length === 1 && a.nodes[0].y === bc.nodes[0].y) {
         edges.push({ d: `M${ax} ${cy} H${bx - 2}`, arrow: true });
       } else {
         for (const n of a.nodes) edges.push({ d: curve(ax, n.y + n.h / 2, jx, cy), arrow: false });
-        for (const n of b.nodes) edges.push({ d: curve(jx, cy, bx - 2, n.y + n.h / 2), arrow: true });
+        for (const n of bc.nodes) edges.push({ d: curve(jx, cy, bx - 2, n.y + n.h / 2), arrow: true });
       }
       if (ci === 0) continue; // nothing runs between the spec session and the lock
-      plus.push(Object.assign({ x: jx, y: cy }, presetOf(a.region, b.region, has)));
+      plus.push(Object.assign({ x: jx, y: cy }, presetOf(a.region, bc.region, has)));
     }
-    // Groups around their columns.
+    // Groups around their columns; the task group inside the phase group.
+    const inGroup = (g) => cols.filter((c) => c.groups.includes(g)).flatMap((c) => c.nodes);
+    const taskNodes = inGroup("task");
+    const taskTop = Math.min(98, ...taskNodes.map((n) => n.y - 40));
     const boxes = groups.map((g) => {
-      const cs = cols.filter((c) => c.group === g);
-      const ns = cs.flatMap((c) => c.nodes);
-      const top = Math.min(70, ...ns.map((n) => n.y - 40));
-      const bottom = Math.max(g === "phase" ? gh - 60 : gh - 40, ...ns.map((n) => n.y + n.h + 30));
-      const x0 = cs[0].x - PAD - room[g], x1 = cs[cs.length - 1].x + nw + PAD + room[g];
-      return { group: g, x: x0, y: top, w: x1 - x0, h: bottom - top,
-        label: LABEL[g] };
+      const ns = inGroup(g);
+      let top = Math.min(70, ...ns.map((n) => n.y - 40));
+      let bottom = Math.max(g === "phase" ? gh - 60 : gh - 40, ...ns.map((n) => n.y + n.h + 30));
+      if (g === "phase" && taskNodes.length) {
+        top = Math.min(top, taskTop - 28);
+        bottom = Math.max(bottom, ...taskNodes.map((n) => n.y + n.h + 44));
+      }
+      if (g === "task") {
+        top = taskTop;
+        bottom = Math.max(gh - 74, ...ns.map((n) => n.y + n.h + 30));
+      }
+      return { group: g, x: span[g].x0, y: top, w: span[g].x1 - span[g].x0, h: bottom - top, label: LABEL[g] };
     });
-    // Back-edges: the next task, and what a failure leads to.
-    const back = [];
-    const tasks = cols.filter((c) => c.region === "task").map((c) => c.nodes[0]);
-    if (tasks.length) {
-      const f = tasks[0], l = tasks[tasks.length - 1];
-      const x1 = f.x + Math.min(30, nw / 3), x2 = l.x + l.w - Math.min(30, nw / 3);
-      back.push({ kind: "next", d: `M${x2} ${f.y} C ${x2} ${f.y - 50}, ${x1} ${f.y - 50}, ${x1} ${f.y - 2}`, label: "next task", lx: (x1 + x2) / 2, ly: f.y - 44 });
+    // Within the task group, a + before its first column and after its last when nothing runs
+    // there yet: a step before or after each task.
+    if (span.task) {
+      if (!has("task-start")) plus.push({ x: span.task.x0 + Math.round(padOf("task") / 2), y: cy, when: "task", at: "start" });
+      if (!has("task-end")) plus.push({ x: span.task.x1 - Math.round(padOf("task") / 2), y: cy, when: "task", at: "end" });
     }
-    const builder = nodes.find((n) => n.st && n.st.when === "task" && n.st.agent !== GATES);
+    // In the order they sit, for Tab.
+    plus.sort((p1, p2) => p1.x - p2.x);
+    // Back-edges: the next task (over the whole task group), and what a failure leads to.
+    const back = [];
+    const tcols = cols.filter((c) => c.groups.includes("task"));
+    if (tcols.length) {
+      const f = tcols[0].nodes[0], l = tcols[tcols.length - 1].nodes[0];
+      const x1 = f.x + Math.min(30, nw / 3), x2 = l.x + l.w - Math.min(30, nw / 3);
+      const y = Math.min(f.y, l.y);
+      back.push({ kind: "next", d: `M${x2} ${l.y} C ${x2} ${y - 50}, ${x1} ${y - 50}, ${x1} ${f.y - 2}`, label: "next task", lx: (x1 + x2) / 2, ly: y - 44 });
+    }
+    const builder = nodes.find((n) => n.builder);
     if (builder) {
       const bx = builder.x + Math.min(50, builder.w / 2), by = builder.y + builder.h;
       const phaseFail = nodes.filter((n) => n.st && (n.st.when === "task" || n.st.when === "phase") && n !== builder && n.st.on_fail === "repair");
       if (phaseFail.length) {
-        const s0 = phaseFail[phaseFail.length - 1];
+        const s0 = phaseFail.reduce((m, n) => (n.x > m.x ? n : m));
         const sx = s0.x + s0.w / 2, sy = s0.y + s0.h;
         back.push({ kind: "repair", d: `M${sx} ${sy} C ${sx} ${sy + 60}, ${bx} ${sy + 60}, ${bx} ${by + 2}`,
           label: `fails → repair, same session · ≤ ${d.caps.task_repairs} per task`, lx: (sx + bx) / 2, ly: sy + 64 });
@@ -238,13 +293,19 @@
     return `M${x1} ${y1} C ${m} ${y1}, ${m} ${y2}, ${x2} ${y2}`;
   }
 
-  // What a + adds by default, from where it sits; the form lets the engineer change it.
+  // What a + adds by default, from where it sits; the form lets the engineer change it. 018:
+  // every point, before and after each task included.
   function presetOf(left, right, has) {
-    const inPhase = (r) => r === "phase-start" || r === "task" || r === "phase-end";
+    const inPhase = (r) => ["phase-start", "task-start", "task", "task-end", "phase-end"].includes(r);
     switch (right) {
       case "once-start": return { when: "once", at: "start" };
       case "phase-start": return { when: "phase", at: "start" };
-      case "task": return inPhase(left) ? { when: "task", at: "" } : { when: "phase", at: "start" };
+      case "task-start": return left === "task-start" ? { when: "task", at: "start" } : { when: "phase", at: "start" };
+      case "task":
+        if (left === "task-start") return { when: "task", at: "start" };
+        if (left === "task") return { when: "task", at: "end" };
+        return { when: "phase", at: "start" };
+      case "task-end": return { when: "task", at: "end" };
       case "phase-end": return { when: "phase", at: "end" };
       case "checkpoint": return { when: "checkpoint", at: "end" };
       default:
@@ -261,18 +322,22 @@
     merge: { k: "ONCE", t: "Merge", s: "you", text: "You merge the gated commit, once for the whole feature." },
   };
 
-  function nodeKind(st) {
-    const where = { task: "EACH TASK", phase: `EACH PHASE, AT THE ${atOf(st).toUpperCase()}`, checkpoint: atOf(st) === "start" ? "CHECKPOINT, AT THE START" : "CHECKPOINT", once: `ONCE, AT THE ${atOf(st).toUpperCase()}` }[st.when] || st.when;
+  // `core`: the builder or the gates (the task itself).
+  function nodeKind(st, core) {
+    const task = core ? "EACH TASK" : atOf(st) === "start" ? "BEFORE EACH TASK" : "AFTER EACH TASK";
+    const where = { task, phase: `EACH PHASE, AT THE ${atOf(st).toUpperCase()}`, checkpoint: atOf(st) === "start" ? "CHECKPOINT, AT THE START" : "CHECKPOINT", once: `ONCE, AT THE ${atOf(st).toUpperCase()}` }[st.when] || st.when;
     return (st.paths || []).length ? `${where} · ${st.paths.join(", ")} ONLY` : where;
   }
 
-  function nodeSub(st) {
+  function nodeSub(st, builder) {
     if (st.agent === GATES) return "Fallow · vs the baseline";
     const k = kindOf(st.agent);
     if (!k) return "no such agent";
-    if (st.when === "task") return "one session per phase";
+    // 018 FR-028: the builder says how many work on [P] tasks at once.
+    const n = +(s.draft.caps.builders || 1);
+    if (builder) return n > 1 ? `up to ${n} builders on [P] tasks` : "one session per phase";
     if ((st.parallel_with || []).length) return `alongside ${st.parallel_with.join(", ")}`;
-    const others = s.draft.steps.filter((o) => (o.parallel_with || []).includes(st.agent)).map((o) => o.agent);
+    const others = s.draft.steps.filter((o) => o.when === st.when && atOf(o) === atOf(st) && (o.parallel_with || []).includes(st.agent)).map((o) => o.agent);
     if (others.length) return `alongside ${others.join(", ")}`;
     const a = agentOf(st.agent);
     return a ? a.description : "";
@@ -288,17 +353,19 @@
   function nodeLabel(n) {
     if (!n.st) return `${FIXED[n.key].t}, always part of the pipeline: ${FIXED[n.key].s}`;
     const st = n.st;
+    const core = n.builder || st.agent === GATES;
     const at = st.when === "task" ? "" : `, at the ${atOf(st)}`;
-    return `${st.agent === GATES ? "Fallow's gates" : st.agent}, ${WHEN_LONG[st.when] || st.when}${at}${n.role === "unknown" ? ", no such agent" : `, ${n.role === "gates" ? "run by Fallow" : n.role}`}`;
+    const when = st.when !== "task" ? WHEN_LONG[st.when] || st.when : core ? "for each task" : atOf(st) === "start" ? "before each task" : "after each task";
+    return `${st.agent === GATES ? "Fallow's gates" : st.agent}, ${when}${at}${n.role === "unknown" ? ", no such agent" : `, ${n.role === "gates" ? "run by Fallow" : n.role}`}`;
   }
 
   function graph() {
     const g = layout(s.draft, kindOf);
     const node = (n) => {
       const f = n.st ? null : FIXED[n.key];
-      const k = f ? f.k : nodeKind(n.st);
+      const k = f ? f.k : nodeKind(n.st, n.builder || n.st.agent === GATES);
       const t = f ? f.t : n.st.agent === GATES ? "Gates" : n.st.agent;
-      const sub = f ? f.s : nodeSub(n.st);
+      const sub = f ? f.s : nodeSub(n.st, n.builder);
       const sel = s.sel === n.key;
       const you = n.st && n.st.on_fail === "engineer";
       const small = n.h < 56;
@@ -310,7 +377,8 @@
         ${you ? h`<text class="you" x="${n.x + 14}" y="${n.y + n.h + 14}">fails → you</text>` : ""}
         <title>${sub}</title></g>`;
     };
-    const plus = (p, i) => h`<g class="gplus" id="gp-${i}" tabindex="0" role="button" data-act="plus" data-when="${p.when}" data-at="${p.at}" aria-label="${`Add a step here (${WHEN_LONG[p.when]}${p.at ? `, at the ${p.at}` : ""})`}">
+    const where = (p) => (p.when === "task" && p.at ? (p.at === "start" ? "before each task" : "after each task") : `${WHEN_LONG[p.when]}${p.at ? `, at the ${p.at}` : ""}`);
+    const plus = (p, i) => h`<g class="gplus" id="gp-${i}" tabindex="0" role="button" data-act="plus" data-when="${p.when}" data-at="${p.at}" aria-label="${`Add a step here (${where(p)})`}">
       <circle cx="${p.x}" cy="${p.y}" r="10"></circle><path d="M${p.x - 5} ${p.y}h10M${p.x} ${p.y - 5}v10"></path></g>`;
     return h`<div class="pl-graph${g.w > GW ? " wide" : ""}"><svg viewBox="0 0 ${g.w} ${g.h}" preserveAspectRatio="xMidYMid meet" role="group" aria-label="${`The pipeline ${s.draft.name}`}">
       <defs><marker id="pg-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0L10,5L0,10z" class="ah"></path></marker>
@@ -353,7 +421,9 @@
       <div class="card pad-14 small lh"><b>What this pipeline checks</b><div class="muted mt-6">${guarantee}</div>
         <div class="mt-10">Repairs: at most
           <label class="sr" for="cap-tasks">Repairs per task</label><input id="cap-tasks" class="num" type="number" min="1" max="20" value="${d.caps.task_repairs}" data-change="cap" data-k="task_repairs"> per task and
-          <label class="sr" for="cap-reviews">Review rounds</label><input id="cap-reviews" class="num" type="number" min="1" max="20" value="${d.caps.review_rounds}" data-change="cap" data-k="review_rounds"> review rounds per story, then you.</div></div>
+          <label class="sr" for="cap-reviews">Review rounds</label><input id="cap-reviews" class="num" type="number" min="1" max="20" value="${d.caps.review_rounds}" data-change="cap" data-k="review_rounds"> review rounds per story, then you.</div>
+        <div class="mt-10">Builders: up to
+          <label class="sr" for="cap-builders">Builders at once on [P] tasks, 1 to 8</label><input id="cap-builders" class="num" type="number" min="1" max="8" value="${d.caps.builders || 1}" data-change="cap" data-k="builders"> builders on [P] tasks, each in its own working copy.</div></div>
     </div>`;
   }
 
@@ -376,12 +446,15 @@
 
   function stepForm(st, i) {
     const k = kindOf(st.agent);
-    const same = (o) => o !== st && o.when === st.when && atOf(o) === atOf(st) && kindOf(o.agent) === "checker";
-    // Only checkers at a story's checkpoint (its end) run alongside each other (008 R-7).
-    const peers = k === "checker" && st.when === "checkpoint" && atOf(st) === "end" ? s.draft.steps.filter(same) : [];
+    const b = builderOf(s.draft.steps, kindOf);
+    const core = coreOf(st, i, b);
+    const key = pointKey(st, i, b);
+    // 018 (research R-3): checkers at the same point, any point, may run alongside each other.
+    const peers = k === "checker" ? s.draft.steps.filter((o, j) => o !== st && pointKey(o, j, b) === key && kindOf(o.agent) === "checker") : [];
     const along = (o) => (st.parallel_with || []).includes(o.agent) || (o.parallel_with || []).includes(st.agent);
-    const region = (o) => `${o.when}/${o.when === "task" ? "" : atOf(o)}`;
-    const mates = s.draft.steps.map((o, j) => [o, j]).filter(([o]) => region(o) === region(st));
+    // Nothing of a point's work is built at its start: a checker there asks the engineer.
+    const noRepair = k === "checker" && atOf(st) === "start";
+    const mates = s.draft.steps.map((o, j) => [o, j]).filter(([o, j]) => pointKey(o, j, b) === key);
     const pos = mates.findIndex(([, j]) => j === i);
     return h`<div class="row wrap gap-6"><span class="small muted">SELECTED STEP</span><span class="grow"></span>
         ${mates.length > 1 ? h`<button class="btn btn2 xs" id="st-earlier" data-act="earlier" data-i="${i}"${raw(pos === 0 ? " disabled" : "")}>Earlier</button><button class="btn btn2 xs" id="st-later" data-act="later" data-i="${i}"${raw(pos === mates.length - 1 ? " disabled" : "")}>Later</button>` : ""}
@@ -390,23 +463,28 @@
       <div class="step-form mt-10">
         <div class="field"><label for="st-agent">Agent</label><select id="st-agent" data-change="step-field" data-i="${i}" data-k="agent">${agentOpts(st.agent)}</select></div>
         <div class="field"><label for="st-when">Runs</label><select id="st-when" data-change="step-field" data-i="${i}" data-k="when">${whenOpts(st.when)}</select></div>
-        ${st.when !== "task" ? h`<div class="field"><label for="st-at">At</label><select id="st-at" data-change="step-field" data-i="${i}" data-k="at">${opt("end", "the end", atOf(st))}${opt("start", "the start", atOf(st))}</select></div>` : ""}
+        ${st.when !== "task" ? h`<div class="field"><label for="st-at">At</label><select id="st-at" data-change="step-field" data-i="${i}" data-k="at">${opt("end", "the end", atOf(st))}${opt("start", "the start", atOf(st))}</select></div>`
+          : !core ? h`<div class="field"><label for="st-at">At</label><select id="st-at" data-change="step-field" data-i="${i}" data-k="at">${opt("end", "after each task", atOf(st))}${opt("start", "before each task", atOf(st))}</select></div>` : ""}
         <div class="field"><label for="st-paths">Only when these paths changed</label><input id="st-paths" type="text" class="mono" placeholder="api/**, auth/**" value="${(st.paths || []).join(", ")}" data-change="step-field" data-i="${i}" data-k="paths"></div>
-        <div class="field"><label for="st-fail">On failure</label><select id="st-fail" data-change="step-field" data-i="${i}" data-k="on_fail">${opt("repair", "a repair by the builder", st.on_fail)}${opt("engineer", "ask me", st.on_fail)}</select></div>
+        <div class="field"><label for="st-fail">On failure</label><select id="st-fail" data-change="step-field" data-i="${i}" data-k="on_fail"><option value="repair"${raw(st.on_fail === "repair" ? " selected" : "")}${raw(noRepair ? " disabled" : "")}>a repair by the builder${noRepair ? " (not at a start)" : ""}</option>${opt("engineer", "ask me", st.on_fail)}</select></div>
         ${peers.length ? h`<fieldset class="field along"><legend>Alongside</legend>${peers.map((o) => h`<label class="row gap-6"><input type="checkbox" id="along-${o.agent}" data-change="along" data-i="${i}" data-agent="${o.agent}"${raw(along(o) ? " checked" : "")}> ${o.agent}</label>`)}</fieldset>` : ""}
       </div>`;
   }
 
   function addForm() {
     const p = s.adding;
-    // A checker added at a checkpoint's end may run alongside the checkers already there.
-    const peers = kindOf(p.agent) === "checker" && p.when === "checkpoint" && (p.at || "end") === "end"
-      ? s.draft.steps.filter((o) => o.agent !== p.agent && o.when === "checkpoint" && atOf(o) === "end" && kindOf(o.agent) === "checker") : [];
+    const b = builderOf(s.draft.steps, kindOf);
+    // A checker added at a point may run alongside the checkers already there (018: any point).
+    const key = `${p.when}/${p.at || "end"}`;
+    const peers = kindOf(p.agent) === "checker"
+      ? s.draft.steps.filter((o, j) => o.agent !== p.agent && pointKey(o, j, b) === key && kindOf(o.agent) === "checker") : [];
+    const taskAt = p.when === "task" && p.agent !== GATES && (!!p.at || b >= 0);
     return h`<div class="small muted">ADD A STEP</div>
       <div class="step-form mt-10">
         <div class="field"><label for="add-agent">Agent</label><select id="add-agent" data-change="add-field" data-k="agent">${agentOpts(p.agent)}</select></div>
         <div class="field"><label for="add-when">Runs</label><select id="add-when" data-change="add-when">${whenOpts(p.when)}</select></div>
-        ${p.when !== "task" ? h`<div class="field"><label for="add-at">At</label><select id="add-at" data-change="add-field" data-k="at">${opt("end", "the end", p.at || "end")}${opt("start", "the start", p.at || "end")}</select></div>` : ""}
+        ${p.when !== "task" ? h`<div class="field"><label for="add-at">At</label><select id="add-at" data-change="add-field" data-k="at">${opt("end", "the end", p.at || "end")}${opt("start", "the start", p.at || "end")}</select></div>`
+          : taskAt ? h`<div class="field"><label for="add-at">At</label><select id="add-at" data-change="add-field" data-k="at">${opt("end", "after each task", p.at || "end")}${opt("start", "before each task", p.at || "end")}</select></div>` : ""}
         ${peers.length ? h`<fieldset class="field along"><legend>Alongside</legend>${peers.map((o) => h`<label class="row gap-6"><input type="checkbox" id="add-along-${o.agent}" data-change="add-along" data-agent="${o.agent}"${raw((p.along || []).includes(o.agent) ? " checked" : "")}> ${o.agent}</label>`)}</fieldset>` : ""}
       </div>
       <div class="row wrap gap-8 mt-10"><button class="btn sm" data-act="add-confirm">Add</button><button class="btn btn2 sm" data-act="add-cancel">Cancel</button>
@@ -549,12 +627,16 @@
         s.focus = `gn-${s.sel}`;
         return render();
       case "plus": {
-        // The agent a step there usually has: a checker at checkpoints, a maker elsewhere.
-        const want = el.dataset.when === "checkpoint" ? "checker" : "maker";
-        const taskMaker = d.steps.some((st) => st.when === "task" && kindOf(st.agent) === "maker");
-        const fresh = el.dataset.when === "task" && taskMaker ? null
+        // The agent a step there usually has: a checker at checkpoints and after each task, a
+        // maker elsewhere; the gates after each task when the pipeline has none.
+        const when = el.dataset.when;
+        const at = el.dataset.at || "";
+        const want = when === "checkpoint" || (when === "task" && at === "end") ? "checker" : "maker";
+        const hasBuilder = builderOf(d.steps, kindOf) >= 0;
+        const gates = when === "task" && hasBuilder && (!at || (at === "end" && !d.steps.some((st) => st.agent === GATES)));
+        const fresh = gates ? null
           : s.agents.find((a) => a.kind === want && !d.steps.some((st) => st.agent === a.name)) || s.agents.find((a) => a.kind === want);
-        s.adding = { when: el.dataset.when, at: el.dataset.at || "end", agent: fresh ? fresh.name : GATES };
+        s.adding = { when, at: at || (when === "task" ? "" : "end"), agent: fresh ? fresh.name : GATES };
         s.sel = null;
         s.focus = "add-agent";
         return render();
@@ -580,7 +662,9 @@
         const agent = document.getElementById("add-agent").value;
         const along = [...document.querySelectorAll("[data-change=add-along]")].filter((x) => x.checked).map((x) => x.dataset.agent);
         const st = { agent, when: s.adding.when, on_fail: "repair", paths: [], parallel_with: along };
-        if (st.when !== "task") st.at = at ? at.value : "end";
+        // 018: a step before or after each task has `at`; the builder and the gates do not.
+        if (st.when !== "task" || (agent !== GATES && at)) st.at = at ? at.value : "end";
+        if (kindOf(agent) === "checker" && st.at === "start") st.on_fail = "engineer";
         d.steps.push(st);
         s.adding = null;
         s.sel = String(d.steps.length - 1);
@@ -590,8 +674,8 @@
       case "earlier": case "later": {
         // Order matters only among the steps that run at the same point.
         const i = +el.dataset.i;
-        const region = (o) => `${o.when}/${o.when === "task" ? "" : o.at || "end"}`;
-        const mates = d.steps.map((o, j) => j).filter((j) => region(d.steps[j]) === region(d.steps[i]));
+        const b = builderOf(d.steps, kindOf);
+        const mates = d.steps.map((o, j) => j).filter((j) => pointKey(d.steps[j], j, b) === pointKey(d.steps[i], i, b));
         const k = mates.indexOf(i) + (name === "earlier" ? -1 : 1);
         if (k < 0 || k >= mates.length) return;
         const j = mates[k];
@@ -692,7 +776,13 @@
         return;
       case "based": if (el.value) { pickPipeline(el.value); s.draft.name = `${el.value}-copy`; s.draft.saved = false; s.dirty = true; } return render();
       case "name": d.name = el.value.trim(); d.saved = false; d.source = null; s.dirty = true; return render();
-      case "cap": d.caps[el.dataset.k] = Math.max(1, parseInt(el.value, 10) || 1); return changed();
+      case "cap": {
+        // 018: builders are 1 to 8 (contracts/pipeline.md).
+        const most = el.dataset.k === "builders" ? 8 : Infinity;
+        d.caps[el.dataset.k] = Math.min(most, Math.max(1, parseInt(el.value, 10) || 1));
+        s.focus = el.id;
+        return changed();
+      }
       case "along": {
         // Alongside is symmetric: unticking a step drops the link in both directions.
         const st = stepAt(el);
@@ -708,13 +798,23 @@
         const k = el.dataset.k;
         if (k === "paths") st.paths = el.value.split(",").map((x) => x.trim()).filter(Boolean);
         else st[k] = el.value;
-        if (k === "when" && st.when === "task") delete st.at;
+        if ((k === "when" || k === "agent") && st.when === "task") {
+          // 018: the gates and the one builder take no `at`; any other step per task runs
+          // after each task (a checker) or before it (another maker).
+          const i = +el.dataset.i;
+          const other = d.steps.some((o, j) => j !== i && o.when === "task" && o.agent !== GATES && !o.at && kindOf(o.agent) !== "checker");
+          if (st.agent === GATES || (kindOf(st.agent) !== "checker" && !other)) delete st.at;
+          else if (!st.at) st.at = kindOf(st.agent) === "checker" ? "end" : "start";
+        }
+        // A checker at a start asks the engineer: nothing of that point's work is built yet.
+        if (kindOf(st.agent) === "checker" && atOf(st) === "start") st.on_fail = "engineer";
         if (k === "agent" || k === "when" || k === "at") {
-          const at = (x) => `${x.when}/${x.when === "task" ? "" : x.at || "end"}`;
+          const b = builderOf(d.steps, kindOf);
+          const key = (x) => pointKey(x, d.steps.indexOf(x), b);
           for (const o of d.steps) {
             const checker = (a) => kindOf(a) === "checker";
             o.parallel_with = checker(o.agent)
-              ? (o.parallel_with || []).filter((p) => checker(p) && d.steps.some((x) => x !== o && x.agent === p && at(x) === at(o)))
+              ? (o.parallel_with || []).filter((p) => checker(p) && d.steps.some((x) => x !== o && x.agent === p && key(x) === key(o)))
               : [];
           }
         }

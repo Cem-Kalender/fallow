@@ -300,13 +300,15 @@ fn step(run: &mut Run, ctx: &Ctx) -> Result<(), String> {
                     else {
                         return false;
                     };
-                    let mates = alongside_of(run, ctx, st.def.as_deref());
-                    let since = round_start(run, &l, part);
+                    let mates = alongside_of(run, ctx, st.def.as_deref(), Some(part));
+                    let since = unit_since(run, &l, part);
                     run.state.steps.values().any(|x| {
                         x.kind == StepKind::Review
-                            && x.part == st.part
-                            && x.def.as_ref().is_some_and(|d| mates.contains(d))
                             && x.queued_seq > since
+                            && mates.iter().any(|(d, p)| {
+                                x.def.as_deref() == Some(d.as_str())
+                                    && x.part.as_deref() == Some(p.as_str())
+                            })
                     })
                 });
                 if along && step.is_some_and(|st| st.end.is_none()) {
@@ -394,26 +396,9 @@ fn step(run: &mut Run, ctx: &Ctx) -> Result<(), String> {
             Some(_) => {}
         }
     }
-    for s in pl
-        .steps
-        .iter()
-        .filter(|s| s.when == When::Once && s.at() == At::Start)
-    {
-        let what = "Do your work for the whole feature before the builder starts, as your definition says.";
-        if !extra(
-            run,
-            ctx,
-            &l,
-            &pl,
-            &lib,
-            s,
-            &format!("{}@once-start", s.agent),
-            1,
-            None,
-            what,
-        )? {
-            return Ok(());
-        }
+    // 018 (contracts/pipeline.md "Points"): once at the start, the phases, once at the end.
+    if !point(run, ctx, &l, &pl, &lib, &Point::OnceStart, None)? {
+        return Ok(());
     }
     for p in &l.phases {
         if p.state == PhaseState::Done {
@@ -421,42 +406,23 @@ fn step(run: &mut Run, ctx: &Ctx) -> Result<(), String> {
         }
         return phase(run, ctx, &l, &pl, &lib, p);
     }
-    for s in pl
-        .steps
-        .iter()
-        .filter(|s| s.when == When::Once && s.at() == At::End)
-    {
-        let what = "Every phase of the feature is built and verified. Do your work for the whole feature, as your definition says.";
-        if !extra(
-            run,
-            ctx,
-            &l,
-            &pl,
-            &lib,
-            s,
-            &format!("{}@once-end", s.agent),
-            last_phase,
-            None,
-            what,
-        )? {
-            return Ok(());
-        }
+    if !point(run, ctx, &l, &pl, &lib, &Point::OnceEnd, None)? {
+        return Ok(());
     }
     finish(run, &pl)
 }
 
 /// A maker's accepted work goes through the gates like a task's, when the pipeline has gates
 /// and the step is at an end (a maker at the start writes tests that must fail first).
-#[allow(clippy::too_many_arguments)]
 fn maker_gated(
     run: &mut Run,
     ctx: &Ctx,
     pl: &Pipeline,
-    part: &str,
-    phase: u32,
+    spot: &Spot,
     commit: Option<String>,
     gate: bool,
 ) -> Result<bool, String> {
+    let part = spot.part.as_str();
     let Some(c) = commit else {
         return Ok(true);
     };
@@ -496,9 +462,9 @@ fn maker_gated(
         Some(failed) if !failed.is_empty() => {
             repair_or_ask(
                 run,
-                part,
-                None,
-                phase,
+                &spot.repair,
+                spot.task.as_deref(),
+                spot.phase,
                 pl.caps.task_repairs,
                 &builder_of(pl),
                 failed,
@@ -624,10 +590,547 @@ pub(crate) fn scenario_checker(pl: &Pipeline, lib: &Library) -> Option<String> {
         .map(|s| s.agent.clone())
 }
 
+/// 018 (data-model "Point", research R-2): where the pipeline's steps around the work run, in
+/// the order `tasks.md` gives (spec FR-004). The builder and the gates are the task itself;
+/// a story's checkpoint end is `checkpoint()`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Point {
+    OnceStart,
+    /// A phase's start (its number).
+    PhaseStart(u32),
+    /// The start of a story's phase (the phase's number): a test-writer before its tasks.
+    CheckpointStart(u32),
+    /// Before a task (its id and the phase it is in).
+    TaskStart(String, u32),
+    /// After a task, once its gates passed.
+    TaskEnd(String, u32),
+    PhaseEnd(u32),
+    OnceEnd,
+}
+
+impl Point {
+    /// The steps of the pipeline at this point, in pipeline order: never the builder or the
+    /// gates (the work of the task itself).
+    fn steps(&self, pl: &Pipeline) -> Vec<pipeline::Step> {
+        let (when, at) = match self {
+            Point::OnceStart => (When::Once, At::Start),
+            Point::OnceEnd => (When::Once, At::End),
+            Point::PhaseStart(_) => (When::Phase, At::Start),
+            Point::CheckpointStart(_) => (When::Checkpoint, At::Start),
+            Point::TaskStart(..) => (When::Task, At::Start),
+            Point::TaskEnd(..) => (When::Task, At::End),
+            Point::PhaseEnd(_) => (When::Phase, At::End),
+        };
+        steps_at(pl, when, at)
+    }
+
+    /// Where its steps and repairs are counted: the phase of the repairs' session, and the
+    /// phase its steps are recorded under.
+    fn phases(&self, last_phase: u32) -> (u32, Option<u32>) {
+        match self {
+            Point::OnceStart => (1, None),
+            Point::OnceEnd => (last_phase, None),
+            Point::PhaseStart(n)
+            | Point::CheckpointStart(n)
+            | Point::PhaseEnd(n)
+            | Point::TaskStart(_, n)
+            | Point::TaskEnd(_, n) => (*n, Some(*n)),
+        }
+    }
+
+    /// The part of a member's step: 0.4.0's names for the points it had (spec decision 12),
+    /// `<agent>@<task>-start|end` for a task's.
+    fn part(&self, agent: &str) -> String {
+        match self {
+            Point::OnceStart => format!("{agent}@once-start"),
+            Point::OnceEnd => format!("{agent}@once-end"),
+            Point::PhaseStart(n) | Point::CheckpointStart(n) => format!("{agent}@phase-{n}-start"),
+            Point::PhaseEnd(n) => format!("{agent}@phase-{n}-end"),
+            Point::TaskStart(t, _) => format!("{agent}@{t}-start"),
+            Point::TaskEnd(t, _) => format!("{agent}@{t}-end"),
+        }
+    }
+
+    /// Where a failure of a unit at this point is repaired (data-model "Unit"): the task after
+    /// it (counted against the task's repairs); the point itself for checkers alongside each
+    /// other; a unit of one, as 0.4.0, under its own part.
+    fn repair(&self, own: &str, several: bool) -> (String, Option<String>) {
+        match self {
+            Point::TaskEnd(t, _) => (t.clone(), Some(t.clone())),
+            _ if !several => (own.to_string(), None),
+            Point::OnceStart => ("once-start".into(), None),
+            Point::OnceEnd => ("once-end".into(), None),
+            Point::PhaseStart(n) | Point::CheckpointStart(n) => (format!("phase-{n}-start"), None),
+            Point::PhaseEnd(n) => (format!("phase-{n}-end"), None),
+            // Before the task nothing of it is built: its own part, never the task's repairs
+            // (a repair of the task before its build would stand for the build).
+            Point::TaskStart(..) => (own.to_string(), None),
+        }
+    }
+}
+
+/// The steps at `(when, at)` other than the builder and the gates, in pipeline order.
+fn steps_at(pl: &Pipeline, when: When, at: At) -> Vec<pipeline::Step> {
+    let builder = pl.builder_index();
+    pl.steps
+        .iter()
+        .enumerate()
+        .filter(|(i, s)| Some(*i) != builder && s.agent != pipeline::GATES)
+        .filter(|(_, s)| s.point_at() == (when, at))
+        .map(|(_, s)| s.clone())
+        .collect()
+}
+
+/// Where one step of a point stands: its part, where its failure is repaired, its phases, what
+/// it is asked to do, and (after a task) where the task's changes begin, for its `paths`.
+struct Spot {
+    part: String,
+    repair: String,
+    task: Option<String>,
+    phase: u32,
+    at_phase: Option<u32>,
+    what: String,
+    from: Option<String>,
+}
+
+/// The commit a task's work began at: the base of its first build (since a new lock).
+fn task_base(run: &Run, task: &str) -> Option<String> {
+    task_steps(run, task)
+        .find(|s| s.kind == StepKind::Build)
+        .and_then(|s| s.base.clone())
+}
+
+/// Whether a step with `paths` has anything to look at: the changes since its last passing run
+/// at its part (for a step at every phase's end, at any phase's end; after a task, since the
+/// task began) touch them. Changes that cannot be read count as touched.
+fn paths_touched(
+    run: &Run,
+    l: &LoopState,
+    s: &pipeline::Step,
+    kind: StepKind,
+    part: &str,
+    from: Option<&str>,
+) -> Result<bool, String> {
+    if s.paths.is_empty() {
+        return Ok(true);
+    }
+    let every_phase = part.contains("@phase-") && part.ends_with("-end");
+    let from = match from {
+        Some(f) => f.to_string(),
+        None => run
+            .state
+            .steps
+            .values()
+            .rev()
+            .find(|x| {
+                x.kind == kind
+                    && x.verified.as_ref().is_some_and(|v| v.0)
+                    && (x.part.as_deref() == Some(part)
+                        || (every_phase
+                            && x.def.as_deref() == Some(s.agent.as_str())
+                            && x.part.as_deref().is_some_and(|p| {
+                                p.starts_with(&format!("{}@phase-", s.agent)) && p.ends_with("-end")
+                            })))
+            })
+            .and_then(|x| x.base.clone())
+            .unwrap_or_else(|| l.lock_commit.clone()),
+    };
+    let head = git::head(&build_wt(run))?;
+    Ok(match git::files_between(&run.state.repo, &from, &head) {
+        Ok(changed) => paths_match(&s.paths, &changed),
+        Err(_) => true,
+    })
+}
+
+/// 018 (research R-2): runs the steps of one point, unit by unit in pipeline order: a unit of
+/// one as `extra()`, checkers alongside each other as one unit (`unit()`). `Ok(true)` when every
+/// unit passed or was skipped by its `paths`; otherwise something was queued, runs, or was asked.
+fn point(
+    run: &mut Run,
+    ctx: &Ctx,
+    l: &LoopState,
+    pl: &Pipeline,
+    lib: &Library,
+    pt: &Point,
+    p: Option<&PhaseStatus>,
+) -> Result<bool, String> {
+    let steps = pt.steps(pl);
+    if steps.is_empty() {
+        return Ok(true);
+    }
+    let last_phase = l.phases.iter().map(|p| p.spec.n).max().unwrap_or(1);
+    let (phase, at_phase) = pt.phases(last_phase);
+    let label = p.map(|p| (p.spec.label.clone(), p.spec.title.clone()));
+    let task_text = |t: &str| {
+        p.and_then(|p| p.spec.tasks.iter().find(|x| x.id == t))
+            .map(|x| x.text.clone())
+            .unwrap_or_default()
+    };
+    let what: String = {
+        let (lb, title) = label.unwrap_or_default();
+        match pt {
+            Point::OnceStart => "Do your work for the whole feature before the builder starts, as your definition says.".into(),
+            Point::OnceEnd => "Every phase of the feature is built and verified. Do your work for the whole feature, as your definition says.".into(),
+            Point::PhaseStart(_) => format!(
+                "Work on phase {lb} ({title}) before the builder starts it, as your definition says."
+            ),
+            Point::CheckpointStart(_) => match p.and_then(|p| p.spec.story.clone()) {
+                Some(st) => format!(
+                    "Before the builder starts phase {lb} ({title}), write the acceptance tests of user story {st}: one per acceptance scenario in spec.md, including the must-fail ones, and show they fail because the behaviour is missing."
+                ),
+                None => format!(
+                    "Work on phase {lb} ({title}) before the builder starts it, as your definition says."
+                ),
+            },
+            Point::TaskStart(t, _) => format!(
+                "Before the builder starts task {t} ({}), do your work for it, as your definition says.",
+                task_text(t)
+            ),
+            Point::TaskEnd(t, _) => format!(
+                "Task {t} ({}) is built. Do your work on it, as your definition says.",
+                task_text(t)
+            ),
+            Point::PhaseEnd(_) => format!(
+                "Phase {lb} ({title}) is built and handed over. Do your work on it, as your definition says."
+            ),
+        }
+    };
+    let from = match pt {
+        Point::TaskEnd(t, _) => task_base(run, t),
+        _ => None,
+    };
+    for members in parallel_units(&steps) {
+        let several = members.len() > 1;
+        if !several {
+            let s = &members[0];
+            let part = pt.part(&s.agent);
+            let (repair, task) = pt.repair(&part, false);
+            let spot = Spot {
+                part,
+                repair,
+                task,
+                phase,
+                at_phase,
+                what: what.clone(),
+                from: from.clone(),
+            };
+            if !extra(run, ctx, l, pl, lib, s, &spot)? {
+                return Ok(false);
+            }
+            continue;
+        }
+        // Checkers alongside each other: those whose paths were not touched sit this one out.
+        let mut touched = Vec::new();
+        for s in members {
+            let part = pt.part(&s.agent);
+            if paths_touched(run, l, &s, StepKind::Review, &part, from.as_deref())? {
+                touched.push((s, part));
+            }
+        }
+        if touched.is_empty() {
+            continue;
+        }
+        let (repair, task) = pt.repair("", true);
+        let since = round_start(run, l, &repair).max(
+            task.as_deref()
+                .and_then(|t| l.tasks.get(t))
+                .map_or(0, |t| t.since),
+        );
+        let u = Unit {
+            label: repair.clone(),
+            repair,
+            task,
+            phase,
+            at_phase,
+            cap: pl.caps.task_repairs,
+            since,
+        };
+        let prompt = |run: &Run, s: &pipeline::Step, part: &str| -> Result<String, String> {
+            let may = may_of(run, lib, &s.agent);
+            let hand = handovers_before(l, phase + 1);
+            let head = git::head(&build_wt(run))?;
+            Ok(prompts::loop_check_findings(
+                &loop_cx(l, &may, &hand),
+                part,
+                &s.agent,
+                &what,
+                &head,
+            ))
+        };
+        if !unit(run, ctx, pl, touched, &u, &prompt)? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+/// A unit of checkers alongside each other (008 R-7, 018 research R-3): where they are and
+/// where their findings go.
+struct Unit {
+    /// What the engineer's questions name (a story, a point, a task).
+    label: String,
+    repair: String,
+    task: Option<String>,
+    phase: u32,
+    at_phase: Option<u32>,
+    cap: u32,
+    /// Where the current round starts: checks queued before are stale.
+    since: u64,
+}
+
+/// One unit of checkers alongside each other: all queued at once after the unit's repair is
+/// settled, judged when all have finished; members that gave no usable verdict asked again,
+/// each on its own; one repair with all findings, or the engineer first when a failing member
+/// says so. `Ok(true)` when every member passed this round.
+fn unit(
+    run: &mut Run,
+    ctx: &Ctx,
+    pl: &Pipeline,
+    members: Vec<(pipeline::Step, String)>,
+    u: &Unit,
+    prompt: &dyn Fn(&Run, &pipeline::Step, &str) -> Result<String, String>,
+) -> Result<bool, String> {
+    let fresh = fresh_since(run).max(u.since);
+    let lasts: Vec<(pipeline::Step, String, Option<Step>)> = members
+        .into_iter()
+        .map(|(c, part)| {
+            let last = run
+                .state
+                .steps
+                .values()
+                .rev()
+                .find(|s| {
+                    s.kind == StepKind::Review
+                        && s.part.as_deref() == Some(part.as_str())
+                        && s.def.as_deref() == Some(c.agent.as_str())
+                        && s.queued_seq > u.since
+                })
+                .cloned();
+            (c, part, last)
+        })
+        .collect();
+    let label = u.label.as_str();
+    // Members without a check in this round: after the unit's repair is settled, all of them
+    // are queued at once.
+    let unchecked: Vec<(&pipeline::Step, &String)> = lasts
+        .iter()
+        .filter(|(_, _, last)| last.is_none())
+        .map(|(c, p, _)| (c, p))
+        .collect();
+    if !unchecked.is_empty() {
+        // A repair still running or not yet gated: wait for it.
+        let open = run.state.steps.values().any(|s| {
+            s.kind == StepKind::Repair
+                && s.part.as_deref() == Some(u.repair.as_str())
+                && s.verified.is_none()
+        });
+        if open {
+            return Ok(false);
+        }
+        if let Some(r) = run
+            .state
+            .steps
+            .values()
+            .rev()
+            .find(|s| s.kind == StepKind::Repair && s.part.as_deref() == Some(u.repair.as_str()))
+            .cloned()
+        {
+            match &r.verified {
+                Some((false, reasons)) => {
+                    let reasons = reasons.clone();
+                    repair_or_ask(
+                        run,
+                        &u.repair,
+                        u.task.as_deref(),
+                        u.phase,
+                        u.cap,
+                        &builder_of(pl),
+                        reasons,
+                    )?;
+                    return Ok(false);
+                }
+                Some((true, _)) => {
+                    if let Some(c) = r.verified_commit.clone() {
+                        if pl.steps.iter().any(|s| s.agent == pipeline::GATES) {
+                            // The repair is gated like a task before the checkers look again.
+                            match gated(run, ctx, &u.repair, &c)? {
+                                None => return Ok(false),
+                                Some(f) if !f.is_empty() => {
+                                    repair_or_ask(
+                                        run,
+                                        &u.repair,
+                                        u.task.as_deref(),
+                                        u.phase,
+                                        u.cap,
+                                        &builder_of(pl),
+                                        f,
+                                    )?;
+                                    return Ok(false);
+                                }
+                                Some(_) => {}
+                            }
+                        }
+                    }
+                }
+                None => return Ok(false),
+            }
+        }
+        let texts: Vec<(String, String, String)> = unchecked
+            .iter()
+            .map(|(c, part)| prompt(run, c, part).map(|t| (c.agent.clone(), (*part).clone(), t)))
+            .collect::<Result<_, _>>()?;
+        for (agent, part, text) in texts {
+            queue(
+                run,
+                StepKind::Review,
+                Some(&part),
+                None,
+                u.at_phase,
+                &agent,
+                None,
+                &format!("{agent} checks {label}"),
+                text,
+            )?;
+        }
+        return Ok(false);
+    }
+    // A member still running: the unit is judged when all have answered.
+    if lasts
+        .iter()
+        .any(|(_, _, last)| last.as_ref().is_some_and(|s| s.verified.is_none()))
+    {
+        return Ok(false);
+    }
+    // Incomplete members are asked again, each on its own (FR-012); when one of them has used
+    // up its tries, the engineer is asked first and none is queued.
+    let incomplete: Vec<(&pipeline::Step, &String, &Step, &Vec<String>)> = lasts
+        .iter()
+        .filter_map(|(c, part, last)| {
+            let s = last.as_ref()?;
+            match &s.verified {
+                Some((false, reasons)) if reasons.iter().all(|r| r.starts_with(INCOMPLETE)) => {
+                    Some((c, part, s, reasons))
+                }
+                _ => None,
+            }
+        })
+        .collect();
+    for (c, part, _, reasons) in &incomplete {
+        let tries = run
+            .state
+            .steps
+            .values()
+            .filter(|x| {
+                x.kind == StepKind::Review
+                    && x.part.as_deref() == Some(part.as_str())
+                    && x.def.as_deref() == Some(c.agent.as_str())
+                    && x.queued_seq > fresh
+                    && !machine::cut_short(x)
+            })
+            .count();
+        if tries >= CHECK_TRIES {
+            run.append(Event::NeedsEngineer {
+                why: format!(
+                    "{} gave no usable verdict on {label} after {tries} tries: {}",
+                    c.agent,
+                    reasons.join("; ")
+                ),
+                options: vec!["retry".into(), "stop".into()],
+            })?;
+            return Ok(false);
+        }
+    }
+    let mut again = false;
+    for (c, part, s, reasons) in incomplete {
+        let missing: Vec<String> = reasons
+            .iter()
+            .map(|r| r.trim_start_matches(INCOMPLETE).to_string())
+            .collect();
+        let session = s
+            .session
+            .clone()
+            .filter(|x| !run.state.lost_sessions.contains(x))
+            .filter(|_| !reasons.iter().any(|r| r.contains("worktree changed")));
+        let text = match &session {
+            Some(_) => prompts::loop_check_missing(part, &missing),
+            None => machine::instruction_of(run, s.n),
+        };
+        queue(
+            run,
+            StepKind::Review,
+            Some(part),
+            None,
+            u.at_phase,
+            &c.agent,
+            session,
+            &format!("{} checks {label} again", c.agent),
+            text,
+        )?;
+        again = true;
+    }
+    if again {
+        return Ok(false);
+    }
+    // The members that found problems: one repair with all their findings, or the engineer
+    // when one of them says so.
+    let failing: Vec<(&pipeline::Step, &Step, Vec<String>)> = lasts
+        .iter()
+        .filter_map(|(c, _, last)| {
+            let s = last.as_ref()?;
+            match &s.verified {
+                Some((false, reasons)) => Some((c, s, reasons.clone())),
+                _ => None,
+            }
+        })
+        .collect();
+    if failing.is_empty() {
+        return Ok(true);
+    }
+    let several = failing.len() > 1;
+    let reasons: Vec<String> = failing
+        .iter()
+        .flat_map(|(c, _, rs)| {
+            rs.iter().map(move |r| {
+                if several {
+                    format!("{}: {r}", c.agent)
+                } else {
+                    r.clone()
+                }
+            })
+        })
+        .collect();
+    let go = last_go(run);
+    let ask_engineer = failing
+        .iter()
+        .any(|(c, s, _)| c.on_fail == OnFail::Engineer && s.queued_seq >= go);
+    if ask_engineer {
+        let who: Vec<&str> = failing.iter().map(|(c, ..)| c.agent.as_str()).collect();
+        run.append(Event::NeedsEngineer {
+            why: format!(
+                "{} found problems in {label}: {}",
+                who.join(" and "),
+                reasons.join("; ")
+            ),
+            options: vec!["allow one more repair".into(), "stop".into()],
+        })?;
+        return Ok(false);
+    }
+    repair_or_ask(
+        run,
+        &u.repair,
+        u.task.as_deref(),
+        u.phase,
+        u.cap,
+        &builder_of(pl),
+        reasons,
+    )?;
+    Ok(false)
+}
+
 /// A pipeline step around the tasks (research S-9): a maker or a checker at a phase's start or
-/// end, at a story's checkpoint start, or once for the whole loop. `Ok(true)` when it passed or
-/// its `paths` were not touched; otherwise something was queued, is running, or was asked.
-#[allow(clippy::too_many_arguments)]
+/// end, at a story's checkpoint start, before or after a task (018), or once for the whole loop,
+/// as a unit of one. `Ok(true)` when it passed or its `paths` were not touched; otherwise
+/// something was queued, is running, or was asked.
 fn extra(
     run: &mut Run,
     ctx: &Ctx,
@@ -635,11 +1138,14 @@ fn extra(
     pl: &Pipeline,
     lib: &Library,
     s: &pipeline::Step,
-    part: &str,
-    phase: u32,
-    at_phase: Option<u32>,
-    what: &str,
+    spot: &Spot,
 ) -> Result<bool, String> {
+    let part = spot.part.as_str();
+    let phase = spot.phase;
+    let at_phase = spot.at_phase;
+    let what = spot.what.as_str();
+    let rp = spot.repair.as_str();
+    let rt = spot.task.as_deref();
     let def = lib
         .agent(&s.agent)
         .cloned()
@@ -662,8 +1168,8 @@ fn extra(
         .steps
         .values()
         .rev()
-        .filter(|x| x.kind == StepKind::Repair)
-        .find(of_part)
+        .filter(|x| x.kind == StepKind::Repair && x.part.as_deref() == Some(rp))
+        .find(|x| rt.is_none_or(|t| l.tasks.get(t).is_none_or(|ts| x.queued_seq > ts.since)))
         .cloned();
     let since = repair.as_ref().map_or(0, |r| r.queued_seq);
     let last = run
@@ -698,8 +1204,8 @@ fn extra(
                     Some((false, reasons)) => {
                         repair_or_ask(
                             run,
-                            part,
-                            None,
+                            rp,
+                            rt,
                             phase,
                             pl.caps.task_repairs,
                             &builder,
@@ -710,37 +1216,23 @@ fn extra(
                     // A maker's work, repaired, is gated; a checker looks again.
                     Some((true, _)) if !checker => {
                         let c = r.verified_commit.clone();
-                        return maker_gated(run, ctx, pl, part, phase, c, gate);
+                        return maker_gated(run, ctx, pl, spot, c, gate);
                     }
                     Some((true, _)) => {}
                 }
-            } else if !s.paths.is_empty() {
-                // Only when the changes since its last run touch its paths: for a step at
-                // every phase's end, its run at an earlier phase counts.
-                let every_phase = part.contains("@phase-") && part.ends_with("-end");
-                let from = run
-                    .state
-                    .steps
-                    .values()
-                    .rev()
-                    .find(|x| {
-                        x.kind == kind
-                            && x.verified.as_ref().is_some_and(|v| v.0)
-                            && (x.part.as_deref() == Some(part)
-                                || (every_phase
-                                    && x.def.as_deref() == Some(s.agent.as_str())
-                                    && x.part.as_deref().is_some_and(|p| {
-                                        p.starts_with(&format!("{}@phase-", s.agent))
-                                            && p.ends_with("-end")
-                                    })))
-                    })
-                    .and_then(|x| x.base.clone())
-                    .unwrap_or_else(|| l.lock_commit.clone());
-                let head = git::head(&build_wt(run))?;
-                let changed = git::files_between(&run.state.repo, &from, &head).unwrap_or_default();
-                if !paths_match(&s.paths, &changed) {
-                    return Ok(true);
-                }
+            }
+            // Only when the changes since its last run touch its paths: for a step at every
+            // phase's end, its run at an earlier phase counts. A step that ran before at its
+            // part and was repaired looks again whatever changed.
+            let ran = run
+                .state
+                .steps
+                .values()
+                .any(|x| x.kind == kind && of_part(&x));
+            if (repair.is_none() || !ran)
+                && !paths_touched(run, l, s, kind, part, spot.from.as_deref())?
+            {
+                return Ok(true);
             }
             let may = may_of(run, lib, &s.agent);
             let hand = handovers_before(l, phase + 1);
@@ -768,7 +1260,7 @@ fn extra(
         Some(Some((true, _))) if checker => Ok(true),
         Some(Some((true, _))) => {
             let c = last.and_then(|x| x.verified_commit);
-            maker_gated(run, ctx, pl, part, phase, c, gate)
+            maker_gated(run, ctx, pl, spot, c, gate)
         }
         Some(Some((false, reasons))) => {
             let last = last.unwrap_or_else(|| unreachable!());
@@ -812,15 +1304,7 @@ fn extra(
                 })?;
                 return Ok(false);
             }
-            repair_or_ask(
-                run,
-                part,
-                None,
-                phase,
-                pl.caps.task_repairs,
-                &builder,
-                reasons,
-            )?;
+            repair_or_ask(run, rp, rt, phase, pl.caps.task_repairs, &builder, reasons)?;
             Ok(false)
         }
     }
@@ -1463,25 +1947,14 @@ fn phase(
             _ => {}
         }
     }
-    // Makers at the start of the phase (a test-writer at a story's phase).
-    for s in pl.steps.iter().filter(|s| {
-        s.at() == At::Start
-            && (s.when == When::Phase || (s.when == When::Checkpoint && p.spec.story.is_some()))
-    }) {
-        let what = match &p.spec.story {
-            Some(st) if s.when == When::Checkpoint => format!(
-                "Before the builder starts phase {} ({}), write the acceptance tests of user story {st}: one per acceptance scenario in spec.md, including the must-fail ones, and show they fail because the behaviour is missing.",
-                p.spec.label, p.spec.title
-            ),
-            _ => format!(
-                "Work on phase {} ({}) before the builder starts it, as your definition says.",
-                p.spec.label, p.spec.title
-            ),
-        };
-        let part = format!("{}@phase-{n}-start", s.agent);
-        if !extra(run, ctx, l, pl, lib, s, &part, n, Some(n), &what)? {
-            return Ok(());
-        }
+    // The steps at the phase's start, then at its story's (a test-writer), before its tasks
+    // (018 contracts/pipeline.md "Points").
+    if !point(run, ctx, l, pl, lib, &Point::PhaseStart(n), Some(p))? {
+        return Ok(());
+    }
+    if p.spec.story.is_some() && !point(run, ctx, l, pl, lib, &Point::CheckpointStart(n), Some(p))?
+    {
+        return Ok(());
     }
     let gates_per_task = pl
         .steps
@@ -1498,6 +1971,18 @@ fn phase(
         }
         let last = task_steps(run, &t.id).last().cloned();
         let Some(last) = last else {
+            // 018: the steps before the task first; the builder starts from what they made.
+            if !point(
+                run,
+                ctx,
+                l,
+                pl,
+                lib,
+                &Point::TaskStart(t.id.clone(), n),
+                Some(p),
+            )? {
+                return Ok(());
+            }
             let session = phase_session(run, n);
             let may = may_of(run, lib, &builder);
             let hand = handovers_before(l, n);
@@ -1561,6 +2046,18 @@ fn phase(
                         }
                         Some(_) => {}
                     }
+                }
+                // 018: the task is accepted only once the steps after it passed (FR-008).
+                if !point(
+                    run,
+                    ctx,
+                    l,
+                    pl,
+                    lib,
+                    &Point::TaskEnd(t.id.clone(), n),
+                    Some(p),
+                )? {
+                    return Ok(());
                 }
                 return run.append(Event::Task {
                     id: t.id.clone(),
@@ -1694,19 +2191,8 @@ fn phase(
         }
     }
     // Steps at the end of the phase (FR-011, contracts/pipeline.md).
-    for s in pl
-        .steps
-        .iter()
-        .filter(|s| s.when == When::Phase && s.at() == At::End)
-    {
-        let what = format!(
-            "Phase {} ({}) is built and handed over. Do your work on it, as your definition says.",
-            p.spec.label, p.spec.title
-        );
-        let part = format!("{}@phase-{n}-end", s.agent);
-        if !extra(run, ctx, l, pl, lib, s, &part, n, Some(n), &what)? {
-            return Ok(());
-        }
+    if !point(run, ctx, l, pl, lib, &Point::PhaseEnd(n), Some(p))? {
+        return Ok(());
     }
     // The checkpoints of the stories whose last tasks are in this phase.
     for story in stories_ending_at(l, n) {
@@ -1840,104 +2326,28 @@ fn checkpoint(
         return Ok(Some(true));
     }
     let answerer = scenario_checker(pl, lib);
-    let last_repair = round_start(run, l, story);
-    let fresh = fresh_since(run).max(last_repair);
-    // Checkers marked to run alongside each other form one unit, run at the same time and
-    // judged together (008 R-7); a checker alone is a unit of one. Units go in pipeline order.
-    for unit in parallel_units(&checkers) {
-        let lasts: Vec<(pipeline::Step, Option<Step>)> = unit
-            .into_iter()
-            .map(|c| {
-                let last = run
-                    .state
-                    .steps
-                    .values()
-                    .rev()
-                    .find(|s| {
-                        s.kind == StepKind::Review
-                            && s.part.as_deref() == Some(story)
-                            && s.def.as_deref() == Some(c.agent.as_str())
-                            && s.queued_seq > last_repair
-                    })
-                    .cloned();
-                (c, last)
-            })
-            .collect();
-        // Members without a check in this round: after the story's repair is settled, all of
-        // them are queued at once.
-        let unchecked: Vec<&pipeline::Step> = lasts
-            .iter()
-            .filter(|(_, last)| last.is_none())
-            .map(|(c, _)| c)
-            .collect();
-        if !unchecked.is_empty() {
-            // A repair still running or not yet gated: wait for it.
-            let open = run.state.steps.values().any(|s| {
-                s.kind == StepKind::Repair
-                    && s.part.as_deref() == Some(story)
-                    && s.verified.is_none()
-            });
-            if open {
-                return Ok(Some(false));
-            }
-            if let Some(r) = run
-                .state
-                .steps
-                .values()
-                .rev()
-                .find(|s| s.kind == StepKind::Repair && s.part.as_deref() == Some(story))
-                .cloned()
-            {
-                match &r.verified {
-                    Some((false, reasons)) => {
-                        let reasons = reasons.clone();
-                        repair_or_ask(
-                            run,
-                            story,
-                            None,
-                            n,
-                            pl.caps.review_rounds,
-                            &builder_of(pl),
-                            reasons,
-                        )?;
-                        return Ok(Some(false));
-                    }
-                    Some((true, _)) => {
-                        if let Some(c) = r.verified_commit.clone() {
-                            if pl.steps.iter().any(|s| s.agent == pipeline::GATES) {
-                                // The repair is gated like a task before the checkers look again.
-                                match gated(run, ctx, story, &c)? {
-                                    None => return Ok(Some(false)),
-                                    Some(f) if !f.is_empty() => {
-                                        repair_or_ask(
-                                            run,
-                                            story,
-                                            None,
-                                            n,
-                                            pl.caps.review_rounds,
-                                            &builder_of(pl),
-                                            f,
-                                        )?;
-                                        return Ok(Some(false));
-                                    }
-                                    Some(_) => {}
-                                }
-                            }
-                        }
-                    }
-                    None => return Ok(Some(false)),
-                }
-            }
-            let spec_text = doc_at(run, &l.lock_commit, "spec.md").unwrap_or_default();
-            let spec = speckit::spec::read("spec.md", &spec_text).map_err(|e| {
-                e.iter()
-                    .map(|p| p.to_string())
-                    .collect::<Vec<_>>()
-                    .join("; ")
-            })?;
-            let st = spec
-                .story(story)
-                .ok_or_else(|| format!("{story} is not in the locked spec.md"))?;
+    let u = Unit {
+        label: story.to_string(),
+        repair: story.to_string(),
+        task: None,
+        phase: n,
+        at_phase: Some(n),
+        cap: pl.caps.review_rounds,
+        since: round_start(run, l, story),
+    };
+    let prompt = |run: &Run, c: &pipeline::Step, _: &str| -> Result<String, String> {
+        let spec_text = doc_at(run, &l.lock_commit, "spec.md").unwrap_or_default();
+        let spec = speckit::spec::read("spec.md", &spec_text).map_err(|e| {
+            e.iter()
+                .map(|p| p.to_string())
+                .collect::<Vec<_>>()
+                .join("; ")
+        })?;
+        let st = spec
+            .story(story)
+            .ok_or_else(|| format!("{story} is not in the locked spec.md"))?;
+        let may = may_of(run, lib, &c.agent);
+        Ok(if answerer.as_deref() == Some(c.agent.as_str()) {
             let scenarios: Vec<prompts::Scenario> = st
                 .scenarios
                 .iter()
@@ -1947,206 +2357,119 @@ fn checkpoint(
                     must_fail: s.must_fail,
                 })
                 .collect();
-            for c in unchecked {
-                let may = may_of(run, lib, &c.agent);
-                let text = if answerer.as_deref() == Some(c.agent.as_str()) {
-                    prompts::loop_check(
-                        &loop_cx(l, &may, &[]),
-                        &c.agent,
-                        story,
-                        &st.title,
-                        &scenarios,
-                        &head,
-                    )
-                } else {
-                    prompts::loop_check_findings(
-                        &loop_cx(l, &may, &[]),
-                        story,
-                        &c.agent,
-                        &format!(
-                            "Check user story {story} (\"{}\") of the feature.",
-                            st.title
-                        ),
-                        &head,
-                    )
-                };
-                queue(
-                    run,
-                    StepKind::Review,
-                    Some(story),
-                    None,
-                    Some(n),
-                    &c.agent,
-                    None,
-                    &format!("{} checks {story}", c.agent),
-                    text,
-                )?;
-            }
-            return Ok(Some(false));
-        }
-        // A member still running: the unit is judged when all have answered.
-        if lasts
-            .iter()
-            .any(|(_, last)| last.as_ref().is_some_and(|s| s.verified.is_none()))
-        {
-            return Ok(Some(false));
-        }
-        // Incomplete members are asked again, each on its own (FR-012); when one of them has
-        // used up its tries, the engineer is asked first and none is queued.
-        let incomplete: Vec<(&pipeline::Step, &Step, &Vec<String>)> = lasts
-            .iter()
-            .filter_map(|(c, last)| {
-                let s = last.as_ref()?;
-                match &s.verified {
-                    Some((false, reasons)) if reasons.iter().all(|r| r.starts_with(INCOMPLETE)) => {
-                        Some((c, s, reasons))
-                    }
-                    _ => None,
-                }
-            })
-            .collect();
-        for (c, _, reasons) in &incomplete {
-            let tries = run
-                .state
-                .steps
-                .values()
-                .filter(|x| {
-                    x.kind == StepKind::Review
-                        && x.part.as_deref() == Some(story)
-                        && x.def.as_deref() == Some(c.agent.as_str())
-                        && x.queued_seq > fresh
-                        && !machine::cut_short(x)
-                })
-                .count();
-            if tries >= CHECK_TRIES {
-                run.append(Event::NeedsEngineer {
-                    why: format!(
-                        "{} gave no usable verdict on {story} after {tries} tries: {}",
-                        c.agent,
-                        reasons.join("; ")
-                    ),
-                    options: vec!["retry".into(), "stop".into()],
-                })?;
-                return Ok(Some(false));
-            }
-        }
-        let mut again = false;
-        for (c, s, reasons) in incomplete {
-            let missing: Vec<String> = reasons
-                .iter()
-                .map(|r| r.trim_start_matches(INCOMPLETE).to_string())
-                .collect();
-            let session = s
-                .session
-                .clone()
-                .filter(|x| !run.state.lost_sessions.contains(x))
-                .filter(|_| !reasons.iter().any(|r| r.contains("worktree changed")));
-            let text = match &session {
-                Some(_) => prompts::loop_check_missing(story, &missing),
-                None => machine::instruction_of(run, s.n),
-            };
-            queue(
-                run,
-                StepKind::Review,
-                Some(story),
-                None,
-                Some(n),
+            prompts::loop_check(
+                &loop_cx(l, &may, &[]),
                 &c.agent,
-                session,
-                &format!("{} checks {story} again", c.agent),
-                text,
-            )?;
-            again = true;
-        }
-        if again {
-            return Ok(Some(false));
-        }
-        // The members that found problems: one repair with all their findings, or the
-        // engineer when one of them says so.
-        let failing: Vec<(&pipeline::Step, &Step, Vec<String>)> = lasts
-            .iter()
-            .filter_map(|(c, last)| {
-                let s = last.as_ref()?;
-                match &s.verified {
-                    Some((false, reasons)) => Some((c, s, reasons.clone())),
-                    _ => None,
-                }
-            })
-            .collect();
-        if failing.is_empty() {
-            continue;
-        }
-        let several = failing.len() > 1;
-        let reasons: Vec<String> = failing
-            .iter()
-            .flat_map(|(c, _, rs)| {
-                rs.iter().map(move |r| {
-                    if several {
-                        format!("{}: {r}", c.agent)
-                    } else {
-                        r.clone()
-                    }
-                })
-            })
-            .collect();
-        let go = last_go(run);
-        let ask_engineer = failing
-            .iter()
-            .any(|(c, s, _)| c.on_fail == OnFail::Engineer && s.queued_seq >= go);
-        if ask_engineer {
-            let who: Vec<&str> = failing.iter().map(|(c, ..)| c.agent.as_str()).collect();
-            run.append(Event::NeedsEngineer {
-                why: format!(
-                    "{} found problems in {story}: {}",
-                    who.join(" and "),
-                    reasons.join("; ")
+                story,
+                &st.title,
+                &scenarios,
+                &head,
+            )
+        } else {
+            prompts::loop_check_findings(
+                &loop_cx(l, &may, &[]),
+                story,
+                &c.agent,
+                &format!(
+                    "Check user story {story} (\"{}\") of the feature.",
+                    st.title
                 ),
-                options: vec!["allow one more repair".into(), "stop".into()],
-            })?;
+                &head,
+            )
+        })
+    };
+    // Checkers marked to run alongside each other form one unit, run at the same time and
+    // judged together (008 R-7); a checker alone is a unit of one. Units go in pipeline order.
+    for members in parallel_units(&checkers) {
+        let members = members
+            .into_iter()
+            .map(|c| (c, story.to_string()))
+            .collect();
+        if !unit(run, ctx, pl, members, &u, &prompt)? {
             return Ok(Some(false));
         }
-        repair_or_ask(
-            run,
-            story,
-            None,
-            n,
-            pl.caps.review_rounds,
-            &builder_of(pl),
-            reasons,
-        )?;
-        return Ok(Some(false));
     }
     Ok(Some(true))
 }
 
-/// The checkers of a checkpoint in units: those connected by `parallel_with` (in either
-/// direction) form one unit; units in the order their first member appears (008 R-7).
-/// The other checkers of the story's checkpoint that run alongside `def` (its unit): empty for
-/// a checker on its own, so a pipeline without `parallel_with` behaves as in 007.
-fn alongside_of(run: &Run, ctx: &Ctx, def: Option<&str>) -> Vec<String> {
-    let Some(def) = def else { return Vec::new() };
+/// The checkers that run alongside a review step `(def, part)` at its point (its unit), each
+/// with the part of its own step: empty for a checker on its own, so a pipeline without
+/// `parallel_with` behaves as in 007. 018 (research R-3): at every point, not only a story's
+/// checkpoint; the point is read from the step's part.
+fn alongside_of(
+    run: &Run,
+    ctx: &Ctx,
+    def: Option<&str>,
+    part: Option<&str>,
+) -> Vec<(String, String)> {
+    let (Some(def), Some(part)) = (def, part) else {
+        return Vec::new();
+    };
     let lib = library(run, ctx);
     let Ok(pl) = pipeline_of(run, &lib) else {
         return Vec::new();
     };
-    let checkers: Vec<pipeline::Step> = pl
-        .steps
-        .iter()
-        .filter(|s| s.when == When::Checkpoint && s.at() == At::End)
-        .cloned()
-        .collect();
-    parallel_units(&checkers)
-        .into_iter()
-        .find(|u| u.iter().any(|s| s.agent == def))
-        .map(|u| {
-            u.into_iter()
+    // Where a step at `part` runs, and its mates' parts.
+    let (points, suffix): (Vec<(When, At)>, Option<&str>) = match part.split_once('@') {
+        None => (vec![(When::Checkpoint, At::End)], None),
+        Some((_, rest)) => {
+            let at = if rest.ends_with("-start") {
+                At::Start
+            } else {
+                At::End
+            };
+            let whens = if rest.starts_with("once-") {
+                vec![When::Once]
+            } else if rest.starts_with("phase-") && at == At::Start {
+                vec![When::Phase, When::Checkpoint]
+            } else if rest.starts_with("phase-") {
+                vec![When::Phase]
+            } else {
+                vec![When::Task]
+            };
+            (whens.into_iter().map(|w| (w, at)).collect(), Some(rest))
+        }
+    };
+    for (when, at) in points {
+        let found = parallel_units(&steps_at(&pl, when, at))
+            .into_iter()
+            .find(|u| u.iter().any(|s| s.agent == def));
+        if let Some(u) = found {
+            return u
+                .into_iter()
                 .map(|s| s.agent)
                 .filter(|a| a != def)
-                .collect()
-        })
-        .unwrap_or_default()
+                .map(|a| {
+                    let p = match suffix {
+                        Some(rest) => format!("{a}@{rest}"),
+                        None => part.to_string(),
+                    };
+                    (a, p)
+                })
+                .collect();
+        }
+    }
+    Vec::new()
 }
 
+/// Where the round of a review step at `part` starts: the latest repair of where its unit's
+/// findings go (a story, a point, a task), so checks queued before are stale.
+fn unit_since(run: &Run, l: &LoopState, part: &str) -> u64 {
+    let Some((_, rest)) = part.split_once('@') else {
+        return round_start(run, l, part);
+    };
+    if rest.starts_with("once-") || rest.starts_with("phase-") {
+        return round_start(run, l, rest);
+    }
+    let task = rest
+        .strip_suffix("-end")
+        .or_else(|| rest.strip_suffix("-start"))
+        .unwrap_or(rest);
+    round_start(run, l, task).max(l.tasks.get(task).map_or(0, |t| t.since))
+}
+
+/// The checkers of one point in units: those connected by `parallel_with` (in either
+/// direction) form one unit; units in the order their first member appears (008 R-7).
 fn parallel_units(checkers: &[pipeline::Step]) -> Vec<Vec<pipeline::Step>> {
     let mut unit_of: Vec<usize> = (0..checkers.len()).collect();
     fn root(u: &mut [usize], mut i: usize) -> usize {
@@ -2403,15 +2726,18 @@ fn start(run: &mut Run, ctx: &Ctx, n: u32) -> Result<(), String> {
     // nor once a checker alongside this one has begun the story's round: checkers alongside
     // each other check the same commit, also when they start apart (one slot, or asked again)
     // (008 R-7). Checkers on their own see every answer, as in 007.
-    let mates = alongside_of(run, ctx, step.def.as_deref());
+    // 018 (research R-3): per point, not only per story.
+    let mates = alongside_of(run, ctx, step.def.as_deref(), step.part.as_deref());
     let round_begun = step.kind == StepKind::Review
         && step.part.as_deref().is_some_and(|p| {
-            let since = round_start(run, &l, p);
+            let since = unit_since(run, &l, p);
             run.state.steps.values().any(|x| {
                 x.n != n
                     && x.kind == StepKind::Review
-                    && x.part.as_deref() == Some(p)
-                    && x.def.as_ref().is_some_and(|d| mates.contains(d))
+                    && mates.iter().any(|(d, mp)| {
+                        x.def.as_deref() == Some(d.as_str())
+                            && x.part.as_deref() == Some(mp.as_str())
+                    })
                     && x.queued_seq > since
                     && x.started.is_some()
             })

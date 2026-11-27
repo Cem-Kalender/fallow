@@ -682,3 +682,66 @@ fn a_pipeline_the_lead_proposes_is_used_only_once_saved() {
     drop(e);
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// 018 US2 (T016; AS7, AS8, AS10): the designer's check refuses what the points do not allow,
+/// naming the step, and accepts a checker after each task.
+#[test]
+fn the_designer_refuses_what_the_points_do_not_allow() {
+    let root = scratch("defs-points");
+    let scenario = root.join("scenario.toml");
+    std::fs::write(&scenario, "").unwrap();
+    let e = start_studio(&root, &scenario, None);
+    let check = |toml: String| {
+        sreq(
+            &e.tx,
+            Req::CheckPipeline {
+                project: None,
+                toml,
+            },
+        )
+    };
+    let base = "name = \"pts\"\n\n[[step]]\nagent = \"builder\"\nwhen = \"task\"\non_fail = \"repair\"\n\n[[step]]\nagent = \"fallow:gates\"\nwhen = \"task\"\non_fail = \"repair\"\n";
+    let with = |extra: &str| format!("{base}\n{extra}");
+    // Two makers alongside each other (steps 3 and 4).
+    let why = check(with(
+        "[[step]]\nagent = \"test-writer\"\nwhen = \"task\"\nat = \"start\"\non_fail = \"engineer\"\nparallel_with = [\"docs-writer\"]\n\n[[step]]\nagent = \"docs-writer\"\nwhen = \"task\"\nat = \"start\"\non_fail = \"engineer\"\n",
+    ))
+    .unwrap_err();
+    assert!(
+        why.contains("step 3") && why.contains("only checkers at the same point run together"),
+        "{why}"
+    );
+    // A checker at a start that would be repaired (step 3).
+    let why = check(with(
+        "[[step]]\nagent = \"reviewer\"\nwhen = \"phase\"\nat = \"start\"\non_fail = \"repair\"\n",
+    ))
+    .unwrap_err();
+    assert!(
+        why.contains("step 3") && why.contains("nothing of that point's work is built yet"),
+        "{why}"
+    );
+    // The gates with `at` (step 2).
+    let why = check(base.replacen(
+        "agent = \"fallow:gates\"\nwhen = \"task\"\n",
+        "agent = \"fallow:gates\"\nwhen = \"task\"\nat = \"end\"\n",
+        1,
+    ))
+    .unwrap_err();
+    assert!(why.contains("step 2") && why.contains("`at`"), "{why}");
+    // The builder with `at` (step 1).
+    let why = check(base.replacen(
+        "agent = \"builder\"\nwhen = \"task\"\n",
+        "agent = \"builder\"\nwhen = \"task\"\nat = \"start\"\n",
+        1,
+    ))
+    .unwrap_err();
+    assert!(why.contains("step 1") && why.contains("no `at`"), "{why}");
+    // A checker after each task is accepted.
+    let ok = check(with(
+        "[[step]]\nagent = \"reviewer\"\nwhen = \"task\"\nat = \"end\"\non_fail = \"repair\"\n",
+    ))
+    .unwrap();
+    assert!(ok["checks"].to_string().contains("after each task"), "{ok}");
+    drop(e);
+    let _ = std::fs::remove_dir_all(&root);
+}

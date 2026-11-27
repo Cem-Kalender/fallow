@@ -769,9 +769,14 @@ pub fn view(run: &Run, ctx: &Ctx) -> Result<Value, String> {
     let pipeline = pl.as_ref().map(|pl| {
         json!({
             "name": pl.name, "verifying": pl.verifying, "missing": pl.missing,
-            "caps": { "task_repairs": pl.caps.task_repairs, "review_rounds": pl.caps.review_rounds },
-            "steps": pl.steps.iter().map(|st| json!({
+            // 018 (data-model "Loop view"): the most builders on [P] tasks; `at` of every
+            // step, task steps included (the builder and the gates are "end").
+            "caps": { "task_repairs": pl.caps.task_repairs, "review_rounds": pl.caps.review_rounds, "builders": pl.caps.builders },
+            "steps": pl.steps.iter().enumerate().map(|(i, st)| json!({
                 "agent": st.agent, "when": format!("{:?}", st.when).to_lowercase(),
+                // 018: the one maker per task without `at`, for the graph (every step has `at`
+                // here).
+                "builder": pl.builder_index() == Some(i),
                 "at": if st.at() == At::Start { "start" } else { "end" },
                 "paths": st.paths, "checker": lib.agent(&st.agent).is_some_and(|d| d.kind == Kind::Checker),
                 // For the live graph (008 T043): what runs alongside, and where a failure goes.

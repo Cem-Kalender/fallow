@@ -283,7 +283,9 @@
           const twice = pl.steps.filter((x) => x.agent === agent).length > 1;
           // The part its agent works on, or the one it waits on.
           const part = (a && a.task) || (stuck === agent && v.waits_at.part) || "";
-          const whenOf = /^T\d/.test(part) ? "task" : /^US\d/.test(part) ? "checkpoint" : /^phase/.test(part) ? "phase" : "once";
+          // 018: a step at a point is `<agent>@<where>` (`lint-checker@T002-end`).
+          const where = part.includes("@") ? part.slice(part.indexOf("@") + 1) : part;
+          const whenOf = /^T\d/.test(where) ? "task" : /^US\d/.test(where) ? "checkpoint" : /^phase/.test(where) ? "phase" : "once";
           const here = !twice || st.when === whenOf || (whenOf === "checkpoint" && st.when === "task");
           const ran = a && a.steps > 0;
           phase = a && a.status === "working" && here ? "now" : (a && a.status === "asks you" && here) || (stuck === agent && here) ? "asks"
