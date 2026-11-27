@@ -10,7 +10,7 @@ use fallow::run::engine::{Msg, Request};
 use serde_json::Value;
 use std::path::Path;
 
-const PARALLEL: &str = r#"name = "parallel"
+const PARALLEL: &str = r#"name = "alongside"
 description = "Standard, with a security review alongside the review"
 
 [caps]
@@ -89,7 +89,7 @@ fn us2() -> String {
 fn setup(root: &Path, extra_settings: Option<&str>) {
     let dir = root.join("config").join("pipelines");
     std::fs::create_dir_all(&dir).unwrap();
-    std::fs::write(dir.join("parallel.toml"), PARALLEL).unwrap();
+    std::fs::write(dir.join("alongside.toml"), PARALLEL).unwrap();
     if let Some(s) = extra_settings {
         std::fs::write(root.join("settings.extra.toml"), s).unwrap();
     }
@@ -119,7 +119,7 @@ fn checkers_alongside_each_other_overlap_and_are_judged_together() {
         us2(),
     ]
     .concat();
-    let (e, _repo, id) = locked_calc(&root, &steps, Some("parallel"));
+    let (e, _repo, id) = locked_calc(&root, &steps, Some("alongside"));
     let tx = &e.tx;
     // Both run at once: the loop says so.
     let v = wait_for(tx, id, "both checkers running", |v| {
@@ -172,7 +172,7 @@ fn both_failing_lead_to_one_repair_with_both_findings() {
         us2(),
     ]
     .concat();
-    let (e, _repo, id) = locked_calc(&root, &steps, Some("parallel"));
+    let (e, _repo, id) = locked_calc(&root, &steps, Some("alongside"));
     let tx = &e.tx;
     let v = wait_for(tx, id, "ready", |v| v["stage"] == "ready");
     let repairs: Vec<&Value> = v["steps"]
@@ -213,7 +213,7 @@ fn one_slot_runs_them_one_after_the_other_with_the_same_outcome() {
         us2(),
     ]
     .concat();
-    let (e, _repo, id) = locked_calc(&root, &steps, Some("parallel"));
+    let (e, _repo, id) = locked_calc(&root, &steps, Some("alongside"));
     let tx = &e.tx;
     let v = wait_for(tx, id, "ready", |v| v["stage"] == "ready");
     assert_eq!(v["feature_loop"]["outcome"][0], true);
@@ -251,7 +251,7 @@ fn a_restart_while_both_run_resumes_each_in_its_own_session() {
         us2(),
     ]
     .concat();
-    let (e, _repo, id) = locked_calc(&root, &steps, Some("parallel"));
+    let (e, _repo, id) = locked_calc(&root, &steps, Some("alongside"));
     let v = wait_for(&e.tx, id, "both checkers running", |v| {
         v["busy"].as_str().is_some_and(|b| b.starts_with("steps "))
     });
@@ -307,7 +307,7 @@ fn a_question_from_one_checker_is_answered_while_the_other_runs() {
         us2(),
     ]
     .concat();
-    let (e, _repo, id) = locked_calc(&root, &steps, Some("parallel"));
+    let (e, _repo, id) = locked_calc(&root, &steps, Some("alongside"));
     let tx = &e.tx;
     let v = wait_for(tx, id, "ready", |v| v["stage"] == "ready");
     assert_eq!(
@@ -353,7 +353,7 @@ fn a_checker_that_cannot_start_is_asked_again_and_the_other_goes_on() {
     )
     .unwrap();
     let steps = [us1_build(), reviewer("US1", true, "sleep_ms = 2000"), us2()].concat();
-    let (e, _repo, id) = locked_calc(&root, &steps, Some("parallel"));
+    let (e, _repo, id) = locked_calc(&root, &steps, Some("alongside"));
     let v = wait_for(&e.tx, id, "the engineer asked", |v| {
         !v["needs_engineer"].is_null()
     });
@@ -388,7 +388,7 @@ fn a_checker_on_its_own_that_cannot_start_stops_the_loop_as_before() {
     std::fs::write(
         dir.join("sequential.toml"),
         PARALLEL
-            .replace("name = \"parallel\"", "name = \"sequential\"")
+            .replace("name = \"alongside\"", "name = \"sequential\"")
             .replace("parallel_with = [\"security-reviewer\"]\n", ""),
     )
     .unwrap();

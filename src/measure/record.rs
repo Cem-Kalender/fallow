@@ -28,7 +28,7 @@ const AGENTS: &[&str] = &[
     "fallow:gates",
     "custom",
 ];
-const PIPELINES: &[&str] = &["standard", "test-first", "solo", "custom"];
+const PIPELINES: &[&str] = &["standard", "test-first", "solo", "parallel", "custom"];
 const RUNTIMES: &[&str] = &["claude", "fake", "custom"];
 const WHEN: &[&str] = &["task", "phase", "checkpoint", "once"];
 const AT: &[&str] = &["start", "end"];
@@ -93,6 +93,17 @@ pub struct LoopRecord {
     pub minutes: u64,
     pub cost_usd: f64,
     pub outcome: String,
+    /// 018 (FR-026, research R-15): the pipeline's most builders on [P] tasks; the most builds
+    /// and repairs of group tasks that ran at once; the groups of [P] tasks run; the overlaps
+    /// repaired. Absent from records written before 018.
+    #[serde(default)]
+    pub builders_cap: u32,
+    #[serde(default)]
+    pub builders_most: u32,
+    #[serde(default)]
+    pub groups_parallel: u32,
+    #[serde(default)]
+    pub overlap_repairs: u32,
 }
 
 /// A model id of an agent on `runtime`, kept only when it is an identifier (constitution V):
@@ -125,6 +136,38 @@ fn known(list: &[&str], s: &str) -> String {
 
 fn hex(s: &str) -> bool {
     !s.is_empty() && s.len() <= 64 && s.chars().all(|c| c.is_ascii_hexdigit())
+}
+
+/// 018: the most builds and repairs of group tasks that ran at once, from their starts and ends.
+fn builders_most(s: &RunState) -> u32 {
+    let Some(l) = s.feature_loop.as_ref() else {
+        return 0;
+    };
+    let mut marks: Vec<(u64, i32)> = s
+        .steps
+        .values()
+        .filter(|x| {
+            matches!(x.kind, StepKind::Build | StepKind::Repair)
+                && x.started_seq > 0
+                && x.task.as_ref().is_some_and(|t| l.group_of(t).is_some())
+        })
+        .flat_map(|x| {
+            let end = if x.finished_seq > 0 {
+                x.finished_seq
+            } else {
+                u64::MAX
+            };
+            [(x.started_seq, 1), (end, -1)]
+        })
+        .collect();
+    // An end before a start at the same place: never at once.
+    marks.sort_by_key(|(at, d)| (*at, *d));
+    let (mut now, mut most) = (0i32, 0i32);
+    for (_, d) in marks {
+        now += d;
+        most = most.max(now);
+    }
+    most.max(0) as u32
 }
 
 impl LoopRecord {
@@ -272,6 +315,15 @@ impl LoopRecord {
             minutes: s.minutes_used(end),
             cost_usd: (s.cost_usd * 10_000.0).round() / 10_000.0,
             outcome: outcome.into(),
+            builders_cap: raw.as_ref().map_or(1, |r| r.caps.builders),
+            builders_most: builders_most(s),
+            groups_parallel: l.groups.len() as u32,
+            overlap_repairs: l
+                .groups
+                .iter()
+                .flat_map(|g| &g.tasks)
+                .map(|t| t.overlaps.len() as u32)
+                .sum(),
         })
     }
 
@@ -409,8 +461,34 @@ mod tests {
             minutes: 12,
             cost_usd: 0.4,
             outcome: "merged".into(),
+            builders_cap: 3,
+            builders_most: 3,
+            groups_parallel: 1,
+            overlap_repairs: 1,
         };
         assert!(r.check().is_ok());
+        // 018 (research R-15): a record written before 018 has none of the builders' numbers
+        // and still reads, with zeros.
+        let mut old = serde_json::to_value(&r).unwrap();
+        for k in [
+            "builders_cap",
+            "builders_most",
+            "groups_parallel",
+            "overlap_repairs",
+        ] {
+            old.as_object_mut().unwrap().remove(k);
+        }
+        let back: LoopRecord = serde_json::from_value(old).unwrap();
+        assert_eq!(
+            (
+                back.builders_cap,
+                back.builders_most,
+                back.groups_parallel,
+                back.overlap_repairs
+            ),
+            (0, 0, 0, 0)
+        );
+        assert_eq!(back.pipeline, "standard");
         r.steps[0].agent = "my-secret-checker".into();
         assert!(r.check().is_err());
         r.steps[0].agent = "custom".into();

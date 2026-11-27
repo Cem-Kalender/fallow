@@ -430,7 +430,18 @@ on_fail = \"repair\"
                 .unwrap_or_else(|e| panic!("{stem}: {e:?}"));
             assert_eq!(pl.verifying, *stem != "solo", "{stem}: {:?}", pl.missing);
             assert_eq!(pl.builder().unwrap().agent, "builder");
+            // 018: only the parallel default has more than one builder.
+            assert_eq!(
+                pl.caps.builders,
+                if *stem == "parallel" { 3 } else { 1 },
+                "{stem}"
+            );
         }
+        let names: Vec<&str> = super::super::DEFAULT_PIPELINES
+            .iter()
+            .map(|(n, _)| *n)
+            .collect();
+        assert_eq!(names, ["standard", "test-first", "solo", "parallel"]);
     }
 
     #[test]

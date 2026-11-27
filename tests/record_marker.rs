@@ -167,3 +167,88 @@ fn a_record_holds_no_text_of_the_loop() {
     drop(e);
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// 018 (T033; FR-026, research R-15): the record of a loop with a group of [P] tasks counts its
+/// builders and overlaps in numbers, and still holds none of the loop's text; a record written
+/// before 018 reads.
+#[test]
+fn a_record_of_a_loop_with_builders_holds_numbers_only() {
+    let root = scratch("record-builders");
+    let dir = root.join("config").join("pipelines");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("builders.toml"), pipeline_with(3, "")).unwrap();
+    let mut f = parallel_tasks_feature(
+        &root,
+        3,
+        &[("T004", "calc/shared.py"), ("T006", "calc/shared.py")],
+    );
+    f.lead = f.lead.replace("Join them", &format!("Join them {MARKER}"));
+    let mut steps = f.phase_1();
+    for t in &f.parallel {
+        let extra = if t == "T006" {
+            "sleep_ms = 1500"
+        } else {
+            "sleep_ms = 500"
+        };
+        steps.push_str(&f.build(t, extra).replacen(
+            "summary = \"did",
+            &format!("summary = \"{MARKER} did"),
+            1,
+        ));
+    }
+    steps.push_str(
+        &task_step(
+            "T006",
+            &[("calc/shared.py", &format!("# {MARKER}\nBY = 'both'\n"))],
+            "",
+        )
+        .replacen("kind = \"build\"", "kind = \"repair\"", 1),
+    );
+    steps.push_str(&f.build(&f.last, ""));
+    steps.push_str(&handover_step(2, ""));
+    steps.push_str(&check_step("US1", true, ""));
+    let scenario = root.join("scenario.toml");
+    std::fs::write(&scenario, format!("{}{steps}", f.lead)).unwrap();
+    let e = start_studio(&root, &scenario, None);
+    let tx = &e.tx;
+    let id = lock_calc_in(tx, &f.repo, Some("builders"), Some((5.0, 60)), None);
+    wait_for(tx, id, "ready to merge", |v| v["stage"] == "ready");
+    merge_when_read(tx, id).unwrap();
+    wait_for(tx, id, "merged", |v| v["stage"] == "done");
+    let record = root.join("data/records/v1").join(format!("loop-{id}.json"));
+    let end = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !record.exists() && std::time::Instant::now() < end {
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    let text = std::fs::read_to_string(&record).unwrap();
+    assert!(!text.to_lowercase().contains(MARKER), "{text}");
+    assert!(!text.contains("calc/") && !text.contains("T00"), "{text}");
+    let r: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(r["builders_cap"], 3, "{r}");
+    assert_eq!(r["builders_most"], 3, "{r}");
+    assert_eq!(r["groups_parallel"], 1, "{r}");
+    assert_eq!(r["overlap_repairs"], 1, "{r}");
+    // A record written before 018, without these, still reads (and lists).
+    let mut old = r.clone();
+    for k in [
+        "builders_cap",
+        "builders_most",
+        "groups_parallel",
+        "overlap_repairs",
+    ] {
+        old.as_object_mut().unwrap().remove(k);
+    }
+    std::fs::write(
+        root.join("data/records/v1/loop-999.json"),
+        serde_json::to_string(&old).unwrap(),
+    )
+    .unwrap();
+    let listed = fallow::measure::record::list(&root.join("data"));
+    let before = listed
+        .iter()
+        .find(|(n, _)| *n == 999)
+        .expect("the old record reads");
+    assert_eq!(before.1.builders_cap, 0);
+    drop(e);
+    let _ = std::fs::remove_dir_all(&root);
+}

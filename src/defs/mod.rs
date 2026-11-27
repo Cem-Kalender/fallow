@@ -47,6 +47,11 @@ pub const DEFAULT_PIPELINES: &[(&str, &str)] = &[
         include_str!("../../assets/pipelines/test-first.toml"),
     ),
     ("solo", include_str!("../../assets/pipelines/solo.toml")),
+    // 018 (contracts/pipeline.md "The defaults"): builders over [P] tasks.
+    (
+        "parallel",
+        include_str!("../../assets/pipelines/parallel.toml"),
+    ),
 ];
 
 /// Files read from one place: (name, file shown in problems, text).
@@ -372,9 +377,12 @@ mod tests {
         let lib = Library::load(None, None);
         assert!(lib.problems.is_empty(), "{:?}", lib.problems);
         assert_eq!(lib.agents.len(), 7);
-        assert_eq!(lib.pipelines.len(), 3);
+        assert_eq!(lib.pipelines.len(), 4);
         assert!(lib.pipelines["standard"].verifying);
         assert!(!lib.pipelines["solo"].verifying);
+        // 018: the parallel default, verifying, with three builders.
+        assert!(lib.pipelines["parallel"].verifying);
+        assert_eq!(lib.pipelines["parallel"].caps.builders, 3);
     }
 
     #[test]
