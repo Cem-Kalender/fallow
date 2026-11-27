@@ -2143,25 +2143,9 @@ fn phase(
                 Some((true, _)) => {
                     if let Some(c) = r.verified_commit.clone() {
                         if pl.steps.iter().any(|s| s.agent == pipeline::GATES) {
-                            // A story's repair: on the build head (FR-020b).
-                            let c = if q.affects.is_some() {
-                                match story_head(run, &c)? {
-                                    Ok(head) => head,
-                                    Err(why) => {
-                                        return repair_or_ask(
-                                            run,
-                                            &part,
-                                            None,
-                                            n,
-                                            pl.caps.task_repairs,
-                                            &builder,
-                                            vec![why],
-                                        );
-                                    }
-                                }
-                            } else {
-                                c
-                            };
+                            // Gated on its own commit, like a task, while the phase goes on: a
+                            // later task's or group's failure is never the story's. Only the
+                            // checkpoint gates the build head (FR-020b; review 4).
                             match gated(run, ctx, &part, &c)? {
                                 None => return Ok(()),
                                 Some(f) if !f.is_empty() => {

@@ -707,3 +707,92 @@ fn a_confirmed_decision_keeps_its_commit_and_a_call_cut_short_goes_to_the_engine
     drop(e);
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// 018 review 4 (FR-020b): an overrule repair of the story is gated on its own commit while the
+/// phase goes on; only the checkpoint gates the build head. A later task that fails the gates is
+/// gated and repaired on its own, never charged to the story.
+#[test]
+fn an_overrule_repair_mid_phase_is_not_charged_a_later_tasks_failure() {
+    let root = scratch("ask-ovr-mid");
+    let bad = TEST_ADD.replace("add(2, 3), 5", "add(2, 3), 6");
+    let steps = [
+        task_step("T001", &[("calc/__init__.py", "")], ""),
+        handover_step(1, ""),
+        // T002 asks, then runs on long enough for the engineer to overrule the decision.
+        asking_step("T002", FLOATS, None, &[("calc/__init__.py", CALC_INIT)], "done")
+            .replacen("ask = ", "sleep_ms = 6000\nask = ", 1),
+        lead_answer("q1", "decided", "No floats", "none", ""),
+        "[[step]]\nkind = \"repair\"\npart = \"US1\"\nwhen = \"overruled\"\nfiles = [{ path = \"tests/test_float.py\", text = \"\" }]\noutput = { status = \"done\", task = \"US1\", files = [\"tests/test_float.py\"], summary = \"floats\" }\n\n".to_string(),
+        // T003 commits a failing test; its own repair fixes it.
+        task_step("T003", &[("tests/__init__.py", ""), ("tests/test_add.py", &bad)], ""),
+        task_step("T003", &[("tests/test_add.py", TEST_ADD)], "")
+            .replacen("kind = \"build\"", "kind = \"repair\"", 1),
+        handover_step(2, ""),
+        check_step("US1", true, ""),
+        task_step("T004", &[("calc/__init__.py", CALC_INIT_SUB), ("tests/test_sub.py", TEST_SUB)], ""),
+        handover_step(3, ""),
+        check_step("US2", true, ""),
+    ]
+    .concat();
+    let (e, _repo, id) = lock_level(&root, &steps, Level::Free);
+    let tx = &e.tx;
+    wait_for(tx, id, "q1 decided", |v| {
+        v["feature_loop"]["questions"]["q1"]["state"] == "decided"
+    });
+    ask(
+        tx,
+        Request::Overrule {
+            id,
+            q: "q1".into(),
+            answer: "Accept floats too".into(),
+        },
+    )
+    .unwrap();
+    let v = wait_for(tx, id, "the end", |v| {
+        v["stage"] == "ready" || !v["needs_engineer"].is_null()
+    });
+    assert_eq!(v["stage"], "ready", "needs: {}", v["needs_engineer"]);
+    assert_eq!(question(&v, "q1")["state"], "overruled");
+    // The story's only repair is the overrule's; T003's failure is repaired by T003's own.
+    let story = steps_of(&v, "repair", "US1");
+    assert_eq!(story.len(), 1, "{story:?}");
+    assert!(
+        story[0]["reason"]
+            .as_str()
+            .unwrap()
+            .starts_with("the engineer overruled")
+    );
+    let own = steps_of(&v, "repair", "T003");
+    assert_eq!(own.len(), 1, "T003's own repair: {own:?}");
+    // T003 was gated on its own commit, failed, and passed on its repair's; no gate run of the
+    // story ever failed.
+    let ev: Vec<Value> = std::fs::read_to_string(
+        root.join("data/runs")
+            .join(id.to_string())
+            .join("events.jsonl"),
+    )
+    .unwrap()
+    .lines()
+    .map(|l| serde_json::from_str(l).unwrap())
+    .collect();
+    let gates: Vec<&Value> = ev.iter().filter(|e| e["type"] == "gate_run").collect();
+    let commit = |s: &Value| s["verified_commit"].as_str().unwrap().to_string();
+    let build = commit(steps_of(&v, "build", "T003")[0]);
+    let fixed = commit(own[0]);
+    let t003: Vec<&&Value> = gates.iter().filter(|g| g["part"] == "T003").collect();
+    assert!(
+        t003.iter()
+            .any(|g| g["result"]["commit"] == build.as_str() && g["class"] != "pass"),
+        "T003 gated on its own commit {build}: {t003:?}"
+    );
+    assert!(
+        t003.iter()
+            .any(|g| g["result"]["commit"] == fixed.as_str() && g["class"] == "pass"),
+        "T003's repair {fixed} passed: {t003:?}"
+    );
+    let us1: Vec<&&Value> = gates.iter().filter(|g| g["part"] == "US1").collect();
+    assert!(!us1.is_empty());
+    assert!(us1.iter().all(|g| g["class"] == "pass"), "{us1:?}");
+    drop(e);
+    let _ = std::fs::remove_dir_all(&root);
+}

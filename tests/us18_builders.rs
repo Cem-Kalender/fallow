@@ -1667,3 +1667,88 @@ fn a_dropped_task_with_a_waiting_question_is_not_shown_waiting() {
     drop(e);
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// 018 US3 (review 4, FR-020b): the engineer overrules the lead's decision while a group runs.
+/// The story's overrule repair is gated on its own commit; the merged group that then fails the
+/// gates is repaired as the group's, never charged to the story. Only the checkpoint gates the
+/// build head.
+#[test]
+fn an_overrule_repair_is_not_charged_a_group_merged_after_it() {
+    let root = scratch("builders-overrule-group");
+    setup(&root, 3, None);
+    let f = parallel_tasks_feature(&root, 3, &[]);
+    pair_gate(&f);
+    let part = "group-T004-T006";
+    let mut steps = f.phase_1();
+    for t in &f.parallel {
+        if t == "T004" {
+            // T004 asks; the lead decides (Free) and T004 goes on.
+            steps.push_str(&f.build(t, "ask = \"May t004.py be empty?\"").replacen(
+                "status = \"done\"",
+                "status = \"done\", question = \"$ANSWER\"",
+                1,
+            ));
+            steps.push_str("[[step]]\nkind = \"lead_answer\"\npart = \"q1\"\noutput = { outcome = \"decided\", answer = \"No\", basis = \"none\", reserved = false, changes_criterion = false, touches_interface = false, adds_dependency = false, options = [{ label = \"no\", recommended = true }, { label = \"yes\" }] }\n\n");
+        } else {
+            steps.push_str(&f.build(t, "sleep_ms = 6000"));
+        }
+    }
+    // The overrule repair: no session holds the whole phase, so its instruction starts with
+    // the phase's last build's (T006's), which is what the fake agent reads it as.
+    steps.push_str("[[step]]\nkind = \"build\"\npart = \"T006\"\nwhen = \"overruled\"\nfiles = [{ path = \"calc/overruled.py\", text = \"YES = True\\n\" }]\noutput = { status = \"done\", task = \"US1\", files = [\"calc/overruled.py\"], summary = \"yes\" }\n\n");
+    steps.push_str(&repair(part, &[("calc/fixed.py", "FIXED = True\n")]));
+    steps.push_str(&f.build(&f.last, ""));
+    steps.push_str(&handover_step(2, ""));
+    steps.push_str(&check_step("US1", true, ""));
+    let scenario = root.join("scenario.toml");
+    std::fs::write(&scenario, format!("{}{steps}", f.lead)).unwrap();
+    let e = start_studio(&root, &scenario, None);
+    let id = lock_calc_in(
+        &e.tx,
+        &f.repo,
+        Some("builders"),
+        Some((5.0, 60)),
+        Some(fallow::run::events::Level::Free),
+    );
+    let tx = &e.tx;
+    wait_for(tx, id, "q1 decided", |v| {
+        v["feature_loop"]["questions"]["q1"]["state"] == "decided"
+    });
+    ask(
+        tx,
+        Request::Overrule {
+            id,
+            q: "q1".into(),
+            answer: "Yes".into(),
+        },
+    )
+    .unwrap();
+    let v = wait_for(tx, id, "ready", |v| {
+        v["stage"] == "ready" || !v["needs_engineer"].is_null()
+    });
+    assert_eq!(v["stage"], "ready", "{}", v["needs_engineer"]);
+    let ev = events(&root, id);
+    let gates = of_type(&ev, "gate_run");
+    // The story's only repair is the overrule's, accepted before the merged group failed.
+    let story = of(&v, "repair", "US1");
+    assert_eq!(story.len(), 1, "{story:?}");
+    assert!(text(story[0], "reason").starts_with("the engineer overruled"));
+    let accepted = of_type(&ev, "verified")
+        .iter()
+        .find(|e| e["n"] == story[0]["n"] && e["accepted"] == true)
+        .map(|e| e["seq"].as_u64().unwrap())
+        .expect("the overrule repair accepted");
+    // The merged group failed and was repaired as the group's.
+    let failed = gates
+        .iter()
+        .find(|g| g["part"] == part && g["result"]["gate"] == "pair" && g["class"] != "pass")
+        .unwrap_or_else(|| panic!("{gates:?}"));
+    assert!(failed["seq"].as_u64().unwrap() > accepted, "{failed}");
+    assert_eq!(of(&v, "repair", part).len(), 1);
+    // No gate run of the story ever failed.
+    let us1: Vec<&&Value> = gates.iter().filter(|g| g["part"] == "US1").collect();
+    assert!(!us1.is_empty());
+    assert!(us1.iter().all(|g| g["class"] == "pass"), "{us1:?}");
+    drop(e);
+    let _ = std::fs::remove_dir_all(&root);
+}
