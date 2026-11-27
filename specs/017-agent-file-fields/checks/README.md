@@ -71,3 +71,17 @@ high), the editor's text started at 3236 px, and the wheel scrolled the page (sc
 Below 900 px the editor's text box starts only a few pixels inside the first screen, because the
 editor's heading (name, Save for, Save, description, "Used in", the file name) wraps on a narrow
 window; its Save button is well inside it.
+
+## T044: the quickstart before 0.4.0 (2026-11-27)
+
+- **Q1, Q2, Q4 (automated)**: `cargo test --lib` (214 passed, the `defs::agent` and `claude.rs`
+  unit tests among them) and `cargo test --features automation --test us6_defs --test
+  us7_runtime --test agent_claude --test us8_agent_fields --test us17_existing --test us9_leads`
+  pass, with a scratch `HOME`.
+- **Q3 (automated part)**: `us8_agent_fields` passes. Its by-hand steps, and Q4's, need
+  Fallow's window and were not done (the builder does not start Fallow.app).
+- **Q5**: recorded above (T038-T040), every check passing at both sizes; no page code changed
+  since. A rerun from the builder's sandboxed shell hung at Chrome's first page, before any check.
+- **Q6**: `cargo fmt --all --check` and `cargo clippy --workspace --all-targets --all-features
+  -- -D warnings` pass; the full `cargo test --workspace --features automation` and the budget
+  benchmarks (`cargo xtask bench`, which start Fallow's window) are left to CI.
