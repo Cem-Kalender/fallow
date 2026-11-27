@@ -1,9 +1,11 @@
-// The Pipelines tab (007 FR-024 to FR-028; 008 US3, US4, FR-009 to FR-013): the pipelines on the
-// left, marked verifying or not, the pipeline as a graph of its fixed step model over the rest of
-// the width, and under it the selected step's settings, its agent in brief and what the pipeline
-// guarantees. The
-// agents themselves are edited in the Agents tab. A pipeline the lead proposed opens here as a
-// draft and is used only once saved.
+// The Pipelines tab (007 FR-024 to FR-028; 008 US3, US4, FR-009 to FR-013; 018 FR-001, FR-002):
+// the pipelines on the left, the pipeline as a graph of its fixed step model over the rest of the
+// width, and under it the selected step's settings, its agent in brief and what the pipeline
+// checks, in the service's plain sentences (`checks`). No pipeline is labelled "verifying" or
+// "not verifying" (018 FR-001): when a result would not be verified, the designer says what it
+// will say ("Done, not verified by Fallow") and what is not checked. The agents themselves are
+// edited in the Agents tab. A pipeline the lead proposed opens here as a draft and is used only
+// once saved.
 "use strict";
 (() => {
   const { h, raw, get, api, post, confirm, alertLine, icon, saveFor } = Fallow;
@@ -29,6 +31,8 @@
     const out = [`name = ${str(d.name)}`];
     if (d.description) out.push(`description = ${str(d.description)}`);
     out.push("", "[caps]", `task_repairs = ${d.caps.task_repairs}`, `review_rounds = ${d.caps.review_rounds}`);
+    // 018: written only when not 1, as the service writes it.
+    if (d.caps.builders && +d.caps.builders !== 1) out.push(`builders = ${d.caps.builders}`);
     for (const st of d.steps) {
       out.push("", "[[step]]", `agent = ${str(st.agent)}`, `when = ${str(st.when)}`);
       if (st.at && st.when !== "task") out.push(`at = ${str(st.at)}`);
@@ -45,7 +49,7 @@
       caps: Object.assign({ task_repairs: 3, review_rounds: 3 }, pl.caps || {}),
       steps: JSON.parse(JSON.stringify(pl.steps || [])),
       source: pl.source || null, saved: !!pl.source, proposed: false,
-      verifying: pl.verifying, missing: pl.missing || [], problems: [],
+      verifying: pl.verifying, missing: pl.missing || [], checks: pl.checks || [], problems: [],
     }, extra || {});
   }
 
@@ -62,6 +66,7 @@
       }
       s.draft.verifying = v.verifying;
       s.draft.missing = v.missing;
+      s.draft.checks = v.checks || [];
       s.draft.problems = [];
     } catch (e) {
       s.draft.problems = e.message.split("\n").filter(Boolean);
@@ -78,7 +83,7 @@
       ${s.pipelines.map((p) => {
         const sel = s.draft && p.name === s.draft.name && s.draft.saved;
         return h`<button class="ag-item${sel ? " sel" : ""}" data-act="pick-pipeline" data-name="${p.name}" aria-pressed="${sel ? "true" : "false"}">
-          <span class="row wrap gap-6"><b>${p.name}</b>${p.verifying ? h`<span class="pill green">verifying</span>` : h`<span class="pill orange">not verifying</span>`}${s.project && s.projectPipeline === p.name ? h`<span class="pill blue">this project's</span>` : ""}</span>
+          <span class="row wrap gap-6"><b>${p.name}</b>${s.project && s.projectPipeline === p.name ? h`<span class="pill blue">this project's</span>` : ""}</span>
           ${p.description ? h`<span class="d">${p.description}</span>` : ""}
           ${p.verifying ? "" : h`<span class="d">missing: ${(p.missing || []).join(", ")}</span>`}</button>`;
       })}
@@ -319,10 +324,13 @@
     <div class="row wrap gap-12 small muted pl-legend"><span><i class="sw maker"></i>maker</span><span><i class="sw checker"></i>checker</span><span><i class="sw gates"></i>Fallow</span><span><i class="sw fixed"></i>you</span><span>red dashes: what happens on a failure</span></div>`;
   }
 
+  // 018 FR-002: what a result of the pipeline says when something is not checked.
+  const notVerified = (d) => `A result of this pipeline ends as "Done, not verified by Fallow": ${d.missing.join("; ")}.`;
+
   const opt = (v, label, cur) => h`<option value="${v}"${raw(v === cur ? " selected" : "")}>${label}</option>`;
 
   // Under the graph: the selected step's settings (or the + form), its agent in brief, and
-  // what the pipeline guarantees.
+  // what the pipeline checks.
   function under() {
     const d = s.draft;
     const i = s.sel !== null && /^\d+$/.test(s.sel) ? +s.sel : null;
@@ -334,15 +342,15 @@
         <div class="row wrap gap-6 mt-4"><b>${st.agent}</b>${a ? h`<span class="pill grey">${a.kind}</span>` : h`<span class="pill red">unknown</span>`}</div>
         ${a ? h`<div class="small muted mt-6">${a.description}</div><div class="mono tiny mt-6">${a.runtime}${a.model ? ` · ${a.model}` : ""}</div>` : ""}
         <div class="mt-10"><a href="#/agents/${projectPart()}/${encodeURIComponent(st.agent)}">Edit this agent in Agents →</a></div>`;
-    const gates = d.steps.some((x) => x.agent === GATES && x.when === "task");
-    const checked = d.steps.some((x) => x.when === "checkpoint" && kindOf(x.agent) === "checker" && !(x.paths || []).length);
-    const guarantee = d.verifying === false
-      ? h`A result ends as "Done, not verified by Fallow": ${(d.missing || []).join("; ")}.`
-      : h`${gates ? "Every task gated against the baseline" : "No gates"}; ${checked ? "every story's criteria checked by running them" : "no story check"}. A result can be "Ready to merge".`;
+    // 018 FR-002: what it checks, in plain sentences, and what a result says when not all is.
+    const checks = (d.checks || []).length ? d.checks.join(" ") : "Nothing is checked.";
+    const guarantee = (d.missing || []).length
+      ? h`${checks} ${notVerified(d)}`
+      : h`${checks} A result can be "Ready to merge".`;
     return h`<div class="pl-under">
       <div class="card pad-14">${s.adding ? addForm() : st ? stepForm(st, i) : fixedCard()}</div>
       <div class="card pad-14">${brief}</div>
-      <div class="card pad-14 small lh"><b>What this pipeline guarantees</b><div class="muted mt-6">${guarantee}</div>
+      <div class="card pad-14 small lh"><b>What this pipeline checks</b><div class="muted mt-6">${guarantee}</div>
         <div class="mt-10">Repairs: at most
           <label class="sr" for="cap-tasks">Repairs per task</label><input id="cap-tasks" class="num" type="number" min="1" max="20" value="${d.caps.task_repairs}" data-change="cap" data-k="task_repairs"> per task and
           <label class="sr" for="cap-reviews">Review rounds</label><input id="cap-reviews" class="num" type="number" min="1" max="20" value="${d.caps.review_rounds}" data-change="cap" data-k="review_rounds"> review rounds per story, then you.</div></div>
@@ -417,7 +425,7 @@
         <input id="pl-name" class="title-input" type="text" value="${d.name}" data-change="name"></div>
       <div class="grow"></div>
       <span class="pair"><label for="pl-based" class="small muted">Based on</label>
-      <select id="pl-based" data-change="based">${opt("", "—", "")}${s.pipelines.map((p) => opt(p.name, `${p.name}${p.verifying ? "" : " (not verified)"}`, ""))}</select></span>
+      <select id="pl-based" data-change="based">${opt("", "—", "")}${s.pipelines.map((p) => opt(p.name, p.name, ""))}</select></span>
       <button class="btn btn2" data-act="ask-lead"${raw(s.project ? "" : " disabled title=\"Choose a project first\"")}>Ask the assistant</button>
       ${saveFor("pl-scope", s.project, s.scope, "pipelines")}
       <button class="btn" data-act="save">Save</button>
@@ -427,7 +435,7 @@
       ${d.saved && d.source !== "default" ? h`<button class="btn btn2 xs" data-act="delete-pipeline">Delete</button>` : ""}
       <button class="btn btn2 xs" data-act="raw">${s.rawMode ? "Back to the graph" : "Edit as TOML"}</button>
     </div>
-    ${d.verifying === false ? h`<div class="notice mt-8" role="status"><b>Not verifying.</b> A result of this pipeline ends as "Done, not verified by Fallow": ${d.missing.join("; ")}.</div>` : ""}
+    ${(d.missing || []).length ? h`<div class="notice mt-8" role="status">${notVerified(d)}</div>` : ""}
     ${d.problems.length ? h`<div class="card pad-12 mt-8" role="alert"><div class="b small">This pipeline cannot be used yet</div><ul class="problems">${d.problems.map((p) => h`<li>${p}</li>`)}</ul></div>` : ""}`;
   }
 

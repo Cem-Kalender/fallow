@@ -123,6 +123,37 @@ pub struct Pipeline {
     /// 018: the places of the makers with `when = "task"` and no `at` (one: the builder).
     #[serde(skip)]
     pub makers_per_task: Vec<usize>,
+    /// 018: each step's agent kind, as the checks found it (`None` for the gates).
+    #[serde(skip)]
+    pub kinds: Vec<Option<Kind>>,
+}
+
+/// 018: an agent's name in plain words (`security-reviewer`: "security reviewer").
+fn plain(agent: &str) -> String {
+    agent.replace(['-', '_'], " ")
+}
+
+/// 018: names joined in plain words ("a", "a and b", "a, b and c").
+fn joined(names: &[String]) -> String {
+    match names {
+        [] => String::new(),
+        [one] => one.clone(),
+        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+    }
+}
+
+/// 018: where a step runs, in plain words.
+fn place(when: When, at: At) -> &'static str {
+    match (when, at) {
+        (When::Task, At::Start) => "before each task",
+        (When::Task, At::End) => "after each task",
+        (When::Phase, At::Start) => "at the start of every phase",
+        (When::Phase, At::End) => "at the end of every phase",
+        (When::Checkpoint, At::Start) => "before each user story is built",
+        (When::Checkpoint, At::End) => "at each user story's checkpoint",
+        (When::Once, At::Start) => "once at the start",
+        (When::Once, At::End) => "once at the end",
+    }
 }
 
 impl Pipeline {
@@ -137,6 +168,74 @@ impl Pipeline {
     /// The builder's place among the steps.
     pub fn builder_index(&self) -> Option<usize> {
         self.makers_per_task.first().copied()
+    }
+
+    /// 018 (research R-12, spec FR-002): what the pipeline checks, as plain sentences, in the
+    /// order of its steps: the builders on `[P]` tasks when more than one, the gates, and each
+    /// agent with where it runs. A checker named in an earlier checker's `parallel_with` at the
+    /// same point is said with it ("alongside the security reviewer"), unless it has `paths` of
+    /// its own. The builder is not named.
+    pub fn checks(&self) -> Vec<String> {
+        let mut out = Vec::new();
+        if self.caps.builders > 1 {
+            out.push(format!(
+                "Up to {} builders work on [P] tasks at the same time, each in its own working copy.",
+                self.caps.builders
+            ));
+        }
+        let builder = self.builder_index();
+        for (i, st) in self.steps.iter().enumerate() {
+            if Some(i) == builder {
+                continue;
+            }
+            let (when, at) = st.point_at();
+            if st.agent == GATES {
+                out.push(match when {
+                    When::Phase => "Fallow runs the gates at the end of every phase.".into(),
+                    _ => "Fallow runs the gates after every task.".into(),
+                });
+                continue;
+            }
+            let checker = self.kinds.get(i).copied().flatten() == Some(Kind::Checker);
+            let folded = checker
+                && st.paths.is_empty()
+                && self.steps[..i].iter().any(|o| {
+                    o.point_at() == (when, at) && o.parallel_with.iter().any(|p| p == &st.agent)
+                });
+            if folded {
+                continue;
+            }
+            let name = plain(&st.agent);
+            let mut sentence = if !checker {
+                format!("The {name} works {}", place(when, at))
+            } else if (when, at) == (When::Checkpoint, At::End) && st.paths.is_empty() {
+                format!(
+                    "The {name} checks every user story's acceptance scenarios at its checkpoint"
+                )
+            } else if (when, at) == (When::Checkpoint, At::End) {
+                format!("The {name} checks each story")
+            } else {
+                format!("The {name} checks the work {}", place(when, at))
+            };
+            if !st.paths.is_empty() {
+                sentence.push_str(&format!(" when {} changed", st.paths.join(" or ")));
+            }
+            let alongside: Vec<String> = self
+                .steps
+                .iter()
+                .filter(|o| o.agent != st.agent && o.point_at() == (when, at))
+                .filter(|o| {
+                    st.parallel_with.contains(&o.agent) || o.parallel_with.contains(&st.agent)
+                })
+                .map(|o| format!("the {}", plain(&o.agent)))
+                .collect();
+            if checker && !alongside.is_empty() {
+                sentence.push_str(&format!(", alongside {}", joined(&alongside)));
+            }
+            sentence.push('.');
+            out.push(sentence);
+        }
+        out
     }
 
     /// The pipeline as TOML, as a loop records it.
@@ -274,11 +373,16 @@ pub fn parse(
         name: raw.name,
         description: raw.description,
         caps: raw.caps,
-        steps: raw.steps,
         source,
         verifying: missing.is_empty(),
         missing,
         makers_per_task,
+        kinds: raw
+            .steps
+            .iter()
+            .map(|s| (s.agent != GATES).then(|| kind_of(&s.agent).ok()).flatten())
+            .collect(),
+        steps: raw.steps,
     })
 }
 
@@ -713,6 +817,95 @@ on_fail = "repair"
             e.iter()
                 .any(|x| x.contains("exactly one maker") && x.contains("it has 0")),
             "a maker before each task is not the builder: {e:?}"
+        );
+    }
+
+    // ---- 018 US1 (T007): what a pipeline checks, in plain words ------------------------------
+
+    #[test]
+    fn a_pipeline_says_what_it_checks() {
+        let std = parse(
+            "x",
+            "standard",
+            PIPELINE_040_STANDARD,
+            Source::Default,
+            &kinds,
+        )
+        .unwrap();
+        assert_eq!(
+            std.checks(),
+            [
+                "Fallow runs the gates after every task.",
+                "The reviewer checks every user story's acceptance scenarios at its checkpoint.",
+            ]
+        );
+        let solo = parse("x", "solo", PIPELINE_040_SOLO, Source::Default, &kinds).unwrap();
+        assert_eq!(solo.checks(), ["Fallow runs the gates after every task."]);
+        let tf = parse(
+            "x",
+            "test-first",
+            PIPELINE_040_TEST_FIRST,
+            Source::Default,
+            &kinds,
+        )
+        .unwrap();
+        assert_eq!(
+            tf.checks()[0],
+            "The test writer works before each user story is built."
+        );
+        let more = p(&standard_with(
+            "builders = 3",
+            &[
+                step(
+                    "security-reviewer",
+                    "checkpoint",
+                    None,
+                    "repair",
+                    "paths = [\"api/**\", \"auth/**\"]\n",
+                ),
+                step("docs-writer", "once", Some("end"), "engineer", ""),
+            ]
+            .concat(),
+        ))
+        .unwrap();
+        assert_eq!(
+            more.checks(),
+            [
+                "Up to 3 builders work on [P] tasks at the same time, each in its own working copy.",
+                "Fallow runs the gates after every task.",
+                "The reviewer checks every user story's acceptance scenarios at its checkpoint.",
+                "The security reviewer checks each story when api/** or auth/** changed.",
+                "The docs writer works once at the end.",
+            ]
+        );
+        let alongside = p(&standard_with(
+            "",
+            &step("security-reviewer", "checkpoint", None, "repair", ""),
+        )
+        .replace(
+            "agent = \"reviewer\"\nwhen = \"checkpoint\"\non_fail = \"repair\"\n",
+            "agent = \"reviewer\"\nwhen = \"checkpoint\"\non_fail = \"repair\"\nparallel_with = [\"security-reviewer\"]\n",
+        ))
+        .unwrap();
+        assert_eq!(
+            alongside.checks()[1],
+            "The reviewer checks every user story's acceptance scenarios at its checkpoint, alongside the security reviewer."
+        );
+        assert_eq!(alongside.checks().len(), 2, "{:?}", alongside.checks());
+    }
+
+    #[test]
+    fn checkers_elsewhere_than_checkpoints_do_not_check_every_story() {
+        let pl = p("name = \"p\"\n[[step]]\nagent = \"builder\"\nwhen = \"task\"\non_fail = \"repair\"\n[[step]]\nagent = \"fallow:gates\"\nwhen = \"task\"\non_fail = \"repair\"\n[[step]]\nagent = \"reviewer\"\nwhen = \"phase\"\non_fail = \"repair\"\n[[step]]\nagent = \"lint-checker\"\nwhen = \"task\"\non_fail = \"repair\"\n").unwrap();
+        assert!(!pl.verifying);
+        assert_eq!(pl.missing, ["no review at checkpoints"]);
+        assert_eq!(
+            pl.checks(),
+            [
+                "Fallow runs the gates after every task.",
+                "The reviewer checks the work at the end of every phase.",
+                "The lint checker checks the work after each task.",
+            ]
         );
     }
 }
