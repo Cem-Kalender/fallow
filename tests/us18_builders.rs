@@ -493,13 +493,7 @@ fn a_merged_group_that_fails_the_gates_is_repaired_before_the_next_task() {
     let f = parallel_tasks_feature(&root, 4, &[]);
     // A gate that fails only on the merged result: T004's and T005's files together, until a
     // repair adds calc/fixed.py.
-    std::fs::write(
-        f.repo.join(".fallow/squad.toml"),
-        format!(
-            "repair_cap = 2\n[[gate]]\nname = \"tests\"\ncommand = \"{PYTHON} -m unittest\"\nbaseline = true\n\n[[gate]]\nname = \"pair\"\ncommand = \"{PYTHON} -c \\\"import os,sys; print('Ran 1 test'); both = os.path.exists('calc/t004.py') and os.path.exists('calc/t005.py'); sys.exit(1 if both and not os.path.exists('calc/fixed.py') else 0)\\\"\"\nbaseline = true\n"
-        ),
-    )
-    .unwrap();
+    pair_gate(&f);
     let mut steps = f.phase_1();
     for t in &f.parallel {
         steps.push_str(&f.build(t, ""));
@@ -1204,6 +1198,363 @@ fn a_new_lock_keeps_the_tasks_of_the_group_already_merged() {
         .collect();
     assert!(left.is_empty(), "{left:?}");
     assert_eq!(v["feature_loop"]["outcome"][0], true);
+    drop(e);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// A gate that fails only on the merged result of T004 and T005 until a repair adds
+/// calc/fixed.py or the new lock's story repair adds calc/relock.py (as
+/// `a_merged_group_that_fails_the_gates_is_repaired_before_the_next_task`).
+fn pair_gate(f: &ParallelFeature) {
+    std::fs::write(
+        f.repo.join(".fallow/squad.toml"),
+        format!(
+            "repair_cap = 2\n[[gate]]\nname = \"tests\"\ncommand = \"{PYTHON} -m unittest\"\nbaseline = true\n\n[[gate]]\nname = \"pair\"\ncommand = \"{PYTHON} -c \\\"import os,sys; print('Ran 1 test'); both = os.path.exists('calc/t004.py') and os.path.exists('calc/t005.py'); fixed = os.path.exists('calc/fixed.py') or os.path.exists('calc/relock.py'); sys.exit(1 if both and not fixed else 0)\\\"\"\nbaseline = true\n"
+        ),
+    )
+    .unwrap();
+}
+
+/// 018 US3 (review 2, FR-020a, research R-6a): the engineer locks again while the repair of a
+/// merged group (part `group-<first>-<last>`, tied to no one task) is at work, with a restart of
+/// Fallow before it ends or not. The group is dropped; its repair is never queued again, and
+/// never counts as the repair of the group the new lock gives.
+fn relock_during_a_group_repair(name: &'static str, restart: bool) {
+    let root = scratch(name);
+    setup(&root, 3, None);
+    let f = parallel_tasks_feature(&root, 3, &[]);
+    pair_gate(&f);
+    let part = "group-T004-T006";
+    let fixed = [("calc/fixed.py", "FIXED = True\n")];
+    let mut steps = f.phase_1();
+    for t in &f.parallel {
+        steps.push_str(&f.build(t, ""));
+    }
+    // The old group's repair, at work when the engineer locks again.
+    steps.push_str(&task_step(part, &fixed, "sleep_ms = 15000").replacen(
+        "kind = \"build\"",
+        "kind = \"repair\"",
+        1,
+    ));
+    // The story brought in line with the new lock (gated at the checkpoint on its own commit:
+    // the pair gate passes there).
+    steps.push_str(
+        &task_step(
+            "US1",
+            &[("calc/relock.py", "LOCK = 2\n")],
+            "when = \"lock 2\"",
+        )
+        .replacen("kind = \"build\"", "kind = \"repair\"", 1),
+    );
+    // A second repair of the part, for the old one were it run again.
+    steps.push_str(&repair(part, &fixed));
+    steps.push_str(&f.build(&f.last, ""));
+    steps.push_str(&handover_step(2, ""));
+    steps.push_str(&check_step("US1", true, ""));
+    steps.push_str(LEAD_ANALYZES_AGAIN);
+    let (e, id) = lock(&root, &f, &steps, (5.0, 60));
+    let v = wait_for(&e.tx, id, "the group's repair at work", |v| {
+        of(v, "repair", part)
+            .first()
+            .is_some_and(|s| !s["started"].is_null())
+    });
+    lock_again(&e.tx, &v, |t| {
+        t.replace(
+            "T007 [US1] Join them in calc/all.py",
+            "T007 [US1] Join them all in calc/all.py",
+        )
+    });
+    let e = if restart {
+        stop(e);
+        start_studio(&root, &root.join("scenario.toml"), None)
+    } else {
+        e
+    };
+    let tx = &e.tx;
+    let v = wait_for(tx, id, "ready", |v| {
+        v["stage"] == "ready" || !v["needs_engineer"].is_null()
+    });
+    assert_eq!(v["stage"], "ready", "{}", v["needs_engineer"]);
+    let ev = events(&root, id);
+    let dropped = of_type(&ev, "group_dropped");
+    assert_eq!(dropped.len(), 1, "{dropped:?}");
+    assert_eq!(dropped[0]["dropped"], serde_json::json!([]));
+    let dropped_at = dropped[0]["seq"].as_u64().unwrap();
+    let started = of_type(&ev, "group_started");
+    assert_eq!(started.len(), 2, "{started:?}");
+    let new_group = started[1]["seq"].as_u64().unwrap();
+    // Must fail (restart): the old repair, interrupted, is never queued again after the drop.
+    let reps = of(&v, "repair", part);
+    for r in &reps {
+        let q = queued_seq(&ev, r["n"].as_u64().unwrap());
+        assert!(
+            q < dropped_at || q > new_group,
+            "a repair of the dropped group queued after its drop: {r}"
+        );
+        assert!(
+            !text(r, "reason").starts_with("resumed") && !text(r, "reason").starts_with("again"),
+            "{r}"
+        );
+    }
+    // The new group's merged result passes: no repair of its own, and none of the old group's.
+    assert_eq!(reps.len(), 1, "{reps:?}");
+    assert_eq!(of_type(&ev, "group_done").len(), 1);
+    assert_eq!(v["feature_loop"]["outcome"][0], true);
+    drop(e);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_new_lock_during_a_group_repair_never_runs_it_again() {
+    relock_during_a_group_repair("builders-relock-repair", false);
+}
+
+#[test]
+fn a_new_lock_during_a_group_repair_then_a_restart_never_runs_it_again() {
+    relock_during_a_group_repair("builders-relock-repair-restart", true);
+}
+
+/// 018 US3 (review 2, research R-6): a new lock that takes a merged task out of every group (its
+/// [P] removed) leaves neither its working copy nor its branch: no branch of the run outlives
+/// its group.
+#[test]
+fn a_new_lock_removes_the_copies_of_a_merged_task_no_longer_in_a_group() {
+    let root = scratch("builders-relock-ungroup");
+    setup(&root, 3, None);
+    let f = parallel_tasks_feature(&root, 3, &[]);
+    let mut steps = f.phase_1();
+    // T004 is merged; T005 is still at work at the new lock; T006 is accepted, not merged.
+    steps.push_str(&f.build("T004", ""));
+    steps.push_str(&f.build("T005", "sleep_ms = 20000"));
+    steps.push_str(&f.build("T006", ""));
+    steps.push_str(
+        &task_step(
+            "US1",
+            &[("calc/relock.py", "LOCK = 2\n")],
+            "when = \"lock 2\"",
+        )
+        .replacen("kind = \"build\"", "kind = \"repair\"", 1),
+    );
+    for t in ["T005", "T006", "T007"] {
+        steps.push_str(&f.build(t, ""));
+    }
+    steps.push_str(&handover_step(2, ""));
+    steps.push_str(&check_step("US1", true, ""));
+    steps.push_str(LEAD_ANALYZES_AGAIN);
+    let (e, id) = lock(&root, &f, &steps, (5.0, 60));
+    let tx = &e.tx;
+    let v = wait_for(
+        tx,
+        id,
+        "T004 merged and T006 accepted while T005 builds",
+        |v| {
+            v["feature_loop"]["tasks"]["T006"]["state"] == "accepted"
+                && v["feature_loop"]["groups"][0]["tasks"][0]["merged"].is_string()
+        },
+    );
+    lock_again(tx, &v, |t| t.replace("T004 [P] [US1]", "T004 [US1]"));
+    let v = wait_for(tx, id, "ready", |v| {
+        v["stage"] == "ready" || !v["needs_engineer"].is_null()
+    });
+    assert_eq!(v["stage"], "ready", "{}", v["needs_engineer"]);
+    let ev = events(&root, id);
+    let started = of_type(&ev, "group_started");
+    assert_eq!(started.len(), 2);
+    assert_eq!(started[1]["tasks"], serde_json::json!(["T005", "T006"]));
+    assert_eq!(of(&v, "build", "T004").len(), 1);
+    // Must fail: T004's working copy and branch are gone with the group it was in.
+    let wt = root.join("data/runs").join(id.to_string()).join("wt");
+    for t in ["T004", "T005", "T006"] {
+        assert!(!wt.join(format!("task-{t}")).exists(), "{t}'s working copy");
+    }
+    let left: Vec<String> = branches(&f.repo)
+        .into_iter()
+        .filter(|b| {
+            ["T004", "T005", "T006"]
+                .iter()
+                .any(|t| b.ends_with(&format!("-{t}")))
+        })
+        .collect();
+    assert!(left.is_empty(), "{left:?}");
+    assert_eq!(v["feature_loop"]["outcome"][0], true);
+    drop(e);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+const LINT: &str = "---\nname: lint-checker\ndescription: Runs the linter on what a task changed\nruntime: claude\nmodel: claude-sonnet-5-5\nkind: checker\nmay_run: [gates]\nreturns: verdict\n---\n\nRun the linter on the task's changes.\n";
+
+/// A checker's verdict at `part`: no findings.
+fn clean(part: &str, extra: &str) -> String {
+    format!(
+        "[[step]]\nkind = \"review\"\npart = {part:?}\n{extra}\noutput = {{ findings = [], summary = \"checked\" }}\n\n"
+    )
+}
+
+const RELAY_Q1: &str = "[[step]]\nkind = \"lead_answer\"\npart = \"q1\"\noutput = { outcome = \"relay\", answer = \"\", basis = \"none\", reserved = false, changes_criterion = false, touches_interface = false, adds_dependency = false, options = [{ label = \"no\", recommended = true }] }\n\n";
+
+/// 018 US3 (review 2, FR-018): a checker after a task of the group asks the engineer. The
+/// engineer is told who asks about which task (the checker, not a builder); only that task is
+/// held; the answer goes to the checker that asked.
+#[test]
+fn a_checker_after_a_group_task_asks_as_itself_and_holds_only_its_task() {
+    let root = scratch("builders-checker-asks");
+    let dir = root.join("config").join("pipelines");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("builders.toml"),
+        pipeline_with(
+            3,
+            "[[step]]\nagent = \"lint-checker\"\nwhen = \"task\"\nat = \"end\"\non_fail = \"repair\"\n",
+        ),
+    )
+    .unwrap();
+    let agents = root.join("config").join("agents");
+    std::fs::create_dir_all(&agents).unwrap();
+    std::fs::write(agents.join("lint-checker.md"), LINT).unwrap();
+    let f = parallel_tasks_feature(&root, 3, &[]);
+    let mut steps = f.phase_1();
+    for t in ["T001", "T002", "T003"] {
+        steps.push_str(&clean(&format!("lint-checker@{t}-end"), ""));
+    }
+    for t in &f.parallel {
+        steps.push_str(&f.build(t, ""));
+        let extra = if t == "T005" {
+            "ask = \"May T005 import os?\""
+        } else {
+            ""
+        };
+        steps.push_str(&clean(&format!("lint-checker@{t}-end"), extra));
+    }
+    steps.push_str(RELAY_Q1);
+    steps.push_str(&clean(
+        "lint-checker@T005-end",
+        "when = \"The engineer answers\"",
+    ));
+    steps.push_str(&f.build(&f.last, ""));
+    steps.push_str(&clean(&format!("lint-checker@{}-end", f.last), ""));
+    steps.push_str(&handover_step(2, ""));
+    steps.push_str(&check_step("US1", true, ""));
+    let (e, id) = lock(&root, &f, &steps, (5.0, 60));
+    let tx = &e.tx;
+    let v = wait_for(tx, id, "the question", |v| {
+        v["feature_loop"]["questions"]["q1"]["state"] == "waiting_engineer"
+            && !v["needs_engineer"].is_null()
+    });
+    let needs = v["needs_engineer"].as_str().unwrap_or_default().to_string();
+    // Must fail: the checker asks about T005, not "the builder" or its point's name.
+    assert!(
+        needs.contains("The lint-checker of T005 asks (q1): "),
+        "{needs}"
+    );
+    // Only T005 is held: T004 and T006 are accepted meanwhile.
+    let v = wait_for(tx, id, "T004 and T006 accepted, T005 waits", |v| {
+        ["T004", "T006"]
+            .iter()
+            .all(|t| v["feature_loop"]["tasks"][t]["state"] == "accepted")
+            && v["feature_loop"]["tasks"]["T005"]["state"] == "waiting"
+    });
+    assert!(of(&v, "build", &f.last).is_empty());
+    ask(
+        tx,
+        Request::Answer {
+            id,
+            text: "Yes, os is fine".into(),
+        },
+    )
+    .unwrap();
+    let v = wait_for(tx, id, "ready", |v| {
+        v["stage"] == "ready" || (v["stage"] != "building" && !v["needs_engineer"].is_null())
+    });
+    assert_eq!(v["stage"], "ready", "{}", v["needs_engineer"]);
+    let r = of(&v, "review", "lint-checker@T005-end");
+    assert_eq!(r.len(), 2, "{r:?}");
+    assert!(prompt(&root, id, r[1]).contains("Yes, os is fine"));
+    drop(e);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// 018 US3 (review 2, research R-6a): a task whose question still waits for the engineer is
+/// dropped by a new lock. Its question is the loop's, no longer the task's: the task is not
+/// shown waiting for an answer.
+#[test]
+fn a_dropped_task_with_a_waiting_question_is_not_shown_waiting() {
+    let root = scratch("builders-relock-question");
+    setup(&root, 3, None);
+    let f = parallel_tasks_feature(&root, 3, &[]);
+    let mut steps = f.phase_1();
+    steps.push_str(&f.build("T004", ""));
+    steps.push_str(&f.build("T005", "ask = \"May T005 import os?\"").replacen(
+        "status = \"done\"",
+        "status = \"blocked\", question = \"$ANSWER\"",
+        1,
+    ));
+    steps.push_str(&f.build("T006", ""));
+    steps.push_str(RELAY_Q1);
+    steps.push_str(
+        &task_step(
+            "US1",
+            &[("calc/relock.py", "LOCK = 2\n")],
+            "when = \"lock 2\"",
+        )
+        .replacen("kind = \"build\"", "kind = \"repair\"", 1),
+    );
+    for t in ["T005", "T006", "T007"] {
+        steps.push_str(&f.build(t, ""));
+    }
+    steps.push_str(&handover_step(2, ""));
+    steps.push_str(&check_step("US1", true, ""));
+    steps.push_str(LEAD_ANALYZES_AGAIN);
+    let (e, id) = lock(&root, &f, &steps, (5.0, 60));
+    let tx = &e.tx;
+    let v = wait_for(tx, id, "T005's question, T004 merged", |v| {
+        v["feature_loop"]["questions"]["q1"]["state"] == "waiting_engineer"
+            && v["feature_loop"]["groups"][0]["tasks"][0]["merged"].is_string()
+            && v["feature_loop"]["tasks"]["T006"]["state"] == "accepted"
+    });
+    lock_again(tx, &v, |t| {
+        t.replace(
+            "T005 [P] [US1] Write calc/t005.py",
+            "T005 [P] [US1] Write calc/t005.py with its name",
+        )
+    });
+    wait_for(tx, id, "the group dropped", |v| {
+        v["feature_loop"]["groups"][0]["dropped"] == true
+    });
+    std::thread::sleep(Duration::from_secs(2));
+    let v = ask(tx, Request::Get { id }).unwrap();
+    assert_eq!(
+        v["feature_loop"]["questions"]["q1"]["state"],
+        "waiting_engineer"
+    );
+    // Must fail: T005 is not built and not waiting for an answer; the question is the loop's.
+    assert_eq!(v["feature_loop"]["tasks"]["T005"]["state"], "pending");
+    let needs = v["needs_engineer"].as_str().unwrap_or_default().to_string();
+    assert!(needs.contains("(q1)"), "{needs}");
+    assert!(!needs.contains(" of T005 asks"), "{needs}");
+    let lv = ask(tx, Request::Loop { id }).unwrap();
+    for g in lv["groups"].as_array().unwrap() {
+        for t in g["tasks"].as_array().unwrap() {
+            assert_ne!(t["state"], "waiting", "{g}");
+        }
+    }
+    for p in lv["phases"].as_array().unwrap() {
+        for t in p["tasks"].as_array().unwrap() {
+            assert_ne!(t["state"], "waiting", "{t}");
+        }
+    }
+    ask(
+        tx,
+        Request::Answer {
+            id,
+            text: "Yes, os is fine".into(),
+        },
+    )
+    .unwrap();
+    let v = wait_for(tx, id, "ready", |v| {
+        v["stage"] == "ready" || (v["stage"] != "building" && !v["needs_engineer"].is_null())
+    });
+    assert_eq!(v["stage"], "ready", "{}", v["needs_engineer"]);
+    assert_eq!(of(&v, "build", "T005").len(), 2);
     drop(e);
     let _ = std::fs::remove_dir_all(&root);
 }

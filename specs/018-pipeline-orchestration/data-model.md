@@ -64,7 +64,7 @@ Only when `caps.builders > 1` and the run of `[P]` tasks has at least two tasks;
 | `TaskMerged` | `task: String, commit: String` | a group task was merged into the build branch and ticked |
 | `TaskOverlap` | `task: String, files: Vec<String>, with: Vec<String>, working: String` | a group task was held back; `working` is the commit its repair starts from |
 | `GroupDone` | `phase: u32, first: String, tasks: Vec<String>, left: Vec<String>` | the merged result of the group passed the gates; `left`: what could not be removed |
-| `GroupDropped` | `phase: u32, tasks: Vec<String>, dropped: Vec<String>, left: Vec<String>` | a new lock was taken in while the group was in progress (R-6a): `dropped` were reset to not built |
+| `GroupDropped` | `phase: u32, tasks: Vec<String>, dropped: Vec<String>, left: Vec<String>` | a new lock was taken in while the group was in progress (R-6a): `dropped` were reset to not built; every task's working copy and branch removed (`left`: what could not be) |
 
 Each is folded into `LoopState.groups: Vec<GroupState>` (`#[serde(default)]`, so state from before 018 reads as no groups). `Step` is unchanged: a group task's steps carry `task`, `phase`, `def` and their `worktree` as today.
 

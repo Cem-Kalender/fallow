@@ -328,6 +328,12 @@ pub struct GroupState {
     /// When it ended (done or dropped), and what of it Fallow could not remove.
     pub ended_at: Option<String>,
     pub left: Vec<String>,
+    /// 018 (review 2): the seq of its start and of its end (0 while in progress): a step queued
+    /// in between for one of its tasks or for the group itself is the group's.
+    #[serde(skip)]
+    pub started_seq: u64,
+    #[serde(skip)]
+    pub ended_seq: u64,
 }
 
 /// 018: a task of a group.
@@ -1786,6 +1792,8 @@ impl RunState {
                         dropped: false,
                         ended_at: None,
                         left: Vec::new(),
+                        started_seq: l.seq,
+                        ended_seq: 0,
                     });
                 }
             }
@@ -1840,6 +1848,7 @@ impl RunState {
                         g.done = true;
                         g.ended_at = Some(l.at.clone());
                         g.left = left.clone();
+                        g.ended_seq = l.seq;
                     }
                 }
             }
@@ -1859,6 +1868,7 @@ impl RunState {
                         g.dropped = true;
                         g.ended_at = Some(l.at.clone());
                         g.left = left.clone();
+                        g.ended_seq = l.seq;
                         for t in g.tasks.iter_mut().filter(|t| dropped.contains(&t.id)) {
                             t.dropped = true;
                             t.working = None;
@@ -2276,5 +2286,72 @@ mod tests {
         // T004, merged before the new lock and kept by it, stays merged in the new group.
         assert_eq!(g[1].tasks[0].merged.as_deref(), Some("m4"));
         assert_eq!(g[1].tasks[1].merged, None);
+    }
+
+    fn queued(n: u32, kind: StepKind, part: &str, task: Option<&str>) -> Event {
+        Event::StepQueued {
+            n,
+            kind,
+            part: Some(part.into()),
+            resume: None,
+            reason: "r".into(),
+            task: task.map(str::to_string),
+            phase: Some(2),
+            def: Some("builder".into()),
+        }
+    }
+
+    /// 018 (research R-6a, review 2): every step of a group a new lock dropped, queued while it
+    /// was in progress, is the dropped group's: its tasks' steps, their points' steps, and the
+    /// steps of the group itself (its repair, tied to no one task), merged tasks included. A
+    /// step of the group the new lock gives, with the same part, is not.
+    #[test]
+    fn every_step_of_a_dropped_group_belongs_to_it() {
+        use crate::run::groups::dropped_step;
+        let three: Vec<String> = ["T004", "T005", "T006"].map(String::from).to_vec();
+        let mut events = before_018();
+        events.extend([
+            Event::GroupStarted {
+                phase: 2,
+                tasks: three.clone(),
+                base: "b0".into(),
+            },
+            queued(1, StepKind::Build, "T004", Some("T004")),
+            queued(2, StepKind::Review, "lint-checker@T004-end", None),
+            accepted("T004"),
+            Event::TaskMerged {
+                task: "T004".into(),
+                commit: "m4".into(),
+            },
+            queued(3, StepKind::Build, "T005", Some("T005")),
+            queued(4, StepKind::Repair, "group-T004-T006", None),
+            Event::GroupDropped {
+                phase: 2,
+                tasks: three.clone(),
+                dropped: vec!["T005".into(), "T006".into()],
+                left: Vec::new(),
+            },
+            Event::GroupStarted {
+                phase: 2,
+                tasks: three.clone(),
+                base: "b1".into(),
+            },
+            queued(5, StepKind::Repair, "group-T004-T006", None),
+            queued(6, StepKind::Build, "T005", Some("T005")),
+        ]);
+        let s = RunState::fold(1, &logged(events)).unwrap();
+        let l = s.feature_loop.as_ref().unwrap();
+        for n in 1..=4 {
+            assert!(
+                dropped_step(l, &s.steps[&n]),
+                "step {n} is the dropped group's"
+            );
+        }
+        for n in 5..=6 {
+            assert!(
+                !dropped_step(l, &s.steps[&n]),
+                "step {n} is the new group's"
+            );
+        }
     }
 }

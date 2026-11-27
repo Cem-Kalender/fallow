@@ -616,14 +616,21 @@ pub fn answer(run: &mut Run, text: &str) -> Result<(), String> {
         return Err("this run is from an earlier version of Fallow and cannot go on".into());
     }
     // 018 (review 1): the blocked step the engineer was asked about ("The builder of T005
-    // asks: …"), when several tasks of a group wait; else the newest.
+    // asks: …", "The lint-checker of T005 asks: …" for a checker at T005's end; review 2),
+    // when several tasks of a group wait; else the newest.
     let blocked = |s: &&Step| first_reason(s).is_some_and(|r| r.starts_with(BLOCKED));
     let why = run.state.needs.as_ref().map(|n| n.why.as_str());
     let named = run.state.steps.values().rev().filter(blocked).find(|s| {
-        s.part
-            .as_deref()
-            .zip(why)
-            .is_some_and(|(p, w)| w.starts_with(&format!("The builder of {p} asks: ")))
+        let who = s.def.as_deref().unwrap_or("builder");
+        why.is_some_and(|w| {
+            [s.part.as_deref(), super::groups::step_task(s)]
+                .into_iter()
+                .flatten()
+                .any(|p| {
+                    w.strip_prefix(&format!("The {who} of {p} asks"))
+                        .is_some_and(|r| r.starts_with(": ") || r.starts_with(" ("))
+                })
+        })
     });
     let Some(last) = named
         .or_else(|| run.state.steps.values().rev().find(blocked))

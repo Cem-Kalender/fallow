@@ -19,7 +19,7 @@ use super::engine::{Ctx, Done, Msg, Run};
 use super::events::*;
 use super::groups;
 use super::machine::{self, BLOCKED, INTERRUPTED, NOT_STARTED, SESSION_LOST};
-use super::state::{GroupState, LoopState, PhaseStatus, Step};
+use super::state::{GroupState, LoopState, PhaseStatus, QuestionEntry, Step};
 use crate::agent::{self, Call, Session, prompts, rights};
 use crate::config::GateDef;
 use crate::defs::pipeline::{self, At, OnFail, Pipeline, When};
@@ -271,14 +271,16 @@ fn step(run: &mut Run, ctx: &Ctx) -> Result<(), String> {
     // 018 (FR-018, research R-4, R-6b): the tasks of the group in progress that wait for the
     // engineer are held, each on its own; the group's other tasks go on.
     let held = held_tasks(run, &l);
+    // Each with the task it is about (none for a question of a group a new lock dropped: it is
+    // the loop's then; review 2).
     let mut waiting: Vec<_> = l
         .questions
         .values()
         .filter(|q| q.state == QuestionState::WaitingEngineer)
-        .cloned()
+        .map(|q| (q.clone(), question_task(run, &l, q)))
         .collect();
-    waiting.sort_by_key(|q| q.seq);
-    for t in waiting.iter().filter_map(|q| q.task.as_ref()).chain(&held) {
+    waiting.sort_by_key(|(q, _)| q.seq);
+    for t in waiting.iter().filter_map(|(_, t)| t.as_ref()).chain(&held) {
         // (A task may be named twice: as of now.)
         if lp(run)?
             .tasks
@@ -296,7 +298,8 @@ fn step(run: &mut Run, ctx: &Ctx) -> Result<(), String> {
     // One question to the engineer at a time: a later one never replaces it, and is asked
     // when it is answered.
     if run.state.needs.is_none() {
-        if let Some(q) = waiting.first() {
+        if let Some((q, t)) = waiting.first() {
+            // Who asked: the agent of the step (a checker at a task's point is not its builder).
             let who = run
                 .state
                 .steps
@@ -306,27 +309,28 @@ fn step(run: &mut Run, ctx: &Ctx) -> Result<(), String> {
             run.append(Event::NeedsEngineer {
                 why: format!(
                     "The {who} of {} asks ({}): {}",
-                    q.task.as_deref().unwrap_or("the feature"),
+                    t.as_deref().unwrap_or("the feature"),
                     q.id,
                     q.text
                 ),
                 options: vec!["answer".into(), "stop".into()],
             })?;
-        } else if let Some((t, q)) = held.iter().find_map(|t| {
-            let last = task_steps(run, t).last()?;
+        } else if let Some((t, who, q)) = held.iter().find_map(|t| {
+            let last = held_step(run, &l, t)?;
             let q = machine::first_reason(last)?.strip_prefix(BLOCKED)?;
-            Some((t.clone(), q.to_string()))
+            let who = last.def.clone().unwrap_or_else(|| "builder".into());
+            Some((t.clone(), who, q.to_string()))
         }) {
-            // A builder that returned `blocked` without Fallow's ask tool (as 0.4.0).
+            // An agent that returned `blocked` without Fallow's ask tool (as 0.4.0).
             run.append(Event::NeedsEngineer {
-                why: format!("The builder of {t} asks: {q}"),
+                why: format!("The {who} of {t} asks: {q}"),
                 options: vec!["answer".into(), "stop".into()],
             })?;
         }
     }
     if waiting
         .iter()
-        .any(|q| q.task.as_ref().is_none_or(|t| !held.contains(t)))
+        .any(|(_, t)| t.as_ref().is_none_or(|t| !held.contains(t)))
     {
         return Ok(());
     }
@@ -1467,9 +1471,11 @@ fn extra(
                 }
                 run.append(Event::NeedsEngineer {
                     why: if blocked {
+                        // At a task's point: the task it asks about (review 2).
                         format!(
-                            "The {} of {part} asks: {}",
+                            "The {} of {} asks: {}",
                             s.agent,
+                            spot.of_task.as_deref().unwrap_or(part),
                             reasons[0].trim_start_matches(BLOCKED)
                         )
                     } else {
@@ -2225,6 +2231,8 @@ fn phase(
                 s.kind == StepKind::Repair
                     && s.part.as_deref() == Some(part.as_str())
                     && s.queued_seq > fresh
+                    // Never the repair of a group a new lock dropped (review 2).
+                    && !groups::dropped_step(l, s)
             })
             .cloned();
         match repair.as_ref().map(|r| &r.verified) {
@@ -2599,14 +2607,45 @@ pub(crate) fn held_tasks(run: &Run, l: &LoopState) -> Vec<String> {
         .filter(|t| t.merged.is_none())
         .filter(|t| {
             l.questions.values().any(|q| {
-                q.state == QuestionState::WaitingEngineer && q.task.as_deref() == Some(&t.id)
-            }) || task_steps(run, &t.id)
-                .last()
+                q.state == QuestionState::WaitingEngineer
+                    && question_task(run, l, q).as_deref() == Some(&t.id)
+            }) || held_step(run, l, &t.id)
                 .and_then(machine::first_reason)
                 .is_some_and(|r| r.starts_with(BLOCKED))
         })
         .map(|t| t.id.clone())
         .collect()
+}
+
+/// 018 (review 2): the latest step of a task since a new lock changed it: its build or repair,
+/// or an agent at its start or end.
+fn held_step<'a>(run: &'a Run, l: &LoopState, task: &str) -> Option<&'a Step> {
+    let since = l.tasks.get(task).map_or(0, |t| t.since);
+    run.state
+        .steps
+        .values()
+        .filter(|s| s.queued_seq > since)
+        .filter(|s| match s.task.as_deref() {
+            Some(t) => t == task && matches!(s.kind, StepKind::Build | StepKind::Repair),
+            None => groups::step_task(s) == Some(task),
+        })
+        .max_by_key(|s| s.n)
+}
+
+/// 018 (review 2): the task a question is about: the task of the step that asked (its own, or
+/// its point's), or what the question names. None for a step of a group a new lock dropped: the
+/// question is then the loop's, no task's.
+fn question_task(run: &Run, l: &LoopState, q: &QuestionEntry) -> Option<String> {
+    let Some(s) = run.state.steps.get(&q.step) else {
+        return q.task.clone();
+    };
+    if groups::dropped_step(l, s) {
+        return None;
+    }
+    groups::step_task(s)
+        .filter(|t| l.tasks.contains_key(*t))
+        .map(str::to_string)
+        .or_else(|| q.task.clone())
 }
 
 /// 018: the engineer's attention is held only by a question from a task of the group in
@@ -2624,8 +2663,8 @@ pub(crate) fn held_task(run: &Run) -> Option<String> {
 
 /// 018 (research R-6a, decided after review 1): a new lock while the group `g` was in progress.
 /// Once no step runs (nothing new of the group starts meanwhile), its tasks merged into the build
-/// branch stay merged; every other task is dropped: its working copy and branch removed, reset
-/// to not built (`GroupDropped`). The phase then goes on under the new lock.
+/// branch stay merged; every other task is dropped, reset to not built (`GroupDropped`); every
+/// task's working copy and branch are removed. The phase then goes on under the new lock.
 fn take_in_new_lock(run: &mut Run, l: &LoopState, g: &GroupState) -> Result<(), String> {
     if run.busy.is_some()
         || !run.running.is_empty()
@@ -2664,7 +2703,10 @@ fn take_in_new_lock(run: &mut Run, l: &LoopState, g: &GroupState) -> Result<(), 
         .filter(|t| t.merged.is_none())
         .map(|t| t.id.clone())
         .collect();
-    let left = groups::clean_up(run, l, &dropped);
+    // Every task's working copy and branch go, the merged ones' too (review 2): their work is on
+    // the build branch, and a later group holding one makes it again from the build head; no
+    // branch of the run outlives its group (research R-6).
+    let left = groups::clean_up(run, l, &tasks);
     run.append(Event::GroupDropped {
         phase: g.phase,
         tasks,
@@ -3737,6 +3779,20 @@ pub fn answered(run: &mut Run, last: &Step, text: &str) -> Result<(), String> {
             state: TaskState::Current,
             commit: None,
             repairs: repairs_of(run, t),
+        })?;
+    } else if let Some(t) = groups::step_task(last).map(str::to_string).filter(|t| {
+        // An agent at a task's point: its task, held for the answer, goes on (review 2).
+        lp(run).is_ok_and(|l| {
+            l.tasks
+                .get(t)
+                .is_some_and(|x| x.state == TaskState::Waiting)
+        })
+    }) {
+        run.append(Event::Task {
+            id: t.clone(),
+            state: TaskState::Current,
+            commit: None,
+            repairs: repairs_of(run, &t),
         })?;
     }
     Ok(())

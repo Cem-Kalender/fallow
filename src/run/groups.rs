@@ -88,7 +88,7 @@ pub fn find<'a>(l: &'a LoopState, phase: u32, tasks: &[String]) -> Option<&'a Gr
 }
 
 /// The task a step works on or checks: its own, or its point's (`<agent>@<task>-start|end`).
-fn step_task(s: &Step) -> Option<&str> {
+pub fn step_task(s: &Step) -> Option<&str> {
     if let Some(t) = s.task.as_deref() {
         return Some(t);
     }
@@ -97,16 +97,30 @@ fn step_task(s: &Step) -> Option<&str> {
         .or_else(|| rest.strip_suffix("-end"))
 }
 
-/// 018 (research R-6a): a step of a task a new lock dropped from its group, queued before the
-/// drop: never resumed, and no answer goes to it.
+/// 018 (research R-6a): a step of a group a new lock dropped, queued while the group was in
+/// progress: never resumed, never counted for a later group, and no answer goes to it. Every
+/// step of the group is its own (review 2): its tasks' steps and their points' (merged tasks
+/// too), and the group's own (its repair `group-<first>-<last>`, tied to no one task). A step of
+/// a task it dropped queued before the drop, also before the group started, is no longer the
+/// task's either.
 pub fn dropped_step(l: &LoopState, s: &Step) -> bool {
-    let Some(t) = step_task(s) else {
-        return false;
-    };
-    l.tasks.get(t).is_some_and(|x| x.since >= s.queued_seq)
-        && l.groups
-            .iter()
-            .any(|g| g.dropped && g.tasks.iter().any(|x| x.id == t && x.dropped))
+    let t = step_task(s);
+    let in_group = l
+        .groups
+        .iter()
+        .filter(|g| g.dropped && s.queued_seq > g.started_seq && s.queued_seq < g.ended_seq)
+        .any(|g| {
+            let ids: Vec<String> = g.tasks.iter().map(|x| x.id.clone()).collect();
+            s.part.as_deref() == Some(part(&ids).as_str())
+                || t.is_some_and(|t| ids.iter().any(|x| x == t))
+        });
+    in_group
+        || t.is_some_and(|t| {
+            l.tasks.get(t).is_some_and(|x| x.since >= s.queued_seq)
+                && l.groups
+                    .iter()
+                    .any(|g| g.dropped && g.tasks.iter().any(|x| x.id == t && x.dropped))
+        })
 }
 
 /// The part a group's gate runs and repair are counted under: `group-<first>-<last>`.
@@ -342,8 +356,8 @@ pub fn remove_copy(repo: &Path, wt: &Path, branch: &str) -> Vec<String> {
     left
 }
 
-/// Removes the working copies and branches of a group's `tasks` (when it is done, every task is
-/// merged; when a new lock drops it, the tasks not merged). Returns what could not be removed.
+/// Removes the working copies and branches of a group's `tasks` (all of them, when it is done or
+/// a new lock drops it). Returns what could not be removed.
 pub fn clean_up(run: &Run, l: &LoopState, tasks: &[String]) -> Vec<String> {
     tasks
         .iter()
