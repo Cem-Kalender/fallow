@@ -48,7 +48,9 @@ The steps at one point connected by `parallel_with` (checkers only), or one step
 | per task: `base` | `base`, or the working commit's build parent after an overlap |
 | per task: `merged` | the merge commit on the build branch (event `TaskMerged`) |
 | per task: `overlaps` | each overlap: files and the tasks that changed them (event `TaskOverlap`) |
-| `done` | merged and the merged result gated (event `GroupDone`) |
+| `lock` | the loop's lock when the group started (R-6a) |
+| `done` | merged and the merged result gated (event `GroupDone`), or dropped by a new lock (`GroupDropped`) |
+| `dropped` | dropped by a new lock: its unmerged tasks were reset (R-6a) |
 
 State of a group task: `queued → building → (repairing)* → accepted → (overlap → repairing → accepted)* → merged`; the group: `started → all merged → gated → done`, with `repairing` on a failed group gate.
 
@@ -61,7 +63,8 @@ Only when `caps.builders > 1` and the run of `[P]` tasks has at least two tasks;
 | `GroupStarted` | `phase: u32, tasks: Vec<String>, base: String` | the runner reaches a group's first task |
 | `TaskMerged` | `task: String, commit: String` | a group task was merged into the build branch and ticked |
 | `TaskOverlap` | `task: String, files: Vec<String>, with: Vec<String>, working: String` | a group task was held back; `working` is the commit its repair starts from |
-| `GroupDone` | `phase: u32, first: String` | the merged result of the group passed the gates |
+| `GroupDone` | `phase: u32, first: String, tasks: Vec<String>, left: Vec<String>` | the merged result of the group passed the gates; `left`: what could not be removed |
+| `GroupDropped` | `phase: u32, tasks: Vec<String>, dropped: Vec<String>, left: Vec<String>` | a new lock was taken in while the group was in progress (R-6a): `dropped` were reset to not built |
 
 Each is folded into `LoopState.groups: Vec<GroupState>` (`#[serde(default)]`, so state from before 018 reads as no groups). `Step` is unchanged: a group task's steps carry `task`, `phase`, `def` and their `worktree` as today.
 

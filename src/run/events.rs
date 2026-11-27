@@ -648,11 +648,26 @@ pub enum Event {
         with: Vec<String>,
         working: String,
     },
-    /// 018: every task of the group starting with `first` is merged and the merged result passed
-    /// the gates.
+    /// 018: every task of the group starting with `first` (`tasks`: all of them; empty in logs
+    /// written before review 1) is merged and the merged result passed the gates. `left`: the
+    /// working copies and branches of the group Fallow could not remove.
     GroupDone {
         phase: u32,
         first: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        tasks: Vec<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        left: Vec<String>,
+    },
+    /// 018 (research R-6a, decided after review 1): a new lock was taken in while the group of
+    /// `tasks` was in progress. Its tasks not merged (`dropped`) are reset to not built; their
+    /// working copies and branches were removed (`left`: what could not be).
+    GroupDropped {
+        phase: u32,
+        tasks: Vec<String>,
+        dropped: Vec<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        left: Vec<String>,
     },
 }
 
@@ -865,6 +880,7 @@ impl Event {
             Event::TaskMerged { .. } => "task_merged",
             Event::TaskOverlap { .. } => "task_overlap",
             Event::GroupDone { .. } => "group_done",
+            Event::GroupDropped { .. } => "group_dropped",
         }
     }
 }

@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 use super::engine::Run;
 use super::events::{Event, PhaseSpec};
-use super::state::{GroupState, LoopState};
+use super::state::{GroupState, LoopState, Step};
 use crate::speckit;
 use crate::verify::git;
 
@@ -47,6 +47,66 @@ pub fn overlap(mine: &[String], theirs: &[String], tasks_md: &str) -> Vec<String
     v.sort();
     v.dedup();
     v
+}
+
+/// Why a group task is held back by an overlap: the files, and the tasks of the group merged
+/// before it that changed them, or the build branch when none did (files a new lock's merge
+/// brought; review 1).
+pub fn overlap_reason(task: &str, files: &[String], with: &[String]) -> String {
+    match with {
+        [] => format!(
+            "{task} changed {}, which the build branch changed too",
+            files.join(", ")
+        ),
+        _ => format!(
+            "{task} changed {}, which {} changed",
+            files.join(", "),
+            with.join(" and ")
+        ),
+    }
+}
+
+/// The history's line for an overlap (FR-024).
+pub fn overlap_line(task: &str, files: &[String], with: &[String]) -> String {
+    let on = match with {
+        [] => "the build branch".to_string(),
+        _ => with.join(" and "),
+    };
+    format!(
+        "{}: repaired on top of {on}",
+        overlap_reason(task, files, with)
+    )
+}
+
+/// The group in progress of phase `phase` with exactly `tasks` (a group is its whole list of
+/// tasks, never its first task alone; review 1).
+pub fn find<'a>(l: &'a LoopState, phase: u32, tasks: &[String]) -> Option<&'a GroupState> {
+    l.groups
+        .iter()
+        .rev()
+        .find(|g| !g.done && g.phase == phase && g.tasks.iter().map(|t| &t.id).eq(tasks.iter()))
+}
+
+/// The task a step works on or checks: its own, or its point's (`<agent>@<task>-start|end`).
+fn step_task(s: &Step) -> Option<&str> {
+    if let Some(t) = s.task.as_deref() {
+        return Some(t);
+    }
+    let rest = s.part.as_deref()?.split_once('@')?.1;
+    rest.strip_suffix("-start")
+        .or_else(|| rest.strip_suffix("-end"))
+}
+
+/// 018 (research R-6a): a step of a task a new lock dropped from its group, queued before the
+/// drop: never resumed, and no answer goes to it.
+pub fn dropped_step(l: &LoopState, s: &Step) -> bool {
+    let Some(t) = step_task(s) else {
+        return false;
+    };
+    l.tasks.get(t).is_some_and(|x| x.since >= s.queued_seq)
+        && l.groups
+            .iter()
+            .any(|g| g.dropped && g.tasks.iter().any(|x| x.id == t && x.dropped))
 }
 
 /// The part a group's gate runs and repair are counted under: `group-<first>-<last>`.
@@ -124,12 +184,16 @@ pub fn start_group(
     build_head: &str,
 ) -> Result<(), String> {
     for t in tasks {
-        // A branch left by an earlier start (a new lock) starts again at the new base.
-        let wt = worktree(run, t);
-        let _ = git::worktree_remove(&run.state.repo, &wt);
-        let _ = std::fs::remove_dir_all(&wt);
-        git::delete_branch(&run.state.repo, &branch(l, t))?;
-        ensure_worktree(run, l, t, build_head)?;
+        // A branch left by an earlier start starts again at the new base.
+        let left = remove_copy(&run.state.repo, &worktree(run, t), &branch(l, t));
+        if !left.is_empty() {
+            return Err(format!("cannot start {t} afresh: {}", left.join("; ")));
+        }
+        // A task already on the build branch (merged before a new lock) is only recorded as
+        // merged: no working copy (research R-6a).
+        if !l.merged_into_build(t) {
+            ensure_worktree(run, l, t, build_head)?;
+        }
     }
     run.append(Event::GroupStarted {
         phase,
@@ -257,13 +321,34 @@ pub fn try_merge(
     Ok(Merge::Merged)
 }
 
-/// Removes a done group's working copies and branches: every task is merged.
-pub fn clean_up(run: &Run, l: &LoopState, tasks: &[String]) {
-    let repo = run.state.repo.clone();
-    for t in tasks {
-        let _ = git::worktree_remove(&repo, &worktree(run, t));
-        let _ = git::delete_branch(&repo, &branch(l, t));
+/// Removes a task's working copy `wt` and its branch. Returns what could not be removed (a file
+/// held open on Windows, a branch checked out elsewhere), to be said in the history (review 1);
+/// what is not there is fine.
+pub fn remove_copy(repo: &Path, wt: &Path, branch: &str) -> Vec<String> {
+    let mut left = Vec::new();
+    if wt.exists() {
+        let _ = git::worktree_remove(repo, wt);
+        if wt.exists() {
+            let _ = std::fs::remove_dir_all(wt);
+        }
+        git::worktree_prune(repo);
+        if wt.exists() {
+            left.push(format!("the working copy {}", wt.display()));
+        }
     }
+    if let Err(e) = git::delete_branch(repo, branch) {
+        left.push(format!("the branch {branch} ({})", e.trim()));
+    }
+    left
+}
+
+/// Removes the working copies and branches of a group's `tasks` (when it is done, every task is
+/// merged; when a new lock drops it, the tasks not merged). Returns what could not be removed.
+pub fn clean_up(run: &Run, l: &LoopState, tasks: &[String]) -> Vec<String> {
+    tasks
+        .iter()
+        .flat_map(|t| remove_copy(&run.state.repo, &worktree(run, t), &branch(l, t)))
+        .collect()
 }
 
 #[cfg(test)]
@@ -361,6 +446,79 @@ mod tests {
         );
         assert!(overlap(&s(&[tasks]), &s(&[tasks]), tasks).is_empty());
         assert!(overlap(&s(&["a"]), &s(&["b"]), tasks).is_empty());
+    }
+
+    #[test]
+    fn an_overlap_names_the_tasks_or_else_the_build_branch() {
+        let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            overlap_reason("T007", &s(&["calc/a.py"]), &s(&["T005"])),
+            "T007 changed calc/a.py, which T005 changed"
+        );
+        assert_eq!(
+            overlap_line("T007", &s(&["calc/a.py", "b.py"]), &s(&["T004", "T005"])),
+            "T007 changed calc/a.py, b.py, which T004 and T005 changed: repaired on top of T004 and T005"
+        );
+        // Files a new lock's merge brought, which no task of the group changed (review 1).
+        assert_eq!(
+            overlap_reason("T007", &s(&["calc/a.py"]), &[]),
+            "T007 changed calc/a.py, which the build branch changed too"
+        );
+        assert_eq!(
+            overlap_line("T007", &s(&["calc/a.py"]), &[]),
+            "T007 changed calc/a.py, which the build branch changed too: repaired on top of the build branch"
+        );
+    }
+
+    fn sh(dir: &Path, args: &[&str]) -> bool {
+        std::process::Command::new("git")
+            .current_dir(dir)
+            .args([
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@t",
+                "-c",
+                "commit.gpgsign=false",
+            ])
+            .args(args)
+            .output()
+            .is_ok_and(|o| o.status.success())
+    }
+
+    /// Review 1: what Fallow cannot remove of a group is said, never left silently.
+    #[test]
+    fn removing_a_task_copy_says_what_could_not_be_removed() {
+        let root = std::env::temp_dir().join(format!("fallow-groups-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let repo = root.join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        assert!(sh(&repo, &["init", "-q", "-b", "main"]));
+        std::fs::write(repo.join("a"), "a\n").unwrap();
+        assert!(sh(&repo, &["add", "."]));
+        assert!(sh(&repo, &["commit", "-q", "-m", "a"]));
+        let wt = root.join("task-T004");
+        let wt_s = wt.display().to_string();
+        assert!(sh(&repo, &["worktree", "add", "-q", "-b", "b-T004", &wt_s]));
+        // Removed: nothing left, nothing said; again: still nothing to say.
+        assert!(remove_copy(&repo, &wt, "b-T004").is_empty());
+        assert!(!wt.exists());
+        assert!(!sh(
+            &repo,
+            &["rev-parse", "--verify", "-q", "refs/heads/b-T004"]
+        ));
+        assert!(remove_copy(&repo, &wt, "b-T004").is_empty());
+        // A branch still checked out in another working copy cannot be deleted: it is named.
+        let other = root.join("other");
+        let other_s = other.display().to_string();
+        assert!(sh(
+            &repo,
+            &["worktree", "add", "-q", "-b", "b-T005", &other_s]
+        ));
+        let left = remove_copy(&repo, &root.join("task-T005"), "b-T005");
+        assert_eq!(left.len(), 1, "{left:?}");
+        assert!(left[0].starts_with("the branch b-T005"), "{left:?}");
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

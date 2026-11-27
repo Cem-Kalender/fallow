@@ -149,7 +149,13 @@ fn builders_most(s: &RunState) -> u32 {
         .filter(|x| {
             matches!(x.kind, StepKind::Build | StepKind::Repair)
                 && x.started_seq > 0
-                && x.task.as_ref().is_some_and(|t| l.group_of(t).is_some())
+                // A task's own working copy: its group may since have been dropped by a new lock.
+                && x.task.as_ref().is_some_and(|t| {
+                    l.groups.iter().any(|g| g.tasks.iter().any(|y| &y.id == t))
+                        && x.worktree
+                            .as_ref()
+                            .is_some_and(|w| w.ends_with(format!("task-{t}")))
+                })
         })
         .flat_map(|x| {
             let end = if x.finished_seq > 0 {

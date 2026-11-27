@@ -249,3 +249,81 @@ fn a_restart_while_builders_run_resumes_each_task() {
     drop(e);
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// 018 US3 AS12 (FR-020; review 1): Fallow stops after two tasks of a group were merged, while the
+/// third builds; after the restart the merged tasks are neither built nor merged again, the third
+/// resumes in its session and working copy, and the group ends once.
+#[test]
+fn a_restart_after_some_group_tasks_merged_merges_none_twice() {
+    let root = scratch("resume-merged");
+    let dir = root.join("config").join("pipelines");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("builders.toml"), pipeline_with(3, "")).unwrap();
+    let f = parallel_tasks_feature(&root, 3, &[]);
+    let mut steps = f.phase_1();
+    steps.push_str(&f.build("T004", ""));
+    steps.push_str(&f.build("T005", ""));
+    steps.push_str(&f.build("T006", &format!("say = \"Working\"\n{SLOW}")));
+    steps.push_str(&f.build("T006", AGAIN));
+    steps.push_str(&f.build(&f.last, ""));
+    steps.push_str(&handover_step(2, ""));
+    steps.push_str(&check_step("US1", true, ""));
+    let scenario = root.join("scenario.toml");
+    std::fs::write(&scenario, format!("{}{steps}", f.lead)).unwrap();
+    let e = start_studio(&root, &scenario, None);
+    let id = lock_calc_in(&e.tx, &f.repo, Some("builders"), Some((5.0, 60)), None);
+    let merged_of = |root: &Path| -> Vec<String> {
+        std::fs::read_to_string(
+            root.join("data/runs")
+                .join(id.to_string())
+                .join("events.jsonl"),
+        )
+        .unwrap()
+        .lines()
+        .map(|l| serde_json::from_str::<Value>(l).unwrap())
+        .filter(|e| e["type"] == "task_merged")
+        .map(|e| e["task"].as_str().unwrap().to_string())
+        .collect()
+    };
+    working(&e.tx, id, "build", "T006");
+    let end = Instant::now() + Duration::from_secs(60);
+    while merged_of(&root) != ["T004", "T005"] && Instant::now() < end {
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    assert_eq!(merged_of(&root), ["T004", "T005"], "merged before the stop");
+    e.tx.send(Msg::Shutdown).unwrap();
+    let fallow::service::ToolEngine { handle, .. } = e;
+    handle.join().unwrap();
+    let e = start_studio(&root, &root.join("scenario.toml"), None);
+    let v = wait_for(&e.tx, id, "ready", |v| v["stage"] == "ready");
+    for t in ["T004", "T005"] {
+        assert_eq!(steps_of(&v, "build", t).len(), 1, "{t} built once");
+    }
+    let mut s = steps_of(&v, "build", "T006");
+    s.sort_by_key(|x| x["n"].as_u64());
+    assert_eq!(s.len(), 2, "the interrupted build and its resumption");
+    assert_eq!(s[1]["resume"], s[0]["session"], "resumed in its session");
+    assert!(
+        s[1]["worktree"]
+            .as_str()
+            .unwrap()
+            .replace('\\', "/")
+            .ends_with("/task-T006")
+    );
+    assert_eq!(
+        merged_of(&root),
+        ["T004", "T005", "T006"],
+        "each merged once"
+    );
+    let log = std::fs::read_to_string(
+        root.join("data/runs")
+            .join(id.to_string())
+            .join("events.jsonl"),
+    )
+    .unwrap();
+    assert_eq!(log.matches("\"type\":\"group_started\"").count(), 1);
+    assert_eq!(log.matches("\"type\":\"group_done\"").count(), 1);
+    assert_eq!(v["feature_loop"]["outcome"][0], true);
+    drop(e);
+    let _ = std::fs::remove_dir_all(&root);
+}

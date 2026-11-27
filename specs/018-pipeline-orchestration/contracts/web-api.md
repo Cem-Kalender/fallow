@@ -52,4 +52,4 @@ Each entry of `pipelines`:
 ]}]
 ```
 
-`state`: `queued | building | repairing | accepted | merged | waiting` (a question to the engineer). The loop page shows, for each active group, one row per task with its builder's state, and for an overlap "T011 changed src/cart.rs, which T010 changed: repaired on top of T010" (spec FR-024). The history lists `TaskOverlap` and `TaskMerged` with the files and tasks.
+`state`: `queued | building | repairing | accepted | merged | waiting` (a question to the engineer) `| dropped` (not merged before a new lock, built again; research R-6a). A group has `dropped: true` when a new lock dropped it (then `done` is true too). The loop page shows, for each active group, one row per task with its builder's state, and for an overlap "T011 changed src/cart.rs, which T010 changed: repaired on top of T010" (spec FR-024). The history lists `TaskOverlap` and `TaskMerged` with the files and tasks.

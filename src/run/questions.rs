@@ -195,6 +195,25 @@ fn open_of(l: &LoopState, n: u32) -> Option<&QuestionEntry> {
     })
 }
 
+/// 018 (review 1): the question waiting for the engineer that they were asked (the loop's
+/// question names it), else the oldest waiting: an answer not naming its question goes there.
+pub fn asked<'a>(l: &'a LoopState, needs: Option<&str>) -> Option<&'a QuestionEntry> {
+    let mut waiting: Vec<&QuestionEntry> = l
+        .questions
+        .values()
+        .filter(|q| q.state == QuestionState::WaitingEngineer)
+        .collect();
+    waiting.sort_by_key(|q| q.seq);
+    needs
+        .and_then(|why| {
+            waiting
+                .iter()
+                .find(|q| why.contains(&format!(" asks ({}): ", q.id)))
+                .copied()
+        })
+        .or_else(|| waiting.first().copied())
+}
+
 /// A question that waits for the engineer: the loop waits for it (FR-021).
 pub fn waiting(l: &LoopState) -> Option<&QuestionEntry> {
     l.questions
@@ -792,6 +811,11 @@ pub fn deliver(run: &mut Run) -> Result<bool, String> {
         let Some(s) = run.state.steps.get(&q.step).cloned() else {
             continue;
         };
+        // 018 (research R-6a): a step of a task a new lock dropped is not resumed; the answer is
+        // in spec.md's Clarifications for its new build.
+        if super::groups::dropped_step(&l, &s) {
+            continue;
+        }
         if s.end.is_none()
             || run.running.contains_key(&s.n)
             || super::machine::first_reason(&s).is_none()

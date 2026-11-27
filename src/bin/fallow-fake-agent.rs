@@ -268,11 +268,15 @@ fn main() -> ExitCode {
             .append(true)
             .open(log)
         {
-            // One argument per line; a newline inside one is written as `\n`.
+            // One argument per line; a newline inside one is written as `\n`. One write per
+            // call, so the calls of agents running at once never interleave (018 review 1).
+            let mut block = String::new();
             for a in &args {
-                let _ = writeln!(f, "{}", a.replace('\n', "\\n"));
+                block.push_str(&a.replace('\n', "\\n"));
+                block.push('\n');
             }
-            let _ = writeln!(f, "---");
+            block.push_str("---\n");
+            let _ = f.write_all(block.as_bytes());
         }
     }
     // 009: playing an editor. `--record <file> <args...>` appends each argument, one per line,

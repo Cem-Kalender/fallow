@@ -236,6 +236,7 @@
     accepted: "accepted, waiting to be merged",
     merged: "merged",
     waiting: "waiting for your answer",
+    dropped: "not merged before the new lock: built again",
   };
   function builders(v) {
     const active = (v.groups || []).filter((g) => !g.done);

@@ -5167,12 +5167,15 @@ impl Engine {
             Request::RelockPreview { project, feature } => self.relock_preview(&project, &feature),
             Request::Answer { id, text } => {
                 // A question relayed to the engineer is answered as such: committed first.
-                let waiting = self
-                    .runs
-                    .get(&id)
-                    .and_then(|r| r.state.feature_loop.as_ref())
-                    .and_then(super::questions::waiting)
-                    .map(|q| q.id.clone());
+                // 018 (review 1): the question the engineer was asked, when several wait.
+                let waiting = self.runs.get(&id).and_then(|r| {
+                    let needs = r.state.needs.as_ref().map(|n| n.why.as_str());
+                    r.state
+                        .feature_loop
+                        .as_ref()
+                        .and_then(|l| super::questions::asked(l, needs))
+                        .map(|q| q.id.clone())
+                });
                 match waiting {
                     Some(q) => self.question_answer(id, &q, &text, false),
                     None => run_mut(self, id)

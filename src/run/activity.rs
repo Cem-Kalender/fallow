@@ -332,22 +332,48 @@ fn fallow_lines(run: &Run, last_line: &BTreeMap<u32, u64>) -> Vec<Value> {
     }
     // 018 (FR-015, FR-024): the merges and overlaps of groups of [P] tasks.
     if let Some(l) = run.state.feature_loop.as_ref() {
-        for t in l.groups.iter().flat_map(|g| g.tasks.iter()) {
-            for (o, at) in t.overlaps.iter().zip(&t.overlaps_at) {
-                let with = o.with.join(" and ");
+        // 018 (research R-6a): a group a new lock dropped, and what Fallow could not remove.
+        for g in &l.groups {
+            let Some(at) = &g.ended_at else {
+                continue;
+            };
+            for t in g.tasks.iter().filter(|t| t.dropped) {
                 out.push(check(
                     ms_of(at),
                     Some(t.id.clone()),
                     format!(
-                        "{} changed {}, which {with} changed: repaired on top of {with}",
-                        t.id,
-                        o.files.join(", ")
+                        "{} built alongside was not merged before the new lock: built again",
+                        t.id
                     ),
+                    None,
+                    "Its working copy and branch were removed; it is built again under the new lock.".into(),
+                ));
+            }
+            for x in &g.left {
+                out.push(check(
+                    ms_of(at),
+                    None,
+                    format!("Fallow could not remove {x}: remove it by hand"),
                     Some("fail"),
                     String::new(),
                 ));
             }
-            if let (Some(c), Some(at)) = (&t.merged, &t.merged_at) {
+        }
+        let mut seen_merge: Vec<(&str, Option<&str>)> = Vec::new();
+        for t in l.groups.iter().flat_map(|g| g.tasks.iter()) {
+            for (o, at) in t.overlaps.iter().zip(&t.overlaps_at) {
+                out.push(check(
+                    ms_of(at),
+                    Some(t.id.clone()),
+                    super::groups::overlap_line(&t.id, &o.files, &o.with),
+                    Some("fail"),
+                    String::new(),
+                ));
+            }
+            // Once, though a task merged before a new lock is in two groups.
+            let first = !seen_merge.contains(&(t.id.as_str(), t.merged.as_deref()));
+            seen_merge.push((t.id.as_str(), t.merged.as_deref()));
+            if let (Some(c), Some(at), true) = (&t.merged, &t.merged_at, first) {
                 out.push(check(
                     ms_of(at),
                     Some(t.id.clone()),
@@ -820,7 +846,7 @@ pub fn view(run: &Run, ctx: &Ctx) -> Result<Value, String> {
         .iter()
         .map(|g| {
             json!({
-                "phase": g.phase, "done": g.done,
+                "phase": g.phase, "done": g.done, "dropped": g.dropped,
                 "tasks": g.tasks.iter().map(|t| json!({
                     "id": t.id, "state": group_task_state(run, t),
                     "worktree": format!("task-{}", t.id), "merged": t.merged,
@@ -881,10 +907,13 @@ pub fn view(run: &Run, ctx: &Ctx) -> Result<Value, String> {
 }
 
 /// 018: where a task of a group stands (contracts/web-api.md): `queued | building | repairing |
-/// accepted | merged | waiting`.
+/// accepted | merged | waiting | dropped`.
 fn group_task_state(run: &Run, t: &super::state::GroupTask) -> &'static str {
     if t.merged.is_some() {
         return "merged";
+    }
+    if t.dropped {
+        return "dropped";
     }
     let Some(l) = run.state.feature_loop.as_ref() else {
         return "queued";

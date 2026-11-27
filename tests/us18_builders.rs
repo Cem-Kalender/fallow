@@ -148,8 +148,9 @@ fn group_time(tx: &std::sync::mpsc::Sender<fallow::run::engine::Msg>, id: u64) -
     from.elapsed()
 }
 
-/// A loop over the feature with `builders` builders, each build taking 5 s; returns the engine,
-/// the loop and the group's time (`group_time`).
+/// A loop over the feature with `builders` builders, each build taking 12 s (so Fallow's own
+/// fixed work, the gates and merges, is a small share of the group's time even on a slow
+/// machine; review 1); returns the engine, the loop and the group's time (`group_time`).
 fn timed(
     name: &'static str,
     builders: u32,
@@ -163,7 +164,7 @@ fn timed(
     let root = scratch(name);
     setup(&root, builders, None);
     let f = parallel_tasks_feature(&root, 4, &[]);
-    let (e, id) = lock(&root, &f, &whole(&f, "sleep_ms = 5000"), (5.0, 60));
+    let (e, id) = lock(&root, &f, &whole(&f, "sleep_ms = 12000"), (5.0, 60));
     let took = group_time(&e.tx, id);
     (root, f, e, id, took)
 }
@@ -744,6 +745,465 @@ fn the_cost_limit_stops_new_builders() {
     for b in group {
         assert!(*b <= share + 0.005, "{b} of {share}: {budgets:?}");
     }
+    drop(e);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// Unlocks the feature, changes its `tasks.md` with `change`, analyzes again and locks it again
+/// (the scenario holds `LEAD_ANALYZES_AGAIN`).
+fn lock_again(
+    tx: &std::sync::mpsc::Sender<fallow::run::engine::Msg>,
+    v: &Value,
+    change: impl Fn(&str) -> String,
+) {
+    use fallow::studio::Req;
+    let project = v["feature_loop"]["project"].as_str().unwrap().to_string();
+    let feature = "001-calc".to_string();
+    ask(
+        tx,
+        Request::Unlock {
+            project: project.clone(),
+            feature: feature.clone(),
+        },
+    )
+    .unwrap();
+    let path = "specs/001-calc/tasks.md".to_string();
+    let doc = sreq(
+        tx,
+        Req::Doc {
+            project: project.clone(),
+            feature: feature.clone(),
+            path: path.clone(),
+        },
+    )
+    .unwrap();
+    let text = change(doc["text"].as_str().unwrap());
+    sreq(
+        tx,
+        Req::PutDoc {
+            project: project.clone(),
+            feature: feature.clone(),
+            path,
+            text,
+            version: doc["version"].as_str().unwrap().to_string(),
+        },
+    )
+    .unwrap();
+    analyze_again(tx, &project, &feature);
+    ask(
+        tx,
+        Request::Lock {
+            project,
+            feature,
+            pipeline: None,
+            level: None,
+            budget_usd: None,
+            budget_minutes: None,
+            when_verified: None,
+            update_limit: None,
+            run_after: None,
+        },
+    )
+    .unwrap();
+}
+
+/// 018 US3 (decided after review 1; FR-020a): a new lock while a group is in progress is taken
+/// in only when no step of the group runs. The tasks of the group not merged by then are dropped
+/// (their branches and working copies removed, built again under the new lock), and the history
+/// says so; `tasks.md` is ticked only for tasks merged into the build branch; no two builders ever
+/// share a working copy and the builders cap holds.
+#[test]
+fn a_new_lock_during_a_group_drops_its_unmerged_tasks_and_builds_them_again() {
+    let root = scratch("builders-relock");
+    setup(&root, 3, None);
+    let f = parallel_tasks_feature(&root, 3, &[]);
+    let mut steps = f.phase_1();
+    // T004 is still at work when the engineer locks again; T005 and T006 are accepted by then,
+    // not merged (they wait for T004).
+    steps.push_str(&f.build("T004", "sleep_ms = 20000"));
+    steps.push_str(&f.build("T005", ""));
+    steps.push_str(&f.build("T006", ""));
+    // Under the new lock: US1 brought in line, then T004 to T007.
+    steps.push_str(
+        &task_step(
+            "US1",
+            &[("calc/relock.py", "LOCK = 2\n")],
+            "when = \"lock 2\"",
+        )
+        .replacen("kind = \"build\"", "kind = \"repair\"", 1),
+    );
+    for t in ["T004", "T005", "T006", "T007"] {
+        steps.push_str(&f.build(t, ""));
+    }
+    steps.push_str(&handover_step(2, ""));
+    steps.push_str(&check_step("US1", true, ""));
+    steps.push_str(LEAD_ANALYZES_AGAIN);
+    let (e, id) = lock(&root, &f, &steps, (5.0, 60));
+    let tx = &e.tx;
+    let v = wait_for(tx, id, "T005 and T006 accepted while T004 builds", |v| {
+        ["T005", "T006"]
+            .iter()
+            .all(|t| v["feature_loop"]["tasks"][t]["state"] == "accepted")
+    });
+    // The new lock: T004's text changes and T006 is no longer [P].
+    lock_again(tx, &v, |t| {
+        t.replace(
+            "T004 [P] [US1] Write calc/t004.py",
+            "T004 [P] [US1] Write calc/t004.py with its name",
+        )
+        .replace("T006 [P] [US1]", "T006 [US1]")
+    });
+    let v = wait_for(tx, id, "ready", |v| {
+        v["stage"] == "ready" || !v["needs_engineer"].is_null()
+    });
+    assert_eq!(v["stage"], "ready", "{}", v["needs_engineer"]);
+    let ev = events(&root, id);
+    let relocked = of_type(&ev, "relocked")[0]["seq"].as_u64().unwrap();
+    let old4 = of(&v, "build", "T004")[0]["n"].as_u64().unwrap();
+    let old4_end = ev
+        .iter()
+        .find(|e| e["type"] == "step_finished" && e["n"].as_u64() == Some(old4))
+        .and_then(|e| e["seq"].as_u64())
+        .unwrap();
+    assert!(
+        old4_end > relocked,
+        "the new lock came while T004 was at work"
+    );
+    // Must fail: nothing of the group starts while T004's builder is at work; never two
+    // builders of one task at once (one working copy); never more than the cap.
+    let between: Vec<&Value> = of_type(&ev, "step_queued")
+        .into_iter()
+        .filter(|e| (relocked..old4_end).contains(&e["seq"].as_u64().unwrap()))
+        .collect();
+    assert!(
+        between.is_empty(),
+        "queued under the old group: {between:?}"
+    );
+    for t in ["T004", "T005", "T006"] {
+        assert_eq!(most_at_once(&ev, &[t.to_string()]), 1, "{t}");
+    }
+    assert!(most_at_once(&ev, &f.parallel) <= 3);
+    // Must fail: the old group is dropped once (none of its tasks was merged), each task
+    // reset, and the history says so.
+    let dropped = of_type(&ev, "group_dropped");
+    assert_eq!(dropped.len(), 1, "{dropped:?}");
+    assert_eq!(
+        dropped[0]["tasks"],
+        serde_json::json!(["T004", "T005", "T006"])
+    );
+    assert_eq!(
+        dropped[0]["dropped"],
+        serde_json::json!(["T004", "T005", "T006"])
+    );
+    assert!(dropped[0]["seq"].as_u64().unwrap() > old4_end);
+    let feed = ask(
+        tx,
+        Request::LoopActivity {
+            id,
+            filter: fallow::run::activity::Filter::default(),
+        },
+    )
+    .unwrap()
+    .to_string();
+    for t in ["T004", "T005", "T006"] {
+        assert!(
+            feed.contains(&format!(
+                "{t} built alongside was not merged before the new lock: built again"
+            )),
+            "{feed}"
+        );
+    }
+    // Must fail: the new lock is taken into the build branch without a tick for a task that
+    // was accepted but never merged.
+    let build_branch = text(&v["feature_loop"], "build_branch");
+    let taken = git(&f.repo, &["log", "--format=%H %s", &build_branch])
+        .lines()
+        .find(|l| l.contains("lock 2 of"))
+        .map(|l| l.split_whitespace().next().unwrap().to_string())
+        .expect("the new lock's merge");
+    let at_lock = git(
+        &f.repo,
+        &["show", &format!("{taken}:specs/001-calc/tasks.md")],
+    );
+    for t in ["T004", "T005", "T006"] {
+        assert!(!at_lock.contains(&format!("- [X] {t} ")), "{t}: {at_lock}");
+    }
+    // Each built again under the new lock: T004 and T005 as the new group, each in its own
+    // working copy started from the build branch holding the new lock; T006 in the build
+    // worktree.
+    for t in ["T004", "T005", "T006"] {
+        let b = of(&v, "build", t);
+        assert_eq!(b.len(), 2, "{t}: {b:?}");
+        let base = text(b[1], "base");
+        let docs = git(
+            &f.repo,
+            &["show", &format!("{base}:specs/001-calc/tasks.md")],
+        );
+        assert!(docs.contains("calc/t004.py with its name"), "{t} on {base}");
+        let wt = text(b[1], "worktree").replace('\\', "/");
+        let own = if t == "T006" {
+            "/build".to_string()
+        } else {
+            format!("/task-{t}")
+        };
+        assert!(wt.ends_with(&own), "{t} in {wt}");
+    }
+    let started = of_type(&ev, "group_started");
+    assert_eq!(started.len(), 2);
+    assert_eq!(started[1]["tasks"], serde_json::json!(["T004", "T005"]));
+    let merged: Vec<&str> = of_type(&ev, "task_merged")
+        .iter()
+        .map(|e| e["task"].as_str().unwrap())
+        .collect();
+    assert_eq!(merged, ["T004", "T005"]);
+    let tasks_md = git(
+        &f.repo,
+        &["show", &format!("{build_branch}:specs/001-calc/tasks.md")],
+    );
+    for t in ["T004", "T005", "T006", "T007"] {
+        assert!(tasks_md.contains(&format!("- [X] {t} ")), "{t}: {tasks_md}");
+    }
+    // The old group is recorded as dropped; no working copy or branch of either group is left.
+    let lv = ask(tx, Request::Loop { id }).unwrap();
+    assert_eq!(lv["groups"][0]["dropped"], true, "{}", lv["groups"]);
+    assert_eq!(lv["groups"][0]["tasks"][1]["state"], "dropped");
+    assert_eq!(lv["groups"][1]["done"], true);
+    let wt = root.join("data/runs").join(id.to_string()).join("wt");
+    for t in ["T004", "T005", "T006"] {
+        assert!(!wt.join(format!("task-{t}")).exists(), "{t}'s working copy");
+    }
+    let left: Vec<String> = branches(&f.repo)
+        .into_iter()
+        .filter(|b| {
+            ["T004", "T005", "T006"]
+                .iter()
+                .any(|t| b.ends_with(&format!("-{t}")))
+        })
+        .collect();
+    assert!(left.is_empty(), "{left:?}");
+    assert_eq!(v["feature_loop"]["outcome"][0], true);
+    drop(e);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// 018 US3 AS10 (FR-018; review 1): two tasks of a group ask questions the engineer must answer.
+/// Each holds only its own task; neither question replaces the other; the group's other tasks go
+/// on; each answer goes to the step of the task that asked.
+#[test]
+fn two_questions_in_a_group_each_hold_only_their_task() {
+    let root = scratch("builders-questions");
+    setup(&root, 3, None);
+    let f = parallel_tasks_feature(&root, 4, &[]);
+    let mut steps = f.phase_1();
+    for t in &f.parallel {
+        if t == "T005" || t == "T006" {
+            steps.push_str(
+                &f.build(t, &format!("ask = \"May {t} import os?\""))
+                    .replacen(
+                        "status = \"done\"",
+                        "status = \"blocked\", question = \"$ANSWER\"",
+                        1,
+                    ),
+            );
+        } else {
+            steps.push_str(&f.build(t, "sleep_ms = 1500"));
+        }
+    }
+    for q in ["q1", "q2"] {
+        steps.push_str(&format!("[[step]]\nkind = \"lead_answer\"\npart = \"{q}\"\noutput = {{ outcome = \"relay\", answer = \"\", basis = \"none\", reserved = false, changes_criterion = false, touches_interface = false, adds_dependency = false, options = [{{ label = \"no\", recommended = true }}] }}\n\n"));
+    }
+    for t in ["T005", "T006"] {
+        steps.push_str(&f.build(t, "when = \"The engineer answers\""));
+    }
+    steps.push_str(&f.build(&f.last, ""));
+    steps.push_str(&handover_step(2, ""));
+    steps.push_str(&check_step("US1", true, ""));
+    let (e, id) = lock(&root, &f, &steps, (5.0, 60));
+    let tx = &e.tx;
+    let v = wait_for(tx, id, "both questions", |v| {
+        ["q1", "q2"]
+            .iter()
+            .all(|q| v["feature_loop"]["questions"][q]["state"] == "waiting_engineer")
+    });
+    let task_of = |v: &Value, q: &str| text(&v["feature_loop"]["questions"][q], "task");
+    let (t1, t2) = (task_of(&v, "q1"), task_of(&v, "q2"));
+    let mut asked = vec![t1.clone(), t2.clone()];
+    asked.sort();
+    assert_eq!(asked, ["T005", "T006"]);
+    // The other tasks go on and are accepted while both wait (AS10); T008 does not start.
+    let v = wait_for(tx, id, "T004 and T007 accepted", |v| {
+        ["T004", "T007"]
+            .iter()
+            .all(|t| v["feature_loop"]["tasks"][t]["state"] == "accepted")
+    });
+    std::thread::sleep(Duration::from_secs(2));
+    let v2 = ask(tx, Request::Get { id }).unwrap();
+    for v in [&v, &v2] {
+        for t in ["T005", "T006"] {
+            assert_eq!(v["feature_loop"]["tasks"][t]["state"], "waiting", "{t}");
+        }
+        // Must fail: the engineer is asked the first question; the second does not replace it.
+        let needs = v["needs_engineer"].as_str().unwrap_or_default().to_string();
+        assert!(
+            needs.contains(&format!("The builder of {t1} asks (q1): ")),
+            "{needs}"
+        );
+    }
+    assert!(
+        of(&v2, "build", "T008").is_empty(),
+        "T008 waits for the answers"
+    );
+    // Answering (the loop's answer, not naming the question) answers the question asked; its
+    // task's builder gets it, the other still waits.
+    ask(
+        tx,
+        Request::Answer {
+            id,
+            text: "First answer".into(),
+        },
+    )
+    .unwrap();
+    let v = wait_for(tx, id, "the first answered", |v| {
+        v["feature_loop"]["questions"]["q1"]["state"] == "answered"
+            && of(v, "build", &t1).len() == 2
+    });
+    assert_eq!(
+        v["feature_loop"]["questions"]["q2"]["state"],
+        "waiting_engineer"
+    );
+    assert_eq!(of(&v, "build", &t2).len(), 1, "{t2} still waits");
+    assert!(prompt(&root, id, of(&v, "build", &t1)[1]).contains("First answer"));
+    let v = wait_for(tx, id, "the second question asked", |v| {
+        v["needs_engineer"]
+            .as_str()
+            .is_some_and(|n| n.contains(&format!("The builder of {t2} asks (q2): ")))
+    });
+    assert!(of(&v, "build", "T008").is_empty());
+    ask(
+        tx,
+        Request::Answer {
+            id,
+            text: "Second answer".into(),
+        },
+    )
+    .unwrap();
+    let v = wait_for(tx, id, "ready", |v| v["stage"] == "ready");
+    let b = of(&v, "build", &t2);
+    assert_eq!(b.len(), 2, "{b:?}");
+    assert_eq!(b[1]["resume"], b[0]["session"]);
+    assert!(prompt(&root, id, b[1]).contains("Second answer"));
+    let ev = events(&root, id);
+    let merged: Vec<&str> = of_type(&ev, "task_merged")
+        .iter()
+        .map(|e| e["task"].as_str().unwrap())
+        .collect();
+    assert_eq!(merged, ["T004", "T005", "T006", "T007"]);
+    drop(e);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// 018 US3 (decided after review 1; FR-020a): a task of the group merged before the new lock
+/// stays merged and is not built again; the tasks not merged are built again; the group the new
+/// `tasks.md` gives is gated on its merged result.
+#[test]
+fn a_new_lock_keeps_the_tasks_of_the_group_already_merged() {
+    let root = scratch("builders-relock-merged");
+    setup(&root, 3, None);
+    let f = parallel_tasks_feature(&root, 3, &[]);
+    let mut steps = f.phase_1();
+    // T004 is merged; T005 is still at work at the new lock; T006 is accepted, not merged.
+    steps.push_str(&f.build("T004", ""));
+    steps.push_str(&f.build("T005", "sleep_ms = 20000"));
+    steps.push_str(&f.build("T006", ""));
+    steps.push_str(
+        &task_step(
+            "US1",
+            &[("calc/relock.py", "LOCK = 2\n")],
+            "when = \"lock 2\"",
+        )
+        .replacen("kind = \"build\"", "kind = \"repair\"", 1),
+    );
+    for t in ["T005", "T006", "T007"] {
+        steps.push_str(&f.build(t, ""));
+    }
+    steps.push_str(&handover_step(2, ""));
+    steps.push_str(&check_step("US1", true, ""));
+    steps.push_str(LEAD_ANALYZES_AGAIN);
+    let (e, id) = lock(&root, &f, &steps, (5.0, 60));
+    let tx = &e.tx;
+    let v = wait_for(
+        tx,
+        id,
+        "T004 merged and T006 accepted while T005 builds",
+        |v| {
+            v["feature_loop"]["tasks"]["T006"]["state"] == "accepted"
+                && v["feature_loop"]["groups"][0]["tasks"][0]["merged"].is_string()
+        },
+    );
+    lock_again(tx, &v, |t| {
+        t.replace(
+            "T005 [P] [US1] Write calc/t005.py",
+            "T005 [P] [US1] Write calc/t005.py with its name",
+        )
+    });
+    let v = wait_for(tx, id, "ready", |v| {
+        v["stage"] == "ready" || !v["needs_engineer"].is_null()
+    });
+    assert_eq!(v["stage"], "ready", "{}", v["needs_engineer"]);
+    let ev = events(&root, id);
+    let dropped = of_type(&ev, "group_dropped");
+    assert_eq!(dropped.len(), 1, "{dropped:?}");
+    assert_eq!(dropped[0]["dropped"], serde_json::json!(["T005", "T006"]));
+    // T004 is built and merged once; T005 and T006 again.
+    assert_eq!(of(&v, "build", "T004").len(), 1);
+    for t in ["T005", "T006"] {
+        assert_eq!(of(&v, "build", t).len(), 2, "{t}");
+    }
+    let merged: Vec<&str> = of_type(&ev, "task_merged")
+        .iter()
+        .map(|e| e["task"].as_str().unwrap())
+        .collect();
+    assert_eq!(merged, ["T004", "T005", "T006"]);
+    // The new group, of the same three tasks, ran and was gated on its merged result.
+    let started = of_type(&ev, "group_started");
+    assert_eq!(started.len(), 2);
+    assert_eq!(
+        started[1]["tasks"],
+        serde_json::json!(["T004", "T005", "T006"])
+    );
+    let done = of_type(&ev, "group_done");
+    assert_eq!(done.len(), 1);
+    let last_merge = of_type(&ev, "task_merged").last().unwrap()["seq"]
+        .as_u64()
+        .unwrap();
+    assert!(
+        of_type(&ev, "gate_run")
+            .iter()
+            .any(|g| g["part"] == "group-T004-T006" && g["seq"].as_u64().unwrap() > last_merge),
+        "the new group's gates"
+    );
+    let build_branch = text(&v["feature_loop"], "build_branch");
+    let taken = git(&f.repo, &["log", "--format=%H %s", &build_branch])
+        .lines()
+        .find(|l| l.contains("lock 2 of"))
+        .map(|l| l.split_whitespace().next().unwrap().to_string())
+        .expect("the new lock's merge");
+    let at_lock = git(
+        &f.repo,
+        &["show", &format!("{taken}:specs/001-calc/tasks.md")],
+    );
+    assert!(at_lock.contains("- [X] T004 "), "{at_lock}");
+    assert!(!at_lock.contains("- [X] T006 "), "{at_lock}");
+    let left: Vec<String> = branches(&f.repo)
+        .into_iter()
+        .filter(|b| {
+            ["T004", "T005", "T006"]
+                .iter()
+                .any(|t| b.ends_with(&format!("-{t}")))
+        })
+        .collect();
+    assert!(left.is_empty(), "{left:?}");
+    assert_eq!(v["feature_loop"]["outcome"][0], true);
     drop(e);
     let _ = std::fs::remove_dir_all(&root);
 }

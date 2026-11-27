@@ -431,11 +431,18 @@ Return `status: done`, the `files` you changed and a `summary`.",
 /// markers where both changed the same lines); its builder makes both tasks' work keep working.
 pub fn loop_overlap(task: &str, files: &[UpdateConflictCx], with: &[String]) -> String {
     let mut s = header("repair", Some(task));
-    s.push_str(&format!(
-        "Fallow did not merge {task}: it changed files that {} changed too, and {} already merged into the build branch. Fallow merged the build branch as it is now into your working copy.\n\nMake both tasks' work keep working: both tasks' work must keep working in each of these files.\n\n",
-        and_list(with),
-        if with.len() == 1 { "that task is" } else { "those tasks are" }
-    ));
+    if with.is_empty() {
+        // Files the build branch changed without a task of the group (a new lock's merge).
+        s.push_str(&format!(
+            "Fallow did not merge {task}: it changed files that the build branch changed too since {task} started. Fallow merged the build branch as it is now into your working copy.\n\nMake both sides' work keep working: both tasks' work must keep working in each of these files.\n\n"
+        ));
+    } else {
+        s.push_str(&format!(
+            "Fallow did not merge {task}: it changed files that {} changed too, and {} already merged into the build branch. Fallow merged the build branch as it is now into your working copy.\n\nMake both tasks' work keep working: both tasks' work must keep working in each of these files.\n\n",
+            and_list(with),
+            if with.len() == 1 { "that task is" } else { "those tasks are" }
+        ));
+    }
     for c in files {
         if c.text {
             s.push_str(&format!(
