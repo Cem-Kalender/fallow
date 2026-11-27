@@ -694,12 +694,31 @@ fn a_0_4_0_loop_stopped_after_a_repair_at_a_phase_end_resumes_without_a_second()
         ),
     ]
     .concat();
+    // The scripted step the interrupted repair picks: Shutdown waits until the fake recorded it.
+    let sleeper = format!("{}{steps}", lead_writes_calc());
+    let sleeper = sleeper[..sleeper.find("sleep_ms = 30000").unwrap()]
+        .matches("[[step]]")
+        .count()
+        - 1;
     let (e, _repo, id) = locked_calc(&root, &steps, Some("points"));
     wait_for(&e.tx, id, "the repair running", |v| {
         of(v, "repair", "reviewer@phase-1-end")
             .iter()
             .any(|s| !s["started"].is_null())
     });
+    let used = root.join("scenario.used");
+    let start = std::time::Instant::now();
+    while !std::fs::read_to_string(&used)
+        .unwrap_or_default()
+        .lines()
+        .any(|l| l.trim() == sleeper.to_string())
+    {
+        assert!(
+            start.elapsed() < std::time::Duration::from_secs(30),
+            "the fake never recorded the repair's pick"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
     e.tx.send(Msg::Shutdown).unwrap();
     let fallow::service::ToolEngine { handle, .. } = e;
     handle.join().unwrap();
@@ -735,11 +754,10 @@ fn a_0_4_0_loop_stopped_after_a_repair_at_a_phase_end_resumes_without_a_second()
     let v = wait_for(&e.tx, id, "the engineer asked", |v| {
         !v["needs_engineer"].is_null()
     });
-    // (Which of the reviewer's scripted findings the fake gives in round 2 varied in runs under
-    // load; the cap is what counts.)
     let why = v["needs"]["why"].as_str().unwrap();
     assert!(
-        why.starts_with("reviewer@phase-1-end still fails after 1 repair"),
+        why.starts_with("reviewer@phase-1-end still fails after 1 repair")
+            && why.contains("still no tests"),
         "the cap counts 0.4.0's repair: {why}"
     );
     assert!(

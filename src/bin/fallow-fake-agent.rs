@@ -491,13 +491,17 @@ fn main() -> ExitCode {
         return ExitCode::SUCCESS;
     };
     used.push(n);
-    let _ = std::fs::write(
-        &used_path,
-        used.iter()
-            .map(|u| u.to_string())
-            .collect::<Vec<_>>()
-            .join("\n"),
-    );
+    // Written to a file of its own and renamed over the record, so an agent killed while writing
+    // (a test's shutdown) leaves the old record or the new one, never half of one.
+    let tmp = used_path.with_extension(format!("used.{}", std::process::id()));
+    let text = used
+        .iter()
+        .map(|u| u.to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+    if std::fs::write(&tmp, text).is_ok() {
+        let _ = std::fs::rename(&tmp, &used_path);
+    }
     drop(lock);
     emit(
         json!({"type": "assistant", "session_id": session, "message": {"content": [{"type": "text", "text": format!("Working on {kind}.")}]}}),
