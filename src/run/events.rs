@@ -627,6 +627,33 @@ pub enum Event {
         target_commit: String,
         commit: String,
     },
+    /// 018 (research R-5): the runner reached a group of `[P]` tasks; each is built in its own
+    /// working copy, starting from the build head `base`.
+    GroupStarted {
+        phase: u32,
+        tasks: Vec<String>,
+        base: String,
+    },
+    /// 018 (research R-6): a group task was merged into the build branch (`commit`, the merge
+    /// commit) and ticked in `tasks.md`.
+    TaskMerged {
+        task: String,
+        commit: String,
+    },
+    /// 018 (research R-6): a group task changed `files` that the group's merged tasks `with`
+    /// changed: it is not merged; its repair starts from the working commit `working`.
+    TaskOverlap {
+        task: String,
+        files: Vec<String>,
+        with: Vec<String>,
+        working: String,
+    },
+    /// 018: every task of the group starting with `first` is merged and the merged result passed
+    /// the gates.
+    GroupDone {
+        phase: u32,
+        first: String,
+    },
 }
 
 /// 011: a conflicting path of an update, as recorded.
@@ -834,6 +861,10 @@ impl Event {
             Event::WaitsFor { .. } => "waits_for",
             Event::WaitEnded { .. } => "wait_ended",
             Event::StartedFrom { .. } => "started_from",
+            Event::GroupStarted { .. } => "group_started",
+            Event::TaskMerged { .. } => "task_merged",
+            Event::TaskOverlap { .. } => "task_overlap",
+            Event::GroupDone { .. } => "group_done",
         }
     }
 }

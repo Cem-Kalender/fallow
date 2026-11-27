@@ -50,6 +50,13 @@ impl Step {
     pub fn at(&self) -> At {
         self.at.unwrap_or_default()
     }
+
+    /// 018: the point a step runs at, `(when, at)`. For a task step other than the builder and
+    /// the gates, before or after each task; a checker per task without `at` runs after it
+    /// (research R-1). The builder and the gates are the task itself (`At::End`).
+    pub fn point_at(&self) -> (When, At) {
+        (self.when, self.at())
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -59,17 +66,33 @@ pub struct Caps {
     pub task_repairs: u32,
     #[serde(default = "three")]
     pub review_rounds: u32,
+    /// 018: the most builders at once on a group of `[P]` tasks; 1..=8, default 1, written only
+    /// when not 1 so a pipeline with one builder records what 0.4.0 recorded (research R-1).
+    #[serde(default = "one", skip_serializing_if = "is_one")]
+    pub builders: u32,
 }
 
 fn three() -> u32 {
     3
 }
 
+fn one() -> u32 {
+    1
+}
+
+fn is_one(n: &u32) -> bool {
+    *n == 1
+}
+
+/// 018: the most builders a pipeline may allow.
+pub const MAX_BUILDERS: u32 = 8;
+
 impl Default for Caps {
     fn default() -> Caps {
         Caps {
             task_repairs: 3,
             review_rounds: 3,
+            builders: 1,
         }
     }
 }
@@ -97,14 +120,23 @@ pub struct Pipeline {
     pub verifying: bool,
     /// What is not checked, when not verifying.
     pub missing: Vec<String>,
+    /// 018: the places of the makers with `when = "task"` and no `at` (one: the builder).
+    #[serde(skip)]
+    pub makers_per_task: Vec<usize>,
 }
 
 impl Pipeline {
-    /// The builder step (the one maker per task).
+    /// The builder step: the one maker per task, the `when = "task"` step without `at` that is
+    /// not the gates. A checker per task without `at` comes after it, so the first such step is
+    /// the builder in every pipeline the checks accept (a checker before the builder is not, as
+    /// `parse` makes sure).
     pub fn builder(&self) -> Option<&Step> {
-        self.steps
-            .iter()
-            .find(|s| s.when == When::Task && s.agent != GATES)
+        self.builder_index().map(|i| &self.steps[i])
+    }
+
+    /// The builder's place among the steps.
+    pub fn builder_index(&self) -> Option<usize> {
+        self.makers_per_task.first().copied()
     }
 
     /// The pipeline as TOML, as a loop records it.
@@ -136,12 +168,29 @@ pub fn parse(
             raw.name
         ));
     }
-    let mut makers_per_task = 0;
+    if !(1..=MAX_BUILDERS).contains(&raw.caps.builders) {
+        problems.push(format!(
+            "{file}: caps: builders must be between 1 and {MAX_BUILDERS}; it is {}",
+            raw.caps.builders
+        ));
+    }
+    // 018 (research R-1): the builder is the one maker per task without `at`.
+    let task_makers: Vec<(usize, bool)> = raw
+        .steps
+        .iter()
+        .enumerate()
+        .filter(|(_, s)| {
+            s.when == When::Task && s.agent != GATES && kind_of(&s.agent) == Ok(Kind::Maker)
+        })
+        .map(|(i, s)| (i, s.at.is_some()))
+        .collect();
+    let makers_per_task: Vec<usize> = task_makers
+        .iter()
+        .filter(|(_, at)| !at)
+        .map(|(i, _)| *i)
+        .collect();
     for (i, s) in raw.steps.iter().enumerate() {
         let at = |m: String| format!("{file}: step {}: {m}", i + 1);
-        if s.at.is_some() && s.when == When::Task {
-            problems.push(at("`at` is for phase, checkpoint and once steps".into()));
-        }
         for g in &s.paths {
             if globset::Glob::new(g).is_err() {
                 problems.push(at(format!("paths: {g:?} is not a glob")));
@@ -150,6 +199,11 @@ pub fn parse(
         if s.agent == GATES {
             if !matches!(s.when, When::Task | When::Phase) {
                 problems.push(at("fallow:gates runs per task or per phase".into()));
+            }
+            if s.at.is_some() {
+                problems.push(at(
+                    "fallow:gates runs after the work it checks: no `at`".into()
+                ));
             }
             if !s.paths.is_empty() {
                 problems.push(at("fallow:gates runs on every change: no `paths`".into()));
@@ -161,29 +215,27 @@ pub fn parse(
             Ok(Kind::Lead) => problems.push(at("the lead is not a pipeline step".into())),
             Ok(Kind::Assistant) => problems.push(at("the assistant is not a pipeline step".into())),
             Ok(Kind::Maker) => {
-                if s.when == When::Task {
-                    makers_per_task += 1;
-                    if !s.paths.is_empty() {
-                        problems.push(at("the builder builds every task: no `paths`".into()));
-                    }
+                if s.when == When::Task && s.at.is_none() && !s.paths.is_empty() {
+                    problems.push(at("the builder builds every task: no `paths`".into()));
+                }
+                if s.when == When::Task && s.at.is_some() && makers_per_task.is_empty() {
+                    problems.push(at(
+                        "the builder (the maker per task) takes no `at`; with it, this maker runs before or after each task and the pipeline has no builder".into(),
+                    ));
                 }
             }
             Ok(Kind::Checker) => {
-                if s.when == When::Task {
+                if s.at() == At::Start && s.on_fail == OnFail::Repair {
                     problems.push(at(
-                        "a checker runs at phases and checkpoints, not per task".into()
+                        "a checker at a start must ask the engineer (on_fail = \"engineer\"): nothing of that point's work is built yet".into(),
                     ));
-                }
-                if s.at() == At::Start {
-                    problems.push(at("a checker at the start has nothing to check yet".into()));
                 }
             }
         }
         for other in &s.parallel_with {
             let ok = raw.steps.iter().any(|o| {
                 &o.agent == other
-                    && o.when == s.when
-                    && o.at() == s.at()
+                    && o.point_at() == s.point_at()
                     && kind_of(other) == Ok(Kind::Checker)
             });
             if !ok || kind_of(&s.agent) != Ok(Kind::Checker) {
@@ -193,9 +245,10 @@ pub fn parse(
             }
         }
     }
-    if makers_per_task != 1 {
+    if makers_per_task.len() != 1 {
         problems.push(format!(
-            "{file}: a pipeline needs exactly one maker with when = \"task\" (the builder); it has {makers_per_task}"
+            "{file}: a pipeline needs exactly one maker with when = \"task\" and no `at` (the builder); it has {}",
+            makers_per_task.len()
         ));
     }
     if !problems.is_empty() {
@@ -225,6 +278,7 @@ pub fn parse(
         source,
         verifying: missing.is_empty(),
         missing,
+        makers_per_task,
     })
 }
 
@@ -235,7 +289,7 @@ mod tests {
     fn kinds(name: &str) -> Result<Kind, String> {
         match name {
             "builder" | "test-writer" | "docs-writer" => Ok(Kind::Maker),
-            "reviewer" | "security-reviewer" => Ok(Kind::Checker),
+            "reviewer" | "security-reviewer" | "lint-checker" => Ok(Kind::Checker),
             "lead" => Ok(Kind::Lead),
             "assistant" => Ok(Kind::Assistant),
             _ => Err(format!("there is no agent named {name:?}")),
@@ -336,11 +390,8 @@ on_fail = "engineer"
             "name = \"p\"\n[[step]]\nagent = \"reviewer\"\nwhen = \"task\"\non_fail = \"repair\"\n",
         )
         .unwrap_err();
-        assert!(
-            e.iter()
-                .any(|x| x.contains("step 1") && x.contains("not per task")),
-            "{e:?}"
-        );
+        // 018: a checker per task runs after each task; only the builder is missing.
+        assert!(!e.iter().any(|x| x.contains("step 1")), "{e:?}");
         assert!(e.iter().any(|x| x.contains("exactly one maker")), "{e:?}");
         let e = p("name = \"p\"\n[[step]]\nagent = \"builder\"\nwhen = \"task\"\non_fail = \"repair\"\n[[step]]\nagent = \"fallow:gates\"\nwhen = \"checkpoint\"\non_fail = \"repair\"\n[[step]]\nagent = \"ghost\"\nwhen = \"phase\"\non_fail = \"engineer\"\n[[step]]\nagent = \"reviewer\"\nwhen = \"checkpoint\"\nat = \"start\"\non_fail = \"repair\"\n").unwrap_err();
         assert!(
@@ -355,7 +406,8 @@ on_fail = "engineer"
         );
         assert!(
             e.iter()
-                .any(|x| x.contains("step 4") && x.contains("nothing to check")),
+                .any(|x| x.contains("step 4")
+                    && x.contains("nothing of that point's work is built yet")),
             "{e:?}"
         );
         let e = p("name = \"p\"\nwhatever = 1\n").unwrap_err();
@@ -369,5 +421,298 @@ on_fail = "engineer"
         )
         .unwrap_err();
         assert!(e[0].contains("differs from the file name"));
+    }
+
+    // ---- 018 (T003): the format's additions -------------------------------------------------
+
+    const PIPELINE_040_STANDARD: &str = r#"name = "standard"
+description = "One builder task by task, the gates after every task, and a review at every user story's checkpoint"
+
+[caps]
+task_repairs = 3
+review_rounds = 3
+
+[[step]]
+agent = "builder"
+when = "task"
+on_fail = "repair"
+
+[[step]]
+agent = "fallow:gates"
+when = "task"
+on_fail = "repair"
+
+[[step]]
+agent = "reviewer"
+when = "checkpoint"
+on_fail = "repair"
+"#;
+    const PIPELINE_040_TEST_FIRST: &str = r#"name = "test-first"
+description = "Standard, with each user story's acceptance tests written first by the test-writer"
+
+[caps]
+task_repairs = 3
+review_rounds = 3
+
+[[step]]
+agent = "test-writer"
+when = "checkpoint"
+at = "start"
+on_fail = "engineer"
+
+[[step]]
+agent = "builder"
+when = "task"
+on_fail = "repair"
+
+[[step]]
+agent = "fallow:gates"
+when = "task"
+on_fail = "repair"
+
+[[step]]
+agent = "reviewer"
+when = "checkpoint"
+on_fail = "repair"
+"#;
+    const PIPELINE_040_SOLO: &str = r#"name = "solo"
+description = "One builder task by task with the gates, and no review: results are not verified by Fallow"
+
+[caps]
+task_repairs = 3
+review_rounds = 3
+
+[[step]]
+agent = "builder"
+when = "task"
+on_fail = "repair"
+
+[[step]]
+agent = "fallow:gates"
+when = "task"
+on_fail = "repair"
+"#;
+
+    /// Standard's steps with `caps` (the lines after `[caps]`) and `more` steps after them.
+    fn standard_with(caps: &str, more: &str) -> String {
+        format!(
+            "name = \"p\"\n[caps]\n{caps}\n[[step]]\nagent = \"builder\"\nwhen = \"task\"\non_fail = \"repair\"\n[[step]]\nagent = \"fallow:gates\"\nwhen = \"task\"\non_fail = \"repair\"\n[[step]]\nagent = \"reviewer\"\nwhen = \"checkpoint\"\non_fail = \"repair\"\n{more}"
+        )
+    }
+
+    fn step(agent: &str, when: &str, at: Option<&str>, on_fail: &str, extra: &str) -> String {
+        let at = at.map(|a| format!("at = \"{a}\"\n")).unwrap_or_default();
+        format!(
+            "[[step]]\nagent = \"{agent}\"\nwhen = \"{when}\"\n{at}on_fail = \"{on_fail}\"\n{extra}"
+        )
+    }
+
+    #[test]
+    fn builders_default_to_one_and_stay_within_one_to_eight() {
+        assert_eq!(p(&standard_with("", "")).unwrap().caps.builders, 1);
+        for n in [1, 8] {
+            let pl = p(&standard_with(&format!("builders = {n}"), "")).unwrap();
+            assert_eq!(pl.caps.builders, n);
+        }
+        for n in [0, 9] {
+            let e = p(&standard_with(&format!("builders = {n}"), "")).unwrap_err();
+            assert!(
+                e.iter()
+                    .any(|x| x.contains("builders must be between 1 and 8")),
+                "{n}: {e:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn one_builder_writes_what_0_4_0_wrote() {
+        for (stem, text) in [
+            ("standard", PIPELINE_040_STANDARD),
+            ("test-first", PIPELINE_040_TEST_FIRST),
+            ("solo", PIPELINE_040_SOLO),
+        ] {
+            let pl = parse("x", stem, text, Source::Default, &kinds).unwrap();
+            assert_eq!(pl.caps.builders, 1);
+            let toml = pl.to_toml();
+            assert!(!toml.contains("builders"), "{stem}: {toml}");
+            assert_eq!(toml, text, "{stem}: 0.4.0's TOML, byte for byte");
+        }
+        let pl = p(&standard_with("builders = 3", "")).unwrap();
+        assert!(pl.to_toml().contains("builders = 3"), "{}", pl.to_toml());
+    }
+
+    #[test]
+    fn steps_before_and_after_each_task() {
+        let pl = p(&standard_with(
+            "",
+            &[
+                step("test-writer", "task", Some("start"), "engineer", ""),
+                step("docs-writer", "task", Some("end"), "repair", ""),
+                step("reviewer", "task", Some("start"), "engineer", ""),
+                step("lint-checker", "task", Some("end"), "repair", ""),
+                step("security-reviewer", "task", None, "repair", ""),
+            ]
+            .concat(),
+        ))
+        .unwrap_or_else(|e| panic!("{e:?}"));
+        assert_eq!(pl.builder().unwrap().agent, "builder");
+        let point = |agent: &str| {
+            pl.steps
+                .iter()
+                .find(|s| s.agent == agent)
+                .unwrap()
+                .point_at()
+        };
+        assert_eq!(point("test-writer"), (When::Task, At::Start));
+        assert_eq!(point("lint-checker"), (When::Task, At::End));
+        assert_eq!(
+            point("security-reviewer"),
+            (When::Task, At::End),
+            "a checker per task without `at` runs after the task"
+        );
+        assert!(
+            pl.verifying,
+            "checkers per task change nothing: {:?}",
+            pl.missing
+        );
+    }
+
+    #[test]
+    fn the_builder_and_the_gates_take_no_at() {
+        let e = p("name = \"p\"\n[[step]]\nagent = \"builder\"\nwhen = \"task\"\nat = \"start\"\non_fail = \"repair\"\n[[step]]\nagent = \"fallow:gates\"\nwhen = \"task\"\nat = \"end\"\non_fail = \"repair\"\n[[step]]\nagent = \"reviewer\"\nwhen = \"checkpoint\"\non_fail = \"repair\"\n").unwrap_err();
+        assert!(
+            e.iter()
+                .any(|x| x.contains("step 1") && x.contains("the builder") && x.contains("`at`")),
+            "{e:?}"
+        );
+        assert!(
+            e.iter()
+                .any(|x| x.contains("step 2") && x.contains("fallow:gates") && x.contains("`at`")),
+            "{e:?}"
+        );
+        let e = p(&standard_with(
+            "",
+            &step("fallow:gates", "phase", Some("start"), "repair", ""),
+        ))
+        .unwrap_err();
+        assert!(
+            e.iter().any(|x| x.contains("step 4") && x.contains("`at`")),
+            "{e:?}"
+        );
+    }
+
+    #[test]
+    fn a_checker_at_a_start_asks_the_engineer() {
+        for when in ["task", "phase", "checkpoint", "once"] {
+            let e = p(&standard_with(
+                "",
+                &step("lint-checker", when, Some("start"), "repair", ""),
+            ))
+            .unwrap_err();
+            assert!(
+                e.iter().any(|x| x.contains("step 4")
+                    && x.contains("nothing of that point's work is built yet")),
+                "{when}: {e:?}"
+            );
+            p(&standard_with(
+                "",
+                &step("lint-checker", when, Some("start"), "engineer", ""),
+            ))
+            .unwrap_or_else(|e| panic!("{when}: {e:?}"));
+        }
+    }
+
+    #[test]
+    fn only_checkers_at_one_point_run_alongside_each_other() {
+        let e = p(&standard_with(
+            "",
+            &[
+                step(
+                    "test-writer",
+                    "phase",
+                    None,
+                    "engineer",
+                    "parallel_with = [\"docs-writer\"]\n",
+                ),
+                step("docs-writer", "phase", None, "engineer", ""),
+            ]
+            .concat(),
+        ))
+        .unwrap_err();
+        assert!(
+            e.iter().any(|x| x.contains("step 4")
+                && x.contains("only checkers at the same point run together")),
+            "{e:?}"
+        );
+        p(&standard_with(
+            "",
+            &[
+                step(
+                    "lint-checker",
+                    "phase",
+                    Some("end"),
+                    "repair",
+                    "parallel_with = [\"security-reviewer\"]\n",
+                ),
+                step("security-reviewer", "phase", None, "repair", ""),
+            ]
+            .concat(),
+        ))
+        .unwrap_or_else(|e| panic!("{e:?}"));
+        p(&standard_with(
+            "",
+            &[
+                step(
+                    "lint-checker",
+                    "task",
+                    Some("end"),
+                    "repair",
+                    "parallel_with = [\"security-reviewer\"]\n",
+                ),
+                step("security-reviewer", "task", None, "repair", ""),
+            ]
+            .concat(),
+        ))
+        .unwrap_or_else(|e| panic!("checkers after each task, alongside: {e:?}"));
+        let e = p(&standard_with(
+            "",
+            &[
+                step(
+                    "lint-checker",
+                    "phase",
+                    Some("end"),
+                    "repair",
+                    "parallel_with = [\"security-reviewer\"]\n",
+                ),
+                step("security-reviewer", "task", None, "repair", ""),
+            ]
+            .concat(),
+        ))
+        .unwrap_err();
+        assert!(
+            e.iter()
+                .any(|x| x.contains("step 4") && x.contains("same point")),
+            "{e:?}"
+        );
+    }
+
+    #[test]
+    fn exactly_one_builder_is_still_required() {
+        let e = p(&standard_with(
+            "",
+            &step("docs-writer", "task", None, "repair", ""),
+        ))
+        .unwrap_err();
+        assert!(
+            e.iter()
+                .any(|x| x.contains("exactly one maker") && x.contains("it has 2")),
+            "{e:?}"
+        );
+        let e = p("name = \"p\"\n[[step]]\nagent = \"test-writer\"\nwhen = \"task\"\nat = \"start\"\non_fail = \"engineer\"\n").unwrap_err();
+        assert!(
+            e.iter()
+                .any(|x| x.contains("exactly one maker") && x.contains("it has 0")),
+            "a maker before each task is not the builder: {e:?}"
+        );
     }
 }
