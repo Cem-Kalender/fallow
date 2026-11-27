@@ -135,6 +135,8 @@ fn definitions_and_pipelines_are_created_edited_and_deleted() {
             name: "api-checker".into(),
             scope: user(),
             text: bad,
+            base: None,
+            replace: false,
         },
     )
     .unwrap_err();
@@ -148,6 +150,8 @@ fn definitions_and_pipelines_are_created_edited_and_deleted() {
             name: "../x".into(),
             scope: user(),
             text: CHECKER.into(),
+            base: None,
+            replace: false,
         },
     )
     .unwrap_err();
@@ -158,6 +162,8 @@ fn definitions_and_pipelines_are_created_edited_and_deleted() {
             name: "api-checker".into(),
             scope: user(),
             text: CHECKER.into(),
+            base: None,
+            replace: false,
         },
     )
     .unwrap();
@@ -172,6 +178,8 @@ fn definitions_and_pipelines_are_created_edited_and_deleted() {
             name: "alias-checker".into(),
             scope: user(),
             text: alias,
+            base: None,
+            replace: false,
         },
     )
     .unwrap_err();
@@ -188,6 +196,8 @@ fn definitions_and_pipelines_are_created_edited_and_deleted() {
             name: "api-checker".into(),
             scope: format!("project:{p}"),
             text: over,
+            base: None,
+            replace: false,
         },
     )
     .unwrap();
@@ -285,6 +295,8 @@ fn definitions_and_pipelines_are_created_edited_and_deleted() {
             name: "reviewer".into(),
             scope: user(),
             text: lead,
+            base: None,
+            replace: false,
         },
     )
     .unwrap_err();
@@ -302,6 +314,8 @@ fn definitions_and_pipelines_are_created_edited_and_deleted() {
             name: "reviewer".into(),
             scope: user(),
             text: maker,
+            base: None,
+            replace: false,
         },
     )
     .unwrap_err();

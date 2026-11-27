@@ -388,6 +388,11 @@ pub enum Req {
         name: String,
         scope: String,
         text: String,
+        /// 017 review 1: the text the page loaded (none for a new agent); a file at that place
+        /// holding something else is not written over unless `replace`.
+        base: Option<String>,
+        /// The engineer chose to replace the file at that place.
+        replace: bool,
     },
     /// 017 (contracts/web-api.md): the text a new agent named `name` starts from.
     AgentTemplate {

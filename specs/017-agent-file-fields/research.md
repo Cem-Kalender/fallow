@@ -103,9 +103,9 @@ The runtimes' part of the comments comes from `defs::runtimes()` (R-1), so a new
 
 ## R-8: Run records
 
-**Decision**: `measure::record::model_id(runtime, s)` keeps a model name when it fits its runtime's naming (R-1), or one of the forms it accepted before (so records written before 017 still validate). The record's runtime is the definition's runtime (already recorded). `tests/record_marker.rs` moves its marker out of the model: a model with the marker in it is now refused at load (the builder falls back to the default, which the test checks), and the record holds `claude-sonnet-5-5`.
+**Decision** (revised after the first independent review, by the engineer's stand-in): `measure::record::model_id(runtime, s)` keeps a model name when `ModelNaming::recordable` accepts it, or one of the forms it accepted before (so records written before 017 still validate). `ModelNaming` gains `families`, the provider's family words (`claude`: opus, sonnet, haiku, fable; `fake`: none), not serialized; `recordable(name)` is `<prefix><family>-<version>` with the version only digits separated by `.` or `-` (a `-YYYYMMDD` date included), ≤ 64 characters. The record's runtime is the definition's runtime (already recorded). `tests/record_marker.rs` puts its marker in a name the file check accepts (`claude-sonnet-<marker>`): the builder is in force with it, and its record row has no model.
 
-**Rationale**: constitution V allows identifiers; a name of the declared form (lowercase letters, digits, `.`, `-`, ≤ 64) is one. Fallow no longer needs a list of vendors' forms for new records.
+**Rationale**: constitution V allows identifiers only. The file check's form (R-1) accepts any lowercase word after `claude-`, so it can carry the engineer's words (`claude-acme-merger-q3`); the first design kept such names in records. Constitution V wins over FR-022 as first written. The family words filter records only; Fallow still chooses no model from them and keeps no model list.
 
 ## R-9: Existing files and open sessions
 

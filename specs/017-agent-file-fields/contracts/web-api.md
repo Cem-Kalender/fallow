@@ -27,7 +27,9 @@ As 007/008, plus `unusable`:
 
 ## `PUT /api/agents/<name>?scope=user|project:<p>`
 
-Only `{ "text": "<the whole file>" }`. Checked as Fallow reads it (agent-definition.md), and against the pipelines in use (as 007); refused with every problem, one per line, `file:line: message`. On success `{ "saved": "<path>" }`. Saving over an unusable file at that scope replaces it.
+`{ "text": "<the whole file>", "base"?: "<the text the page loaded>", "replace"?: true }`. Checked as Fallow reads it (agent-definition.md), and against the pipelines in use (as 007); refused with every problem, one per line, `file:line: message`. On success `{ "saved": "<path>" }`.
+
+A file already at that place is written over only when it holds `base` (or the new text already), or when `replace` is `true`, sent after the engineer confirmed (017 review 1, FR-017). A new agent sends no `base`. Otherwise refused: `<path> holds your own <name>.md[, which Fallow could not use], not the text this page loaded: open it to see it, or replace it on purpose`; the page asks the engineer and saves again with `replace`.
 
 A body with `fields` (008's form save) is refused: `an agent is saved as its whole text`.
 

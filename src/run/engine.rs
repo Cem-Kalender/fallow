@@ -4424,10 +4424,17 @@ impl Engine {
                 None => self.studio.tool_open(&token, pid),
             },
             Req::Agents { project } => self.studio.agents_view(project.as_deref()),
-            Req::PutAgent { name, scope, text } => {
+            Req::PutAgent {
+                name,
+                scope,
+                text,
+                base,
+                replace,
+            } => {
                 let scope = crate::studio::defs::Scope::parse(&scope)?;
                 let live = self.live_pipelines();
-                self.studio.put_agent(&name, &scope, &text, &live)
+                self.studio
+                    .put_agent(&name, &scope, &text, base.as_deref(), replace, &live)
             }
             Req::AgentTemplate { name } => self.studio.agent_template(&name),
             Req::DeleteAgent { name, scope } => {

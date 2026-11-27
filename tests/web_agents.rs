@@ -85,6 +85,18 @@ fn no_list_of_model_names_remains() {
     for rel in ["src/agent/mod.rs", "src/agent/claude.rs"] {
         let src = without_tests(&read(rel));
         assert!(src.contains("pub"), "{rel} was read");
+        // 017 review 1 (FR-022): the provider's family words, declared once in the runtime's
+        // naming as a privacy filter for run records, are no list of models to choose from.
+        let declared: Vec<&str> = src
+            .lines()
+            .filter(|l| l.trim_start().starts_with("families: &["))
+            .collect();
+        assert!(declared.len() <= 1, "{rel}: {declared:?}");
+        let src: String = src
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("families: &["))
+            .collect::<Vec<_>>()
+            .join("\n");
         for w in SHORT_NAMES {
             let found = literals_of(&src, w);
             assert!(found.is_empty(), "{rel}: {found:?}");

@@ -4,6 +4,10 @@
 // A new agent starts from the template Fallow serves, with a comment on every line.
 // 017 US3 (FR-013, FR-018): the files Fallow could not use are listed under the agents; each
 // opens in the same editor with its problems at their lines, and is saved at its own place.
+// 017 review 1 (FR-017): a save never lands on an engineer's file without their say. A file at the
+// chosen place that Fallow could not use is shown beside the editor, and Save asks before it is
+// replaced; Fallow refuses a save over a file holding other text than the page loaded, and the page
+// then asks. "+ New agent" with the name of a file that exists opens that file.
 "use strict";
 (() => {
   const { h, raw, get, api, confirm, alertLine, saveFor } = Fallow;
@@ -35,6 +39,13 @@
     ["checker", "Checkers: only run and verify"],
   ];
   const projectPart = () => encodeURIComponent(s.project || "_");
+  // Fallow's refusal of a save over a file holding other text than the page loaded
+  // (studio::defs::NOT_LOADED).
+  const NOT_LOADED = "not the text this page loaded";
+  // "Save for": "user" or "project", as chosen, or where the file shown would be saved.
+  const whereOf = (fallback) => (s.where && (s.where === "user" || s.project) ? s.where : fallback);
+  // The file of `name` Fallow could not use at a "Save for" place, and its index in the list.
+  const clashAt = (name, where) => s.unusable.findIndex((u) => u.name === name && u.source === (where === "project" ? "project" : "user"));
 
   function list() {
     return h`<aside class="ag-side" aria-label="Agents">
@@ -80,7 +91,7 @@
         <h1 class="page-title">${u.name}</h1>
         <span class="pill orange">cannot be used</span><span class="pill grey">${SOURCE[u.source] || u.source}</span>
         <span class="grow"></span>
-        ${saveFor("ag-scope", s.project, u.source === "project" ? "project" : "user", "agents")}
+        <span data-change="where">${saveFor("ag-scope", s.project, whereOf(u.source === "project" ? "project" : "user"), "agents")}</span>
         <button class="btn" data-act="save">Save</button>
       </div>
       <div class="small muted mt-6">Fallow could not use this file: ${inForce(u)}. Fix it below and save it.</div>
@@ -110,7 +121,10 @@
     const name = a ? a.name : s.newAgent;
     const lines = problemLines();
     const used = a ? a.used_by : [];
-    const scopeDefault = a && a.source === "project" ? "project" : (s.project ? "project" : "user");
+    const where = whereOf(a && a.source === "project" ? "project" : (s.project ? "project" : "user"));
+    // The engineer's own file at that place, which Fallow could not use (017 review 1).
+    const ci = a ? clashAt(a.name, where) : -1;
+    const clash = ci < 0 ? null : s.unusable[ci];
     return h`<section class="card ag-editor" aria-label="${`The agent ${name}`}">
       <div class="row wrap gap-8">
         <h1 class="page-title">${name}</h1>
@@ -122,11 +136,12 @@
             return h`<button class="btn btn2 xs" data-act="use-lead"${raw(off ? ` disabled title="${Fallow.esc(a.runtime)} is not installed"` : ' title="New spec sessions of this project start with this lead"')}>Use for this project</button>`;
           })()) : ""}
         <span class="grow"></span>
-        ${saveFor("ag-scope", s.project, scopeDefault, "agents")}
+        <span data-change="where">${saveFor("ag-scope", s.project, where, "agents")}</span>
         <button class="btn" data-act="save">Save</button>
         ${a && a.source !== "default" ? h`<button class="btn btn2" data-act="delete-agent">${a.source === "user" && a.shipped ? "Reset to the default" : "Delete"}</button>` : ""}
       </div>
       ${a ? h`<div class="small muted mt-6">${a.description}</div>` : ""}
+      ${clash ? h`<div class="notice small mt-8" role="status">Your own ${name}.md at this place could not be used (<span class="mono">${clash.file}</span>); ${inForce(clash)}. Saving here replaces it, after asking. <button class="btn btn2 xs" data-act="open-clash" data-i="${String(ci)}">Open your file</button></div>` : ""}
       <div class="small mt-8">Used in: ${used.length ? used.map((p, i) => h`${i ? " · " : ""}<a href="#/pipelines/${projectPart()}/${encodeURIComponent(p)}">${p}</a>`) : h`<span class="muted">no pipeline</span>`}</div>
       ${a && a.update ? h`<div class="notice small mt-8">An update of this default is beside your copy, in <span class="mono">${name}.md.new</span>. <button class="btn btn2 xs" data-act="show-update">${s.showUpdate ? "Hide it" : "Show it"}</button>${s.showUpdate ? h`<pre class="term">${a.update}</pre>` : ""}</div>` : ""}
       <div class="row mt-12"><b class="mono">${name}.md</b>${a ? "" : h`<span class="small muted">Fill in every line from its comment; the instructions go below the closing ---.</span>`}</div>
@@ -227,6 +242,7 @@
     s.newAgent = null;
     s.problems2 = [];
     s.showUpdate = false;
+    s.where = null;
     s.text = a ? a.text : "";
     s.fresh = true;
   }
@@ -240,6 +256,7 @@
     s.brokenKey = `${u.source}:${u.name}`;
     s.problems2 = [];
     s.showUpdate = false;
+    s.where = null;
     s.text = u.text;
     s.fresh = true;
   }
@@ -263,7 +280,7 @@
 
   async function enter(app, r) {
     s = { app, project: r.project || null, agents: [], runtimes: [], projects: [], problems: [], problems2: [],
-      unusable: [], broken: null, brokenKey: null, agent: null, newAgent: null, text: "", showUpdate: false };
+      unusable: [], broken: null, brokenKey: null, agent: null, newAgent: null, text: "", showUpdate: false, where: null };
     try {
       await load();
     } catch (e) {
@@ -287,13 +304,29 @@
   }
 
   async function doSave() {
-    const name = s.agent || s.newAgent || (brokenOf() || {}).name;
-    const scope = Fallow.scopeOf(document.getElementById("ag-scope").value, s.project);
+    const broken = brokenOf();
+    const a = agentOf(s.agent);
+    const name = s.agent || s.newAgent || (broken || {}).name;
+    const where = document.getElementById("ag-scope").value;
+    const scope = Fallow.scopeOf(where, s.project);
     const url = `/api/agents/${encodeURIComponent(name)}?scope=${encodeURIComponent(scope)}`;
+    // The text the page loaded (none for a new agent): Fallow writes over the file at that place
+    // only while it still holds it, or when the engineer chose to replace it (017 review 1).
+    const base = broken ? broken.text : (a ? a.text : null);
+    s.text = document.getElementById("ag-text").value;
+    const ci = broken ? -1 : clashAt(name, where);
+    if (ci >= 0) {
+      const u = s.unusable[ci];
+      const ok = await confirm({
+        title: `Replace your ${name}.md?`,
+        text: "This place holds your own version, which Fallow could not use. Saving replaces it with the text in the editor.",
+        items: [u.file], ok: "Replace it",
+      });
+      if (!ok) return render();
+    }
     try {
       // The whole file, as written: Fallow checks it and refuses it with every problem.
-      s.text = document.getElementById("ag-text").value;
-      await api("PUT", url, { text: s.text });
+      await put(url, base, ci >= 0);
       await load();
       pick(name);
       alertLine(`${name}.md is saved.`);
@@ -303,36 +336,69 @@
     render();
   }
 
+  // A save; refused over a file holding other text than the page loaded, it asks the engineer
+  // and replaces that file only on their yes.
+  async function put(url, base, replace) {
+    const body = { text: s.text };
+    if (base !== null) body.base = base;
+    if (replace) body.replace = true;
+    try {
+      await api("PUT", url, body);
+    } catch (e) {
+      if (replace || !e.message.includes(NOT_LOADED)) throw e;
+      const ok = await confirm({ title: "Replace that file?", text: e.message, ok: "Replace it" });
+      if (!ok) throw e;
+      await api("PUT", url, { text: s.text, replace: true });
+    }
+  }
+
+  // An agent from the list, by its address (the engineer was asked about unsaved changes).
+  function openAgent(name) {
+    // Asked already: the address change that follows needs no second question.
+    const to = `#/agents/${projectPart()}/${encodeURIComponent(name)}`;
+    if (to !== location.hash) {
+      s.asked = true;
+      location.hash = to;
+      return;
+    }
+    // The address is already this agent's (a file that could not be used was shown).
+    pick(name);
+    render();
+    focusItem(`.ag-item[data-name="${CSS.escape(name)}"]`);
+  }
+
+  // A file Fallow could not use, opened in the editor.
+  function openBroken(i) {
+    pickBroken(i);
+    render();
+    focusItem(`.ag-item[data-act="broken"][data-i="${i}"]`);
+  }
+
   async function act(name, el) {
     switch (name) {
       case "agent":
         if (el.dataset.name === s.agent || !(await leaveOk())) return;
-        {
-          // Asked already: the address change that follows needs no second question.
-          const to = `#/agents/${projectPart()}/${encodeURIComponent(el.dataset.name)}`;
-          if (to !== location.hash) {
-            s.asked = true;
-            location.hash = to;
-            return;
-          }
-          // The address is already this agent's (a file that could not be used was shown).
-          pick(el.dataset.name);
-          render();
-          focusItem(`.ag-item[data-name="${CSS.escape(el.dataset.name)}"]`);
-        }
-        return;
-      case "broken": {
+        return openAgent(el.dataset.name);
+      case "broken":
+      case "open-clash": {
         const i = Number(el.dataset.i);
         if (i === s.broken || !s.unusable[i] || !(await leaveOk())) return;
-        pickBroken(i);
-        render();
-        focusItem(`.ag-item[data-act="broken"][data-i="${i}"]`);
-        return;
+        return openBroken(i);
       }
+      case "where":
+        s.where = document.getElementById("ag-scope").value;
+        return render();
       case "new-agent": {
         const n = await confirm({ title: "A new agent", text: "Its name, in a-z, 0-9 and -. It is saved as <name>.md.", ok: "Create", input: { label: "Name", value: "" } });
         if (!n) return;
-        if (agentOf(n)) return alertLine(`An agent named ${n} exists: choose it in the list to change it.`);
+        // A file of that name opens instead of the template, which would replace it (017 review
+        // 1): the one Fallow could not use first, as the template would land on it.
+        const bi = s.unusable.findIndex((u) => u.name === n);
+        if (bi >= 0 || agentOf(n)) {
+          if (!(await leaveOk())) return;
+          alertLine(`${n}.md exists: it is open instead of a new agent.`);
+          return bi >= 0 ? openBroken(bi) : openAgent(n);
+        }
         if (!(await leaveOk())) return;
         // The template comes from Fallow, which also checks the file (017 FR-012).
         let template;
@@ -341,6 +407,7 @@
         } catch (e) { return alertLine(e.message); }
         s.agent = null;
         s.newAgent = n;
+        s.where = null;
         s.problems2 = [];
         s.showUpdate = false;
         s.text = template;

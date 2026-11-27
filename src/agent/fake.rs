@@ -15,6 +15,8 @@ pub const MODEL_NAMING: super::ModelNaming = super::ModelNaming {
     example: "fake-1",
     lookup: "the fake runtime's scenario",
     lookup_url: None,
+    // `fake-1`: the version follows the prefix.
+    families: &[],
 };
 
 #[derive(Debug, Clone)]

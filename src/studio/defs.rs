@@ -46,6 +46,40 @@ fn shipped(list: &[(&str, &'static str)], name: &str) -> Option<&'static str> {
     list.iter().find(|(n, _)| *n == name).map(|(_, t)| *t)
 }
 
+/// What a refused save says when the file at its place is not the text the page loaded (017
+/// review 1). The page knows the refusal by these words and asks before replacing the file.
+pub const NOT_LOADED: &str = "not the text this page loaded";
+
+/// 017 review 1 (FR-017): refuses to write `text` at `path` over a file that holds something
+/// else than `base` (the text the page loaded; none for a new agent). Fallow never writes over
+/// an engineer's file without their say: the page asks, then sends `replace`.
+fn not_over_another(
+    path: &Path,
+    name: &str,
+    text: &str,
+    base: Option<&str>,
+    source: Source,
+) -> Result<(), String> {
+    let Ok(now) = std::fs::read_to_string(path) else {
+        return Ok(());
+    };
+    let same = |a: &str, b: &str| a.replace("\r\n", "\n") == b.replace("\r\n", "\n");
+    if same(&now, text) || base.is_some_and(|b| same(&now, b)) {
+        return Ok(());
+    }
+    let file = format!("{name}.md");
+    let unusable = agent::parse(&file, name, &now, source, &defs::runtimes()).is_err();
+    Err(format!(
+        "{} holds your own {file}{}, {NOT_LOADED}: open it to see it, or replace it on purpose",
+        path.display(),
+        if unusable {
+            ", which Fallow could not use"
+        } else {
+            ""
+        }
+    ))
+}
+
 impl Studio {
     /// The folder a scope saves in (`agents` or `pipelines` below it).
     fn scope_dir(&self, scope: &Scope, sub: &str) -> Result<PathBuf, String> {
@@ -295,11 +329,17 @@ impl Studio {
 
     /// `PUT /api/agents/<name>`: checked as Fallow reads it; refused with the problems at their
     /// lines, one per line, when it does not pass, or when a pipeline would stop working.
+    ///
+    /// 017 review 1 (FR-017): a file already at that place is written over only when it still
+    /// holds `base`, the text the page loaded, or when `replace` says the engineer chose to
+    /// replace it. A new agent sends no `base`, so it never lands on a file of that name.
     pub fn put_agent(
         &mut self,
         name: &str,
         scope: &Scope,
         text: &str,
+        base: Option<&str>,
+        replace: bool,
         live: &[(PathBuf, String)],
     ) -> Result<Value, String> {
         check_name(name)?;
@@ -317,8 +357,11 @@ impl Studio {
         })?;
         self.would_break(scope, name, Some(&d), live)
             .map_err(|e| format!("{file}: {e}"))?;
-        std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
         let path = dir.join(&file);
+        if !replace {
+            not_over_another(&path, name, text, base, source)?;
+        }
+        std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
         std::fs::write(&path, text).map_err(|e| format!("{}: {e}", path.display()))?;
         Ok(json!({ "saved": path.display().to_string() }))
     }

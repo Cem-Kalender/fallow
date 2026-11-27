@@ -225,6 +225,8 @@ fn studio_route(
                 name: name.to_string(),
                 scope: query_arg(url, "scope").unwrap_or_else(|| "user".into()),
                 text,
+                base: s("base"),
+                replace: body.get("replace").and_then(Value::as_bool) == Some(true),
             }),
             Err(e) => Some(Err(e)),
         },

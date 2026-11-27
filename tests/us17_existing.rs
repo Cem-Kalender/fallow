@@ -335,26 +335,56 @@ fn files_from_before_the_update_are_kept_listed_and_fixable() {
         tx,
         "PUT",
         "/api/agents/docs-writer?scope=user",
-        Some(json!({ "text": docs })),
+        Some(json!({ "text": docs, "base": shipped("docs-writer") })),
     );
     assert_eq!(status, 200, "{s}");
-    let mut after = agent_files(&dirs);
+    let after = agent_files(&dirs);
+    let mut others = after.clone();
     assert_eq!(
-        after.remove(&agents.join("docs-writer.md")),
+        others.remove(&agents.join("docs-writer.md")),
         Some(docs.clone().into_bytes())
     );
     let mut was = before.clone();
     was.remove(&agents.join("docs-writer.md"));
-    assert!(after == was, "an agent file changed on its own");
+    assert!(others == was, "an agent file changed on its own");
+
+    // AS2 with a save (017 review 1): the page shows the reviewer in force, the shipped text,
+    // and saves it for the engineer. Their edited copy, which still names `sonnet`, is not
+    // written over: refused, naming the file and saying it holds their own version; nothing
+    // changes.
+    let reviewer_file = agents.join("reviewer.md");
+    let (status, s) = call(
+        tx,
+        "PUT",
+        "/api/agents/reviewer?scope=user",
+        Some(json!({ "text": shipped("reviewer"), "base": shipped("reviewer") })),
+    );
+    assert_eq!(status, 409, "{s}");
+    let why = s["error"].as_str().unwrap();
+    assert!(
+        why.contains(&reviewer_file.display().to_string())
+            && why.contains("holds your own reviewer.md, which Fallow could not use")
+            && why.contains(fallow::studio::defs::NOT_LOADED),
+        "{why}"
+    );
+    // Nor as a new agent of that name (no text loaded).
+    let (status, s) = call(
+        tx,
+        "PUT",
+        "/api/agents/reviewer?scope=user",
+        Some(json!({ "text": shipped("reviewer") })),
+    );
+    assert_eq!(status, 409, "{s}");
+    assert!(agent_files(&dirs) == after, "the edited reviewer is kept");
 
     // AS4 (T033): the reviewer fixed from the page: saved at its own place, in force, and no
-    // longer listed.
+    // longer listed. The page loaded that file, so it is saved over it.
     let fixed = replace_found(&reviewer_031, "model: sonnet", "model: claude-sonnet-5-5");
     let (status, s) = call(
         tx,
         "PUT",
         "/api/agents/reviewer?scope=user",
-        Some(json!({ "text": fixed })),
+        Some(json!({ "text": fixed, "base": reviewer_031 })),
     );
     assert_eq!(status, 200, "{s}");
     assert_eq!(

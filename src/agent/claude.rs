@@ -21,6 +21,9 @@ pub const MODEL_NAMING: super::ModelNaming = super::ModelNaming {
     example: "claude-sonnet-5-5",
     lookup: "Anthropic's models overview",
     lookup_url: Some("https://platform.claude.com/docs/en/models/overview"),
+    // For run records only (FR-022): Anthropic's family words, so a record keeps
+    // `claude-<family>-<version>` and no other text.
+    families: &["opus", "sonnet", "haiku", "fable"],
 };
 
 /// The runtime for an agent program that speaks `claude -p`: Claude Code itself, or

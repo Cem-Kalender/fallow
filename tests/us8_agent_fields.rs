@@ -158,6 +158,64 @@ fn an_agent_is_saved_as_its_whole_text() {
     assert_eq!(a["kind"], "checker");
     assert_eq!(a["model"], "claude-sonnet-5-5");
 
+    // 017 review 1: "+ New agent" with the name of a file that exists sends no loaded text, so
+    // the file is not written over: refused, naming it; only an explicit replace writes it.
+    let ui = config.join("agents/ui-checker.md");
+    let other = filled.replace("Checks the pages", "Checks other pages");
+    let (status, v) = call(
+        tx,
+        "PUT",
+        "/api/agents/ui-checker?scope=user",
+        Some(json!({ "text": other })),
+    );
+    assert_eq!(status, 409, "{v}");
+    let why = v["error"].as_str().unwrap();
+    assert!(
+        why.contains(&ui.display().to_string())
+            && why.contains("holds your own ui-checker.md,")
+            && !why.contains("could not use")
+            && why.contains(fallow::studio::defs::NOT_LOADED),
+        "{why}"
+    );
+    assert_eq!(std::fs::read_to_string(&ui).unwrap(), filled);
+    // A page that loaded other text than the file now holds is refused the same way.
+    let (status, v) = call(
+        tx,
+        "PUT",
+        "/api/agents/ui-checker?scope=user",
+        Some(json!({ "text": other, "base": template })),
+    );
+    assert_eq!(status, 409, "{v}");
+    assert_eq!(std::fs::read_to_string(&ui).unwrap(), filled);
+    let (status, v) = call(
+        tx,
+        "PUT",
+        "/api/agents/ui-checker?scope=user",
+        Some(json!({ "text": other, "replace": true })),
+    );
+    assert_eq!(status, 200, "{v}");
+    assert_eq!(std::fs::read_to_string(&ui).unwrap(), other);
+    // The same over a file Fallow could not use: the message says so, and it is kept.
+    let unusable = filled
+        .replace("name: ui-checker", "name: old-checker")
+        .replace("model: claude-sonnet-5-5", "model: sonnet");
+    let old = config.join("agents/old-checker.md");
+    std::fs::write(&old, &unusable).unwrap();
+    let new = filled.replace("name: ui-checker", "name: old-checker");
+    let (status, v) = call(
+        tx,
+        "PUT",
+        "/api/agents/old-checker?scope=user",
+        Some(json!({ "text": new })),
+    );
+    assert_eq!(status, 409, "{v}");
+    let why = v["error"].as_str().unwrap();
+    assert!(
+        why.contains("holds your own old-checker.md, which Fallow could not use"),
+        "{why}"
+    );
+    assert_eq!(std::fs::read_to_string(&old).unwrap(), unusable);
+
     drop(e);
     let _ = std::fs::remove_dir_all(&root);
 }

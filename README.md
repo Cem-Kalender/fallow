@@ -144,7 +144,7 @@ the new default is beside your copy as `<name>.md.new`; copies you never edited 
 replaced. A spec session that was open starts a new agent session at its next message.
 
 For the `claude` runtime only names of the form `claude-…` are accepted, so Claude Code set up
-for Amazon Bedrock model names (`us.anthropic.…`) is not supported by 0.4.0.
+for Amazon Bedrock model names (`anthropic.claude-…`) is not supported by 0.4.0.
 
 ### Connect Claude Code
 

@@ -102,7 +102,7 @@ pub struct LoopRecord {
 /// family, a version number and fixed words after it. Anything else could carry the engineer's
 /// words.
 pub fn model_id(runtime: &str, s: &str) -> Option<String> {
-    if crate::agent::registry::model_naming(runtime).is_some_and(|n| n.fits(s)) {
+    if crate::agent::registry::model_naming(runtime).is_some_and(|n| n.recordable(s)) {
         return Some(s.to_string());
     }
     static FORM: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
@@ -425,8 +425,25 @@ mod tests {
             assert_eq!(model_id("claude", ok).as_deref(), Some(ok), "{ok}");
         }
         assert_eq!(model_id("fake", "fake-1").as_deref(), Some("fake-1"));
+        assert_eq!(model_id("fake", "fake-acme"), None);
         assert_eq!(model_id("claude", "fake-1"), None, "not claude's form");
-        for bad in ["my words", "Claude-Opus-5-5", "claude-opus-5-5 my words"] {
+        assert_eq!(
+            model_id("claude", "claude-opus-4-1-20250805").as_deref(),
+            Some("claude-opus-4-1-20250805"),
+            "with its date"
+        );
+        // 017 review 1 (FR-022): a name the agent file check accepts is kept only when it is a
+        // recognisable provider name; one that can carry the engineer's words is not.
+        for bad in [
+            "my words",
+            "Claude-Opus-5-5",
+            "claude-opus-5-5 my words",
+            "claude-acme-merger-q3",
+            "claude-sonnet-mk5f0c2dx",
+            "claude-sonnet-5-5-acme",
+            "claude-fable-",
+            "claude-sonnetx-5",
+        ] {
             assert_eq!(model_id("claude", bad), None, "{bad}");
         }
         r.agents[0].model = Some("claude-fable-5-2".into());

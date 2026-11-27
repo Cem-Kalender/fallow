@@ -384,6 +384,12 @@ pub struct ModelNaming {
     pub lookup: &'static str,
     /// That place's address, if it has one.
     pub lookup_url: Option<&'static str>,
+    /// 017 review 1 (FR-022, constitution V): the words the provider's names give a model's
+    /// family, after `prefix`. Only for run records, which keep a name only when it is
+    /// `<prefix><family>-<version>`; not a list of models and not for choosing one. Empty: the
+    /// version follows `prefix` directly.
+    #[serde(skip)]
+    pub families: &'static [&'static str],
 }
 
 impl ModelNaming {
@@ -398,6 +404,28 @@ impl ModelNaming {
                         c.is_ascii_lowercase() || c.is_ascii_digit() || c == '.' || c == '-'
                     })
             })
+    }
+
+    /// Whether a run record may keep `name` (FR-022): `<prefix><family>-<version>`, the
+    /// family one of `families`, the version digits separated by `.` or `-` (a date
+    /// `-YYYYMMDD` included), at most 64 characters. Anything else may carry the engineer's
+    /// words, so a record keeps no model for it.
+    pub fn recordable(&self, name: &str) -> bool {
+        let Some(rest) = name.strip_prefix(self.prefix).filter(|_| name.len() <= 64) else {
+            return false;
+        };
+        let version = if self.families.is_empty() {
+            Some(rest)
+        } else {
+            self.families
+                .iter()
+                .find_map(|f| rest.strip_prefix(f).and_then(|r| r.strip_prefix('-')))
+        };
+        version.is_some_and(|v| {
+            !v.is_empty()
+                && v.split(['.', '-'])
+                    .all(|part| !part.is_empty() && part.chars().all(|c| c.is_ascii_digit()))
+        })
     }
 
     /// What a name of this runtime looks like and where to look it up, for messages, the
@@ -623,6 +651,41 @@ mod model_naming_tests {
         assert!(!claude.fits("fake-1"));
         assert!(!fake.fits("claude-sonnet-5-5"));
         assert_eq!(model_naming("gpt"), None);
+    }
+
+    /// 017 review 1 (FR-022): a run record keeps a name only of the provider's recognisable
+    /// form, also when the file check accepts more.
+    #[test]
+    fn a_record_keeps_only_a_provider_name() {
+        let claude = model_naming("claude").unwrap();
+        let fake = model_naming("fake").unwrap();
+        for ok in [
+            "claude-opus-5-5",
+            "claude-sonnet-5-5",
+            "claude-fable-5-2",
+            "claude-haiku-4-5-20251001",
+            "claude-opus-4.1",
+        ] {
+            assert!(claude.recordable(ok), "{ok}");
+        }
+        for bad in [
+            "claude-acme-merger-q3",
+            "claude-sonnet-mk5f0c2dx",
+            "claude-sonnet-5-5-acme",
+            "claude-sonnet",
+            "claude-sonnet-",
+            "claude-opus-5--5",
+            "claude-opusx-5",
+            "claude-5-5",
+            "opus",
+        ] {
+            assert!(!claude.recordable(bad), "{bad}");
+        }
+        // The file check accepts these; the record does not keep them.
+        assert!(claude.fits("claude-acme-merger-q3") && claude.fits("claude-sonnet-mk5f0c2dx"));
+        assert!(fake.recordable("fake-1"));
+        assert!(!fake.recordable("fake-acme"));
+        assert!(!claude.recordable("fake-1"));
     }
 
     #[test]
