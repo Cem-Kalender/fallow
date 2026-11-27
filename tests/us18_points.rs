@@ -72,6 +72,28 @@ fn text(s: &Value, k: &str) -> String {
     s[k].as_str().unwrap_or_default().to_string()
 }
 
+/// The loop's log.
+fn events(root: &Path, id: u64) -> Vec<Value> {
+    std::fs::read_to_string(
+        root.join("data/runs")
+            .join(id.to_string())
+            .join("events.jsonl"),
+    )
+    .unwrap()
+    .lines()
+    .map(|l| serde_json::from_str(l).unwrap())
+    .collect()
+}
+
+/// When step `s` had its event `t` (`step_started`, `step_finished`), in seconds.
+fn when(ev: &[Value], t: &str, s: &Value) -> u64 {
+    let e = ev
+        .iter()
+        .find(|e| e["type"] == t && e["n"] == s["n"])
+        .unwrap_or_else(|| panic!("no {t} for {s}"));
+    fallow::run::time::parse_rfc3339(e["at"].as_str().unwrap()).unwrap()
+}
+
 #[test]
 fn a_checker_after_each_task_checks_its_commit_and_its_finding_is_a_task_repair() {
     let root = scratch("points-task-end");
@@ -233,12 +255,12 @@ fn checkers_alongside_each_other_at_a_phase_end_overlap_and_are_judged_together(
         findings(
             "reviewer@phase-1-end",
             Some("the reviewer saw no docstring"),
-            "sleep_ms = 2000",
+            "sleep_ms = 8000",
         ),
         findings(
             "security-reviewer@phase-1-end",
             Some("the security reviewer saw eval"),
-            "sleep_ms = 2000",
+            "sleep_ms = 8000",
         ),
         repair(
             "phase-1-end",
@@ -266,9 +288,16 @@ fn checkers_alongside_each_other_at_a_phase_end_overlap_and_are_judged_together(
     assert_eq!(rv.len(), 2, "both ran again after the repair: {rv:?}");
     assert_eq!(sec.len(), 2, "both ran again after the repair: {sec:?}");
     let (a, b) = (rv[0], sec[0]);
+    // They overlap in time: each started before the other finished, from the steps' own
+    // `step_started` and `step_finished` in the loop's log. Each checker takes 8 s, so one
+    // started only after the other finished only if Fallow ran them one after another; the
+    // machine's load cannot delay a start by that much.
+    let ev = events(&root, id);
+    let (a0, a1) = (when(&ev, "step_started", a), when(&ev, "step_finished", a));
+    let (b0, b1) = (when(&ev, "step_started", b), when(&ev, "step_finished", b));
     assert!(
-        text(a, "started") < text(b, "finished") && text(b, "started") < text(a, "finished"),
-        "they overlap in time: {a} {b}"
+        a0 < b1 && b0 < a1,
+        "they overlap in time: {a0}..{a1} and {b0}..{b1}: {a} {b}"
     );
     // Both checked the same commit.
     assert_eq!(a["base"], b["base"]);
