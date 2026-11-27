@@ -3,7 +3,7 @@
 ## T056: the Pipelines tab at 1440 × 900 and 390 × 844 (2026-11-27)
 
 **How it was seen**: `tests/visual_018.rs` served from a scratch root
-(`FALLOW_VISUAL_ROOT=/private/tmp/claude-502/v18`): the shipped Standard, Test first, Solo and
+(`FALLOW_VISUAL_ROOT=<a short scratch folder>`): the shipped Standard, Test first, Solo and
 `parallel`, two checkers of its own (`ui-checker`, `perf-checker`) and `every-point`, a pipeline
 with a step at every point of FR-004 (checkers alongside each other after each task, at each
 phase's end and at each checkpoint's end; `builders = 3`), every pipeline loading without a

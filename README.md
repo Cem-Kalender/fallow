@@ -59,7 +59,7 @@ the project's principles are in [`.specify/memory/constitution.md`](.specify/mem
   Agents tab shows the selected agent's whole file in one editor; save for all your projects or
   this project only. A new agent starts from a template whose comments say what to fill in. The Pipelines tab draws a pipeline as a graph of Fallow's fixed steps, where you
   add, change and remove steps with the + at each point, and says in plain sentences what the
-  pipeline checks; Standard, Test first, Solo and Parallel ship with Fallow, and the lead can
+  pipeline checks; Standard, Test first, Solo and `parallel` ship with Fallow, and the lead can
   propose one, which is used only once you save it.
   - *Points.* A step can run before or after each task, at the start or end of each phase, at
     the start or end of each user story's checkpoint, and once at the start or end of the loop.
