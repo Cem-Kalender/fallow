@@ -340,18 +340,18 @@ mod tests {
         std::fs::create_dir_all(proj.join(".fallow/agents")).unwrap();
         std::fs::write(
             proj.join(".fallow/agents/reviewer.md"),
-            "---\nname: reviewer\ndescription: stricter\nruntime: claude\nmodel: opus\nkind: checker\nreturns: verdict\n---\nCheck harder.\n",
+            "---\nname: reviewer\ndescription: stricter\nruntime: claude\nmodel: claude-opus-5-5\nkind: checker\nmay_run: [gates]\nreturns: verdict\n---\nCheck harder.\n",
         )
         .unwrap();
         std::fs::write(proj.join(".fallow/agents/broken.md"), "no frontmatter\n").unwrap();
         std::fs::write(
             user.join("agents/ui-checker.md"),
-            "---\nname: ui-checker\ndescription: walks the stories\nruntime: claude\nkind: checker\nreturns: verdict\n---\nOpen it.\n",
+            "---\nname: ui-checker\ndescription: walks the stories\nruntime: claude\nmodel: claude-haiku-4-5\nkind: checker\nmay_run: []\nreturns: verdict\n---\nOpen it.\n",
         )
         .unwrap();
         let lib = Library::load(Some(&user), Some(&proj));
         assert_eq!(lib.agents["reviewer"].source, Source::Project);
-        assert_eq!(lib.agents["reviewer"].model, "opus");
+        assert_eq!(lib.agents["reviewer"].model, "claude-opus-5-5");
         assert_eq!(
             lib.agents["builder"].source,
             Source::Default,

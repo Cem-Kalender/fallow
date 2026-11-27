@@ -825,11 +825,7 @@ pub fn assistant_on_fake(repo: &Path) {
         .find(|(n, _)| *n == "assistant")
         .unwrap()
         .1;
-    std::fs::write(
-        dir.join("assistant.md"),
-        replace_found(shipped, "runtime: claude", "runtime: fake"),
-    )
-    .unwrap();
+    std::fs::write(dir.join("assistant.md"), on_fake(shipped, "fake-1")).unwrap();
     git(repo, &["add", "."]);
     git(repo, &["commit", "-q", "-m", "assistant on fake"]);
 }

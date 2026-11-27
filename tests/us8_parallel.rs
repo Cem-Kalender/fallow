@@ -349,7 +349,7 @@ fn a_checker_that_cannot_start_is_asked_again_and_the_other_goes_on() {
         .1;
     std::fs::write(
         agents.join("security-reviewer.md"),
-        shipped.replace("runtime: claude", "runtime: fake"),
+        on_fake(shipped, "fake-1"),
     )
     .unwrap();
     let steps = [us1_build(), reviewer("US1", true, "sleep_ms = 2000"), us2()].concat();
@@ -401,7 +401,7 @@ fn a_checker_on_its_own_that_cannot_start_stops_the_loop_as_before() {
         .1;
     std::fs::write(
         agents.join("security-reviewer.md"),
-        shipped.replace("runtime: claude", "runtime: fake"),
+        on_fake(shipped, "fake-1"),
     )
     .unwrap();
     let steps = [us1_build(), reviewer("US1", true, ""), us2()].concat();

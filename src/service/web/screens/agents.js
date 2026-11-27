@@ -49,8 +49,9 @@
   }
 
   function fields(a) {
-    const rt = s.runtimes.find((r) => r.name === s.form.runtime) || { models: [] };
-    const models = rt.models.includes(s.form.model) || !s.form.model ? rt.models : [s.form.model, ...rt.models];
+    // 017: the runtimes no longer list models (US2 replaces this form with the file).
+    const known = (s.runtimes.find((r) => r.name === s.form.runtime) || {}).models || [];
+    const models = known.includes(s.form.model) || !s.form.model ? known : [s.form.model, ...known];
     return h`<div class="ag-fields">
       <div class="field"><label for="ag-runtime">Runtime</label><select id="ag-runtime" data-change="field" data-k="runtime">${s.runtimes.map((r) => opt(r.name, `${r.name}${r.installed ? "" : " (not installed)"}`, s.form.runtime))}</select></div>
       <div class="field"><label for="ag-model">Model</label><select id="ag-model" data-change="field" data-k="model">${s.form.model ? "" : opt("", "the runtime's default", "")}${models.map((m) => opt(m, m, s.form.model))}</select></div>
@@ -263,7 +264,7 @@
         s.newAgent = n;
         s.form = null;
         s.problems2 = [];
-        s.text = `---\nname: ${n}\ndescription: What it checks\nruntime: claude\nmodel: sonnet\nkind: checker\nmay_run: [gates, plan.commands]\nreturns: verdict\n---\n\nSay what it checks, and how, by running something.\n`;
+        s.text = `---\nname: ${n}\ndescription: What it checks\nruntime: claude\nmodel: claude-sonnet-5-5\nkind: checker\nmay_run: [gates, plan.commands]\nreturns: verdict\n---\n\nSay what it checks, and how, by running something.\n`;
         return render();
       }
       case "as-text":
@@ -312,7 +313,7 @@
         if (k === "kind") s.form.returns = RETURNS[el.value] || s.form.returns;
         if (k === "runtime") {
           const rt = s.runtimes.find((r) => r.name === el.value);
-          if (rt && rt.models.length && !rt.models.includes(s.form.model)) s.form.model = rt.models[0];
+          if (rt && rt.models && rt.models.length && !rt.models.includes(s.form.model)) s.form.model = rt.models[0];
         }
         return render();
       }

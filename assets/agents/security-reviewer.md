@@ -2,7 +2,7 @@
 name: security-reviewer
 description: Reads a story's changes for injection, secrets and auth gaps, and proves each finding by running it
 runtime: claude
-model: opus
+model: claude-opus-5-5
 kind: checker
 may_run: [gates, plan.commands]
 returns: verdict

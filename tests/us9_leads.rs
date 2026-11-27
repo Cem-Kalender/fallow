@@ -86,14 +86,14 @@ fn a_project_lead_starts_new_sessions_and_a_pick_comes_before_the_first_message(
         r##"
 [[step]]
 kind = "lead_turn"
-model = "careful-1"
+model = "claude-careful-1"
 system = "CAREFUL-MARKER"
 when = "Hello careful"
 output = { reply = "careful here", step = "none" }
 
 [[step]]
 kind = "lead_turn"
-model = "opus"
+model = "claude-opus-5-5"
 when = "Hello plain"
 output = { reply = "plain here", step = "none" }
 "##,
@@ -103,11 +103,11 @@ output = { reply = "plain here", step = "none" }
         &repo,
         "careful-lead",
         "claude",
-        "careful-1",
+        "claude-careful-1",
         "CAREFUL-MARKER",
     );
     // On a runtime this Fallow has no profile for: listed, but not choosable.
-    second_lead(&repo, "ghost-lead", "fake", "x", "GHOST");
+    second_lead(&repo, "ghost-lead", "fake", "fake-x", "GHOST");
     let e = start_studio(&root, &scenario, None);
     let tx = &e.tx;
     let project = add(tx, &repo);
@@ -161,7 +161,7 @@ output = { reply = "plain here", step = "none" }
     let a = feature(tx, &project, "First");
     let v = view(tx, &a);
     assert_eq!(v["lead"]["name"], "careful-lead", "{v}");
-    assert_eq!(v["lead"]["model"], "careful-1");
+    assert_eq!(v["lead"]["model"], "claude-careful-1");
     assert_eq!(v["lead"]["fixed"], false);
     let leads = v["leads"].as_array().unwrap();
     let find = |n: &str| leads.iter().find(|l| l["name"] == n).unwrap().clone();
@@ -225,27 +225,27 @@ output = { reply = "own", step = "none" }
 [[step]]
 kind = "lead_turn"
 forked = false
-model = "sonnet"
+model = "claude-sonnet-5-5"
 when = "Lead changed under a fork"
 output = { reply = "fresh after the fork", step = "none" }
 
 [[step]]
 kind = "lead_turn"
 forked = false
-model = "careful-1"
+model = "claude-careful-1"
 when = "Other lead"
 output = { reply = "new", step = "none" }
 
 [[step]]
 kind = "lead_turn"
-model = "careful-1"
+model = "claude-careful-1"
 when = "Again"
 output = { reply = "resumed", step = "none" }
 
 [[step]]
 kind = "lead_turn"
 forked = false
-model = "careful-2"
+model = "claude-careful-2"
 when = "After the change"
 output = { reply = "changed", step = "none" }
 "##,
@@ -255,7 +255,7 @@ output = { reply = "changed", step = "none" }
         &repo,
         "careful-lead",
         "claude",
-        "careful-1",
+        "claude-careful-1",
         "CAREFUL-MARKER",
     );
     let e = start_studio(&root, &scenario, None);
@@ -275,7 +275,11 @@ output = { reply = "changed", step = "none" }
         .1;
     std::fs::write(
         repo.join(".fallow/agents/lead.md"),
-        shipped.replacen("model: opus", "model: sonnet", 1),
+        replace_found(
+            shipped,
+            "model: claude-opus-5-5",
+            "model: claude-sonnet-5-5",
+        ),
     )
     .unwrap();
     assert_eq!(view(tx, &a)["lead"]["changed"], true, "{}", view(tx, &a));
@@ -309,7 +313,7 @@ output = { reply = "changed", step = "none" }
     let text = std::fs::read_to_string(&file).unwrap();
     std::fs::write(
         &file,
-        text.replacen("model: careful-1", "model: careful-2", 1),
+        replace_found(&text, "model: claude-careful-1", "model: claude-careful-2"),
     )
     .unwrap();
     let v = view(tx, &b);
@@ -373,7 +377,7 @@ output = { reply = "never", step = "none" }
         &repo,
         "careful-lead",
         "claude",
-        "careful-1",
+        "claude-careful-1",
         "CAREFUL-MARKER",
     );
     let e = start_studio(&root, &scenario, None);
@@ -426,7 +430,7 @@ fn a_session_keeps_its_lead_across_a_restart_and_old_logs_read_lead() {
         &repo,
         "careful-lead",
         "claude",
-        "careful-1",
+        "claude-careful-1",
         "CAREFUL-MARKER",
     );
     let e = start_studio(&root, &scenario, None);
@@ -482,7 +486,7 @@ fn a_loop_question_goes_to_the_feature_sessions_lead() {
         ),
         // careful-lead's model changed after the lock: a new session on the new model, not a
         // fork of the spec session's.
-        lead_answer("q1", "model = \"careful-2\"\nforked = false"),
+        lead_answer("q1", "model = \"claude-careful-2\"\nforked = false"),
         task_step(
             "T003",
             &[("tests/__init__.py", ""), ("tests/test_add.py", TEST_ADD)],
@@ -505,14 +509,14 @@ fn a_loop_question_goes_to_the_feature_sessions_lead() {
     // The spec session's two turns are careful-lead's.
     let lead = lead_writes_calc().replace(
         "kind = \"lead_turn\"\n",
-        "kind = \"lead_turn\"\nmodel = \"careful-1\"\n",
+        "kind = \"lead_turn\"\nmodel = \"claude-careful-1\"\n",
     );
     std::fs::write(&scenario, format!("{lead}{steps}")).unwrap();
     second_lead(
         &repo,
         "careful-lead",
         "claude",
-        "careful-1",
+        "claude-careful-1",
         "CAREFUL-MARKER",
     );
     let e = start_studio(&root, &scenario, None);
@@ -552,7 +556,7 @@ fn a_loop_question_goes_to_the_feature_sessions_lead() {
     let text = std::fs::read_to_string(&file).unwrap();
     std::fs::write(
         &file,
-        text.replacen("model: careful-1", "model: careful-2", 1),
+        replace_found(&text, "model: claude-careful-1", "model: claude-careful-2"),
     )
     .unwrap();
 

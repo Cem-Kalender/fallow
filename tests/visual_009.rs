@@ -85,7 +85,13 @@ output = { reply = "This one exists already.", step = "none", proposed_feature =
         format!("{}{loop_steps}{chat}{catch_all}", lead_writes_calc()),
     )
     .unwrap();
-    second_lead(&repo, "careful-lead", "claude", "opus", "CAREFUL-MARKER");
+    second_lead(
+        &repo,
+        "careful-lead",
+        "claude",
+        "claude-opus-5-5",
+        "CAREFUL-MARKER",
+    );
     let e = start_studio(&root, &scenario, None);
     let tx = &e.tx;
     lock_calc_in(tx, &repo, None, Some((50.0, 600)), None);

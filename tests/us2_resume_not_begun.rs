@@ -55,11 +55,7 @@ fn a_step_whose_agent_never_began_is_given_its_instruction_after_a_restart() {
         .find(|(n, _)| *n == "builder")
         .unwrap()
         .1;
-    std::fs::write(
-        agents.join("builder.md"),
-        shipped.replace("runtime: claude", "runtime: fake"),
-    )
-    .unwrap();
+    std::fs::write(agents.join("builder.md"), on_fake(shipped, "fake-1")).unwrap();
     std::fs::write(
         root.join("settings.extra.toml"),
         format!(

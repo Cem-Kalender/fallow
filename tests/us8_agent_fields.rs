@@ -37,7 +37,7 @@ fn only_the_changed_fields_are_saved() {
         Req::PutAgentFields {
             name: "reviewer".into(),
             scope: format!("project:{p}"),
-            fields: fields(json!({ "model": "opus" })),
+            fields: fields(json!({ "model": "claude-opus-5-5" })),
             body: None,
         },
     )
@@ -48,11 +48,19 @@ fn only_the_changed_fields_are_saved() {
         .zip(copy.lines())
         .filter(|(a, b)| a != b)
         .collect();
-    assert_eq!(changed, vec![("model: sonnet", "model: opus")], "{copy}");
+    assert_eq!(
+        changed,
+        vec![("model: claude-sonnet-5-5", "model: claude-opus-5-5")],
+        "{copy}"
+    );
     assert_eq!(default.lines().count(), copy.lines().count());
 
     // A hand-written value and a comment stay; a list item with a space reads back unchanged.
-    let hand = copy.replace("model: opus", "model: claude-opus-x # pinned by hand");
+    let hand = replace_found(
+        &copy,
+        "model: claude-opus-5-5",
+        "model: claude-opus-x # pinned by hand",
+    );
     std::fs::write(repo.join(".fallow/agents/reviewer.md"), &hand).unwrap();
     sreq(
         tx,

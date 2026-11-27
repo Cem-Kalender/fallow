@@ -11,7 +11,7 @@ use fallow::run::engine::Request;
 use fallow::studio::Req;
 use serde_json::{Value, json};
 
-const CHECKER: &str = "---\nname: api-checker\ndescription: Calls the API the story changed\nruntime: claude\nmodel: haiku\nkind: checker\nmay_run: [gates]\nreturns: verdict\n---\n\nCall every endpoint the changes touch.\n";
+const CHECKER: &str = "---\nname: api-checker\ndescription: Calls the API the story changed\nruntime: claude\nmodel: claude-sonnet-5-5\nkind: checker\nmay_run: [gates]\nreturns: verdict\n---\n\nCall every endpoint the changes touch.\n";
 
 fn agents(tx: &std::sync::mpsc::Sender<fallow::run::engine::Msg>, project: Option<&str>) -> Value {
     sreq(
@@ -81,7 +81,8 @@ fn definitions_and_pipelines_are_created_edited_and_deleted() {
     let builder = config.join("agents/builder.md");
     let edited = std::fs::read_to_string(&builder)
         .unwrap()
-        .replace("model: sonnet", "model: opus");
+        .replace("model: claude-sonnet-5-5", "model: claude-opus-5-5");
+    assert!(edited.contains("model: claude-opus-5-5"));
     std::fs::write(&builder, &edited).unwrap();
     let rec = config.join(".shipped.json");
     let mut r: Value = serde_json::from_str(&std::fs::read_to_string(&rec).unwrap()).unwrap();
@@ -110,12 +111,12 @@ fn definitions_and_pipelines_are_created_edited_and_deleted() {
     assert_eq!(agent(&v, "reviewer")["kind"], "checker");
     let b = agent(&v, "builder");
     assert_eq!(b["source"], "user");
-    assert_eq!(b["model"], "opus");
+    assert_eq!(b["model"], "claude-opus-5-5");
     assert_eq!(b["text"], edited);
     assert!(
         b["update"]
             .as_str()
-            .is_some_and(|u| u.contains("model: sonnet")),
+            .is_some_and(|u| u.contains("model: claude-sonnet-5-5")),
         "the new default beside it: {b}"
     );
     assert!(
@@ -161,7 +162,26 @@ fn definitions_and_pipelines_are_created_edited_and_deleted() {
     )
     .unwrap();
     assert!(config.join("agents/api-checker.md").is_file());
-    let over = CHECKER.replace("model: haiku", "model: opus");
+    // 017 (US1 AS1): an alias is refused at the model's line with the hint; nothing is written.
+    let alias = CHECKER
+        .replace("name: api-checker", "name: alias-checker")
+        .replace("model: claude-sonnet-5-5", "model: opus");
+    let why = sreq(
+        tx,
+        Req::PutAgent {
+            name: "alias-checker".into(),
+            scope: user(),
+            text: alias,
+        },
+    )
+    .unwrap_err();
+    assert!(
+        why.contains("alias-checker.md:5: model \"opus\" is not a full model name for claude")
+            && why.contains("https://platform.claude.com/docs/en/models/overview"),
+        "{why}"
+    );
+    assert!(!config.join("agents/alias-checker.md").exists());
+    let over = CHECKER.replace("model: claude-sonnet-5-5", "model: claude-opus-5-5");
     sreq(
         tx,
         Req::PutAgent {
@@ -174,7 +194,7 @@ fn definitions_and_pipelines_are_created_edited_and_deleted() {
     assert!(repo.join(".fallow/agents/api-checker.md").is_file());
     let v = agents(tx, Some(&p));
     assert_eq!(agent(&v, "api-checker")["source"], "project");
-    assert_eq!(agent(&v, "api-checker")["model"], "opus");
+    assert_eq!(agent(&v, "api-checker")["model"], "claude-opus-5-5");
     assert_eq!(
         agent(&agents(tx, None), "api-checker")["source"],
         "user",
@@ -255,9 +275,10 @@ fn definitions_and_pipelines_are_created_edited_and_deleted() {
         .find(|(n, _)| *n == "reviewer")
         .unwrap()
         .1;
-    let lead = shipped_reviewer
-        .replace("kind: checker", "kind: lead")
-        .replace("returns: verdict", "returns: reply");
+    // 017 (FR-005): a lead runs no listed commands.
+    let lead = replace_found(shipped_reviewer, "kind: checker", "kind: lead");
+    let lead = replace_found(&lead, "returns: verdict", "returns: reply");
+    let lead = replace_found(&lead, "may_run: [gates, plan.commands]", "may_run: []");
     let why = sreq(
         tx,
         Req::PutAgent {
@@ -373,7 +394,7 @@ fn definitions_and_pipelines_are_created_edited_and_deleted() {
     .unwrap();
     let b = agent(&agents(tx, Some(&p)), "builder").clone();
     assert_eq!(b["source"], "default");
-    assert_eq!(b["model"], "sonnet");
+    assert_eq!(b["model"], "claude-sonnet-5-5");
     let why = sreq(
         tx,
         Req::DeleteAgent {

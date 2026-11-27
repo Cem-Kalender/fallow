@@ -2,7 +2,7 @@
 name: builder
 description: Implements a phase of a locked Spec Kit feature task by task, in its own worktree
 runtime: claude
-model: sonnet
+model: claude-sonnet-5-5
 kind: maker
 may_run: [gates, plan.commands]
 returns: work

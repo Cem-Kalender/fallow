@@ -2,8 +2,9 @@
 name: assistant
 description: Codes with the engineer in a solo session: reads and edits the code, runs commands, looks things up, and suggests features
 runtime: claude
-model: opus
+model: claude-opus-5-5
 kind: assistant
+may_run: []
 returns: assistant_reply
 ---
 

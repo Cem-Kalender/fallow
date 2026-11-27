@@ -433,14 +433,6 @@ pub mod registry {
     use super::{Availability, Runtime};
     use crate::config::Settings;
 
-    /// The models a definition may name, per runtime, as the page offers them.
-    pub fn models(name: &str) -> &'static [&'static str] {
-        match name {
-            "claude" => &["opus", "sonnet", "haiku"],
-            _ => &[],
-        }
-    }
-
     /// 017: how the runtime called `name` names its models, as its adapter declares it; `None`
     /// for a runtime Fallow does not know. Needs no settings: a definition is checked without
     /// a configured profile.
@@ -536,14 +528,15 @@ pub mod registry {
         super::claude::permission_reply(allow, message, raw)
     }
 
-    type Listed = Vec<(String, Availability, &'static [&'static str])>;
+    type Listed = Vec<(String, Availability)>;
     /// The versions last probed, for the profiles they were probed with, and when; and whether
     /// a probe is under way.
     type Versions = (String, std::time::Instant, Vec<(String, Option<String>)>);
     static VERSIONS: std::sync::Mutex<Option<Versions>> = std::sync::Mutex::new(None);
     static PROBING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-    /// `GET /api/runtimes`: each runtime, whether it is installed, its version and its models.
+    /// `GET /api/runtimes`: each runtime, whether it is installed and its version (017: no list
+    /// of models; each runtime's model naming is [`model_naming`]).
     /// It answers at once: whether a runtime is installed is a lookup of its program, and its
     /// version comes from a probe on a thread of its own (each program is killed after a few
     /// seconds), started when the versions are missing or a minute old. Until the probe is
@@ -575,7 +568,6 @@ pub mod registry {
                         installed: r.is_some(),
                         version: version.filter(|_| r.is_some()),
                     },
-                    models(name),
                 )
             })
             .collect();

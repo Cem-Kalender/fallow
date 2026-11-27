@@ -231,11 +231,7 @@ fn an_agent_that_could_not_be_started_uses_no_repair_and_goes_again_as_the_same_
         .find(|(n, _)| *n == "builder")
         .unwrap()
         .1;
-    std::fs::write(
-        agents.join("builder.md"),
-        shipped.replace("runtime: claude", "runtime: fake"),
-    )
-    .unwrap();
+    std::fs::write(agents.join("builder.md"), on_fake(shipped, "fake-1")).unwrap();
     std::fs::write(
         root.join("settings.extra.toml"),
         format!(

@@ -363,7 +363,7 @@ fn a_checker_for_some_paths_that_did_not_pass_is_never_shown_as_checked() {
         .1;
     std::fs::write(
         agents.join("security-reviewer.md"),
-        shipped.replace("runtime: claude", "runtime: fake"),
+        on_fake(shipped, "fake-1"),
     )
     .unwrap();
     let steps = [

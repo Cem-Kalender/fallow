@@ -2,8 +2,9 @@
 name: lead
 description: Works out features with the engineer following Spec Kit, answers agents' questions during a loop, and proposes pipelines
 runtime: claude
-model: opus
+model: claude-opus-5-5
 kind: lead
+may_run: []
 returns: reply
 ---
 

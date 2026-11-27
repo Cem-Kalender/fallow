@@ -45,7 +45,9 @@ fn a_record_holds_no_text_of_the_loop() {
     // The project and the pipeline carry the marker in their names too.
     let repo = repo_named(&root, &format!("shop-{MARKER}"));
     std::fs::create_dir_all(repo.join(".fallow/pipelines")).unwrap();
-    // The builder runs on a model alias the engineer chose, with the marker in it.
+    // The engineer's builder names a model alias with the marker in it. 017 (research R-8): a
+    // model must have its runtime's form, so that file cannot be used: it is listed, and the
+    // loop runs with the shipped builder.
     std::fs::create_dir_all(repo.join(".fallow/agents")).unwrap();
     let builder = fallow::defs::DEFAULT_AGENTS
         .iter()
@@ -54,7 +56,11 @@ fn a_record_holds_no_text_of_the_loop() {
         .1;
     std::fs::write(
         repo.join(".fallow/agents/builder.md"),
-        builder.replace("model: sonnet", &format!("model: sonnet-{MARKER}")),
+        replace_found(
+            builder,
+            "model: claude-sonnet-5-5",
+            &format!("model: sonnet-{MARKER}"),
+        ),
     )
     .unwrap();
     let name = format!("std-{MARKER}");
@@ -65,6 +71,17 @@ fn a_record_holds_no_text_of_the_loop() {
             .replace("name = \"standard\"", &format!("name = \"{name}\"")),
     )
     .unwrap();
+    let lib = fallow::defs::Library::load(Some(&root.join("config")), Some(&repo));
+    let unusable: Vec<&str> = lib.unusable.iter().map(|u| u.name.as_str()).collect();
+    assert_eq!(unusable, ["builder"], "{:?}", lib.problems);
+    assert!(
+        lib.unusable[0].problems[0]
+            .message
+            .contains("is not a full model name for claude"),
+        "{:?}",
+        lib.unusable[0].problems
+    );
+    assert_eq!(lib.agents["builder"].model, "claude-sonnet-5-5");
     let e = start_studio(&root, &scenario, None);
     let tx = &e.tx;
     let id = lock_calc_in(tx, &repo, Some(&name), Some((5.0, 60)), None);
@@ -115,6 +132,14 @@ fn a_record_holds_no_text_of_the_loop() {
     assert_eq!(r["phases"], 3);
     assert_eq!(r["questions"]["relayed"], 1);
     assert_eq!(r["verifying"], true);
+    // The model of the builder in force, an identifier of its runtime's form.
+    let builder_row = r["agents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|a| a["agent"] == "builder")
+        .unwrap();
+    assert_eq!(builder_row["model"], "claude-sonnet-5-5", "{r}");
     assert!(
         r["interventions"].as_u64().unwrap() >= 2,
         "the answer and the note: {r}"

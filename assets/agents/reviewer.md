@@ -2,7 +2,7 @@
 name: reviewer
 description: Checks every acceptance scenario of a user story by running something; never edits
 runtime: claude
-model: sonnet
+model: claude-sonnet-5-5
 kind: checker
 may_run: [gates, plan.commands]
 returns: verdict

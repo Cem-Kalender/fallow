@@ -4478,16 +4478,20 @@ impl Engine {
     }
 
     /// `GET /api/runtimes`: the runtimes Fallow knows, whether each is installed, its version,
-    /// and the models a definition may name.
+    /// and how it names its models (017 contracts/runtime-model-naming.md; no list of models).
     fn runtimes(&self) -> Value {
         Value::Array(
             crate::agent::registry::list(&self.ctx.settings)
                 .into_iter()
-                .map(|(name, a, models)| {
+                .map(|(name, a)| {
                     // 012 (FR-010a): what it can do, as its adapter declares it.
                     let caps = crate::agent::registry::capabilities(&name, &self.ctx.settings);
+                    let naming = crate::agent::registry::model_naming(&name).map(|m| {
+                        json!({ "prefix": m.prefix, "example": m.example, "lookup": m.lookup,
+                                "lookup_url": m.lookup_url, "hint": m.hint() })
+                    });
                     json!({ "name": name, "installed": a.installed, "version": a.version,
-                            "models": models, "capabilities": caps })
+                            "model_naming": naming, "capabilities": caps })
                 })
                 .collect(),
         )
