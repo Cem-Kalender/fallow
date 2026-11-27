@@ -83,6 +83,18 @@ The engineer's attention: a question from a group task (FR-018) records `NeedsEn
 
 **Alternatives considered**: keeping accepted unmerged tasks whose text did not change (rejected: the group around them may change, and their working copies hold the old lock's documents); stopping running builders at the lock (rejected: the engineer's lock would throw away work under way; 007 halts after the current step).
 
+## R-6c A story is judged on the build head (decided by the engineer after the US3 review, round 3)
+
+**Decision** (by the engineer, 2026-11-27; spec Clarifications and FR-020b):
+- A story's repair (its relock repair, a repair after its checkers' findings, an overruled answer's repair of the story) is gated, once accepted, on the build branch's current head (`git::head` of the build worktree), under the story's part, before its checkers look again (`unit()` with `Unit.on_head` at `checkpoint()`; the overruled answer's repair in `phase()`). The head holds everything that will be merged: the story repair, the tasks merged since (a group's kept tasks and its repair), the handover.
+- The repair's own commit must be on the build branch (`feature::story_head`: equal to the head or its ancestor); when it is not, the repair has failed ("the repair's commit … is not on the build branch"), within the story's repairs. Story repairs run in the build worktree, so this holds unless the branch was moved under them.
+- Unchanged: each task is gated on its own commit (in its own working copy for a group task), a group on its merged result (`group-<first>-<last>`), a maker's work at a point on its commit (`maker_gated`), a phase's gates (`when = "phase"`) on the build head as before.
+- Loops of 0.4.0 resuming: a story repair already gated on its own commit is gated again on the head at the checkpoint only when the head moved since (the gate runs are found by part and commit); at the checkpoint the head is the repair's commit unless something was merged after it, so mostly no gate runs again.
+
+**Rationale**: after a new lock that keeps merged tasks (FR-020a), the story's relock repair is accepted before the new group gates the merged result again; judged on its own commit, the story was charged the group's failure for three repair rounds and went to the engineer, though the group's repair, merged later, fixed it. What will be merged is the head; judging that is what "the story passes" must mean.
+
+**Alternatives considered**: not counting failures the story repair's base already had (rejected: a weaker check, and the story could pass while the head fails); gating the kept merged result before the story repair runs (rejected: the order of the phase after a new lock, story first, is S-17's, and the head would still not be what is judged).
+
 ## R-6b Several questions inside one group (review 1)
 
 **Decision**: the tasks of the group in progress that wait for the engineer form a set: each task with a question waiting for the engineer, or whose latest step ended blocked on a question not yet answered. The group skips each of them and goes on with the others. The engineer is asked one question at a time (`NeedsEngineer` names it: "The builder of T005 asks (q1): …"); a later question never replaces the one asked, and is asked when that one is answered. An answer from the loop's answer field goes to the question the engineer was asked (or, for a builder that returned `blocked` without Fallow's ask tool, to that task's blocked step), never to the newest blocked step of another task.

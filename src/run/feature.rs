@@ -486,6 +486,22 @@ fn step(run: &mut Run, ctx: &Ctx) -> Result<(), String> {
     finish(run, &pl)
 }
 
+/// 018 (FR-020b, engineer's decision 2026-11-27): what a story's repair is gated on at the
+/// checkpoint: the build head, everything that will be merged (kept merged tasks, a group's
+/// repair, the story's own repair), so a story passes only if the real combined result passes.
+/// The repair's own commit must be on the build branch: `Ok(Err(why))` when it is not (its work
+/// would never be merged), a failure of the repair.
+fn story_head(run: &Run, repair_commit: &str) -> Result<Result<String, String>, String> {
+    let head = git::head(&build_wt(run))?;
+    if head == repair_commit || git::is_ancestor(&run.state.repo, repair_commit, &head) {
+        return Ok(Ok(head));
+    }
+    Ok(Err(format!(
+        "the repair's commit {} is not on the build branch",
+        &repair_commit[..repair_commit.len().min(12)]
+    )))
+}
+
 /// A maker's accepted work goes through the gates like a task's, when the pipeline has gates
 /// and the step is at an end (a maker at the start writes tests that must fail first).
 fn maker_gated(
@@ -968,6 +984,7 @@ fn point(
             cap: pl.caps.task_repairs,
             since,
             start: pt.start(),
+            on_head: false,
         };
         let prompt = |run: &Run, s: &pipeline::Step, part: &str| -> Result<String, String> {
             let may = may_of(run, lib, &s.agent);
@@ -1003,6 +1020,9 @@ struct Unit {
     /// At a start: nothing is built yet, so a finding goes to the engineer, never to a repair
     /// (FR-009), as for a checker there on its own.
     start: bool,
+    /// A story's checkpoint: its repair is gated on the build head, everything that will be
+    /// merged, not on the repair's own commit (FR-020b, engineer's decision 2026-11-27).
+    on_head: bool,
 }
 
 /// One unit of checkers alongside each other: all queued at once after the unit's repair is
@@ -1079,7 +1099,27 @@ fn unit(
                 Some((true, _)) => {
                     if let Some(c) = r.verified_commit.clone() {
                         if pl.steps.iter().any(|s| s.agent == pipeline::GATES) {
-                            // The repair is gated like a task before the checkers look again.
+                            // The repair is gated like a task before the checkers look again;
+                            // at a story's checkpoint, on the build head (FR-020b).
+                            let c = if u.on_head {
+                                match story_head(run, &c)? {
+                                    Ok(head) => head,
+                                    Err(why) => {
+                                        repair_or_ask(
+                                            run,
+                                            &u.repair,
+                                            u.task.as_deref(),
+                                            u.phase,
+                                            u.cap,
+                                            &builder_of(pl),
+                                            vec![why],
+                                        )?;
+                                        return Ok(false);
+                                    }
+                                }
+                            } else {
+                                c
+                            };
                             match gated(run, ctx, &u.repair, &c)? {
                                 None => return Ok(false),
                                 Some(f) if !f.is_empty() => {
@@ -2103,6 +2143,25 @@ fn phase(
                 Some((true, _)) => {
                     if let Some(c) = r.verified_commit.clone() {
                         if pl.steps.iter().any(|s| s.agent == pipeline::GATES) {
+                            // A story's repair: on the build head (FR-020b).
+                            let c = if q.affects.is_some() {
+                                match story_head(run, &c)? {
+                                    Ok(head) => head,
+                                    Err(why) => {
+                                        return repair_or_ask(
+                                            run,
+                                            &part,
+                                            None,
+                                            n,
+                                            pl.caps.task_repairs,
+                                            &builder,
+                                            vec![why],
+                                        );
+                                    }
+                                }
+                            } else {
+                                c
+                            };
                             match gated(run, ctx, &part, &c)? {
                                 None => return Ok(()),
                                 Some(f) if !f.is_empty() => {
@@ -2231,8 +2290,6 @@ fn phase(
                 s.kind == StepKind::Repair
                     && s.part.as_deref() == Some(part.as_str())
                     && s.queued_seq > fresh
-                    // Never the repair of a group a new lock dropped (review 2).
-                    && !groups::dropped_step(l, s)
             })
             .cloned();
         match repair.as_ref().map(|r| &r.verified) {
@@ -2848,6 +2905,9 @@ fn group(
                 s.kind == StepKind::Repair
                     && s.part.as_deref() == Some(part.as_str())
                     && s.queued_seq > fresh
+                    // Never the repair of a group a new lock dropped, though a new group of
+                    // the same tasks has its part (review 2; also before the lock: `fresh`).
+                    && !groups::dropped_step(l, s)
             })
             .cloned();
         match repair.as_ref().map(|r| &r.verified) {
@@ -3003,6 +3063,7 @@ fn checkpoint(
         cap: pl.caps.review_rounds,
         since: round_start(run, l, story),
         start: false,
+        on_head: true,
     };
     let prompt = |run: &Run, c: &pipeline::Step, _: &str| -> Result<String, String> {
         let spec_text = doc_at(run, &l.lock_commit, "spec.md").unwrap_or_default();

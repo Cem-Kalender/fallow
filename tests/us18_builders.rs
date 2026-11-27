@@ -1203,13 +1203,12 @@ fn a_new_lock_keeps_the_tasks_of_the_group_already_merged() {
 }
 
 /// A gate that fails only on the merged result of T004 and T005 until a repair adds
-/// calc/fixed.py or the new lock's story repair adds calc/relock.py (as
-/// `a_merged_group_that_fails_the_gates_is_repaired_before_the_next_task`).
+/// calc/fixed.py (as `a_merged_group_that_fails_the_gates_is_repaired_before_the_next_task`).
 fn pair_gate(f: &ParallelFeature) {
     std::fs::write(
         f.repo.join(".fallow/squad.toml"),
         format!(
-            "repair_cap = 2\n[[gate]]\nname = \"tests\"\ncommand = \"{PYTHON} -m unittest\"\nbaseline = true\n\n[[gate]]\nname = \"pair\"\ncommand = \"{PYTHON} -c \\\"import os,sys; print('Ran 1 test'); both = os.path.exists('calc/t004.py') and os.path.exists('calc/t005.py'); fixed = os.path.exists('calc/fixed.py') or os.path.exists('calc/relock.py'); sys.exit(1 if both and not fixed else 0)\\\"\"\nbaseline = true\n"
+            "repair_cap = 2\n[[gate]]\nname = \"tests\"\ncommand = \"{PYTHON} -m unittest\"\nbaseline = true\n\n[[gate]]\nname = \"pair\"\ncommand = \"{PYTHON} -c \\\"import os,sys; print('Ran 1 test'); both = os.path.exists('calc/t004.py') and os.path.exists('calc/t005.py'); fixed = os.path.exists('calc/fixed.py'); sys.exit(1 if both and not fixed else 0)\\\"\"\nbaseline = true\n"
         ),
     )
     .unwrap();
@@ -1236,8 +1235,8 @@ fn relock_during_a_group_repair(name: &'static str, restart: bool) {
         "kind = \"repair\"",
         1,
     ));
-    // The story brought in line with the new lock (gated at the checkpoint on its own commit:
-    // the pair gate passes there).
+    // The story brought in line with the new lock (gated at the checkpoint on the build head,
+    // FR-020b: the group's repair is in it).
     steps.push_str(
         &task_step(
             "US1",
@@ -1246,7 +1245,9 @@ fn relock_during_a_group_repair(name: &'static str, restart: bool) {
         )
         .replacen("kind = \"build\"", "kind = \"repair\"", 1),
     );
-    // A second repair of the part, for the old one were it run again.
+    // A second repair of the part: the new group's, when the old one was cut short by the
+    // restart and its merged result (T004 and T005 kept) still fails (were the old one run
+    // again, it would take this one).
     steps.push_str(&repair(part, &fixed));
     steps.push_str(&f.build(&f.last, ""));
     steps.push_str(&handover_step(2, ""));
@@ -1296,9 +1297,19 @@ fn relock_during_a_group_repair(name: &'static str, restart: bool) {
             "{r}"
         );
     }
-    // The new group's merged result passes: no repair of its own, and none of the old group's.
-    assert_eq!(reps.len(), 1, "{reps:?}");
+    // The new group's merged result: it passes when the old repair ended before the drop;
+    // after a restart (the old repair cut short) it fails and is repaired as the new group's.
+    let own: Vec<&&Value> = reps
+        .iter()
+        .filter(|r| queued_seq(&ev, r["n"].as_u64().unwrap()) > new_group)
+        .collect();
+    assert_eq!(own.len(), usize::from(restart), "{reps:?}");
+    assert_eq!(reps.len(), 1 + own.len(), "{reps:?}");
     assert_eq!(of_type(&ev, "group_done").len(), 1);
+    // FR-020b: the story is gated on the build head at its checkpoint, never charged the
+    // group's failure: its relock repair only.
+    let story = of(&v, "repair", "US1");
+    assert_eq!(story.len(), 1, "{story:?}");
     assert_eq!(v["feature_loop"]["outcome"][0], true);
     drop(e);
     let _ = std::fs::remove_dir_all(&root);
@@ -1312,6 +1323,104 @@ fn a_new_lock_during_a_group_repair_never_runs_it_again() {
 #[test]
 fn a_new_lock_during_a_group_repair_then_a_restart_never_runs_it_again() {
     relock_during_a_group_repair("builders-relock-repair-restart", true);
+}
+
+/// 018 US3 (review 3; engineer's decision 2026-11-27, FR-020b): a new lock keeps the merged
+/// tasks of a group whose merged result fails the gates (the old group's repair fixed nothing).
+/// The story is brought in line with the new lock; the new group gates the merged result again
+/// and repairs it, counted as the group's. At the story's checkpoint the gates run on the build
+/// head (everything that will be merged), not on the story repair's own commit: the story is
+/// never charged the group's failure.
+#[test]
+fn a_story_after_a_new_lock_is_gated_on_the_build_head_not_charged_the_groups_failure() {
+    let root = scratch("builders-relock-story-head");
+    setup(&root, 3, None);
+    let f = parallel_tasks_feature(&root, 3, &[]);
+    pair_gate(&f);
+    let part = "group-T004-T006";
+    let mut steps = f.phase_1();
+    for t in &f.parallel {
+        steps.push_str(&f.build(t, ""));
+    }
+    // The old group's repair, at work at the new lock: it fixes nothing.
+    steps.push_str(
+        &task_step(part, &[("calc/note.py", "NOTE = 1\n")], "sleep_ms = 3000").replacen(
+            "kind = \"build\"",
+            "kind = \"repair\"",
+            1,
+        ),
+    );
+    steps.push_str(
+        &task_step(
+            "US1",
+            &[("calc/relock.py", "LOCK = 2\n")],
+            "when = \"lock 2\"",
+        )
+        .replacen("kind = \"build\"", "kind = \"repair\"", 1),
+    );
+    // The new group's repair of the merged result it gates again.
+    steps.push_str(&repair(part, &[("calc/fixed.py", "FIXED = True\n")]));
+    steps.push_str(&f.build(&f.last, ""));
+    steps.push_str(&handover_step(2, ""));
+    steps.push_str(&check_step("US1", true, ""));
+    steps.push_str(LEAD_ANALYZES_AGAIN);
+    let (e, id) = lock(&root, &f, &steps, (5.0, 60));
+    let tx = &e.tx;
+    let v = wait_for(tx, id, "the group's repair at work", |v| {
+        of(v, "repair", part)
+            .first()
+            .is_some_and(|s| !s["started"].is_null())
+    });
+    lock_again(tx, &v, |t| {
+        t.replace(
+            "T007 [US1] Join them in calc/all.py",
+            "T007 [US1] Join them all in calc/all.py",
+        )
+    });
+    let v = wait_for(tx, id, "ready", |v| {
+        v["stage"] == "ready" || !v["needs_engineer"].is_null()
+    });
+    // Must fail (before the decision): the story's relock repair, gated on its own commit
+    // (without the group's repair), was charged repair rounds and went to the engineer.
+    assert_eq!(v["stage"], "ready", "{}", v["needs_engineer"]);
+    let ev = events(&root, id);
+    let new_group = of_type(&ev, "group_started")[1]["seq"].as_u64().unwrap();
+    // The new group's merged result failed and was repaired as the group's.
+    let gates = of_type(&ev, "gate_run");
+    assert!(
+        gates.iter().any(|g| g["part"] == part
+            && g["result"]["gate"] == "pair"
+            && g["class"] != "pass"
+            && g["seq"].as_u64().unwrap() > new_group),
+        "{gates:?}"
+    );
+    let group_repairs: Vec<&Value> = of(&v, "repair", part)
+        .into_iter()
+        .filter(|r| queued_seq(&ev, r["n"].as_u64().unwrap()) > new_group)
+        .collect();
+    assert_eq!(group_repairs.len(), 1, "{group_repairs:?}");
+    // The story: only its relock repair, never a repair round.
+    let story = of(&v, "repair", "US1");
+    assert_eq!(story.len(), 1, "{story:?}");
+    assert!(
+        text(story[0], "reason").starts_with("the new lock"),
+        "{}",
+        story[0]
+    );
+    let own = text(story[0], "verified_commit");
+    // Its gates ran on the build head at the checkpoint: the group's repair is in it.
+    let at_story: Vec<&&Value> = gates.iter().filter(|g| g["part"] == "US1").collect();
+    assert!(!at_story.is_empty());
+    for g in &at_story {
+        assert_eq!(g["class"], "pass", "{g}");
+        let c = g["result"]["commit"].as_str().unwrap();
+        assert_ne!(c, own, "gated on the story repair's own commit");
+        git(&f.repo, &["cat-file", "-e", &format!("{c}:calc/fixed.py")]);
+        git(&f.repo, &["merge-base", "--is-ancestor", &own, c]);
+    }
+    assert_eq!(v["feature_loop"]["outcome"][0], true);
+    drop(e);
+    let _ = std::fs::remove_dir_all(&root);
 }
 
 /// 018 US3 (review 2, research R-6): a new lock that takes a merged task out of every group (its
