@@ -1,0 +1,38 @@
+{
+  "stage": "ready",
+  "integrated": "089867cc75008183602915a9224f489f69f3961a",
+  "outcome": [
+    false,
+    [
+      "no review at checkpoints"
+    ]
+  ],
+  "phases": [
+    "done",
+    "done",
+    "done"
+  ],
+  "tasks": {
+    "T001": {
+      "state": "accepted",
+      "commit": "cceaa0f1b658a36c7351fcac3067bb33c0df4961",
+      "repairs": 0
+    },
+    "T002": {
+      "state": "accepted",
+      "commit": "c4d73ff69246e8a07634972a3a35f9f41f3d3298",
+      "repairs": 0
+    },
+    "T003": {
+      "state": "accepted",
+      "commit": "1d44ce878cb2d6f46b7970fe52408de33d5c2e4c",
+      "repairs": 0
+    },
+    "T004": {
+      "state": "accepted",
+      "commit": "e938ed01c210413fd59ed20d52ae6c30b6eaf4a5",
+      "repairs": 0
+    }
+  },
+  "verdicts": []
+}

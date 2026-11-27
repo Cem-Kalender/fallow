@@ -75,10 +75,15 @@ the project's principles are in [`.specify/memory/constitution.md`](.specify/mem
     the same file without a repair, and gates the merged result. The lock form says what the
     builders will do for the feature's `tasks.md` before you lock.
   - *The `parallel` default.* Up to 3 builders on `[P]` tasks, the gates after every task, and
-    the reviewer alongside the security reviewer at each user story's checkpoint.
-  - *Pipelines from 0.4.0* load unchanged and mean what they meant: one builder, the same steps
-    and the same result; Fallow 0.5.0 rewrites none of them, and loops locked with 0.4.0 go on
-    with the pipeline they recorded. The other way round, Fallow 0.4.0 cannot use a pipeline
+    the reviewer alongside the security reviewer at each user story's checkpoint. If you already
+    have a pipeline of your own named `parallel`, it keeps the name and is the one used; the
+    shipped one is put beside it as `parallel.toml.new`.
+  - *Pipelines from 0.4.0* load unchanged: one builder, the same steps and the same result;
+    Fallow 0.5.0 rewrites none of them, and loops locked with 0.4.0 go on with the pipeline they
+    recorded. They mean what they meant but for one change: checkers marked `parallel_with` each
+    other anywhere but at the end of a user story's checkpoint (per phase, once, or at a
+    checkpoint's start), which 0.4.0 ran one after the other, now run at the same time, as they
+    already did at a checkpoint's end. The other way round, Fallow 0.4.0 cannot use a pipeline
     that uses 0.5.0's additions (`builders` other than 1, `at` on a task step, a checker per task
     or at a start): it lists such a file with its problem. One saved with one builder and none
     of them still works in 0.4.0.

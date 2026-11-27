@@ -577,3 +577,177 @@ fn a_loop_locked_before_resumes_and_a_finished_one_shows_as_before() {
     stop(e);
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// The engineer's own pipeline named `parallel`, written under 0.4.0 (before Fallow shipped one).
+const OWN_PARALLEL_040: &str = r#"name = "parallel"
+description = "Ours: the reviewer and the security reviewer side by side at each checkpoint"
+
+[[step]]
+agent = "builder"
+when = "task"
+on_fail = "repair"
+
+[[step]]
+agent = "fallow:gates"
+when = "task"
+on_fail = "repair"
+
+[[step]]
+agent = "reviewer"
+when = "checkpoint"
+on_fail = "repair"
+
+[[step]]
+agent = "security-reviewer"
+when = "checkpoint"
+on_fail = "repair"
+parallel_with = ["reviewer"]
+"#;
+
+#[test]
+fn an_own_parallel_and_an_edited_agent_are_kept() {
+    // T051 (US5 review 1): a 0.4.0 data folder with the engineer's own `parallel.toml` (no
+    // record of it: Fallow 0.4.0 shipped none) and an edited copy of the shipped reviewer.
+    let root = scratch("018-own-par");
+    let config = root.join("config");
+    config_040(&config);
+    let own = config.join("pipelines/parallel.toml");
+    std::fs::write(&own, OWN_PARALLEL_040).unwrap();
+    let reviewer = config.join("agents/reviewer.md");
+    let shipped_reviewer = std::fs::read_to_string(&reviewer).unwrap();
+    let edited = shipped_reviewer.replacen("description: ", "description: Ours. ", 1);
+    assert_ne!(edited, shipped_reviewer);
+    std::fs::write(&reviewer, &edited).unwrap();
+    let dirs = [config.join("agents"), config.join("pipelines")];
+    let before = files(&dirs);
+
+    // The update, as `fallow serve` starts: what it says.
+    let said = fallow::defs::install_defaults_said(&config).unwrap();
+    assert_eq!(
+        said,
+        [
+            "Fallow now ships a pipeline named parallel; yours (pipelines/parallel.toml) keeps the name and is the one used, and the shipped one is beside it as parallel.toml.new"
+        ],
+        "not \"an update changed the default\": the engineer's file is not an edited default"
+    );
+    let mut after = files(&dirs);
+    let new = config.join("pipelines/parallel.toml.new");
+    assert_eq!(
+        after.remove(&new).as_deref(),
+        DEFAULT_PIPELINES
+            .iter()
+            .find(|(n, _)| *n == "parallel")
+            .map(|(_, t)| t.as_bytes()),
+        "the shipped `parallel` is beside it"
+    );
+    assert_eq!(
+        after, before,
+        "the own parallel.toml and the edited reviewer are kept byte for byte"
+    );
+    assert!(!config.join("agents/reviewer.md.new").exists());
+
+    // Theirs is the `parallel` used: its text, one builder, its steps.
+    let scenario = root.join("scenario.toml");
+    std::fs::write(&scenario, "").unwrap();
+    let e = start_studio(&root, &scenario, None);
+    let v = sreq(&e.tx, Req::Pipelines { project: None }).unwrap();
+    let p = listed(&v, "parallel");
+    assert_eq!(p["text"], OWN_PARALLEL_040, "{p}");
+    assert_eq!(p["source"], "user", "{p}");
+    assert_eq!(p["caps"]["builders"], 1);
+    assert_eq!(p["steps"].as_array().unwrap().len(), 4);
+    assert_eq!(
+        v["pipelines"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|x| x["name"] == "parallel")
+            .count(),
+        1
+    );
+    let a = sreq(&e.tx, Req::Agents { project: None }).unwrap();
+    let r = a["agents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|x| x["name"] == "reviewer")
+        .unwrap()
+        .clone();
+    assert!(
+        r["description"].as_str().unwrap().starts_with("Ours. "),
+        "the edited reviewer is the one used: {r}"
+    );
+
+    // Started again: nothing more is said or written.
+    stop(e);
+    assert!(
+        fallow::defs::install_defaults_said(&config)
+            .unwrap()
+            .is_empty()
+    );
+    let mut again = files(&dirs);
+    again.remove(&new);
+    assert_eq!(again, before);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// The fixtures' place for the folder a 0.4.0 loop ran in (the reviewer's scratch root); the
+/// logs hold it only in the repository and worktree paths, which the fold keeps as text.
+const ROOT_MARK: &str = "@ROOT@";
+
+#[test]
+fn finished_0_4_0_logs_fold_to_the_same_outcome() {
+    // US5 review 1: event logs written by Fallow 0.4.0's own engine (v0.4.0, the fake runtime:
+    // the calc feature finished on Solo and on Standard), folded by 018. Expected: what 0.4.0's
+    // state view showed for them (`<name>.040.json`, taken from it when the logs were written).
+    for name in ["solo-finished", "standard-finished"] {
+        let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/v040");
+        let root = scratch(&format!("018-fold-{name}"));
+        let dir = root.join("runs/1");
+        std::fs::create_dir_all(&dir).unwrap();
+        let log = std::fs::read_to_string(fixtures.join(format!("{name}.events.jsonl")))
+            .unwrap()
+            .replace(ROOT_MARK, &root.display().to_string());
+        std::fs::write(dir.join("events.jsonl"), log).unwrap();
+        let (_, events, notes) = Log::<Event>::open(&dir).unwrap();
+        assert!(notes.is_empty(), "{name}: {notes:?}");
+        let s = fallow::run::state::RunState::fold(1, &events).unwrap();
+        let s = serde_json::to_value(&s).unwrap();
+        let l = &s["feature_loop"];
+        let got = json!({
+            "stage": s["stage"],
+            "integrated": s["integrated"],
+            "outcome": l["outcome"],
+            "phases": l["phases"].as_array().unwrap().iter().map(|p| p["state"].clone()).collect::<Vec<_>>(),
+            "tasks": l["tasks"].as_object().unwrap().iter().map(|(k, t)| (k.clone(), json!({
+                "state": t["state"], "commit": t["commit"], "repairs": t["repairs"],
+            }))).collect::<serde_json::Map<_, _>>(),
+            "verdicts": s["verdicts"].as_array().unwrap().iter().map(|v| json!({
+                "approved": v["approved"], "complete": v["complete"], "missing": v["missing"],
+            })).collect::<Vec<_>>(),
+        });
+        let want: Value = serde_json::from_str(
+            &std::fs::read_to_string(fixtures.join(format!("{name}.040.json"))).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(got, want, "{name}");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+    // The outcome and `missing` as 0.4.0 ended them, said outright.
+    let outcome = |name: &str| -> Value {
+        serde_json::from_str::<Value>(
+            &std::fs::read_to_string(
+                Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join(format!("tests/fixtures/v040/{name}.040.json")),
+            )
+            .unwrap(),
+        )
+        .unwrap()["outcome"]
+            .clone()
+    };
+    assert_eq!(
+        outcome("solo-finished"),
+        json!([false, ["no review at checkpoints"]])
+    );
+    assert_eq!(outcome("standard-finished"), json!([true, []]));
+}

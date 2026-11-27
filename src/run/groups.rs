@@ -102,8 +102,10 @@ fn statement(
             .flat_map(|p| &p.tasks)
             .any(|t| t.parallel && !built(&t.id));
         return vec![if marked {
+            // "still to build" reads after "in a row" (US4 review 2 nit): the same condition.
+            let are = if still.is_empty() { "" } else { " are" };
             format!(
-                "No two [P] tasks{still} in a row: the pipeline's {builders} builders will work as 1."
+                "No two [P] tasks in a row{are}{still}: the pipeline's {builders} builders will work as 1."
             )
         } else {
             format!("No [P] tasks{still}: the pipeline's {builders} builders will work as 1.")
@@ -750,7 +752,9 @@ mod tests {
         let three = |t: &str| t != "T005";
         assert_eq!(
             relock_statement(3, std::slice::from_ref(&p), 4, three),
-            ["No two [P] tasks still to build in a row: the pipeline's 3 builders will work as 1."]
+            [
+                "No two [P] tasks in a row are still to build: the pipeline's 3 builders will work as 1."
+            ]
         );
         // All built, or no phase still to come.
         let all = |_: &str| true;

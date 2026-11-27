@@ -194,6 +194,7 @@ The engineer keeps a library of agents and composes pipelines from fixed buildin
 1. **Given** the agent library, **Then** it lists the default and the engineer's agents with their kind and source (default, yours, or a project override). Opening one shows its definition, which can be edited.
 2. **Given** a checker agent, **When** it runs, **Then** it cannot change files, and a verdict that does not say what was run for each check does not count.
 3. **Given** a pipeline, **When** the engineer adds, removes or reorders steps, **Then** the designer shows the result as in the mockup. Removing the gates or every review is allowed, with a warning that results will be "not verified by Fallow".
+   > Amended by 018 (specs/018-pipeline-orchestration/spec.md FR-001, FR-002): removing the gates or every review is allowed; the designer then states plainly what would not be verified, without a warning label.)
 4. **Given** the engineer asks the lead to design a pipeline, **When** the lead proposes one, **Then** it appears in the designer for the engineer to edit and save. It is never used before the engineer saves it.
 
 ---
@@ -271,11 +272,14 @@ Claude Code is the first runtime. Others (Codex, Gemini) can be added later with
 **The loop**
 
 - **FR-010**: A loop MUST run the whole locked `tasks.md`, phase by phase and task by task, in the order and grouping it gives, with the steps of the feature's pipeline.
+  > Amended by 018 (specs/018-pipeline-orchestration/spec.md FR-011-FR-013, FR-017): with a pipeline allowing more than one builder, a run of consecutive `[P]` tasks may run at the same time, up to that number; tasks after the group wait for it.)
 - **FR-010a**: Each phase MUST get a fresh builder session; the tasks of a phase, and the repairs from its review, share it.
   - At the end of its phase, the builder MUST write a short handover in markdown: what it built, where, the decisions it made, and what the next phase should know. Fallow commits it to the feature's folder (`specs/NNN-name/handover/`).
   - A new builder session MUST start from the locked documents and every earlier handover, and from nothing else carried over.
   - A phase whose handover is missing or empty MUST NOT count as done.
+  > Amended by 018 (specs/018-pipeline-orchestration/spec.md FR-012, FR-016a, FR-019): each task of a `[P]` group gets its own working copy and builder session; the phase's handover is still written by the phase's builder session.)
 - **FR-011**: Fallow MUST commit each task's changes as their own commit, and run the gates against the baseline from the locked commit after each task. A task counts as done only when Fallow's checks pass, never on an agent's word.
+  > Amended by 018 (specs/018-pipeline-orchestration/spec.md FR-014-FR-016): each task of a group is gated on its own commit, merged in `tasks.md` order, and the merged group is gated as a whole before the next task.)
 - **FR-012**: At each user story checkpoint, a reviewer (a checker agent) MUST check every acceptance scenario of that story by running something, including the must-fail cases. An incomplete verdict MUST be asked for again, not passed to the engineer.
 - **FR-013**: A failing gate or verdict MUST become a repair for the builder in its session, with the reasons, up to the pipeline's cap (3 by default). Beyond the cap, the loop MUST ask the engineer.
 - **FR-014**: The engineer MUST merge once per feature, and exactly the gated commit MUST reach the target branch. A branch that does not merge cleanly MUST NOT be merged.
@@ -328,6 +332,7 @@ Claude Code is the first runtime. Others (Codex, Gemini) can be added later with
 
   Whatever the definition says, every agent MUST get its own working copy, only the commands listed (the gates, the definition's, and those the locked plan names), a fixed result shape, and limits on time, turns and cost.
 - **FR-027**: A pipeline step MUST name an agent, when it runs (per task, per phase, per user story checkpoint, once, or when given paths changed), and what happens on failure (repair by the builder, or the engineer). The engineer MUST be able to create, edit, copy and delete pipelines in the designer, and choose one per project and per feature before the lock.
+  > Amended by 018 (specs/018-pipeline-orchestration/spec.md FR-004, FR-005, FR-008): a step may run before or after each task, at the start or end of a phase, a checkpoint or the loop; checkers may run per task.)
 - **FR-028**: The lead MUST be able to propose a pipeline in conversation with the engineer. It MUST NOT be used until the engineer saves it.
 
 **Runtimes**

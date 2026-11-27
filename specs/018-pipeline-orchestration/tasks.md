@@ -186,9 +186,9 @@ description: "Task list for 018 Pipelines as an orchestration system"
 
 ## Phase 8: Polish & Cross-Cutting Concerns
 
-- [ ] T055 [P] Mark the replaced parts of earlier documents (FR-030): in `specs/007-fallow-studio/contracts/pipeline.md` (the `at` and `parallel_with` rows, the Checks, "The designer shows the same warning"), `specs/007-fallow-studio/spec.md` (FR-010, FR-010a, FR-011, FR-027, US6 AS3) and `specs/008-studio-redesign/spec.md` (FR-009, US3's independent test, US4 AS5, FR-011, FR-013, FR-014, FR-015): a line "Amended by 018: <what>" pointing to `specs/018-pipeline-orchestration/spec.md`, as 017 marked 007 and 008.
-- [ ] T056 [P] Add `tests/visual_018.rs` (ignored, by hand, as `tests/visual_017.rs`): serves the Pipelines tab with Standard, Solo, `parallel` and a pipeline using every point; and `specs/018-pipeline-orchestration/checks/pipelines.js` (as `specs/017-agent-file-fields/checks/agents.js`) checking at 1440 × 900 and 390 × 844: no label text or pill, a + at every point, units drawn as branches, every + reachable by Tab with a visible focus.
-- [ ] T057 Run the quickstart sections 1-7, `cargo fmt --all --check` and `cargo clippy --workspace --all-targets --features automation -- -D warnings`; check the CI `bench` job's budgets are unchanged.
+- [X] T055 [P] Mark the replaced parts of earlier documents (FR-030): in `specs/007-fallow-studio/contracts/pipeline.md` (the `at` and `parallel_with` rows, the Checks, "The designer shows the same warning"), `specs/007-fallow-studio/spec.md` (FR-010, FR-010a, FR-011, FR-027, US6 AS3) and `specs/008-studio-redesign/spec.md` (FR-009, US3's independent test, US4 AS5, FR-011, FR-013, FR-014, FR-015): a line "Amended by 018: <what>" pointing to `specs/018-pipeline-orchestration/spec.md`, as 017 marked 007 and 008.
+- [X] T056 [P] Add `tests/visual_018.rs` (ignored, by hand, as `tests/visual_017.rs`): serves the Pipelines tab with Standard, Solo, `parallel` and a pipeline using every point; and `specs/018-pipeline-orchestration/checks/pipelines.js` (as `specs/017-agent-file-fields/checks/agents.js`) checking at 1440 × 900 and 390 × 844: no label text or pill, a + at every point, units drawn as branches, every + reachable by Tab with a visible focus.
+- [X] T057 Run the quickstart sections 1-7, `cargo fmt --all --check` and `cargo clippy --workspace --all-targets --features automation -- -D warnings`; check the CI `bench` job's budgets are unchanged.
 
 ---
 

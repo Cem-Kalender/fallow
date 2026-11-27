@@ -38,6 +38,18 @@ Each entry of `pipelines`:
 
 `statement` follows research R-11; empty when `builders` is 1. The lock form shows the chosen pipeline's `statement` under the Pipeline field and updates it on change (spec FR-022). The option text keeps " (not verified)" for a pipeline whose results would not be verified.
 
+`relock` (added after the US4 review, round 1): `null` unless the feature's loop is live; then a new lock keeps the loop's recorded pipeline, and the view says what it will do for what is left:
+
+```json
+{ "name": "parallel", "verifying": true, "builders": 3,
+  "statement": ["Phase 3 has 2 [P] tasks still to build: up to 2 builders at a time."] }
+```
+
+- `name`, `verifying`, `builders`: the pipeline the loop recorded at its lock (`feature::pipeline_of`), not the library's copy of that name;
+- `statement`: `groups::relock_statement`, the lines of R-11 with "still to build" ("No two [P] tasks in a row are still to build: …", "No [P] tasks still to build: …"), over the phases not yet done once the new lock is applied, counting in each group only the tasks not already on the build branch (research R-11, "At a new lock"); empty when `builders` is 1. It is computed when the view is loaded.
+
+With `relock` set, the lock form shows that pipeline as text with "A new lock keeps the loop's pipeline." and the lines, offers no choice of pipeline, and sends none with the lock.
+
 ## The loop view
 
 - `pipeline.caps.builders`; `pipeline.steps[].at` is given for task steps too ("start" / "end"; the builder and gates: "end").

@@ -81,6 +81,7 @@ The engineer's controls sit together in the loop page's header: a note for the n
 **Why this priority**: designing pipelines and writing agents are different tasks; one crowded tab served neither well, and a click on an agent did not even show that agent (007's T086).
 
 **Independent Test**: open both tabs on a project, switch between agents, change an agent's model in the form and save it for this project only, and check the file Fallow wrote and the pipeline list's "verifying" marks.
+> Amended by 018 (specs/018-pipeline-orchestration/spec.md FR-001), US3's independent test: there are no "verifying" marks to check; the designer states what each pipeline checks.)
 
 **Acceptance Scenarios**:
 
@@ -114,6 +115,7 @@ Back-edges show what happens on a failure. The engineer adds a step with a + on 
 3. **Given** a selected node, **When** the engineer changes when it runs, **Then** Fallow moves it to the place that matches and the TOML view shows the same pipeline.
 4. **Given** the graph, **When** the engineer tries to connect two steps with an edge of their own, **Then** nothing is drawn: edges follow from when the steps run. (must fail)
 5. **Given** a pipeline whose last checker is removed, **When** the graph is shown, **Then** the pipeline is marked "not verifying" and says which checks are missing.
+   > Amended by 018 (specs/018-pipeline-orchestration/spec.md FR-001, FR-002): no "not verifying" mark; the designer says which checks are missing in plain words.)
 
 ---
 
@@ -182,18 +184,23 @@ When a pipeline marks steps to run alongside each other at a story's checkpoint,
 - **FR-008**: The agent editor MUST offer the runtime, model, kind, the commands the agent may run and its result shape as form fields, and the instructions as text. "Edit as text" MUST show the whole definition. Saving MUST change only what the engineer changed, and keep any value written by hand.
   > Replaced by 017 (specs/017-agent-file-fields/spec.md FR-010, FR-011, FR-012): the editor is the whole file in one text editor, saved only as whole text; a new agent starts from a template.
 - **FR-009**: The Pipelines tab MUST list the pipelines, each marked verifying or not with what is missing, and mark the one the selected project uses. Selecting a step MUST show its agent in brief (name, kind, runtime and model) with a link to it in Agents.
+  > Amended by 018 (specs/018-pipeline-orchestration/spec.md FR-001): the list shows no verifying mark, colour or pill.)
 - **FR-010**: Saving an agent or a pipeline MUST offer "Save for: all my projects / this project only", defaulting to "this project only" when a project is selected. Folder paths appear only in a tooltip.
 
 **The pipeline graph**
 
 - **FR-011**: The pipeline editor MUST show the pipeline as a graph of its steps, replacing the list. Spec session and Lock are always shown and cannot be removed. Steps are grouped by when they run (each task, each phase, a story's checkpoint, once). Steps that run alongside each other are drawn as parallel branches that join again. What happens on a failure is drawn as a back-edge. "Edit as TOML" MUST remain.
+  > Amended by 018 (specs/018-pipeline-orchestration/spec.md FR-028): the graph draws every point in the order the loop runs them (before and after each task, the start and end of each phase, checkpoint and the loop), with a + at each point; units alongside each other as branches.)
 - **FR-012**: Edges MUST follow from when each step runs; the engineer cannot draw edges of their own. Adding a step MUST be possible from a + on an edge; Fallow places the new step by when it runs.
 - **FR-013**: Selecting a node MUST show its settings (agent, when it runs, only when these paths changed, alongside which step, on failure), and changing them MUST update the graph and the TOML alike. Removing a node MUST remove the step, and the pipeline MUST then say plainly what is no longer verified.
+  > Amended by 018 (specs/018-pipeline-orchestration/spec.md FR-002, FR-028, FR-029): the settings offer "alongside" only between checkers at the same point, a repair on failure only where allowed, and the number of builders; removing a step makes the plain statement say what is no longer checked.)
 
 **Running alongside**
 
 - **FR-014**: Steps a pipeline marks to run alongside each other MUST run at the same time, within the loop's concurrency cap; when the cap is reached, the rest wait for a free place.
+  > Amended by 018 (specs/018-pipeline-orchestration/spec.md FR-006, FR-027): checkers alongside each other run at the same time at every point, not only at a checkpoint's end.)
 - **FR-015**: A checkpoint with steps running alongside each other MUST be judged only when all of them have finished. Their findings MUST go to one repair, after which every checker of that checkpoint runs again, within the existing review-round cap.
+  > Amended by 018 (specs/018-pipeline-orchestration/spec.md FR-006): every unit of checkers alongside each other, at any point, is judged when all have finished and passes only when all pass; their findings go to one repair.)
 - **FR-016**: Each step running alongside another MUST keep its own worktree, session, activity and cost, and MUST resume on its own after a restart; nothing completed runs again.
 
 **The look**

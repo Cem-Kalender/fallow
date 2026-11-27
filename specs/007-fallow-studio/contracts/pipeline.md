@@ -56,6 +56,10 @@ on_fail = "engineer"
 | `on_fail` | `repair`: back to the phase's builder session with the reasons. `engineer`: the loop asks |
 | `parallel_with` | Checker steps at the same point meant to run at the same time. At a story's checkpoint (`at = end`) they run at the same time within the concurrency cap (one after the other when only one slot is free), are judged together when all have finished, and their findings go to one repair (008, research R-7). Elsewhere (per phase, once, or at the checkpoint's start) the field is accepted but they run one after the other, and the editor does not offer it there. |
 
+> Amended by 018 (specs/018-pipeline-orchestration/spec.md FR-004, FR-010), the `at` row: `at` is also for `task` (`"start"` before the task, `"end"` after it); the gates and the builder take no `at`. See `specs/018-pipeline-orchestration/contracts/pipeline.md`.)
+
+> Amended by 018 (specs/018-pipeline-orchestration/spec.md FR-005, FR-006, FR-027), the `parallel_with` row: checkers alongside each other run at the same time at every point, not only at a checkpoint's end; the editor offers it at every point. This is the one change for pipeline files valid in 0.4.0.)
+
 ## Checks (refused with the step's index)
 
 - Exactly one `maker` step with `when = "task"`: the builder.
@@ -64,6 +68,8 @@ on_fail = "engineer"
 - A `when = "task"` step that is a checker is refused: checkers run at phases and checkpoints.
 - A checker at the start (`at = "start"`) is refused: there is nothing to check yet.
 
+> Amended by 018 (specs/018-pipeline-orchestration/spec.md FR-007-FR-011), the checks above on makers, checkers per task and checkers at a start: the builder is the one maker per task without `at`; other makers may run before a task or at a start or end, never alongside anything; a checker per task (after it) is allowed and its failure is a repair of the task; a checker at a start is allowed with `on_fail = "engineer"` only; a new cap `builders` (1-8, default 1).)
+
 ## Verifying or not (FR-015)
 
 A pipeline is **verifying** when both hold:
@@ -71,6 +77,8 @@ A pipeline is **verifying** when both hold:
 - at least one checker runs at the end of every checkpoint, with no `paths` limit.
 
 A loop with a pipeline that is not verifying ends as `done_unverified`, and the page names what is missing ("no gates", "no review at checkpoints"). The designer shows the same warning while the pipeline is being edited.
+
+> Amended by 018 (specs/018-pipeline-orchestration/spec.md FR-001, FR-002): the designer shows no verifying label or warning; it states in plain words what the pipeline checks and, when a result would not be verified, what is missing.)
 
 ## The defaults
 
