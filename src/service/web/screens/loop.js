@@ -228,6 +228,34 @@
       ${rows}</aside>`;
   }
 
+  // ---- 018 (FR-024): the builders of a group of [P] tasks, one row per task ---------------------
+  const BUILDER_STATE = {
+    queued: "waiting for a builder",
+    building: "building",
+    repairing: "repairing",
+    accepted: "accepted, waiting to be merged",
+    merged: "merged",
+    waiting: "waiting for your answer",
+  };
+  function builders(v) {
+    const active = (v.groups || []).filter((g) => !g.done);
+    if (!active.length) return "";
+    return active.map((g) => {
+      const rows = g.tasks.map((t) => {
+        const overlaps = (t.overlaps || []).map((o) => {
+          const files = o.files.join(", ");
+          const w = o.with.join(" and ");
+          return h`<div class="small builder-overlap">${t.id} changed ${files}, which ${w} changed: repaired on top of ${w}</div>`;
+        });
+        return h`<li class="builder-row ${t.state}"><span class="mono tiny">${t.id}</span> <span class="builder-state">${BUILDER_STATE[t.state] || t.state}</span> <span class="mono tiny muted" title="The task's working copy">${t.worktree}</span>${overlaps}</li>`;
+      });
+      const label = `Builders on the [P] tasks of phase ${g.phase}`;
+      return h`<section class="card pad-14 builders" aria-label="${label}">
+        <h2 class="th">${label}</h2>
+        <ul class="builder-rows">${rows}</ul></section>`;
+    });
+  }
+
   // ---- The pipeline as the live graph (008 T043; mockup/loop-graph.html) -------------------------
   // The Pipelines tab's layout of the loop's pipeline, each step with its state: working steps
   // pulse, done ones are ticked, a step that asks the engineer is orange. A click on a step
@@ -657,6 +685,7 @@
       ${publishArea(v)}
       ${liveGraph(v)}
       ${banner(v)}
+      ${builders(v)}
       ${verification(v)}
       <div class="row wrap top gap-16 loop-body">
         ${tree(v)}
