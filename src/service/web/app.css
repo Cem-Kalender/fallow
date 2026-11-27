@@ -614,13 +614,12 @@ input.num { width: 56px; padding: 2px 6px; border-radius: 6px; font-weight: 700;
 .ag-item .d { font-size: 12px; color: var(--muted); line-height: 1.4; }
 .ag-item .pill { font-size: 11px; padding: 1px 7px; }
 .ag-editor { padding: 18px 20px; min-width: 0; overflow-wrap: anywhere; }
-.ag-fields { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-top: 14px; }
-.ag-fields .field.wide { grid-column: span 2; }
-.ag-fields select, .ag-fields input { width: 100%; }
+/* 017 US2: the agent is its file, in one editor: 28 rows beside the list (its `rows`), 18 under
+   it on a narrow window, so the list above it and the editor share the screen. */
+#ag-text { display: block; }
 @media (max-width: 900px) {
   .ag-layout, .pl-under { grid-template-columns: minmax(0, 1fr); }
-  .ag-fields { grid-template-columns: minmax(0, 1fr); }
-  .ag-fields .field.wide { grid-column: auto; }
+  #ag-text { height: calc(18 * 12px * 1.7 + 32px); }
 }
 .d-block { display: block; }
 

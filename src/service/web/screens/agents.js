@@ -1,7 +1,7 @@
-// The Agents tab (008 US3; FR-007, FR-008, FR-010): the agents grouped by what they may do,
-// and the selected one in a wide editor: its frontmatter as fields, its instructions as text,
-// the pipelines that use it. A save sends only the fields that changed (contracts/agents-api.md);
-// "Edit as text" edits the whole file, as 007's designer did.
+// The Agents tab (008 US3; 017 US2, FR-010 to FR-012): the agents grouped by what they may do,
+// and the selected one in one editor holding its whole file, with the pipelines that use it.
+// Every field is written in the file; a save sends the whole text (017 contracts/web-api.md).
+// A new agent starts from the template Fallow serves, with a comment on every line.
 "use strict";
 (() => {
   const { h, raw, get, api, confirm, alertLine, saveFor } = Fallow;
@@ -18,16 +18,7 @@
     ["maker", "Makers: change files"],
     ["checker", "Checkers: only run and verify"],
   ];
-  const RETURNS = { maker: "work", checker: "verdict", lead: "reply", assistant: "assistant_reply" };
   const projectPart = () => encodeURIComponent(s.project || "_");
-
-  // The definition split at its frontmatter's closing line: [frontmatter with both `---`, body].
-  function split(text) {
-    const lines = String(text || "").split("\n");
-    const end = lines.findIndex((l, i) => i > 0 && l.trim() === "---");
-    if (lines[0].trim() !== "---" || end < 0) return [null, text];
-    return [lines.slice(0, end + 1).join("\n"), lines.slice(end + 1).join("\n").replace(/^\n+/, "")];
-  }
 
   function list() {
     return h`<aside class="ag-side" aria-label="Agents">
@@ -46,20 +37,6 @@
       })}
       ${s.problems.length ? h`<div class="card pad-12"><div class="b small">Files Fallow could not use</div><ul class="problems">${s.problems.map((p) => h`<li class="mono">${p}</li>`)}</ul></div>` : ""}
     </aside>`;
-  }
-
-  function fields(a) {
-    // 017: the runtimes no longer list models (US2 replaces this form with the file).
-    const known = (s.runtimes.find((r) => r.name === s.form.runtime) || {}).models || [];
-    const models = known.includes(s.form.model) || !s.form.model ? known : [s.form.model, ...known];
-    return h`<div class="ag-fields">
-      <div class="field"><label for="ag-runtime">Runtime</label><select id="ag-runtime" data-change="field" data-k="runtime">${s.runtimes.map((r) => opt(r.name, `${r.name}${r.installed ? "" : " (not installed)"}`, s.form.runtime))}</select></div>
-      <div class="field"><label for="ag-model">Model</label><select id="ag-model" data-change="field" data-k="model">${s.form.model ? "" : opt("", "the runtime's default", "")}${models.map((m) => opt(m, m, s.form.model))}</select></div>
-      <div class="field"><label for="ag-kind">Kind</label><select id="ag-kind" data-change="field" data-k="kind">${GROUPS.map(([k]) => opt(k, k, s.form.kind))}</select></div>
-      <div class="field"><label for="ag-returns">Returns</label><select id="ag-returns" data-change="field" data-k="returns">${Object.values(RETURNS).map((r) => opt(r, r, s.form.returns))}</select></div>
-      <div class="field wide"><label for="ag-may">May run (commands, separated by commas)</label><input id="ag-may" type="text" class="mono" value="${s.form.may_run.join(", ")}" data-change="field" data-k="may_run"></div>
-      <div class="field wide"><label for="ag-desc">Description</label><input id="ag-desc" type="text" value="${s.form.description}" data-change="field" data-k="description"></div>
-    </div>`;
   }
 
   function editor() {
@@ -90,15 +67,9 @@
       ${a ? h`<div class="small muted mt-6">${a.description}</div>` : ""}
       <div class="small mt-8">Used in: ${used.length ? used.map((p, i) => h`${i ? " · " : ""}<a href="#/pipelines/${projectPart()}/${encodeURIComponent(p)}">${p}</a>`) : h`<span class="muted">no pipeline</span>`}</div>
       ${a && a.update ? h`<div class="notice small mt-8">An update of this default is beside your copy, in <span class="mono">${name}.md.new</span>. <button class="btn btn2 xs" data-act="show-update">${s.showUpdate ? "Hide it" : "Show it"}</button>${s.showUpdate ? h`<pre class="term">${a.update}</pre>` : ""}</div>` : ""}
-      ${s.asText || !a ? h`
-        <div class="row mt-12"><b>${name}.md</b><span class="grow"></span>${a ? h`<button class="linkish" data-act="as-form">Back to the fields</button>` : ""}</div>
-        <label for="ag-text" class="sr">${name}.md</label>
-        <textarea id="ag-text" class="def-text mt-6" spellcheck="false" rows="24" data-for="${name}">${s.text}</textarea>`
-      : h`
-        ${fields(a)}
-        <div class="row mt-12"><b>Instructions</b><span class="grow"></span><button class="linkish" data-act="as-text">Edit as text</button></div>
-        <label for="ag-body" class="sr">Instructions</label>
-        <textarea id="ag-body" class="def-text mt-6" spellcheck="false" rows="16" data-for="${name}">${s.body}</textarea>`}
+      <div class="row mt-12"><b class="mono">${name}.md</b>${a ? "" : h`<span class="small muted">Fill in every line from its comment; the instructions go below the closing ---.</span>`}</div>
+      <label for="ag-text" class="sr">${name}.md</label>
+      <textarea id="ag-text" class="def-text mt-6" spellcheck="false" rows="28" data-for="${name}">${s.text}</textarea>
       ${lines.length ? h`<ul class="problems" role="alert">${lines.map((l) => h`<li>${l.line ? `line ${l.line}: ` : ""}${l.text}</li>`)}</ul>` : ""}
       <div class="tiny muted mt-10">What Fallow adds around every agent: its own worktree · only the commands listed · a fixed result shape · Fallow commits and checks the work · limits on time, turns and cost</div>
     </section>`;
@@ -112,8 +83,6 @@
     // pick (a reset or a reload shows the file as it is now).
     const name = s.agent || s.newAgent || "";
     if (!s.fresh) {
-      const keepBody = document.getElementById("ag-body");
-      if (keepBody && keepBody.dataset.for === name) s.body = keepBody.value;
       const keepText = document.getElementById("ag-text");
       if (keepText && keepText.dataset.for === name) s.text = keepText.value;
     }
@@ -151,33 +120,19 @@
     const a = agentOf(name);
     s.agent = a ? a.name : null;
     s.newAgent = null;
-    s.asText = false;
     s.problems2 = [];
     s.showUpdate = false;
     s.text = a ? a.text : "";
-    s.body = a ? split(a.text)[1] : "";
-    s.form = a ? {
-      runtime: a.runtime, model: a.model || "", kind: a.kind, returns: RETURNS[a.kind] || "work",
-      may_run: a.may_run || [], description: a.description || "",
-    } : null;
-    if (a) {
-      // `returns` as written in the file, when it differs from the kind's usual one.
-      const m = /^returns:\s*(\S+)/m.exec(split(a.text)[0] || "");
-      if (m) s.form.returns = m[1].replace(/^"|"$/g, "");
-    }
-    s.orig = s.form ? JSON.parse(JSON.stringify(s.form)) : null;
     s.fresh = true;
   }
 
   const lf = (x) => String(x || "").replace(/\r\n/g, "\n").trim();
-  // What the engineer changed and did not save: fields, instructions or the text.
+  // What the engineer changed in the file and did not save.
   function dirty() {
     const a = agentOf(s.agent);
     if (!a) return !!s.newAgent;
-    const body = document.getElementById("ag-body");
     const text = document.getElementById("ag-text");
-    if (s.asText) return lf(text ? text.value : s.text) !== lf(a.text);
-    return JSON.stringify(s.form) !== JSON.stringify(s.orig) || lf(body ? body.value : s.body) !== lf(split(a.text)[1]);
+    return lf(text ? text.value : s.text) !== lf(a.text);
   }
   async function leaveOk() {
     return !dirty() || confirm({ title: "Leave your changes?", text: "What you changed in this agent is not saved.", ok: "Leave them" });
@@ -185,7 +140,7 @@
 
   async function enter(app, r) {
     s = { app, project: r.project || null, agents: [], runtimes: [], projects: [], problems: [], problems2: [],
-      agent: null, newAgent: null, asText: false, text: "", body: "", form: null, orig: null, showUpdate: false };
+      agent: null, newAgent: null, text: "", showUpdate: false };
     try {
       await load();
     } catch (e) {
@@ -212,29 +167,13 @@
   }
 
   async function doSave() {
-    const a = agentOf(s.agent);
     const name = s.agent || s.newAgent;
     const scope = Fallow.scopeOf(document.getElementById("ag-scope").value, s.project);
     const url = `/api/agents/${encodeURIComponent(name)}?scope=${encodeURIComponent(scope)}`;
     try {
-      if (s.asText || !a) {
-        s.text = document.getElementById("ag-text").value;
-        await api("PUT", url, { text: s.text });
-      } else {
-        s.body = document.getElementById("ag-body").value;
-        const changed = {};
-        for (const k of Object.keys(s.form)) {
-          if (JSON.stringify(s.form[k]) !== JSON.stringify(s.orig[k])) changed[k] = s.form[k];
-        }
-        const sameScope = (a.source === "project" && scope !== "user") || (a.source === "user" && scope === "user");
-        const bodyChanged = lf(s.body) !== lf(split(a.text)[1]);
-        if (!Object.keys(changed).length && !bodyChanged && sameScope) return alertLine("Nothing changed.");
-        // One save: only the changed fields, rewritten line by line on the server, and the
-        // instructions when they changed; saved elsewhere, a copy of the definition in force.
-        const body = { fields: changed };
-        if (bodyChanged) body.body = s.body;
-        await api("PUT", url, body);
-      }
+      // The whole file, as written: Fallow checks it and refuses it with every problem.
+      s.text = document.getElementById("ag-text").value;
+      await api("PUT", url, { text: s.text });
       await load();
       pick(name);
       alertLine(`${name}.md is saved.`);
@@ -260,22 +199,19 @@
         if (!n) return;
         if (agentOf(n)) return alertLine(`An agent named ${n} exists: choose it in the list to change it.`);
         if (!(await leaveOk())) return;
+        // The template comes from Fallow, which also checks the file (017 FR-012).
+        let template;
+        try {
+          template = (await get(`/api/agents/template?name=${encodeURIComponent(n)}`)).text;
+        } catch (e) { return alertLine(e.message); }
         s.agent = null;
         s.newAgent = n;
-        s.form = null;
         s.problems2 = [];
-        s.text = `---\nname: ${n}\ndescription: What it checks\nruntime: claude\nmodel: claude-sonnet-5-5\nkind: checker\nmay_run: [gates, plan.commands]\nreturns: verdict\n---\n\nSay what it checks, and how, by running something.\n`;
+        s.showUpdate = false;
+        s.text = template;
+        s.fresh = true;
         return render();
       }
-      case "as-text":
-        if (!(await leaveOk())) return;
-        pick(s.agent);
-        s.asText = true;
-        return render();
-      case "as-form":
-        if (!(await leaveOk())) return;
-        pick(s.agent);
-        return render();
       case "show-update": s.showUpdate = !s.showUpdate; return render();
       case "use-lead": {
         try {
@@ -307,16 +243,6 @@
         if (dirty()) Fallow.leaveAsked();
         location.hash = el.value ? `#/agents/${encodeURIComponent(el.value)}` : "#/agents";
         return;
-      case "field": {
-        const k = el.dataset.k;
-        s.form[k] = k === "may_run" ? el.value.split(",").map((x) => x.trim()).filter(Boolean) : el.value;
-        if (k === "kind") s.form.returns = RETURNS[el.value] || s.form.returns;
-        if (k === "runtime") {
-          const rt = s.runtimes.find((r) => r.name === el.value);
-          if (rt && rt.models && rt.models.length && !rt.models.includes(s.form.model)) s.form.model = rt.models[0];
-        }
-        return render();
-      }
       default:
     }
   }
