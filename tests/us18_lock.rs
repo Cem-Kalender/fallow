@@ -223,7 +223,7 @@ fn a_single_parallel_task_is_built_alone_as_the_lock_said() {
         "018-lock-one",
         1,
         None,
-        &["No [P] tasks: the pipeline's 3 builders will work as 1."],
+        &["No two [P] tasks in a row: the pipeline's 3 builders will work as 1."],
     );
 }
 

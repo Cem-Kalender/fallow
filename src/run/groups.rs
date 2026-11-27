@@ -63,9 +63,13 @@ pub fn lock_statement(builders: u32, phases: &[PhaseSpec], max_parallel: u32) ->
         }
     }
     if out.is_empty() {
-        return vec![format!(
-            "No [P] tasks: the pipeline's {builders} builders will work as 1."
-        )];
+        // Honest about a lone [P] task: it is there, but nothing runs alongside it.
+        let marked = phases.iter().flat_map(|p| &p.tasks).any(|t| t.parallel);
+        return vec![if marked {
+            format!("No two [P] tasks in a row: the pipeline's {builders} builders will work as 1.")
+        } else {
+            format!("No [P] tasks: the pipeline's {builders} builders will work as 1.")
+        }];
     }
     if (max_parallel as usize) < most {
         out.push(format!(
@@ -641,11 +645,12 @@ mod tests {
                 "Phase 2 has 4 [P] tasks: up to 3 builders at a time.",
             ]
         );
-        // A single [P] task is no group: it counts as none.
+        // A single [P] task is no group: nothing runs alongside it, and the line says so
+        // without claiming there is no [P] task.
         let single = vec![phase_n(2, &[("T003", true), ("T004", false)])];
         assert_eq!(
             lock_statement(3, &single, 4),
-            ["No [P] tasks: the pipeline's 3 builders will work as 1."]
+            ["No two [P] tasks in a row: the pipeline's 3 builders will work as 1."]
         );
         // The setting for agents at once is lower than the builders: it limits them.
         assert_eq!(

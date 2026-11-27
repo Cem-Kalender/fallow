@@ -118,7 +118,7 @@ The engineer's attention: a question from a group task (FR-018) records `NeedsEn
 
 ## R-11 The lock statement
 
-**Decision**: a pure function `groups::lock_statement(builders, phases, max_parallel) -> Vec<String>` gives the lines of FR-022: with `builders == 1`, none; with no group, "No [P] tasks: the pipeline's N builders will work as 1"; per group, "Phase <label> has k [P] tasks: up to min(N, k) builders at a time" (two groups in one phase give two lines); when `max_parallel < N`, "Your setting allows M agents at once: at most M builders". The feature view (`engine.rs`, where `budget_suggestion` is built) adds `builders` and `statement` to each entry of `pipelines`; `spec.js` shows the chosen pipeline's lines under the Pipeline field and re-renders on change.
+**Decision**: a pure function `groups::lock_statement(builders, phases, max_parallel) -> Vec<String>` gives the lines of FR-022: with `builders == 1`, none; with no group, "No [P] tasks: the pipeline's N builders will work as 1" (when [P] tasks exist but no two stand in a row: "No two [P] tasks in a row: …", so the line never denies a [P] task that is there); per group, "Phase <label> has k [P] tasks: up to min(N, k) builders at a time" (two groups in one phase give two lines); when `max_parallel` is lower than the most builders a group would run (only then does it limit them), "Your setting allows M agents at once: at most M builders". The feature view (`engine.rs`, where `budget_suggestion` is built) adds `builders` and `statement` to each entry of `pipelines`; `spec.js` shows the chosen pipeline's lines under the Pipeline field and re-renders on change.
 
 ## R-12 The designer without labels
 
