@@ -11,7 +11,7 @@ use std::collections::BTreeMap;
 const CSS: &str = include_str!("../src/service/web/app.css");
 
 /// Custom properties the page sets at run time, or that are not colours.
-const NOT_COLOURS: &[&str] = &["--share", "--top-h", "--sans", "--mono"];
+const NOT_COLOURS: &[&str] = &["--share", "--top-h", "--ag-top", "--sans", "--mono"];
 
 /// The declarations `--name: value;` of the first block opened by `head` (the text up to its
 /// `{`), and the CSS without that block.

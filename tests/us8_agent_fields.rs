@@ -126,7 +126,7 @@ fn an_agent_is_saved_as_its_whole_text() {
         problems.iter().all(|l| l.starts_with("ui-checker.md:")),
         "{why}"
     );
-    assert!(!config.join("agents/ui-checker.md").exists());
+    assert!(!config.join("agents").join("ui-checker.md").exists());
 
     // Filled in from its comments: saved as written, and listed.
     let filled = template
@@ -145,7 +145,7 @@ fn an_agent_is_saved_as_its_whole_text() {
     );
     assert_eq!(status, 200, "{v}\n{filled}");
     assert_eq!(
-        std::fs::read_to_string(config.join("agents/ui-checker.md")).unwrap(),
+        std::fs::read_to_string(config.join("agents").join("ui-checker.md")).unwrap(),
         filled
     );
     let view = sreq(tx, Req::Agents { project: None }).unwrap();
@@ -160,7 +160,7 @@ fn an_agent_is_saved_as_its_whole_text() {
 
     // 017 review 1: "+ New agent" with the name of a file that exists sends no loaded text, so
     // the file is not written over: refused, naming it; only an explicit replace writes it.
-    let ui = config.join("agents/ui-checker.md");
+    let ui = config.join("agents").join("ui-checker.md");
     let other = filled.replace("Checks the pages", "Checks other pages");
     let (status, v) = call(
         tx,
@@ -199,7 +199,7 @@ fn an_agent_is_saved_as_its_whole_text() {
     let unusable = filled
         .replace("name: ui-checker", "name: old-checker")
         .replace("model: claude-sonnet-5-5", "model: sonnet");
-    let old = config.join("agents/old-checker.md");
+    let old = config.join("agents").join("old-checker.md");
     std::fs::write(&old, &unusable).unwrap();
     let new = filled.replace("name: ui-checker", "name: old-checker");
     let (status, v) = call(
