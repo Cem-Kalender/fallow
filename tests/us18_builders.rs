@@ -1693,9 +1693,9 @@ fn an_overrule_repair_is_not_charged_a_group_merged_after_it() {
             steps.push_str(&f.build(t, "sleep_ms = 6000"));
         }
     }
-    // The overrule repair: no session holds the whole phase, so its instruction starts with
-    // the phase's last build's (T006's), which is what the fake agent reads it as.
-    steps.push_str("[[step]]\nkind = \"build\"\npart = \"T006\"\nwhen = \"overruled\"\nfiles = [{ path = \"calc/overruled.py\", text = \"YES = True\\n\" }]\noutput = { status = \"done\", task = \"US1\", files = [\"calc/overruled.py\"], summary = \"yes\" }\n\n");
+    // The overrule repair: no session holds the whole phase, so it starts with the phase's own
+    // introduction, a repair of the story, never the instruction of a task built alongside.
+    steps.push_str("[[step]]\nkind = \"repair\"\npart = \"US1\"\nwhen = \"overruled\"\nfiles = [{ path = \"calc/overruled.py\", text = \"YES = True\\n\" }]\noutput = { status = \"done\", task = \"US1\", files = [\"calc/overruled.py\"], summary = \"yes\" }\n\n");
     steps.push_str(&repair(part, &[("calc/fixed.py", "FIXED = True\n")]));
     steps.push_str(&f.build(&f.last, ""));
     steps.push_str(&handover_step(2, ""));
@@ -1746,6 +1746,18 @@ fn an_overrule_repair_is_not_charged_a_group_merged_after_it() {
     assert!(failed["seq"].as_u64().unwrap() > accepted, "{failed}");
     assert_eq!(of(&v, "repair", part).len(), 1);
     // No gate run of the story ever failed.
+    // Its instruction never starts as the build of a task built alongside.
+    let first = std::fs::read_to_string(
+        root.join("data/runs")
+            .join(id.to_string())
+            .join("steps")
+            .join(format!("{}.prompt", story[0]["n"])),
+    )
+    .unwrap();
+    assert!(
+        first.starts_with("Fallow step: repair (part US1)") && !first.contains("build (part T00"),
+        "{first}"
+    );
     let us1: Vec<&&Value> = gates.iter().filter(|g| g["part"] == "US1").collect();
     assert!(!us1.is_empty());
     assert!(us1.iter().all(|g| g["class"] == "pass"), "{us1:?}");

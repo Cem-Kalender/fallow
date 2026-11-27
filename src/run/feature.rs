@@ -164,6 +164,32 @@ fn queue(
     .map(|()| n)
 }
 
+/// The instruction a fresh session of phase `phase`'s builder starts with, before a repair of
+/// `part`: the phase's latest build of a task of its own; in a phase whose tasks were all built
+/// alongside each other, an introduction to the phase (018 research R-5); else the phase's.
+fn phase_intro(run: &Run, l: &LoopState, phase: u32, part: &str) -> String {
+    let own = run
+        .state
+        .steps
+        .values()
+        .rev()
+        .find(|s| {
+            s.phase == Some(phase)
+                && s.kind == StepKind::Build
+                && s.task.as_ref().is_none_or(|t| l.group_of(t).is_none())
+        })
+        .map(|s| s.n);
+    match own {
+        Some(n) => machine::instruction_of(run, n),
+        None if l.groups.iter().any(|g| g.phase == phase) => format!(
+            "Fallow step: repair (part {part})\n\nYou are the builder of phase {phase} of the locked feature \"{}\". Its documents are in `{}`: spec.md, plan.md and tasks.md, locked: never change them. Fallow commits your work when the step ends and runs the project's gates.",
+            l.feature,
+            l.dir()
+        ),
+        None => machine::instruction_of(run, 0),
+    }
+}
+
 /// The phase's builder session: the latest session of a builder step of that phase that can
 /// still be resumed (FR-010a: one session per phase).
 fn phase_session(run: &Run, phase: u32) -> Option<String> {
@@ -1970,30 +1996,14 @@ fn repair_with(
         None => {
             // A fresh session gets the work's own instruction first: the task's first build,
             // else the phase's latest build of a task of its own, else the phase's.
-            let first = match in_group {
-                Some(t) => task_steps(run, t)
+            let first = in_group.and_then(|t| {
+                task_steps(run, t)
                     .find(|s| s.kind == StepKind::Build)
-                    .map(|s| s.n),
-                None => run
-                    .state
-                    .steps
-                    .values()
-                    .rev()
-                    .find(|s| {
-                        s.phase == Some(phase)
-                            && s.kind == StepKind::Build
-                            && s.task.as_ref().is_none_or(|t| l.group_of(t).is_none())
-                    })
-                    .map(|s| s.n),
-            };
+                    .map(|s| s.n)
+            });
             let intro = match first {
                 Some(n) => machine::instruction_of(run, n),
-                None if l.groups.iter().any(|g| g.phase == phase) => format!(
-                    "Fallow step: repair (part {part})\n\nYou are the builder of phase {phase} of the locked feature \"{}\". Its documents are in `{}`: spec.md, plan.md and tasks.md, locked: never change them. Fallow commits your work when the step ends and runs the project's gates.",
-                    l.feature,
-                    l.dir()
-                ),
-                None => machine::instruction_of(run, 0),
+                None => phase_intro(run, &l, phase, part),
             };
             format!("{intro}\n\n{text}")
         }
@@ -2100,18 +2110,9 @@ fn phase(
                 let session = phase_session(run, n);
                 let text = match &session {
                     Some(_) => text,
-                    None => format!(
-                        "{}\n\n{text}",
-                        machine::instruction_of(
-                            run,
-                            run.state
-                                .steps
-                                .values()
-                                .rev()
-                                .find(|s| s.phase == Some(n) && s.kind == StepKind::Build)
-                                .map_or(0, |s| s.n)
-                        )
-                    ),
+                    // A fresh session gets the phase's own instruction, never the build
+                    // instruction of a task built alongside (018 review).
+                    None => format!("{}\n\n{text}", phase_intro(run, l, n, &part)),
                 };
                 return queue(
                     run,
