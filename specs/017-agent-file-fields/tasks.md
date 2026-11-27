@@ -143,12 +143,12 @@ description: "Task list for 017 Agent files are complete and say what they need"
 
 ### Tests for User Story 4 (write first, see them fail)
 
-- [ ] T038 [US4] `tests/visual_017.rs` (new, `#[ignore]`, `[[test]]` with `required-features = ["automation"]` in `Cargo.toml`, as `visual_013`): serves the visual fixture with `FALLOW_VISUAL_AGENTS=20` (T001) and writes `url.txt`.
-- [ ] T039 [US4] `specs/017-agent-file-fields/checks/agents.js` (Node 22 + Chrome, no dependency, modelled on `specs/013-dark-mode/checks/shots.js`): at 1440 × 900 and 390 × 844, open `#/agents`; scroll `.ag-side` to its end and assert `window.scrollY` is unchanged and `.ag-editor`'s Save button is in the viewport; click the last agent and assert the editor shows `agent-20.md`, `.ag-side.scrollTop` kept, `window.scrollY` unchanged; below 900 px assert `.ag-side`'s height ≤ 40 % of the viewport and the top of `#ag-text` within the first viewport height (US4 AS2); Tab to the last list item and assert it is visible within `.ag-side`; assert the page's only `select` elements are `#ag-project` and `#ag-scope` (SC-002); print each check and exit non-zero on a failure.
+- [X] T038 [US4] `tests/visual_017.rs` (new, `#[ignore]`, `[[test]]` with `required-features = ["automation"]` in `Cargo.toml`, as `visual_013`): serves the visual fixture with `FALLOW_VISUAL_AGENTS=20` (T001) and writes `url.txt`.
+- [X] T039 [US4] `specs/017-agent-file-fields/checks/agents.js` (Node 22 + Chrome, no dependency, modelled on `specs/013-dark-mode/checks/shots.js`): at 1440 × 900 and 390 × 844, open `#/agents`; scroll `.ag-side` to its end and assert `window.scrollY` is unchanged and `.ag-editor`'s Save button is in the viewport; click the last agent and assert the editor shows `agent-20.md`, `.ag-side.scrollTop` kept, `window.scrollY` unchanged; below 900 px assert `.ag-side`'s height ≤ 40 % of the viewport and the top of `#ag-text` within the first viewport height (US4 AS2); Tab to the last list item and assert it is visible within `.ag-side`; assert the page's only `select` elements are `#ag-project` and `#ag-scope` (SC-002); print each check and exit non-zero on a failure.
 
 ### Implementation for User Story 4
 
-- [ ] T040 [US4] `src/service/web/app.css` (~745): keep the sticky list over 900 px and fix what T001 found; add `@media (max-width: 900px) { .ag-side { max-height: 40vh; overflow-y: auto; overscroll-behavior: contain; } }`; in `src/service/web/screens/agents.js` keep `.ag-side`'s `scrollTop` across `render()` (it does today) and, on focus of an `.ag-item`, `scrollIntoView({block: "nearest"})` within the list. T039 passes at both sizes.
+- [X] T040 [US4] `src/service/web/app.css` (~745): keep the sticky list over 900 px and fix what T001 found; add `@media (max-width: 900px) { .ag-side { max-height: 40vh; overflow-y: auto; overscroll-behavior: contain; } }`; in `src/service/web/screens/agents.js` keep `.ag-side`'s `scrollTop` across `render()` (it does today) and, on focus of an `.ag-item`, `scrollIntoView({block: "nearest"})` within the list. T039 passes at both sizes.
 
 **Checkpoint**: quickstart Q5 passes.
 

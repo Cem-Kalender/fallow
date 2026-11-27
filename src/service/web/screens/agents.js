@@ -154,7 +154,15 @@
         <select id="ag-project" data-change="project">${opt("", "None: yours only", s.project || "")}${s.projects.map((p) => opt(p.id, p.name, s.project || ""))}</select></div>
       <div class="ag-layout">${list()}${editor()}</div></div>`.s;
     const side2 = document.querySelector(".ag-side");
-    if (side2) side2.scrollTop = sideTop;
+    if (side2) {
+      side2.scrollTop = sideTop;
+      fitList();
+      // A focused agent is scrolled into view within the list, not the page (017 FR-014).
+      side2.addEventListener("focusin", (ev) => {
+        const item = ev.target.closest && ev.target.closest(".ag-item");
+        if (item) inList(item);
+      });
+    }
     if (focus) {
       const el = document.getElementById(focus);
       if (el) el.focus();
@@ -182,7 +190,31 @@
 
   function focusItem(sel) {
     const b = document.querySelector(sel);
-    if (b) b.focus();
+    if (b) {
+      b.focus({ preventScroll: true });
+      inList(b);
+    }
+  }
+
+  // 017 (T001, FR-014): beside the editor, the list's height counts from its own top in the
+  // page (below the project row), so its bottom is inside the window before the page scrolls.
+  function fitList() {
+    // The layout's top is the list's place in the page, also while the sticky list is stuck.
+    const layout = document.querySelector(".ag-layout");
+    if (!layout || !s.app) return;
+    const top = Math.round(layout.getBoundingClientRect().top + window.scrollY);
+    if (top > 0) s.app.style.setProperty("--ag-top", `${top}px`);
+  }
+  window.addEventListener("resize", () => { if (s && s.app && Fallow.here(s.app)) fitList(); });
+
+  // Scrolls the list, and only the list, so `item` is wholly in it.
+  function inList(item) {
+    const side = document.querySelector(".ag-side");
+    if (!side || !side.contains(item)) return;
+    const sr = side.getBoundingClientRect();
+    const r = item.getBoundingClientRect();
+    if (r.top < sr.top) side.scrollTop -= sr.top - r.top + 4;
+    else if (r.bottom > sr.bottom) side.scrollTop += r.bottom - sr.bottom + 4;
   }
 
   const isProjectLead = (a) => !!(s.projectLead && a.kind === "lead" && s.projectLead.name === a.name);
@@ -244,10 +276,7 @@
     render();
     s.here = location.hash;
     // Keyboard use goes on from the agent chosen (FR-018).
-    if (r.agent) {
-      const b = document.querySelector(`.ag-item[data-name="${CSS.escape(s.agent || "")}"]`);
-      if (b) b.focus();
-    }
+    if (r.agent) focusItem(`.ag-item[data-name="${CSS.escape(s.agent || "")}"]`);
   }
 
   // A save under way, for the router's guard (009 US4).
@@ -363,8 +392,7 @@
         pick(name);
         render();
       }
-      const b = document.querySelector(`.ag-item[data-name="${CSS.escape(name)}"]`);
-      if (b) b.focus();
+      focusItem(`.ag-item[data-name="${CSS.escape(name)}"]`);
       s.here = location.hash;
     };
     const asked = s.asked;

@@ -29,3 +29,45 @@ editor starts at 2925 px, more than three screens down (the engineer's complaint
 a height that keeps the whole list inside the window when the page is not scrolled (for
 example measured from the list's own top, or the page's heading counted in), so the last agent
 can be selected without scrolling the page (SC-006).
+
+## T038-T040: after the fix (2026-11-27)
+
+**What changed** (`src/service/web/app.css`, `src/service/web/screens/agents.js`):
+- over 900 px the list keeps `position: sticky` and its own scroll, and its `max-height` now
+  counts from its own top: `calc(100vh - var(--ag-top) - 12px)`, where `--ag-top` is the
+  layout's top in the page, measured by `agents.js` at each render and on resize (fallback
+  140 px). The 135 px above the list (top bar, page padding, project row) are now subtracted,
+  not only `--top-h`;
+- below 900 px `.ag-side` gets `max-height: 40vh; overflow-y: auto; overscroll-behavior:
+  contain` (research R-7);
+- a focused agent (Tab, or the page focusing the one chosen) is scrolled into view within the
+  list only, never the page (`focus({preventScroll: true})` and the list's own `scrollTop`).
+
+**How it was seen**: `tests/visual_017.rs` (20 agents `agent-01` … `agent-20`, the 7 shipped
+ones and one file Fallow cannot use, `old-checker.md` with `model: haiku`; one project) served
+from a scratch root, and `node specs/017-agent-file-fields/checks/agents.js <root>` driving
+**headless Chrome** through DevTools, with real wheel, click and Tab input. As for T001, not in
+Fallow's own window (the builder does not start Fallow.app); the window's web view lays the page
+out with the same CSS.
+
+**Before the fix** (the same script against the unchanged page): 1440 × 900 failed "the whole
+list is inside the window" (list 135-953 px of 900) and the Tab check (3 focused agents below
+the window); 390 × 844 failed 10 checks: the list did not scroll (0 px to scroll, 2766 px
+high), the editor's text started at 3236 px, and the wheel scrolled the page (scrollY 2904).
+
+**After the fix**: every check passes at both sizes.
+
+| | 1440 × 900 | 390 × 844 |
+|---|---|---|
+| list on screen, page unscrolled | 135-888 px (753 px high, 2564 px to scroll) | 256-594 px (338 px = 40 % of 844, 2436 px to scroll) |
+| wheel to the list's end | page `scrollY` 0 | page `scrollY` 0 |
+| editor's Save button | 154-194 px | 669-709 px |
+| last agent (`security-reviewer`) and `agent-20` | in the window, selected without page scroll, list position kept | the same |
+| `#ag-text` starts at | (beside the list) | 840 px of 844: within the first screen, with little to spare |
+| Tab through 27 items | each visible within the list | the same |
+| `select` elements | `ag-project`, `ag-scope` | the same |
+| `old-checker.md` under "Files Fallow could not use" | opens with "line 5: model \"haiku\" …" and "line 8: may_run is required …", the overview's address a link, Save for "all my projects" | the same |
+
+Below 900 px the editor's text box starts only a few pixels inside the first screen, because the
+editor's heading (name, Save for, Save, description, "Used in", the file name) wraps on a narrow
+window; its Save button is well inside it.

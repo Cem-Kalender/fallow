@@ -166,6 +166,10 @@ required-features = ["automation"]
 name = "visual_013"
 required-features = ["automation"]
 
+[[test]]
+name = "visual_017"
+required-features = ["automation"]
+
 # 016 (T025): drives the real macOS window through the `automation` build's page and commands.
 [[test]]
 name = "window_mac"
