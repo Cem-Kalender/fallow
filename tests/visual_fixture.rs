@@ -3,6 +3,9 @@
 //! then serve that folder (`fallow serve --config-dir <root>/config --data-dir <root>/data`).
 //! One loop is ready to merge with every story verified; the other waits for the engineer after
 //! a criterion failed.
+//!
+//! 017 T001: with `FALLOW_VISUAL_AGENTS=<n>`, it also writes `<n>` valid checker agents
+//! (`agent-01` … `agent-<n>`) to the engineer's `agents/` folder, for the Agents page's list.
 
 mod common;
 
@@ -47,12 +50,33 @@ fn us1_build() -> String {
     .concat()
 }
 
+/// 017 T001: `n` valid checker agents, `agent-01` … `agent-<n>`, in `dir`.
+fn many_agents(dir: &std::path::Path, n: usize) {
+    std::fs::create_dir_all(dir).unwrap();
+    for i in 1..=n {
+        let name = format!("agent-{i:02}");
+        std::fs::write(
+            dir.join(format!("{name}.md")),
+            format!(
+                "---\nname: {name}\ndescription: Checks one part of the story ({i} of {n})\nruntime: claude\nmodel: claude-sonnet-5-5\nkind: checker\nmay_run: [gates]\nreturns: verdict\n---\n\nCheck the part numbered {i}.\n"
+            ),
+        )
+        .unwrap();
+    }
+}
+
 #[test]
 #[ignore]
 fn visual_check_loops() {
     let root = PathBuf::from(std::env::var("FALLOW_VISUAL_ROOT").expect("FALLOW_VISUAL_ROOT"));
     std::fs::create_dir_all(root.join("config").join("pipelines")).unwrap();
     std::fs::write(root.join("config/pipelines/ask-me.toml"), ASK_ME).unwrap();
+    if let Some(n) = std::env::var("FALLOW_VISUAL_AGENTS")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+    {
+        many_agents(&root.join("config").join("agents"), n);
+    }
     let scenario = root.join("scenario.toml");
     std::fs::write(
         &scenario,

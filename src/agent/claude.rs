@@ -14,6 +14,18 @@ use super::{
     Agent, Availability, Call, Capabilities, Event, Outcome, Runtime, Session, ToolKind, clip,
 };
 
+/// 017 (contracts/runtime-model-naming.md): Anthropic's full model names, as its models overview
+/// lists them.
+pub const MODEL_NAMING: super::ModelNaming = super::ModelNaming {
+    prefix: "claude-",
+    example: "claude-sonnet-5-5",
+    lookup: "Anthropic's models overview",
+    lookup_url: Some("https://platform.claude.com/docs/en/models/overview"),
+    // For run records only (FR-022): Anthropic's family words, so a record keeps
+    // `claude-<family>-<version>` and no other text.
+    families: &["opus", "sonnet", "haiku", "fable"],
+};
+
 /// The runtime for an agent program that speaks `claude -p`: Claude Code itself, or
 /// `fallow-fake-agent` in tests.
 #[derive(Debug, Clone)]
@@ -277,15 +289,13 @@ pub fn args(c: &Call) -> Vec<String> {
             a.push("--fork-session".into());
         }
     }
-    // 012 (FR-042): always a model, since the user's default no longer applies to every kind.
-    a.push("--model".into());
-    a.push(
-        c.model
-            .as_ref()
-            .filter(|m| !m.is_empty())
-            .cloned()
-            .unwrap_or_else(|| super::registry::models("claude")[0].to_string()),
-    );
+    // 012 (FR-042): always a model, since the user's default no longer applies to every kind;
+    // 017 (FR-007): the definition's, exactly as written. A call without one never starts
+    // (`run`), so no model of the runtime's own choosing is ever given.
+    if let Some(m) = c.model.as_ref().filter(|m| !m.trim().is_empty()) {
+        a.push("--model".into());
+        a.push(m.clone());
+    }
     if let Some(b) = c.budget_usd {
         // Unverified: whether Claude Code checks this flag against the session's running total
         // carried over a resume or fork (`REPORTS_SESSION_TOTAL`) or against the call's own
@@ -701,6 +711,13 @@ pub fn run(agent: &Agent, c: &Call, sink: &mut dyn FnMut(Event), stop: &AtomicBo
         denials: Vec::new(),
         duration: started.elapsed(),
     };
+    // 017 (FR-007): refused before the program starts, never run on a default.
+    if c.model.as_ref().is_none_or(|m| m.trim().is_empty()) {
+        return fail(
+            "the agent has no model: its definition must name one".into(),
+            started,
+        );
+    }
     let group = match &c.group {
         Some(g) => std::sync::Arc::clone(g),
         None => match crate::platform::job::Group::new() {
@@ -945,7 +962,7 @@ mod tests {
             rights: rights::lead_in_loop(Vec::new()),
             mcp_config: None,
             session: Session::New("s".into()),
-            model: None,
+            model: Some("claude-sonnet-5-5".into()),
             budget_usd: None,
             session_total_usd: None,
             cwd: std::env::temp_dir(),
@@ -965,6 +982,44 @@ mod tests {
         let t = Instant::now();
         let _ = run(&agent, &c, &mut |_| {}, &AtomicBool::new(true));
         assert!(t.elapsed() < START_WAIT, "a stop ends the waiting");
+    }
+
+    #[test]
+    fn a_call_without_a_model_is_refused_before_its_program_starts() {
+        // 017 (FR-007): no runtime runs on a model of its own choosing.
+        let log = std::env::temp_dir().join(format!("fallow-no-model-{}", std::process::id()));
+        let _ = std::fs::remove_file(&log);
+        // A program that would leave a file behind if it ran.
+        let claude = Claude::new(
+            if cfg!(windows) { "cmd" } else { "touch" },
+            if cfg!(windows) {
+                vec!["/c".into(), "type nul >".into(), log.display().to_string()]
+            } else {
+                vec![log.display().to_string()]
+            },
+        );
+        for model in [None, Some(String::new()), Some("  ".to_string())] {
+            let mut c = call();
+            c.model = model.clone();
+            c.cwd = std::env::temp_dir();
+            let t = Instant::now();
+            let o = claude.start(&c, &mut |_| {}, &AtomicBool::new(false));
+            assert_eq!(
+                o.failure.as_deref(),
+                Some("the agent has no model: its definition must name one"),
+                "{model:?}"
+            );
+            assert!(o.result.is_none());
+            assert!(t.elapsed() < START_WAIT, "refused at once");
+        }
+        assert!(!log.exists(), "the program never ran");
+        // A model is handed over exactly as the definition names it.
+        let mut c = call();
+        c.model = Some("claude-sonnet-5-5".into());
+        let a = args(&c);
+        let at = a.iter().position(|x| x == "--model").unwrap();
+        assert_eq!(a[at + 1], "claude-sonnet-5-5");
+        assert_eq!(a.iter().filter(|x| *x == "--model").count(), 1);
     }
 
     #[test]
@@ -1031,7 +1086,7 @@ mod tests {
             ),
             mcp_config: None,
             session: Session::New("u-1".into()),
-            model: Some("sonnet".into()),
+            model: Some("claude-sonnet-5-5".into()),
             budget_usd: Some(4.5),
             session_total_usd: None,
             cwd: ".".into(),
@@ -1083,7 +1138,7 @@ mod tests {
             s.contains("--disallowedTools Edit(specs/007-x/spec.md) Write(specs/007-x/spec.md)")
         );
         assert!(s.contains("--session-id u-1"));
-        assert!(s.contains("--model sonnet"));
+        assert!(s.contains("--model claude-sonnet-5-5"));
         assert!(s.contains("--max-budget-usd 4.50"));
         assert!(s.contains("--append-system-prompt rules"));
         assert!(!s.contains("dangerously"));
@@ -1317,18 +1372,18 @@ look"
         // for a checker.
         let mut c = call();
         c.rights = rights::checker(Vec::new());
-        c.model = None;
+        c.model = Some("claude-opus-5-5".into());
         let a = args(&c);
         assert_eq!(after(&a, "--setting-sources"), "");
         assert_eq!(after(&a, "--settings"), r#"{"disableAllHooks":true}"#);
         assert_eq!(after(&a, "--tools"), "Read,Glob,Grep,Bash,PowerShell,Task");
-        assert_eq!(after(&a, "--model"), "opus");
+        assert_eq!(after(&a, "--model"), "claude-opus-5-5");
         // The assistant: the user's settings, every command and edit asked of Fallow.
         let mut c = call();
         c.rights = rights::maker(Vec::new(), Vec::new());
         c.user_settings = true;
         c.web = true;
-        c.model = Some("sonnet".into());
+        c.model = Some("claude-sonnet-5-5".into());
         let a = args(&c);
         assert_eq!(after(&a, "--setting-sources"), "user");
         let s: Value = serde_json::from_str(&after(&a, "--settings")).unwrap();
@@ -1338,7 +1393,7 @@ look"
             after(&a, "--tools"),
             "Read,Glob,Grep,Bash,PowerShell,Task,Edit,Write,NotebookEdit,WebSearch,WebFetch"
         );
-        assert_eq!(after(&a, "--model"), "sonnet");
+        assert_eq!(after(&a, "--model"), "claude-sonnet-5-5");
         // Claude Code's own settings files are never editable.
         let d = a.iter().position(|x| x == "--disallowedTools").unwrap();
         assert!(

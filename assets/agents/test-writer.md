@@ -2,7 +2,7 @@
 name: test-writer
 description: Writes a user story's acceptance tests before its tasks are built, and shows they fail
 runtime: claude
-model: sonnet
+model: claude-sonnet-5-5
 kind: maker
 may_run: [gates, plan.commands]
 returns: work

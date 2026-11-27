@@ -2,7 +2,7 @@
 name: docs-writer
 description: Updates the README and quickstart from the finished feature, once at the end
 runtime: claude
-model: sonnet
+model: claude-sonnet-5-5
 kind: maker
 may_run: [gates, plan.commands]
 returns: work

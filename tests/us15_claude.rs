@@ -67,7 +67,11 @@ fn claude_code_gets_the_same_manual_and_auto() {
             .find(|(n, _)| *n == name)
             .unwrap()
             .1;
-        let text = shipped.replace("model: opus", &format!("model: {MODEL}"));
+        let text = replace_found(
+            shipped,
+            "model: claude-opus-5-5",
+            &format!("model: {MODEL}"),
+        );
         let dir = repo.join(".fallow/agents");
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join(file), text).unwrap();

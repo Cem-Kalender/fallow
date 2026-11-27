@@ -8,6 +8,17 @@ use std::sync::atomic::AtomicBool;
 use super::claude::Claude;
 use super::{Availability, Call, Capabilities, Event, Outcome, Runtime};
 
+/// 017: the fake runtime's model names, `fake-…`, so the form check runs through the same
+/// runtime contract in Fallow's tests (constitution IX).
+pub const MODEL_NAMING: super::ModelNaming = super::ModelNaming {
+    prefix: "fake-",
+    example: "fake-1",
+    lookup: "the fake runtime's scenario",
+    lookup_url: None,
+    // `fake-1`: the version follows the prefix.
+    families: &[],
+};
+
 #[derive(Debug, Clone)]
 pub struct Fake {
     inner: Claude,

@@ -4038,7 +4038,6 @@ impl Engine {
             | Req::Pipelines { project }
             | Req::CheckPipeline { project, .. } => project.clone(),
             Req::PutAgent { scope, .. }
-            | Req::PutAgentFields { scope, .. }
             | Req::DeleteAgent { scope, .. }
             | Req::PutPipeline { scope, .. }
             | Req::DeletePipeline { scope, .. } => {
@@ -4425,22 +4424,19 @@ impl Engine {
                 None => self.studio.tool_open(&token, pid),
             },
             Req::Agents { project } => self.studio.agents_view(project.as_deref()),
-            Req::PutAgent { name, scope, text } => {
-                let scope = crate::studio::defs::Scope::parse(&scope)?;
-                let live = self.live_pipelines();
-                self.studio.put_agent(&name, &scope, &text, &live)
-            }
-            Req::PutAgentFields {
+            Req::PutAgent {
                 name,
                 scope,
-                fields,
-                body,
+                text,
+                base,
+                replace,
             } => {
                 let scope = crate::studio::defs::Scope::parse(&scope)?;
                 let live = self.live_pipelines();
                 self.studio
-                    .put_agent_fields(&name, &scope, &fields, body.as_deref(), &live)
+                    .put_agent(&name, &scope, &text, base.as_deref(), replace, &live)
             }
+            Req::AgentTemplate { name } => self.studio.agent_template(&name),
             Req::DeleteAgent { name, scope } => {
                 let scope = crate::studio::defs::Scope::parse(&scope)?;
                 let live = self.live_pipelines();
@@ -4478,16 +4474,20 @@ impl Engine {
     }
 
     /// `GET /api/runtimes`: the runtimes Fallow knows, whether each is installed, its version,
-    /// and the models a definition may name.
+    /// and how it names its models (017 contracts/runtime-model-naming.md; no list of models).
     fn runtimes(&self) -> Value {
         Value::Array(
             crate::agent::registry::list(&self.ctx.settings)
                 .into_iter()
-                .map(|(name, a, models)| {
+                .map(|(name, a)| {
                     // 012 (FR-010a): what it can do, as its adapter declares it.
                     let caps = crate::agent::registry::capabilities(&name, &self.ctx.settings);
+                    let naming = crate::agent::registry::model_naming(&name).map(|m| {
+                        json!({ "prefix": m.prefix, "example": m.example, "lookup": m.lookup,
+                                "lookup_url": m.lookup_url, "hint": m.hint() })
+                    });
                     json!({ "name": name, "installed": a.installed, "version": a.version,
-                            "models": models, "capabilities": caps })
+                            "model_naming": naming, "capabilities": caps })
                 })
                 .collect(),
         )

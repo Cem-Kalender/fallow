@@ -84,6 +84,8 @@ fn a_folder_without_git_is_scanned_and_becomes_a_repository_on_the_click() {
             name: "reviewer".into(),
             scope: format!("project:{project}"),
             text: "---\nkind: checker\n---\nReview.\n".into(),
+            base: None,
+            replace: false,
         },
     )
     .unwrap_err();
@@ -290,6 +292,8 @@ fn a_subfolder_project_from_before_moves_to_the_top_folder_and_its_feature_can_b
             name: "reviewer".into(),
             scope: "project:app".into(),
             text: reviewer.into(),
+            base: None,
+            replace: false,
         },
     )
     .unwrap();

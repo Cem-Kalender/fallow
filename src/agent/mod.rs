@@ -372,6 +372,76 @@ pub struct Capabilities {
     pub control_files: Vec<String>,
 }
 
+/// 017 (contracts/runtime-model-naming.md): how a runtime's provider names its models, and where
+/// the engineer looks the names up. Each adapter declares one; Fallow keeps no list of models.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct ModelNaming {
+    /// What every full name of this runtime's provider starts with.
+    pub prefix: &'static str,
+    /// One full name, for the hint.
+    pub example: &'static str,
+    /// Where the names are listed, in words.
+    pub lookup: &'static str,
+    /// That place's address, if it has one.
+    pub lookup_url: Option<&'static str>,
+    /// 017 review 1 (FR-022, constitution V): the words the provider's names give a model's
+    /// family, after `prefix`. Only for run records, which keep a name only when it is
+    /// `<prefix><family>-<version>`; not a list of models and not for choosing one. Empty: the
+    /// version follows `prefix` directly.
+    #[serde(skip)]
+    pub families: &'static [&'static str],
+}
+
+impl ModelNaming {
+    /// Whether `name` has this runtime's form: it starts with `prefix`, has at most 64
+    /// characters, and the rest is non-empty and only lowercase letters, digits, `.` and `-`.
+    /// Whether the provider has a model of that name is not checked.
+    pub fn fits(&self, name: &str) -> bool {
+        name.len() <= 64
+            && name.strip_prefix(self.prefix).is_some_and(|rest| {
+                !rest.is_empty()
+                    && rest.chars().all(|c| {
+                        c.is_ascii_lowercase() || c.is_ascii_digit() || c == '.' || c == '-'
+                    })
+            })
+    }
+
+    /// Whether a run record may keep `name` (FR-022): `<prefix><family>-<version>`, the
+    /// family one of `families`, the version digits separated by `.` or `-` (a date
+    /// `-YYYYMMDD` included), at most 64 characters. Anything else may carry the engineer's
+    /// words, so a record keeps no model for it.
+    pub fn recordable(&self, name: &str) -> bool {
+        let Some(rest) = name.strip_prefix(self.prefix).filter(|_| name.len() <= 64) else {
+            return false;
+        };
+        let version = if self.families.is_empty() {
+            Some(rest)
+        } else {
+            self.families
+                .iter()
+                .find_map(|f| rest.strip_prefix(f).and_then(|r| r.strip_prefix('-')))
+        };
+        version.is_some_and(|v| {
+            !v.is_empty()
+                && v.split(['.', '-'])
+                    .all(|part| !part.is_empty() && part.chars().all(|c| c.is_ascii_digit()))
+        })
+    }
+
+    /// What a name of this runtime looks like and where to look it up, for messages, the
+    /// template and `GET /api/runtimes`.
+    pub fn hint(&self) -> String {
+        let place = match self.lookup_url {
+            Some(u) => format!("{} ({u})", self.lookup),
+            None => self.lookup.to_string(),
+        };
+        format!(
+            "{} followed by lowercase letters, digits, . and -, for example {}; look the name up in {place}",
+            self.prefix, self.example
+        )
+    }
+}
+
 /// A provider that runs agent calls (FR-029).
 pub trait Runtime: Send + Sync {
     fn name(&self) -> &str;
@@ -391,12 +461,22 @@ pub mod registry {
     use super::{Availability, Runtime};
     use crate::config::Settings;
 
-    /// The models a definition may name, per runtime, as the page offers them.
-    pub fn models(name: &str) -> &'static [&'static str] {
+    /// 017: how the runtime called `name` names its models, as its adapter declares it; `None`
+    /// for a runtime Fallow does not know. Needs no settings: a definition is checked without
+    /// a configured profile.
+    pub fn model_naming(name: &str) -> Option<super::ModelNaming> {
         match name {
-            "claude" => &["opus", "sonnet", "haiku"],
-            _ => &[],
+            "claude" => Some(super::claude::MODEL_NAMING),
+            "fake" => Some(super::fake::MODEL_NAMING),
+            _ => None,
         }
+    }
+
+    /// 017: whether the runtime `name` is set up on this machine: it has a profile in the
+    /// settings (or is `claude`, whose program is found on the PATH). Its program may still be
+    /// missing; [`runtime`] says so at a call.
+    pub fn configured(name: &str, settings: &Settings) -> bool {
+        profile(name, settings).is_some()
     }
 
     /// The program and leading arguments of `name`: its profile in the settings, or for
@@ -483,14 +563,15 @@ pub mod registry {
         super::claude::permission_reply(allow, message, raw)
     }
 
-    type Listed = Vec<(String, Availability, &'static [&'static str])>;
+    type Listed = Vec<(String, Availability)>;
     /// The versions last probed, for the profiles they were probed with, and when; and whether
     /// a probe is under way.
     type Versions = (String, std::time::Instant, Vec<(String, Option<String>)>);
     static VERSIONS: std::sync::Mutex<Option<Versions>> = std::sync::Mutex::new(None);
     static PROBING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-    /// `GET /api/runtimes`: each runtime, whether it is installed, its version and its models.
+    /// `GET /api/runtimes`: each runtime, whether it is installed and its version (017: no list
+    /// of models; each runtime's model naming is [`model_naming`]).
     /// It answers at once: whether a runtime is installed is a lookup of its program, and its
     /// version comes from a probe on a thread of its own (each program is killed after a few
     /// seconds), started when the versions are missing or a minute old. Until the probe is
@@ -522,7 +603,6 @@ pub mod registry {
                         installed: r.is_some(),
                         version: version.filter(|_| r.is_some()),
                     },
-                    models(name),
                 )
             })
             .collect();
@@ -539,6 +619,85 @@ pub mod registry {
             });
         }
         list
+    }
+}
+
+#[cfg(test)]
+mod model_naming_tests {
+    use super::registry::model_naming;
+
+    #[test]
+    fn a_name_fits_its_runtimes_form_only() {
+        let claude = model_naming("claude").unwrap();
+        let fake = model_naming("fake").unwrap();
+        for ok in ["claude-opus-5-5", "claude-sonnet-5-5", "claude-fable-5-2"] {
+            assert!(claude.fits(ok), "{ok}");
+        }
+        let long = format!("claude-{}", "a".repeat(58));
+        assert_eq!(long.len(), 65);
+        for bad in [
+            "opus",
+            "claude-",
+            "Claude-Opus-5-5",
+            "claude opus",
+            "claude-opus-5-5[1m]",
+            "anthropic.claude-opus-5-5",
+            long.as_str(),
+        ] {
+            assert!(!claude.fits(bad), "{bad}");
+        }
+        assert!(claude.fits(&long[..64]));
+        assert!(fake.fits("fake-1"));
+        assert!(!claude.fits("fake-1"));
+        assert!(!fake.fits("claude-sonnet-5-5"));
+        assert_eq!(model_naming("gpt"), None);
+    }
+
+    /// 017 review 1 (FR-022): a run record keeps a name only of the provider's recognisable
+    /// form, also when the file check accepts more.
+    #[test]
+    fn a_record_keeps_only_a_provider_name() {
+        let claude = model_naming("claude").unwrap();
+        let fake = model_naming("fake").unwrap();
+        for ok in [
+            "claude-opus-5-5",
+            "claude-sonnet-5-5",
+            "claude-fable-5-2",
+            "claude-haiku-4-5-20251001",
+            "claude-opus-4.1",
+        ] {
+            assert!(claude.recordable(ok), "{ok}");
+        }
+        for bad in [
+            "claude-acme-merger-q3",
+            "claude-sonnet-mk5f0c2dx",
+            "claude-sonnet-5-5-acme",
+            "claude-sonnet",
+            "claude-sonnet-",
+            "claude-opus-5--5",
+            "claude-opusx-5",
+            "claude-5-5",
+            "opus",
+        ] {
+            assert!(!claude.recordable(bad), "{bad}");
+        }
+        // The file check accepts these; the record does not keep them.
+        assert!(claude.fits("claude-acme-merger-q3") && claude.fits("claude-sonnet-mk5f0c2dx"));
+        assert!(fake.recordable("fake-1"));
+        assert!(!fake.recordable("fake-acme"));
+        assert!(!claude.recordable("fake-1"));
+    }
+
+    #[test]
+    fn the_hint_says_the_form_and_where_to_look() {
+        assert_eq!(
+            model_naming("claude").unwrap().hint(),
+            "claude- followed by lowercase letters, digits, . and -, for example claude-sonnet-5-5; look the name up in Anthropic's models overview (https://platform.claude.com/docs/en/models/overview)"
+        );
+        assert_eq!(
+            model_naming("fake").unwrap().hint(),
+            "fake- followed by lowercase letters, digits, . and -, for example fake-1; look the name up in the fake runtime's scenario"
+        );
     }
 }
 

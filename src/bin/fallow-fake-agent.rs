@@ -12,7 +12,7 @@
 //! kind = "build"                 # build, repair, review, handover, lead_turn, ...
 //! part = "main"                  # optional
 //! when = "text in the instruction"  # optional, e.g. a task id "T014"
-//! model = "opus"                # optional: only a call with this --model
+//! model = "fake-1"              # optional: only a call with this --model
 //! system = "text"                # optional: only a call whose --append-system-prompt has it
 //! forked = false                # optional: only a call that forks (true) or does not (false)
 //! files = [{ path = "shop/x.py", text = "..." }]   # with old = "..." it is an Edit

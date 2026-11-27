@@ -388,13 +388,15 @@ pub enum Req {
         name: String,
         scope: String,
         text: String,
+        /// 017 review 1: the text the page loaded (none for a new agent); a file at that place
+        /// holding something else is not written over unless `replace`.
+        base: Option<String>,
+        /// The engineer chose to replace the file at that place.
+        replace: bool,
     },
-    /// 008: only these frontmatter fields (contracts/agents-api.md).
-    PutAgentFields {
+    /// 017 (contracts/web-api.md): the text a new agent named `name` starts from.
+    AgentTemplate {
         name: String,
-        scope: String,
-        fields: serde_json::Map<String, Value>,
-        body: Option<String>,
     },
     DeleteAgent {
         name: String,
@@ -723,6 +725,10 @@ impl Studio {
     pub fn lead_problem(&self, path: &Path, name: &str) -> Option<String> {
         let lib = self.library(Some(path));
         let Some(def) = lib.agent(name) else {
+            // 017 (FR-019): a lead whose file cannot be used says why.
+            if lib.unusable.iter().any(|u| u.name == name) {
+                return Some(lib.why_not(name));
+            }
             return Some(format!(
                 "the lead {name} is gone: there is no agent of that name"
             ));

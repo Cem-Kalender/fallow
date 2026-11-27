@@ -46,6 +46,40 @@ fn shipped(list: &[(&str, &'static str)], name: &str) -> Option<&'static str> {
     list.iter().find(|(n, _)| *n == name).map(|(_, t)| *t)
 }
 
+/// What a refused save says when the file at its place is not the text the page loaded (017
+/// review 1). The page knows the refusal by these words and asks before replacing the file.
+pub const NOT_LOADED: &str = "not the text this page loaded";
+
+/// 017 review 1 (FR-017): refuses to write `text` at `path` over a file that holds something
+/// else than `base` (the text the page loaded; none for a new agent). Fallow never writes over
+/// an engineer's file without their say: the page asks, then sends `replace`.
+fn not_over_another(
+    path: &Path,
+    name: &str,
+    text: &str,
+    base: Option<&str>,
+    source: Source,
+) -> Result<(), String> {
+    let Ok(now) = std::fs::read_to_string(path) else {
+        return Ok(());
+    };
+    let same = |a: &str, b: &str| a.replace("\r\n", "\n") == b.replace("\r\n", "\n");
+    if same(&now, text) || base.is_some_and(|b| same(&now, b)) {
+        return Ok(());
+    }
+    let file = format!("{name}.md");
+    let unusable = agent::parse(&file, name, &now, source, &defs::runtimes()).is_err();
+    Err(format!(
+        "{} holds your own {file}{}, {NOT_LOADED}: open it to see it, or replace it on purpose",
+        path.display(),
+        if unusable {
+            ", which Fallow could not use"
+        } else {
+            ""
+        }
+    ))
+}
+
 impl Studio {
     /// The folder a scope saves in (`agents` or `pipelines` below it).
     fn scope_dir(&self, scope: &Scope, sub: &str) -> Result<PathBuf, String> {
@@ -109,10 +143,15 @@ impl Studio {
                     "agents",
                     &format!("{}.md", a.name),
                 );
-                let text = std::fs::read_to_string(&file)
-                    .ok()
-                    .or_else(|| shipped(DEFAULT_AGENTS, &a.name).map(str::to_string))
-                    .unwrap_or_default();
+                // A shipped default in force is the shipped text, also when an edited copy
+                // that cannot be used sits at its place (017 FR-018: that copy is listed under
+                // `unusable`).
+                let text = match a.source {
+                    Source::Default => shipped(DEFAULT_AGENTS, &a.name).map(str::to_string),
+                    _ => None,
+                }
+                .or_else(|| std::fs::read_to_string(&file).ok())
+                .unwrap_or_default();
                 let update = self.config.as_ref().and_then(|c| {
                     std::fs::read_to_string(c.join("agents").join(format!("{}.md.new", a.name)))
                         .ok()
@@ -132,7 +171,22 @@ impl Studio {
                 })
             })
             .collect();
-        Ok(json!({ "agents": agents, "problems": lib.problems }))
+        // 017 (FR-013, FR-018; contracts/web-api.md): each file that could not be used, with
+        // its problems at their lines and which definition of that name is in force meanwhile.
+        let unusable: Vec<Value> = lib
+            .unusable
+            .iter()
+            .map(|u| {
+                json!({
+                    "name": u.name, "file": u.file, "source": u.source, "text": u.text,
+                    "problems": u.problems.iter()
+                        .map(|p| json!({ "line": p.line, "message": p.message }))
+                        .collect::<Vec<_>>(),
+                    "in_force": u.in_force,
+                })
+            })
+            .collect();
+        Ok(json!({ "agents": agents, "problems": lib.problems, "unusable": unusable }))
     }
 
     /// `GET /api/pipelines?project=<p>`: the pipelines in force, whether each verifies and what
@@ -211,7 +265,7 @@ impl Studio {
                     }
                 }
             }
-            let kinds = |n: &str| lib.agents.get(n).map(|a| a.kind);
+            let kinds = |n: &str| lib.kind_of(n);
             for pl in lib
                 .pipelines
                 .values()
@@ -239,7 +293,7 @@ impl Studio {
                     .unwrap_or_default();
                 // Nor may a loop still going stop verifying (FR-015).
                 let now_lib = self.library(root.as_deref());
-                let now_kinds = |a: &str| now_lib.agents.get(a).map(|d| d.kind);
+                let now_kinds = |a: &str| now_lib.kind_of(a);
                 let before =
                     pipeline::parse("the loop's pipeline", &n, toml, Source::Default, &now_kinds);
                 match pipeline::parse("the loop's pipeline", &n, toml, Source::Default, &kinds) {
@@ -264,75 +318,28 @@ impl Studio {
         }
     }
 
-    /// 008: saves only the given frontmatter fields of an agent at `scope`, and its body when
-    /// given, in one write (contracts/agents-api.md): on the definition at that scope, or a copy
-    /// of the one in force there.
-    pub fn put_agent_fields(
-        &mut self,
-        name: &str,
-        scope: &Scope,
-        fields: &serde_json::Map<String, Value>,
-        body: Option<&str>,
-        live: &[(PathBuf, String)],
-    ) -> Result<Value, String> {
+    /// 017 `GET /api/agents/template?name=<n>` (contracts/web-api.md): the text a new agent
+    /// starts from, every required key with a comment saying what to write.
+    pub fn agent_template(&self, name: &str) -> Result<Value, String> {
         check_name(name)?;
-        let mut changes = Vec::new();
-        for (k, v) in fields {
-            let value = match v {
-                Value::String(s) => agent::FieldValue::Str(s.clone()),
-                Value::Array(a) => agent::FieldValue::List(
-                    a.iter()
-                        .map(|x| {
-                            x.as_str()
-                                .map(str::to_string)
-                                .ok_or(format!("{k}: a list of strings"))
-                        })
-                        .collect::<Result<_, _>>()?,
-                ),
-                _ => return Err(format!("{k}: a string or a list of strings")),
-            };
-            changes.push((k.clone(), value));
-        }
-        if changes.is_empty()
-            && body.is_none()
-            && std::fs::metadata(self.scope_dir(scope, "agents")?.join(format!("{name}.md")))
-                .is_ok()
-        {
-            return Err("nothing to save".into());
-        }
-        let here = self.scope_dir(scope, "agents")?.join(format!("{name}.md"));
-        let base = match std::fs::read_to_string(&here) {
-            Ok(t) => t,
-            Err(_) => {
-                let path = match scope {
-                    Scope::User => None,
-                    Scope::Project(p) => Some(self.project(p)?.root_dir()),
-                };
-                let lib = self.library(path.as_deref());
-                let a = lib
-                    .agent(name)
-                    .ok_or_else(|| format!("there is no agent {name}: save a new one as text"))?;
-                let file = self.file_of(path.as_deref(), a.source, "agents", &format!("{name}.md"));
-                std::fs::read_to_string(&file)
-                    .ok()
-                    .or_else(|| shipped(DEFAULT_AGENTS, name).map(str::to_string))
-                    .ok_or_else(|| format!("{name}: its definition cannot be read"))?
-            }
-        };
-        let mut text = agent::set_fields(&base, &changes)?;
-        if let Some(b) = body {
-            text = agent::set_body(&text, b)?;
-        }
-        self.put_agent(name, scope, &text, live)
+        // Only the runtimes set up on this machine (017, decided for the engineer).
+        let runtimes = defs::usable_runtimes(&self.settings);
+        Ok(json!({ "text": agent::template(name, &runtimes) }))
     }
 
     /// `PUT /api/agents/<name>`: checked as Fallow reads it; refused with the problems at their
     /// lines, one per line, when it does not pass, or when a pipeline would stop working.
+    ///
+    /// 017 review 1 (FR-017): a file already at that place is written over only when it still
+    /// holds `base`, the text the page loaded, or when `replace` says the engineer chose to
+    /// replace it. A new agent sends no `base`, so it never lands on a file of that name.
     pub fn put_agent(
         &mut self,
         name: &str,
         scope: &Scope,
         text: &str,
+        base: Option<&str>,
+        replace: bool,
         live: &[(PathBuf, String)],
     ) -> Result<Value, String> {
         check_name(name)?;
@@ -342,7 +349,7 @@ impl Studio {
             Scope::User => Source::User,
             Scope::Project(_) => Source::Project,
         };
-        let d = agent::parse(&file, name, text, source, defs::RUNTIMES).map_err(|ps| {
+        let d = agent::parse(&file, name, text, source, &defs::runtimes()).map_err(|ps| {
             ps.iter()
                 .map(|p| p.to_string())
                 .collect::<Vec<_>>()
@@ -350,8 +357,11 @@ impl Studio {
         })?;
         self.would_break(scope, name, Some(&d), live)
             .map_err(|e| format!("{file}: {e}"))?;
-        std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
         let path = dir.join(&file);
+        if !replace {
+            not_over_another(&path, name, text, base, source)?;
+        }
+        std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
         std::fs::write(&path, text).map_err(|e| format!("{}: {e}", path.display()))?;
         Ok(json!({ "saved": path.display().to_string() }))
     }
@@ -381,7 +391,7 @@ impl Studio {
                     name,
                     t,
                     Source::Default,
-                    defs::RUNTIMES,
+                    &defs::runtimes(),
                 )
             })
             .transpose()
@@ -405,7 +415,7 @@ impl Studio {
         let name = toml::from_str::<pipeline::Raw>(text)
             .map(|r| r.name)
             .unwrap_or_default();
-        let kinds = |n: &str| lib.agents.get(n).map(|a| a.kind);
+        let kinds = |n: &str| lib.kind_of(n);
         let p = pipeline::parse(&format!("{name}.toml"), &name, text, Source::User, &kinds)
             .map_err(|ps| ps.join("\n"))?;
         Ok(json!(p))
@@ -417,7 +427,7 @@ impl Studio {
         let dir = self.scope_dir(scope, "pipelines")?;
         let file = format!("{name}.toml");
         let lib = self.library_for(scope)?;
-        let kinds = |n: &str| lib.agents.get(n).map(|a| a.kind);
+        let kinds = |n: &str| lib.kind_of(n);
         let source = match scope {
             Scope::User => Source::User,
             Scope::Project(_) => Source::Project,

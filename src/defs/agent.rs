@@ -3,6 +3,7 @@
 
 use serde::Serialize;
 
+use crate::agent::ModelNaming;
 use crate::project::commands::command_problem;
 use crate::speckit::Problem;
 
@@ -142,145 +143,6 @@ fn value(raw: &str) -> Result<Value, String> {
     Ok(Value::Str(unquote(raw)?))
 }
 
-/// A frontmatter field the page's agent form may set (008 contracts/agents-api.md).
-pub const FIELD_KEYS: &[&str] = &[
-    "description",
-    "runtime",
-    "model",
-    "kind",
-    "may_run",
-    "returns",
-];
-
-/// A new value for a field: a string, or a list of strings.
-#[derive(Debug, Clone, PartialEq)]
-pub enum FieldValue {
-    Str(String),
-    List(Vec<String>),
-}
-
-/// A value written so that [`parse`] reads it back unchanged: quoted only when it would not
-/// otherwise read the same. Refused when no form reads it back (a quote inside it).
-fn write_value(v: &FieldValue) -> Result<String, String> {
-    let plain_ok = |s: &str, in_list: bool| {
-        !s.is_empty()
-            && s.trim() == s
-            && !s.starts_with(['\'', '&', '*', '|', '>', '!', '%', '@', '`', '[', '{', '#'])
-            && !s.contains(" #")
-            && !(in_list && s.contains([',', ']', ' ', ':']))
-    };
-    let one = |s: &str, in_list: bool| -> Result<String, String> {
-        if s.contains('\n') || s.contains('\r') {
-            return Err(format!("{s:?}: a value cannot hold a line break"));
-        }
-        // A quote can stand in a plain value (`Checks the "happy path"`), never in a quoted one
-        // nor in a list item, which the reader splits on quotes. Quotes come in pairs: an odd one
-        // would hide a comment kept after the value (`5" screen # note`) from the reader.
-        if s.contains('"') {
-            let paired = s.matches('"').count() % 2 == 0;
-            return if !in_list && paired && !s.starts_with('"') && plain_ok(s, false) {
-                Ok(s.to_string())
-            } else {
-                Err(format!(
-                    "{s:?}: quotes can stand only in pairs, inside a plain value"
-                ))
-            };
-        }
-        Ok(if plain_ok(s, in_list) {
-            s.to_string()
-        } else {
-            format!("\"{s}\"")
-        })
-    };
-    match v {
-        FieldValue::Str(s) => one(s, false),
-        FieldValue::List(items) => Ok(format!(
-            "[{}]",
-            items
-                .iter()
-                .map(|i| one(i, true))
-                .collect::<Result<Vec<_>, _>>()?
-                .join(", ")
-        )),
-    }
-}
-
-/// `text` with only the given fields' frontmatter lines changed (008 FR-008, contracts/
-/// agents-api.md): an existing key's line keeps its place and its comment; an absent key is
-/// added as the frontmatter's last line; every other line, and the body, stay as they are.
-pub fn set_fields(text: &str, fields: &[(String, FieldValue)]) -> Result<String, String> {
-    // A byte-order mark is kept as it was.
-    let (bom, text) = match text.strip_prefix('\u{feff}') {
-        Some(t) => ("\u{feff}", t),
-        None => ("", text),
-    };
-    let nl = if text.contains("\r\n") { "\r\n" } else { "\n" };
-    let mut lines: Vec<String> = text
-        .split('\n')
-        .map(|l| l.trim_end_matches('\r').to_string())
-        .collect();
-    if lines.first().map(|l| l.trim_end()) != Some("---") {
-        return Err("a definition starts with a `---` line".into());
-    }
-    let mut end = lines
-        .iter()
-        .skip(1)
-        .position(|l| l.trim_end() == "---")
-        .map(|i| i + 1)
-        .ok_or("the frontmatter has no closing `---` line")?;
-    for (key, value) in fields {
-        if !FIELD_KEYS.contains(&key.as_str()) {
-            return Err(format!("{key} cannot be set as a field"));
-        }
-        let v = write_value(value)?;
-        let at = (1..end).find(|&i| {
-            let code = strip_comment(&lines[i]);
-            !code.starts_with([' ', '\t'])
-                && code.split_once(':').is_some_and(|(k, _)| k.trim() == key)
-        });
-        match at {
-            Some(i) => {
-                let code_len = strip_comment(&lines[i]).len();
-                let comment = lines[i][code_len..].trim().to_string();
-                lines[i] = if comment.is_empty() {
-                    format!("{key}: {v}")
-                } else {
-                    format!("{key}: {v} {comment}")
-                };
-            }
-            None => {
-                lines.insert(end, format!("{key}: {v}"));
-                end += 1;
-            }
-        }
-    }
-    Ok(format!("{bom}{}", lines.join(nl)))
-}
-
-/// `text` with its body (everything after the frontmatter) replaced by `body`, in the file's own
-/// line endings; the frontmatter stays as it is (008: the form's instructions).
-pub fn set_body(text: &str, body: &str) -> Result<String, String> {
-    let nl = if text.contains("\r\n") { "\r\n" } else { "\n" };
-    let lines: Vec<&str> = text.split('\n').collect();
-    let end = lines
-        .iter()
-        .skip(1)
-        .position(|l| l.trim_end() == "---")
-        .map(|i| i + 1)
-        .ok_or("the frontmatter has no closing `---` line")?;
-    let front = lines[..=end]
-        .iter()
-        .map(|l| l.trim_end_matches('\r'))
-        .collect::<Vec<_>>()
-        .join(nl);
-    let body = body.replace("\r\n", "\n");
-    let body = body.trim_matches('\n');
-    Ok(format!(
-        "{front}{nl}{nl}{}{nl}",
-        body.split('\n').collect::<Vec<_>>().join(nl)
-    ))
-}
-
 const KEYS: &[&str] = &[
     "name",
     "description",
@@ -293,14 +155,15 @@ const KEYS: &[&str] = &[
 ];
 
 /// Parses the definition in `text` (the file `file`, named `<name>.md`). `runtimes` are the
-/// runtime names Fallow knows.
+/// runtimes Fallow knows, each with its model naming ([`crate::defs::runtimes`]).
 pub fn parse(
     file: &str,
     stem: &str,
     text: &str,
     source: Source,
-    runtimes: &[&str],
+    runtimes: &[(&str, ModelNaming)],
 ) -> Result<AgentDef, Vec<Problem>> {
+    let names: Vec<&str> = runtimes.iter().map(|(n, _)| *n).collect();
     let p = |line: usize, m: String| Problem::new(file, line, m);
     let text = text.strip_prefix('\u{feff}').unwrap_or(text);
     let lines: Vec<&str> = text.lines().collect();
@@ -348,22 +211,37 @@ pub fn parse(
         }
     }
     let get = |k: &str| fields.iter().find(|(f, ..)| f == k);
-    let str_of = |k: &str, problems: &mut Vec<Problem>| -> Option<(String, usize)> {
-        match get(k) {
-            Some((_, Value::Str(s), at)) => Some((s.clone(), *at)),
-            Some((_, _, at)) => {
-                problems.push(p(*at, format!("{k} is a single value")));
-                None
+    // 017 (FR-001, FR-002): every field but `limits` is required. A field written without a
+    // value is missing at its own line; an absent one at the closing `---` line, where it would
+    // be written. Each message says what belongs there (contracts/agent-definition.md).
+    let close = end + 1;
+    let required =
+        |k: &str, belongs: &str, problems: &mut Vec<Problem>| -> Option<(String, usize)> {
+            match get(k) {
+                Some((_, Value::Str(s), at)) if !s.is_empty() => Some((s.clone(), *at)),
+                Some((_, Value::Str(_), at)) => {
+                    problems.push(p(*at, format!("{k} is required: {belongs}")));
+                    None
+                }
+                Some((_, _, at)) => {
+                    problems.push(p(*at, format!("{k} is a single value")));
+                    None
+                }
+                None => {
+                    problems.push(p(close, format!("{k} is required: {belongs}")));
+                    None
+                }
             }
-            None => None,
-        }
-    };
-    let name = match str_of("name", &mut problems) {
+        };
+    let name = match required(
+        "name",
+        "the file's name without .md, in a-z, 0-9 and -",
+        &mut problems,
+    ) {
         Some((n, at)) => {
-            if n.is_empty()
-                || !n
-                    .chars()
-                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+            if !n
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
             {
                 problems.push(p(at, format!("name {n:?}: use a-z, 0-9 and -")));
             } else if n != stem {
@@ -374,40 +252,70 @@ pub fn parse(
             }
             n
         }
-        None => {
-            problems.push(p(1, "name is required".into()));
-            String::new()
-        }
+        None => String::new(),
     };
-    let description = match str_of("description", &mut problems) {
-        Some((d, _)) if !d.is_empty() => d,
-        _ => {
-            problems.push(p(1, "description is required".into()));
-            String::new()
-        }
-    };
-    let runtime = match str_of("runtime", &mut problems) {
+    let description = required(
+        "description",
+        "one line saying what this agent does",
+        &mut problems,
+    )
+    .map(|(d, _)| d)
+    .unwrap_or_default();
+    let runtime_belongs = format!(
+        "the program that runs this agent, one of {}",
+        names.join(", ")
+    );
+    let (runtime, naming) = match required("runtime", &runtime_belongs, &mut problems) {
         Some((r, at)) => {
-            if !runtimes.contains(&r.as_str()) {
+            let naming = runtimes.iter().find(|(n, _)| *n == r).map(|(_, m)| *m);
+            if naming.is_none() {
                 problems.push(p(
                     at,
                     format!(
                         "runtime {r:?} is not one Fallow knows ({})",
-                        runtimes.join(", ")
+                        names.join(", ")
                     ),
                 ));
             }
-            r
+            (r, naming)
         }
-        None => {
-            problems.push(p(1, "runtime is required".into()));
-            String::new()
-        }
+        None => (String::new(), None),
     };
-    let model = str_of("model", &mut problems)
-        .map(|(m, _)| m)
-        .unwrap_or_default();
-    let kind = match str_of("kind", &mut problems) {
+    // FR-003, FR-004: the provider's full name, in the form the runtime declares; checked
+    // only once the runtime is known.
+    let model_belongs = match naming {
+        Some(m) => format!("the model's full name. {}", m.hint()),
+        None => format!(
+            "the model's full name. {}",
+            runtimes
+                .iter()
+                .map(|(n, m)| format!("For {n}: {}.", m.hint()))
+                .collect::<Vec<_>>()
+                .join(" ")
+        ),
+    };
+    let model = match required("model", &model_belongs, &mut problems) {
+        Some((m, at)) => {
+            if let Some(naming) = naming {
+                if !naming.fits(&m) {
+                    problems.push(p(
+                        at,
+                        format!(
+                            "model {m:?} is not a full model name for {runtime}: {}",
+                            naming.hint()
+                        ),
+                    ));
+                }
+            }
+            m
+        }
+        None => String::new(),
+    };
+    let kind = match required(
+        "kind",
+        "maker (changes files), checker (only runs and verifies), lead or assistant",
+        &mut problems,
+    ) {
         Some((k, at)) => match k.as_str() {
             "maker" => Some(Kind::Maker),
             "checker" => Some(Kind::Checker),
@@ -421,53 +329,83 @@ pub fn parse(
                 None
             }
         },
-        None => {
-            problems.push(p(1, "kind is required".into()));
-            None
-        }
+        None => None,
     };
-    let returns = match str_of("returns", &mut problems) {
+    let a_kind = |k: Kind| match k {
+        Kind::Maker => "a maker",
+        Kind::Checker => "a checker",
+        Kind::Lead => "a lead",
+        Kind::Assistant => "an assistant",
+    };
+    let returns_belongs = match kind {
+        Some(k) => format!("{} for {}", k.returns(), a_kind(k)),
+        None => [Kind::Maker, Kind::Checker, Kind::Lead, Kind::Assistant]
+            .map(|k| format!("{} for {}", k.returns(), a_kind(k)))
+            .join(", "),
+    };
+    let returns = match required("returns", &returns_belongs, &mut problems) {
         Some((r, at)) => {
             if let Some(k) = kind {
                 if r != k.returns() {
                     problems.push(p(
                         at,
-                        format!(
-                            "returns {r:?}: {} returns {:?}",
-                            match k {
-                                Kind::Maker => "a maker",
-                                Kind::Checker => "a checker",
-                                Kind::Lead => "a lead",
-                                Kind::Assistant => "an assistant",
-                            },
-                            k.returns()
-                        ),
+                        format!("returns {r:?}: {} returns {:?}", a_kind(k), k.returns()),
                     ));
                 }
             }
             r
         }
-        None => {
-            problems.push(p(1, "returns is required".into()));
-            String::new()
-        }
+        None => String::new(),
+    };
+    // FR-005: a lead's and an assistant's commands follow the chat mode (015), so theirs is [].
+    let chat = match kind {
+        Some(Kind::Lead) => Some("a lead's"),
+        Some(Kind::Assistant) => Some("an assistant's"),
+        _ => None,
+    };
+    let may_run_missing = |at: usize, problems: &mut Vec<Problem>| {
+        problems.push(p(
+            at,
+            match chat {
+                Some(whose) => {
+                    format!("may_run is required: [] ({whose} commands follow the chat mode)")
+                }
+                None => "may_run is required: the commands this agent may run, as a list: [gates, plan.commands, \"npm test\"], or [] for none".into(),
+            },
+        ))
     };
     let may_run = match get("may_run") {
         Some((_, Value::List(items), at)) => {
-            for i in items {
-                if i != "gates" && i != "plan.commands" {
-                    if let Some(why) = command_problem(i) {
-                        problems.push(p(*at, format!("may_run {i:?}: {why}")));
+            if let Some(whose) = chat.filter(|_| !items.is_empty()) {
+                problems.push(p(
+                    *at,
+                    format!(
+                        "may_run: {whose} commands follow the chat mode (Manual or Auto), not this list: write []"
+                    ),
+                ));
+            } else {
+                for i in items {
+                    if i != "gates" && i != "plan.commands" {
+                        if let Some(why) = command_problem(i) {
+                            problems.push(p(*at, format!("may_run {i:?}: {why}")));
+                        }
                     }
                 }
             }
             items.clone()
         }
+        Some((_, Value::Str(s), at)) if s.is_empty() => {
+            may_run_missing(*at, &mut problems);
+            Vec::new()
+        }
         Some((_, _, at)) => {
             problems.push(p(*at, "may_run is a list: [gates, \"npm audit\"]".into()));
             Vec::new()
         }
-        None => Vec::new(),
+        None => {
+            may_run_missing(close, &mut problems);
+            Vec::new()
+        }
     };
     let limits = match get("limits") {
         Some((_, Value::Map(pairs), at)) => {
@@ -512,8 +450,8 @@ pub fn parse(
     let body = lines[end + 1..].join("\n").trim().to_string();
     if body.is_empty() {
         problems.push(p(
-            end + 1,
-            "the instruction after the frontmatter is empty".into(),
+            close,
+            "the instructions after the frontmatter are empty: write what the agent does, below the closing ---".into(),
         ));
     }
     if !problems.is_empty() {
@@ -533,6 +471,53 @@ pub fn parse(
     })
 }
 
+/// 017 (FR-012, research R-5): the text a new agent starts from. Every required key, `name`
+/// filled in and the others without a value, each followed by a comment saying what to write;
+/// the model's comment gives each runtime's form (`runtimes`: those usable on this machine,
+/// [`crate::defs::usable_runtimes`]; the runtime's comment names the same ones).
+/// Saved untouched, [`parse`] refuses it with the six missing fields and the empty instructions.
+pub fn template(name: &str, runtimes: &[(&str, ModelNaming)]) -> String {
+    let names: Vec<&str> = runtimes.iter().map(|(n, _)| *n).collect();
+    let one_of = match names.split_last() {
+        Some((last, [])) => last.to_string(),
+        Some((last, rest)) => format!("{} or {last}", rest.join(", ")),
+        None => String::new(),
+    };
+    let models = runtimes
+        .iter()
+        .map(|(n, m)| format!("{n}: {}.", m.hint()))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let line = |code: String, comment: &str| format!("{code:<24} # {comment}\n");
+    let mut t = String::from("---\n");
+    t += &line(
+        format!("name: {name}"),
+        "the file's name, in a-z, 0-9 and -",
+    );
+    t += &line("description:".into(), "one line: what this agent does");
+    t += &line(
+        "runtime:".into(),
+        &format!("which program runs it: {one_of}"),
+    );
+    t += &line("model:".into(), &format!("the model's full name. {models}"));
+    t += &line(
+        "kind:".into(),
+        "maker (changes files), checker (only runs and verifies), lead or assistant",
+    );
+    t += &line(
+        "may_run:".into(),
+        "the commands it may run, as a list: [gates, plan.commands, \"npm test\"]; [] for none; always [] for a lead or an assistant",
+    );
+    t += &line(
+        "returns:".into(),
+        "work for a maker, verdict for a checker, reply for a lead, assistant_reply for an assistant",
+    );
+    t += "# limits: {minutes: 30, turns: 60, usd: 2}   (optional: per step)\n";
+    t += "# Below the closing --- line: the agent's instructions, in plain text.\n";
+    t += "---\n\n";
+    t
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -545,7 +530,7 @@ mod tests {
             "assistant",
             text,
             Source::Default,
-            &["claude"],
+            &crate::defs::runtimes(),
         )
         .unwrap();
         assert_eq!(d.kind, Kind::Assistant);
@@ -556,7 +541,7 @@ mod tests {
             "assistant",
             &wrong,
             Source::Default,
-            &["claude"],
+            &crate::defs::runtimes(),
         )
         .unwrap_err();
         assert!(
@@ -565,104 +550,12 @@ mod tests {
         );
     }
 
-    #[test]
-    fn fields_change_only_their_lines() {
-        let text = "---\nname: reviewer\ndescription: Checks every story # by running\nruntime: claude\nmodel: sonnet # the default\nkind: checker\nmay_run: [gates]\nreturns: verdict\n---\n\nThe body.\n";
-        let out = set_fields(
-            text,
-            &[
-                ("model".into(), FieldValue::Str("opus".into())),
-                (
-                    "may_run".into(),
-                    FieldValue::List(vec!["gates".into(), "npm audit".into()]),
-                ),
-            ],
-        )
-        .unwrap();
-        let changed: Vec<(&str, &str)> = text
-            .lines()
-            .zip(out.lines())
-            .filter(|(a, b)| a != b)
-            .collect();
-        assert_eq!(
-            changed,
-            vec![
-                ("model: sonnet # the default", "model: opus # the default"),
-                ("may_run: [gates]", "may_run: [gates, \"npm audit\"]"),
-            ]
-        );
-        // It reads back as written.
-        let d = parse("reviewer.md", "reviewer", &out, Source::User, &["claude"]).unwrap();
-        assert_eq!(d.model, "opus");
-        assert_eq!(
-            d.may_run,
-            vec!["gates".to_string(), "npm audit".to_string()]
-        );
-        assert_eq!(d.description, "Checks every story");
-        assert!(out.ends_with("The body.\n"));
-    }
-
-    #[test]
-    fn an_absent_field_is_added_and_others_are_refused() {
-        let text = "---\r\nname: x\r\ndescription: d\r\nruntime: claude\r\nkind: maker\r\nreturns: work\r\n---\r\nBody\r\n";
-        let out = set_fields(text, &[("model".into(), FieldValue::Str("haiku".into()))]).unwrap();
-        assert!(
-            out.contains("returns: work\r\nmodel: haiku\r\n---\r\nBody"),
-            "{out:?}"
-        );
-        assert!(set_fields(text, &[("name".into(), FieldValue::Str("y".into()))]).is_err());
-        assert!(set_fields(text, &[("limits".into(), FieldValue::Str("1".into()))]).is_err());
-        // A quote stands in a plain value, as the reader takes it; never in a list item.
-        let out = set_fields(
-            text,
-            &[("description".into(), FieldValue::Str("say \"hi\"".into()))],
-        )
-        .unwrap();
-        let d = parse("x.md", "x", &out, Source::User, &["claude"]).unwrap();
-        assert_eq!(d.description, "say \"hi\"");
-        assert!(
-            set_fields(
-                text,
-                &[("may_run".into(), FieldValue::List(vec!["a \"b\"".into()]))]
-            )
-            .is_err()
-        );
-        // A lone quote is refused: with a comment kept after it, the reader would take the
-        // comment as part of the value.
-        let commented = text.replace("description: d\r\n", "description: d # note\r\n");
-        assert!(commented.contains("# note"));
-        assert!(
-            set_fields(
-                &commented,
-                &[("description".into(), FieldValue::Str("5\" screen".into()))]
-            )
-            .is_err()
-        );
-        // A byte-order mark stays.
-        let out = set_fields(
-            &format!("\u{feff}{text}"),
-            &[("model".into(), FieldValue::Str("opus".into()))],
-        )
-        .unwrap();
-        assert!(out.starts_with("\u{feff}---"));
-        // A value the reader would misread is quoted.
-        let out = set_fields(
-            text,
-            &[("description".into(), FieldValue::Str("[draft] # 2".into()))],
-        )
-        .unwrap();
-        let d = parse("x.md", "x", &out, Source::User, &["claude"]).unwrap();
-        assert_eq!(d.description, "[draft] # 2");
-    }
-
-    const RT: &[&str] = &["claude", "fake"];
-
     fn parse_ok(stem: &str, text: &str) -> AgentDef {
-        parse("x.md", stem, text, Source::User, RT).unwrap()
+        parse("x.md", stem, text, Source::User, &crate::defs::runtimes()).unwrap()
     }
 
     fn errors(stem: &str, text: &str) -> Vec<String> {
-        parse("x.md", stem, text, Source::User, RT)
+        parse("x.md", stem, text, Source::User, &crate::defs::runtimes())
             .unwrap_err()
             .iter()
             .map(|p| p.to_string())
@@ -673,22 +566,42 @@ mod tests {
     fn the_contracts_example_parses() {
         let d = parse_ok(
             "security-reviewer",
-            "---\nname: security-reviewer\ndescription: Reads a story's changes\nruntime: claude\nmodel: opus\nkind: checker            # maker | checker | lead\nmay_run: [gates, plan.commands, \"npm audit\"]\nreturns: verdict\nlimits: {minutes: 20, turns: 60, usd: 1.5}\n---\n\nYou check the changes.\n",
+            "---\nname: security-reviewer\ndescription: Reads a story's changes\nruntime: claude\nmodel: claude-opus-5-5\nkind: checker            # maker | checker | lead\nmay_run: [gates, plan.commands, \"npm audit\"]\nreturns: verdict\nlimits: {minutes: 20, turns: 60, usd: 1.5}\n---\n\nYou check the changes.\n",
         );
         assert_eq!(d.kind, Kind::Checker);
         assert_eq!(d.may_run, ["gates", "plan.commands", "npm audit"]);
         assert_eq!(d.limits.minutes, Some(20));
         assert_eq!(d.limits.usd, Some(1.5));
         assert_eq!(d.body, "You check the changes.");
-        assert_eq!(d.model, "opus");
+        assert_eq!(d.model, "claude-opus-5-5");
     }
 
     #[test]
     fn the_shipped_defaults_parse() {
+        // 017 (FR-016, SC-001): every shipped agent is complete and names a full model.
         for (stem, text) in super::super::DEFAULT_AGENTS {
-            let d = parse("x.md", stem, text, Source::Default, RT)
-                .unwrap_or_else(|e| panic!("{stem}: {e:?}"));
+            let d = parse(
+                "x.md",
+                stem,
+                text,
+                Source::Default,
+                &crate::defs::runtimes(),
+            )
+            .unwrap_or_else(|e| panic!("{stem}: {e:?}"));
             assert_eq!(d.returns, d.kind.returns());
+            let model = match *stem {
+                "lead" | "assistant" | "security-reviewer" => "claude-opus-5-5",
+                _ => "claude-sonnet-5-5",
+            };
+            assert_eq!(d.model, model, "{stem}");
+            assert!(
+                text.lines().any(|l| l.starts_with("may_run:")),
+                "{stem} writes may_run"
+            );
+            if matches!(d.kind, Kind::Lead | Kind::Assistant) {
+                assert!(d.may_run.is_empty(), "{stem}");
+                assert!(text.contains("\nmay_run: []\n"), "{stem}");
+            }
         }
     }
 
@@ -716,11 +629,11 @@ mod tests {
     fn the_rules_are_checked() {
         let base = |extra: &str| {
             format!(
-                "---\nname: b\ndescription: d\nruntime: claude\nkind: maker\nreturns: work\n{extra}---\nDo it.\n"
+                "---\nname: b\ndescription: d\nruntime: claude\nmodel: claude-sonnet-5-5\nkind: maker\nreturns: work\n{extra}---\nDo it.\n"
             )
         };
         assert!(
-            errors("c", &base(""))
+            errors("c", &base("may_run: []\n"))
                 .iter()
                 .any(|e| e.contains("differs from the file name"))
         );
@@ -729,14 +642,15 @@ mod tests {
             e.iter().any(|x| x.contains("not a command agents may run")),
             "{e:?}"
         );
-        let e = errors("b", &base("limits: {minutes: 0}\n"));
+        assert!(parse_ok("b", &base("may_run: []\n")).may_run.is_empty());
+        let e = errors("b", &base("may_run: []\nlimits: {minutes: 0}\n"));
         assert!(
             e.iter().any(|x| x.contains("not a positive number")),
             "{e:?}"
         );
         let e = errors(
             "b",
-            "---\nname: b\ndescription: d\nruntime: gpt\nkind: checker\nreturns: work\n---\nx\n",
+            "---\nname: b\ndescription: d\nruntime: gpt\nmodel: x\nkind: checker\nmay_run: []\nreturns: work\n---\nx\n",
         );
         assert!(e.iter().any(|x| x.contains("runtime \"gpt\"")), "{e:?}");
         assert!(
@@ -746,8 +660,347 @@ mod tests {
         );
         let e = errors(
             "b",
-            "---\nname: b\ndescription: d\nruntime: claude\nkind: maker\nreturns: work\n---\n\n",
+            "---\nname: b\ndescription: d\nruntime: claude\nmodel: claude-sonnet-5-5\nkind: maker\nmay_run: []\nreturns: work\n---\n\n",
         );
-        assert!(e.iter().any(|x| x.contains("empty")), "{e:?}");
+        assert_eq!(
+            e,
+            [
+                "x.md:9: the instructions after the frontmatter are empty: write what the agent does, below the closing ---"
+            ]
+        );
+    }
+
+    // ---- 017 (contracts/agent-definition.md): every field required, and what belongs there ----
+
+    /// A complete maker; line 9 is the closing `---`.
+    const FULL: &str = "---\nname: b\ndescription: d\nruntime: claude\nmodel: claude-sonnet-5-5\nkind: maker\nmay_run: [gates]\nreturns: work\n---\nDo it.\n";
+
+    const CLAUDE_HINT: &str = "claude- followed by lowercase letters, digits, . and -, for example claude-sonnet-5-5; look the name up in Anthropic's models overview (https://platform.claude.com/docs/en/models/overview)";
+    const FAKE_HINT: &str = "fake- followed by lowercase letters, digits, . and -, for example fake-1; look the name up in the fake runtime's scenario";
+
+    const REQUIRED: [&str; 7] = [
+        "name",
+        "description",
+        "runtime",
+        "model",
+        "kind",
+        "may_run",
+        "returns",
+    ];
+
+    /// What belongs in each required field, as the contract words it (for `FULL`, a maker on
+    /// claude).
+    fn belongs(key: &str) -> String {
+        match key {
+            "name" => "name is required: the file's name without .md, in a-z, 0-9 and -".into(),
+            "description" => "description is required: one line saying what this agent does".into(),
+            "runtime" => {
+                "runtime is required: the program that runs this agent, one of claude, fake".into()
+            }
+            "model" => format!("model is required: the model's full name. {CLAUDE_HINT}"),
+            "kind" => "kind is required: maker (changes files), checker (only runs and verifies), lead or assistant".into(),
+            "may_run" => "may_run is required: the commands this agent may run, as a list: [gates, plan.commands, \"npm test\"], or [] for none".into(),
+            "returns" => "returns is required: work for a maker".into(),
+            _ => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn a_complete_file_parses() {
+        let d = parse_ok("b", FULL);
+        assert_eq!(d.model, "claude-sonnet-5-5");
+        assert_eq!(d.may_run, ["gates"]);
+    }
+
+    #[test]
+    fn every_required_field_absent_or_empty_is_refused_saying_what_belongs_there() {
+        // SC-003: 7 fields, each absent, as `key:` and as `key:   # comment`.
+        let lines: Vec<&str> = FULL.lines().collect();
+        for key in REQUIRED {
+            let at = lines
+                .iter()
+                .position(|l| l.starts_with(&format!("{key}:")))
+                .unwrap();
+            // Absent: at the closing `---` line, line 8 once a line is gone.
+            let absent: String = lines
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| *i != at)
+                .map(|(_, l)| format!("{l}\n"))
+                .collect();
+            let e = errors("b", &absent);
+            let want = format!("x.md:8: {}", belongs(key));
+            assert!(e.contains(&want), "{key} absent: {e:?}\nwanted {want}");
+            for empty in [format!("{key}:"), format!("{key}:   # fill this in")] {
+                let text: String = lines
+                    .iter()
+                    .enumerate()
+                    .map(|(i, l)| {
+                        if i == at {
+                            format!("{empty}\n")
+                        } else {
+                            format!("{l}\n")
+                        }
+                    })
+                    .collect();
+                let e = errors("b", &text);
+                let want = format!("x.md:{}: {}", at + 1, belongs(key));
+                assert!(e.contains(&want), "{empty:?}: {e:?}\nwanted {want}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_missing_model_without_a_runtime_gives_every_runtimes_form() {
+        let text = FULL
+            .replace("runtime: claude\n", "")
+            .replace("model: claude-sonnet-5-5\n", "");
+        let e = errors("b", &text);
+        let m = e.iter().find(|x| x.contains("model is required")).unwrap();
+        assert!(m.contains(CLAUDE_HINT) && m.contains(FAKE_HINT), "{m}");
+        // A model written while the runtime is unknown is not checked against a form.
+        let e = errors(
+            "b",
+            &FULL
+                .replace("runtime: claude", "runtime: gpt")
+                .replace("model: claude-sonnet-5-5", "model: x"),
+        );
+        assert_eq!(e.len(), 1, "{e:?}");
+        assert!(e[0].starts_with("x.md:4: runtime \"gpt\""), "{e:?}");
+    }
+
+    #[test]
+    fn a_model_must_have_its_runtimes_form() {
+        for (written, read) in [
+            ("opus", "opus"),
+            ("Claude-Opus-5-5", "Claude-Opus-5-5"),
+            ("claude-opus-5-5[1m]", "claude-opus-5-5[1m]"),
+            ("\"claude opus\"", "claude opus"),
+            ("anthropic.claude-opus-5-5", "anthropic.claude-opus-5-5"),
+        ] {
+            let e = errors(
+                "b",
+                &FULL.replace("model: claude-sonnet-5-5", &format!("model: {written}")),
+            );
+            assert_eq!(
+                e,
+                [format!(
+                    "x.md:5: model {read:?} is not a full model name for claude: {CLAUDE_HINT}"
+                )],
+                "{written}"
+            );
+            assert!(e[0].contains("https://platform.claude.com/docs/en/models/overview"));
+        }
+        // Another runtime's form: refused with the file's runtime's hint.
+        let e = errors("b", &FULL.replace("runtime: claude", "runtime: fake"));
+        assert_eq!(
+            e,
+            [format!(
+                "x.md:5: model \"claude-sonnet-5-5\" is not a full model name for fake: {FAKE_HINT}"
+            )]
+        );
+        let fake = FULL
+            .replace("runtime: claude", "runtime: fake")
+            .replace("model: claude-sonnet-5-5", "model: fake-1");
+        assert_eq!(parse_ok("b", &fake).model, "fake-1");
+        // Spaces around a value and a comment after it are not part of it.
+        let d = parse_ok(
+            "b",
+            &FULL.replace(
+                "model: claude-sonnet-5-5",
+                "model:   claude-sonnet-5-5    # the provider's full name",
+            ),
+        );
+        assert_eq!(d.model, "claude-sonnet-5-5");
+    }
+
+    #[test]
+    fn a_lead_and_an_assistant_run_no_listed_commands() {
+        for (kind, returns, whose) in [
+            ("lead", "reply", "a lead's"),
+            ("assistant", "assistant_reply", "an assistant's"),
+        ] {
+            let text = FULL
+                .replace("kind: maker", &format!("kind: {kind}"))
+                .replace("returns: work", &format!("returns: {returns}"));
+            let e = errors("b", &text);
+            assert_eq!(
+                e,
+                [format!(
+                    "x.md:7: may_run: {whose} commands follow the chat mode (Manual or Auto), not this list: write []"
+                )],
+                "{kind}"
+            );
+            let ok = text.replace("may_run: [gates]", "may_run: []");
+            assert!(parse_ok("b", &ok).may_run.is_empty());
+            // Missing: its message says [] for them.
+            let e = errors("b", &text.replace("may_run: [gates]\n", ""));
+            let want =
+                format!("x.md:8: may_run is required: [] ({whose} commands follow the chat mode)");
+            assert!(e.contains(&want), "{e:?}");
+        }
+        // `[]` is a real answer for a maker and a checker too.
+        for (kind, returns) in [("maker", "work"), ("checker", "verdict")] {
+            let text = FULL
+                .replace("kind: maker", &format!("kind: {kind}"))
+                .replace("returns: work", &format!("returns: {returns}"))
+                .replace("may_run: [gates]", "may_run: []");
+            assert!(parse_ok("b", &text).may_run.is_empty(), "{kind}");
+        }
+    }
+
+    #[test]
+    fn a_missing_returns_names_the_kinds_value_or_every_value() {
+        let e = errors(
+            "b",
+            &FULL
+                .replace("kind: maker", "kind: checker")
+                .replace("returns: work\n", ""),
+        );
+        assert!(
+            e.contains(&"x.md:8: returns is required: verdict for a checker".to_string()),
+            "{e:?}"
+        );
+        let e = errors(
+            "b",
+            &FULL
+                .replace("kind: maker\n", "")
+                .replace("returns: work\n", ""),
+        );
+        let want = "x.md:7: returns is required: work for a maker, verdict for a checker, reply for a lead, assistant_reply for an assistant";
+        assert!(e.contains(&want.to_string()), "{e:?}");
+    }
+
+    // ---- 017 US2 (FR-012, research R-5): the template a new agent starts from ----
+
+    #[test]
+    fn the_template_names_only_the_runtimes_it_is_given() {
+        let claude: Vec<_> = crate::defs::runtimes()
+            .into_iter()
+            .filter(|(n, _)| *n == "claude")
+            .collect();
+        let t = template("ui-checker", &claude);
+        let line = |key: &str| {
+            t.lines()
+                .find(|l| l.starts_with(&format!("{key}:")))
+                .unwrap()
+                .to_string()
+        };
+        assert!(
+            line("runtime").ends_with("which program runs it: claude"),
+            "{t}"
+        );
+        let model = line("model");
+        assert!(model.contains(&claude[0].1.hint()), "{model}");
+        assert!(!model.contains("fake"), "{model}");
+        assert!(!t.contains("fake"), "{t}");
+    }
+
+    #[test]
+    fn the_template_says_what_belongs_in_every_field() {
+        let rts = crate::defs::runtimes();
+        let t = template("ui-checker", &rts);
+        let lines: Vec<&str> = t.lines().collect();
+        assert_eq!(lines[0], "---");
+        assert!(lines[1].starts_with("name: ui-checker "), "{t}");
+        // Every other required key: written without a value, with a comment saying what to write.
+        for key in [
+            "description",
+            "runtime",
+            "model",
+            "kind",
+            "may_run",
+            "returns",
+        ] {
+            let l = lines
+                .iter()
+                .find(|l| l.starts_with(&format!("{key}:")))
+                .unwrap_or_else(|| panic!("{key} is missing from\n{t}"));
+            let (code, comment) = l.split_once(" #").unwrap_or_else(|| panic!("{l}"));
+            assert_eq!(code.trim(), format!("{key}:"), "{l}");
+            assert!(comment.trim().len() > 5, "{l}");
+        }
+        let model = lines.iter().find(|l| l.starts_with("model:")).unwrap();
+        for (name, naming) in &rts {
+            assert!(model.contains(&naming.hint()), "{name}: {model}");
+        }
+        let runtime = lines.iter().find(|l| l.starts_with("runtime:")).unwrap();
+        assert!(
+            runtime.contains("claude") && runtime.contains("fake"),
+            "{runtime}"
+        );
+        assert!(lines.iter().any(|l| l.starts_with("# limits:")), "{t}");
+        let close = lines
+            .iter()
+            .skip(1)
+            .position(|l| *l == "---")
+            .map(|i| i + 1)
+            .unwrap();
+        assert!(
+            lines[1..close]
+                .iter()
+                .any(|l| l.starts_with('#') && l.contains("instructions") && l.contains("---")),
+            "{t}"
+        );
+        assert!(
+            lines[close + 1..].iter().all(|l| l.trim().is_empty()),
+            "{t}"
+        );
+
+        // Saved untouched: the six fields missing at their own lines, and the empty instructions.
+        let e: Vec<String> = parse("ui-checker.md", "ui-checker", &t, Source::User, &rts)
+            .unwrap_err()
+            .iter()
+            .map(|p| p.to_string())
+            .collect();
+        assert_eq!(e.len(), 7, "{e:#?}");
+        for key in [
+            "description",
+            "runtime",
+            "model",
+            "kind",
+            "may_run",
+            "returns",
+        ] {
+            let at = lines
+                .iter()
+                .position(|l| l.starts_with(&format!("{key}:")))
+                .unwrap()
+                + 1;
+            let want = format!("ui-checker.md:{at}: {key} is required: ");
+            assert!(e.iter().any(|x| x.starts_with(&want)), "{want}: {e:#?}");
+        }
+        assert!(
+            e.contains(&format!(
+                "ui-checker.md:{}: the instructions after the frontmatter are empty: write what the agent does, below the closing ---",
+                close + 1
+            )),
+            "{e:#?}"
+        );
+
+        // Filled in from its comments: it parses.
+        let filled = t
+            .lines()
+            .map(|l| {
+                let v = match l.split_once(':').map(|(k, _)| k) {
+                    Some("description") if !l.starts_with('#') => "Checks the pages",
+                    Some("runtime") => "claude",
+                    Some("model") => "claude-sonnet-5-5",
+                    Some("kind") => "checker",
+                    Some("may_run") => "[gates]",
+                    Some("returns") => "verdict",
+                    _ => return format!("{l}\n"),
+                };
+                let (k, comment) = l.split_once(':').unwrap();
+                format!("{k}: {v} {}\n", comment.trim())
+            })
+            .collect::<String>()
+            + "Open every page and check it.\n";
+        let d = parse("ui-checker.md", "ui-checker", &filled, Source::User, &rts)
+            .unwrap_or_else(|e| panic!("{e:?}\n{filled}"));
+        assert_eq!(d.model, "claude-sonnet-5-5");
+        assert_eq!(d.may_run, ["gates"]);
+        assert_eq!(d.kind, Kind::Checker);
+        assert_eq!(d.body, "Open every page and check it.");
     }
 }

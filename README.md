@@ -52,8 +52,12 @@ the project's principles are in [`.specify/memory/constitution.md`](.specify/mem
   which name the project, the feature and what is needed, and never code or output.
 - **Agents and pipelines.** Agents are markdown files with frontmatter in `~/.fallow/agents/`,
   overridden per project in `.fallow/agents/`: makers change files, checkers only run and verify.
-  The Agents tab edits them as form fields and instructions; save for all your projects or this
-  project only. The Pipelines tab draws a pipeline as a graph of Fallow's fixed steps, where you
+  Every agent file names its `runtime`, the model's full name (for Claude, as listed in
+  Anthropic's [models overview](https://platform.claude.com/docs/en/models/overview), such as
+  `claude-sonnet-5-5`), its `kind`, the commands it `may_run` and what it `returns`; a file
+  missing one, or naming a model by a short name, is listed with its problems and not used. The
+  Agents tab shows the selected agent's whole file in one editor; save for all your projects or
+  this project only. A new agent starts from a template whose comments say what to fill in. The Pipelines tab draws a pipeline as a graph of Fallow's fixed steps, where you
   add, change and remove steps; Standard, Test first and Solo ship with Fallow, and the lead can
   propose one, which is used only once you save it.
 - **Light and dark.** The page follows your system's light or dark setting, switching with it
@@ -128,6 +132,19 @@ the project's principles are in [`.specify/memory/constitution.md`](.specify/mem
   cargo build --release
   target/release/fallow          # starts Fallow and opens its window
   ```
+
+### Upgrading to 0.4.0
+
+From 0.3.x, every agent file must name the model's full name and `may_run` (0.4.0 has no
+default model). Agent files with a short model name (`model: opus`) or without `model` or
+`may_run` are listed in the Agents tab under "Files Fallow could not use", each with what to
+change at its line; Fallow never changes them. Open one there, fix it and save. Where such a file
+has a shipped agent's name (an edited `reviewer`, say), the shipped default runs meanwhile, and
+the new default is beside your copy as `<name>.md.new`; copies you never edited are simply
+replaced. A spec session that was open starts a new agent session at its next message.
+
+For the `claude` runtime only names of the form `claude-…` are accepted, so Claude Code set up
+for Amazon Bedrock model names (`anthropic.claude-…`) is not supported by 0.4.0.
 
 ### Connect Claude Code
 

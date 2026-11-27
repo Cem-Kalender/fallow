@@ -45,16 +45,23 @@ fn a_record_holds_no_text_of_the_loop() {
     // The project and the pipeline carry the marker in their names too.
     let repo = repo_named(&root, &format!("shop-{MARKER}"));
     std::fs::create_dir_all(repo.join(".fallow/pipelines")).unwrap();
-    // The builder runs on a model alias the engineer chose, with the marker in it.
+    // The engineer's builder names a model with the marker in it, in a form the agent file
+    // check accepts (017 review 1, FR-022): the file is in force and the loop runs with it,
+    // but the run record keeps no model for it, as the name can carry the engineer's words.
     std::fs::create_dir_all(repo.join(".fallow/agents")).unwrap();
     let builder = fallow::defs::DEFAULT_AGENTS
         .iter()
         .find(|(n, _)| *n == "builder")
         .unwrap()
         .1;
+    let marked_model = format!("claude-sonnet-{MARKER}");
     std::fs::write(
         repo.join(".fallow/agents/builder.md"),
-        builder.replace("model: sonnet", &format!("model: sonnet-{MARKER}")),
+        replace_found(
+            builder,
+            "model: claude-sonnet-5-5",
+            &format!("model: {marked_model}"),
+        ),
     )
     .unwrap();
     let name = format!("std-{MARKER}");
@@ -65,6 +72,9 @@ fn a_record_holds_no_text_of_the_loop() {
             .replace("name = \"standard\"", &format!("name = \"{name}\"")),
     )
     .unwrap();
+    let lib = fallow::defs::Library::load(Some(&root.join("config")), Some(&repo));
+    assert!(lib.unusable.is_empty(), "{:?}", lib.problems);
+    assert_eq!(lib.agents["builder"].model, marked_model);
     let e = start_studio(&root, &scenario, None);
     let tx = &e.tx;
     let id = lock_calc_in(tx, &repo, Some(&name), Some((5.0, 60)), None);
@@ -115,6 +125,22 @@ fn a_record_holds_no_text_of_the_loop() {
     assert_eq!(r["phases"], 3);
     assert_eq!(r["questions"]["relayed"], 1);
     assert_eq!(r["verifying"], true);
+    // The builder in force names the marked model: its row keeps no model.
+    let builder_row = r["agents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|a| a["agent"] == "builder")
+        .unwrap();
+    assert_eq!(builder_row["model"], serde_json::Value::Null, "{r}");
+    // Another agent's shipped model, a recognisable provider name, is kept.
+    let reviewer_row = r["agents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|a| a["agent"] == "reviewer")
+        .unwrap();
+    assert_eq!(reviewer_row["model"], "claude-sonnet-5-5", "{r}");
     assert!(
         r["interventions"].as_u64().unwrap() >= 2,
         "the answer and the note: {r}"

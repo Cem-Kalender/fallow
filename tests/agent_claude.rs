@@ -15,7 +15,7 @@ fn call(cwd: &std::path::Path, limit: Duration) -> Call {
         rights: rights::maker(vec!["python -m unittest".into()], Vec::new()),
         mcp_config: None,
         session: Session::New("sess-1".into()),
-        model: None,
+        model: Some("fake-1".into()),
         budget_usd: Some(1.0),
         session_total_usd: None,
         cwd: cwd.to_path_buf(),

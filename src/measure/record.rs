@@ -95,10 +95,16 @@ pub struct LoopRecord {
     pub outcome: String,
 }
 
-/// A model id as the agent reported it, kept only when it has the form of a provider's: the
-/// Claude aliases, or a family, a version number and fixed words after it. A custom alias, or
-/// words after a family's name, could carry the engineer's words.
-pub fn model_id(s: &str) -> Option<String> {
+/// A model id of an agent on `runtime`, kept only when it is an identifier (constitution V):
+/// 017 (FR-022, research R-8): it has the form its runtime declares (`claude-` or `fake-`
+/// followed by lowercase letters, digits, `.` and `-`, at most 64 characters), or one of the
+/// forms kept before 017, so records written then still validate: the Claude aliases, or a
+/// family, a version number and fixed words after it. Anything else could carry the engineer's
+/// words.
+pub fn model_id(runtime: &str, s: &str) -> Option<String> {
+    if crate::agent::registry::model_naming(runtime).is_some_and(|n| n.recordable(s)) {
+        return Some(s.to_string());
+    }
     static FORM: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
     let form = FORM.get_or_init(|| {
         regex::Regex::new(
@@ -163,8 +169,8 @@ impl LoopRecord {
                 continue;
             };
             let name = known(AGENTS, def);
-            let model = st.model.as_deref().and_then(model_id);
             let runtime = known(RUNTIMES, &runtime_of(def).unwrap_or_default());
+            let model = st.model.as_deref().and_then(|m| model_id(&runtime, m));
             match agents
                 .iter_mut()
                 .find(|a| a.agent == name && a.model == model && a.runtime == runtime)
@@ -291,7 +297,10 @@ impl LoopRecord {
         for a in &self.agents {
             fixed(AGENTS, &a.agent, "agent")?;
             fixed(RUNTIMES, &a.runtime, "runtime")?;
-            if a.model.as_deref().is_some_and(|m| model_id(m).is_none()) {
+            if a.model
+                .as_deref()
+                .is_some_and(|m| model_id(&a.runtime, m).is_none())
+            {
                 return Err("a model must be a provider's id".into());
             }
         }
@@ -408,10 +417,38 @@ mod tests {
         r.agents[0].model = Some("my words".into());
         assert!(r.check().is_err());
         assert_eq!(
-            model_id("claude-sonnet-4-5"),
+            model_id("claude", "claude-sonnet-4-5"),
             Some("claude-sonnet-4-5".into())
         );
-        assert_eq!(model_id("fake-1"), None, "not a provider's id");
+        // 017: a name of its runtime's declared form is kept, a name of another's is not.
+        for ok in ["claude-fable-5-2", "claude-opus-5-5", "claude-sonnet-5-5"] {
+            assert_eq!(model_id("claude", ok).as_deref(), Some(ok), "{ok}");
+        }
+        assert_eq!(model_id("fake", "fake-1").as_deref(), Some("fake-1"));
+        assert_eq!(model_id("fake", "fake-acme"), None);
+        assert_eq!(model_id("claude", "fake-1"), None, "not claude's form");
+        assert_eq!(
+            model_id("claude", "claude-opus-4-1-20250805").as_deref(),
+            Some("claude-opus-4-1-20250805"),
+            "with its date"
+        );
+        // 017 review 1 (FR-022): a name the agent file check accepts is kept only when it is a
+        // recognisable provider name; one that can carry the engineer's words is not.
+        for bad in [
+            "my words",
+            "Claude-Opus-5-5",
+            "claude-opus-5-5 my words",
+            "claude-acme-merger-q3",
+            "claude-sonnet-mk5f0c2dx",
+            "claude-sonnet-5-5-acme",
+            "claude-fable-",
+            "claude-sonnetx-5",
+        ] {
+            assert_eq!(model_id("claude", bad), None, "{bad}");
+        }
+        r.agents[0].model = Some("claude-fable-5-2".into());
+        assert!(r.check().is_ok());
+        // The forms kept before 017, so records written then still validate.
         for ok in [
             "sonnet",
             "claude-opus-4-1-20250805",
@@ -422,7 +459,7 @@ mod tests {
             "o4-mini",
             "gemini-2.5-pro",
         ] {
-            assert_eq!(model_id(ok).as_deref(), Some(ok), "{ok}");
+            assert_eq!(model_id("custom", ok).as_deref(), Some(ok), "{ok}");
         }
         for bad in [
             "o3acme-merger",
@@ -431,7 +468,7 @@ mod tests {
             "gpt-acme",
             "claude-4-acme",
         ] {
-            assert_eq!(model_id(bad), None, "{bad}");
+            assert_eq!(model_id("custom", bad), None, "{bad}");
         }
     }
 }

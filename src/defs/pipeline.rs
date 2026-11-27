@@ -119,14 +119,14 @@ impl Pipeline {
     }
 }
 
-/// Parses and checks a pipeline. `kind_of` gives an agent definition's kind, or `None` when
-/// there is no such agent. Problems name the step by its number (from 1).
+/// Parses and checks a pipeline. `kind_of` gives an agent definition's kind, or why there is no
+/// usable agent of that name (017 FR-019). Problems name the step by its number (from 1).
 pub fn parse(
     file: &str,
     stem: &str,
     text: &str,
     source: Source,
-    kind_of: &dyn Fn(&str) -> Option<Kind>,
+    kind_of: &dyn Fn(&str) -> Result<Kind, String>,
 ) -> Result<Pipeline, Vec<String>> {
     let raw: Raw = toml::from_str(text).map_err(|e| vec![format!("{file}: {}", e.message())])?;
     let mut problems = Vec::new();
@@ -157,12 +157,10 @@ pub fn parse(
             continue;
         }
         match kind_of(&s.agent) {
-            None => problems.push(at(format!("no agent named {:?}", s.agent))),
-            Some(Kind::Lead) => problems.push(at("the lead is not a pipeline step".into())),
-            Some(Kind::Assistant) => {
-                problems.push(at("the assistant is not a pipeline step".into()))
-            }
-            Some(Kind::Maker) => {
+            Err(why) => problems.push(at(why)),
+            Ok(Kind::Lead) => problems.push(at("the lead is not a pipeline step".into())),
+            Ok(Kind::Assistant) => problems.push(at("the assistant is not a pipeline step".into())),
+            Ok(Kind::Maker) => {
                 if s.when == When::Task {
                     makers_per_task += 1;
                     if !s.paths.is_empty() {
@@ -170,7 +168,7 @@ pub fn parse(
                     }
                 }
             }
-            Some(Kind::Checker) => {
+            Ok(Kind::Checker) => {
                 if s.when == When::Task {
                     problems.push(at(
                         "a checker runs at phases and checkpoints, not per task".into()
@@ -186,9 +184,9 @@ pub fn parse(
                 &o.agent == other
                     && o.when == s.when
                     && o.at() == s.at()
-                    && kind_of(other) == Some(Kind::Checker)
+                    && kind_of(other) == Ok(Kind::Checker)
             });
-            if !ok || kind_of(&s.agent) != Some(Kind::Checker) {
+            if !ok || kind_of(&s.agent) != Ok(Kind::Checker) {
                 problems.push(at(format!(
                     "parallel_with {other:?}: only checkers at the same point run together"
                 )));
@@ -215,7 +213,7 @@ pub fn parse(
         s.when == When::Checkpoint
             && s.at() == At::End
             && s.paths.is_empty()
-            && kind_of(&s.agent) == Some(Kind::Checker)
+            && kind_of(&s.agent) == Ok(Kind::Checker)
     }) {
         missing.push("no review at checkpoints".to_string());
     }
@@ -234,13 +232,13 @@ pub fn parse(
 mod tests {
     use super::*;
 
-    fn kinds(name: &str) -> Option<Kind> {
+    fn kinds(name: &str) -> Result<Kind, String> {
         match name {
-            "builder" | "test-writer" | "docs-writer" => Some(Kind::Maker),
-            "reviewer" | "security-reviewer" => Some(Kind::Checker),
-            "lead" => Some(Kind::Lead),
-            "assistant" => Some(Kind::Assistant),
-            _ => None,
+            "builder" | "test-writer" | "docs-writer" => Ok(Kind::Maker),
+            "reviewer" | "security-reviewer" => Ok(Kind::Checker),
+            "lead" => Ok(Kind::Lead),
+            "assistant" => Ok(Kind::Assistant),
+            _ => Err(format!("there is no agent named {name:?}")),
         }
     }
 

@@ -1,24 +1,41 @@
-//! 008 US3 (T011; FR-008, SC-003; contracts/agents-api.md): the Agents tab saves only the fields
-//! the engineer changed. A project copy of a default differs from it in that line only; comments,
-//! the order of the keys and hand-written values stay; a list item with a space reads back as
-//! written; other keys are refused; a change that stops a pipeline in use from verifying is
-//! refused as in 007.
+//! 017 US2 (T023; FR-010 to FR-012; contracts/web-api.md), replacing 008's field save: an agent
+//! is saved as its whole text. A copy changed in one line differs in that line only; a body with
+//! `fields` is refused; a new agent starts from the template, which is refused untouched with
+//! every missing field and the empty instructions, and nothing is written.
 
 mod common;
 
 use common::*;
+use fallow::service::answer::{KeptTheme, PageRequest, PageResponse, answer};
 use fallow::studio::Req;
-use serde_json::{Map, Value, json};
+use serde_json::{Value, json};
 
-fn fields(v: Value) -> Map<String, Value> {
-    v.as_object().unwrap().clone()
+fn call(
+    tx: &std::sync::mpsc::Sender<fallow::run::engine::Msg>,
+    method: &str,
+    url: &str,
+    body: Option<Value>,
+) -> (u16, Value) {
+    let PageResponse { status, body, .. } = answer(
+        PageRequest {
+            method: method.into(),
+            url: url.into(),
+            body: body.map(|b| b.to_string().into_bytes()).unwrap_or_default(),
+        },
+        tx,
+        &KeptTheme::default(),
+    );
+    let v = serde_json::from_slice(&body)
+        .unwrap_or_else(|_| Value::String(String::from_utf8_lossy(&body).into_owned()));
+    (status, v)
 }
 
 #[test]
-fn only_the_changed_fields_are_saved() {
-    let root = scratch("agent-fields");
+fn an_agent_is_saved_as_its_whole_text() {
+    let root = scratch("agent-text");
     let config = root.join("config");
     std::fs::create_dir_all(&config).unwrap();
+    std::fs::create_dir_all(root.join("data")).unwrap();
     fallow::defs::install_defaults(&config).unwrap();
     let repo = repo_named(&root, "shop");
     let scenario = root.join("scenario.toml");
@@ -31,132 +48,174 @@ fn only_the_changed_fields_are_saved() {
         .to_string();
     let default = std::fs::read_to_string(config.join("agents/reviewer.md")).unwrap();
 
-    // "Save for this project only" on a default: a project copy, the model line changed only.
-    sreq(
+    // "Save for this project only" with one line changed: the copy differs in that line only,
+    // byte for byte (replaces 008 SC-003).
+    let changed = replace_found(
+        &default,
+        "model: claude-sonnet-5-5",
+        "model: claude-opus-5-5",
+    );
+    let (status, v) = call(
         tx,
-        Req::PutAgentFields {
-            name: "reviewer".into(),
-            scope: format!("project:{p}"),
-            fields: fields(json!({ "model": "opus" })),
-            body: None,
-        },
-    )
-    .unwrap();
+        "PUT",
+        &format!("/api/agents/reviewer?scope=project:{p}"),
+        Some(json!({ "text": changed })),
+    );
+    assert_eq!(status, 200, "{v}");
     let copy = std::fs::read_to_string(repo.join(".fallow/agents/reviewer.md")).unwrap();
-    let changed: Vec<(&str, &str)> = default
+    assert_eq!(copy, changed);
+    let diff: Vec<(&str, &str)> = default
         .lines()
         .zip(copy.lines())
         .filter(|(a, b)| a != b)
         .collect();
-    assert_eq!(changed, vec![("model: sonnet", "model: opus")], "{copy}");
+    assert_eq!(
+        diff,
+        vec![("model: claude-sonnet-5-5", "model: claude-opus-5-5")]
+    );
     assert_eq!(default.lines().count(), copy.lines().count());
 
-    // A hand-written value and a comment stay; a list item with a space reads back unchanged.
-    let hand = copy.replace("model: opus", "model: claude-opus-x # pinned by hand");
-    std::fs::write(repo.join(".fallow/agents/reviewer.md"), &hand).unwrap();
-    sreq(
+    // 008's form save is gone: a body with `fields` is refused and nothing is written.
+    let (status, v) = call(
         tx,
-        Req::PutAgentFields {
-            name: "reviewer".into(),
-            scope: format!("project:{p}"),
-            fields: fields(json!({ "may_run": ["gates", "plan.commands", "npm audit"] })),
-            body: None,
-        },
-    )
-    .unwrap_or_else(|e| panic!("{e}"));
-    let now = std::fs::read_to_string(repo.join(".fallow/agents/reviewer.md")).unwrap();
-    assert!(
-        now.contains("model: claude-opus-x # pinned by hand"),
-        "{now}"
+        "PUT",
+        &format!("/api/agents/reviewer?scope=project:{p}"),
+        Some(json!({ "fields": { "model": "claude-sonnet-5-5" } })),
     );
-    assert!(
-        now.contains("may_run: [gates, plan.commands, \"npm audit\"]"),
-        "{now}"
+    assert_eq!(status, 409, "{v}");
+    assert_eq!(v["error"], "an agent is saved as its whole text", "{v}");
+    assert_eq!(
+        std::fs::read_to_string(repo.join(".fallow/agents/reviewer.md")).unwrap(),
+        copy
     );
-    let view = sreq(
+
+    // The template a new agent starts from.
+    let (status, v) = call(tx, "GET", "/api/agents/template?name=ui-checker", None);
+    assert_eq!(status, 200, "{v}");
+    let template = v["value"]["text"].as_str().unwrap().to_string();
+    // Only the runtimes set up here: these settings have no `[agents.fake]`, so the test
+    // runtime is not offered (017, decided for the engineer).
+    let usable = fallow::defs::usable_runtimes(&studio_settings(&scenario));
+    assert_eq!(
+        usable.iter().map(|(n, _)| *n).collect::<Vec<_>>(),
+        ["claude"]
+    );
+    assert_eq!(
+        template,
+        fallow::defs::agent::template("ui-checker", &usable)
+    );
+    assert!(template.contains("name: ui-checker"), "{template}");
+    assert!(!template.contains("fake"), "{template}");
+    for bad in ["name=Bad%20Name", "name=", "name=a/b", "other=x"] {
+        let (status, v) = call(tx, "GET", &format!("/api/agents/template?{bad}"), None);
+        assert_eq!(status, 409, "{bad}: {v}");
+    }
+
+    // Saved untouched: refused with 7 problems at their lines; no file is written.
+    let (status, v) = call(
         tx,
-        Req::Agents {
-            project: Some(p.clone()),
-        },
-    )
-    .unwrap();
-    let r = view["agents"]
+        "PUT",
+        "/api/agents/ui-checker?scope=user",
+        Some(json!({ "text": template })),
+    );
+    assert_eq!(status, 409, "{v}");
+    let why = v["error"].as_str().unwrap();
+    let problems: Vec<&str> = why.lines().filter(|l| !l.trim().is_empty()).collect();
+    assert_eq!(problems.len(), 7, "{why}");
+    assert!(
+        problems.iter().all(|l| l.starts_with("ui-checker.md:")),
+        "{why}"
+    );
+    assert!(!config.join("agents").join("ui-checker.md").exists());
+
+    // Filled in from its comments: saved as written, and listed.
+    let filled = template
+        .replace("description:", "description: Checks the pages")
+        .replace("runtime:", "runtime: claude")
+        .replace("model:", "model: claude-sonnet-5-5")
+        .replace("kind:", "kind: checker")
+        .replace("may_run:", "may_run: [gates]")
+        .replace("returns:", "returns: verdict")
+        + "Open every page and check it.\n";
+    let (status, v) = call(
+        tx,
+        "PUT",
+        "/api/agents/ui-checker?scope=user",
+        Some(json!({ "text": filled })),
+    );
+    assert_eq!(status, 200, "{v}\n{filled}");
+    assert_eq!(
+        std::fs::read_to_string(config.join("agents").join("ui-checker.md")).unwrap(),
+        filled
+    );
+    let view = sreq(tx, Req::Agents { project: None }).unwrap();
+    let a = view["agents"]
         .as_array()
         .unwrap()
         .iter()
-        .find(|a| a["name"] == "reviewer")
+        .find(|a| a["name"] == "ui-checker")
         .unwrap();
-    assert_eq!(
-        r["may_run"],
-        json!(["gates", "plan.commands", "npm audit"]),
-        "read back as written"
-    );
+    assert_eq!(a["kind"], "checker");
+    assert_eq!(a["model"], "claude-sonnet-5-5");
 
-    // Keys the form may not set are refused, naming them; nothing is written.
-    for bad in [json!({ "name": "other" }), json!({ "limits": "1" })] {
-        let why = sreq(
-            tx,
-            Req::PutAgentFields {
-                name: "reviewer".into(),
-                scope: format!("project:{p}"),
-                fields: fields(bad.clone()),
-                body: None,
-            },
-        )
-        .unwrap_err();
-        let key = bad.as_object().unwrap().keys().next().unwrap().clone();
-        assert!(why.contains(&key), "{why}");
-    }
-    assert_eq!(
-        std::fs::read_to_string(repo.join(".fallow/agents/reviewer.md")).unwrap(),
-        now
-    );
-
-    // A change that stops a pipeline in use from verifying is refused, as in 007 (must fail).
-    let why = sreq(
+    // 017 review 1: "+ New agent" with the name of a file that exists sends no loaded text, so
+    // the file is not written over: refused, naming it; only an explicit replace writes it.
+    let ui = config.join("agents").join("ui-checker.md");
+    let other = filled.replace("Checks the pages", "Checks other pages");
+    let (status, v) = call(
         tx,
-        Req::PutAgentFields {
-            name: "reviewer".into(),
-            scope: "user".into(),
-            fields: fields(json!({ "kind": "maker", "returns": "work" })),
-            body: None,
-        },
-    )
-    .unwrap_err();
-    assert!(why.contains("no longer verify"), "{why}");
-    assert_eq!(
-        std::fs::read_to_string(config.join("agents/reviewer.md")).unwrap(),
-        default,
-        "nothing was written"
+        "PUT",
+        "/api/agents/ui-checker?scope=user",
+        Some(json!({ "text": other })),
     );
-
-    // Fields and instructions in one save, in the file's own line endings: a CRLF file stays
-    // CRLF, and a value with a quote inside stays plain.
-    let crlf = now.replace("\r\n", "\n").replace('\n', "\r\n");
-    std::fs::write(repo.join(".fallow/agents/reviewer.md"), &crlf).unwrap();
-    sreq(
+    assert_eq!(status, 409, "{v}");
+    let why = v["error"].as_str().unwrap();
+    assert!(
+        why.contains(&ui.display().to_string())
+            && why.contains("holds your own ui-checker.md,")
+            && !why.contains("could not use")
+            && why.contains(fallow::studio::defs::NOT_LOADED),
+        "{why}"
+    );
+    assert_eq!(std::fs::read_to_string(&ui).unwrap(), filled);
+    // A page that loaded other text than the file now holds is refused the same way.
+    let (status, v) = call(
         tx,
-        Req::PutAgentFields {
-            name: "reviewer".into(),
-            scope: format!("project:{p}"),
-            fields: fields(json!({ "description": "Checks the \"happy path\" too" })),
-            body: Some("Check every scenario.\nRun something.".into()),
-        },
-    )
-    .unwrap_or_else(|e| panic!("{e}"));
-    let after = std::fs::read_to_string(repo.join(".fallow/agents/reviewer.md")).unwrap();
-    assert!(
-        after.contains("description: Checks the \"happy path\" too\r\n"),
-        "{after:?}"
+        "PUT",
+        "/api/agents/ui-checker?scope=user",
+        Some(json!({ "text": other, "base": template })),
     );
-    assert!(
-        after.ends_with("---\r\n\r\nCheck every scenario.\r\nRun something.\r\n"),
-        "{after:?}"
+    assert_eq!(status, 409, "{v}");
+    assert_eq!(std::fs::read_to_string(&ui).unwrap(), filled);
+    let (status, v) = call(
+        tx,
+        "PUT",
+        "/api/agents/ui-checker?scope=user",
+        Some(json!({ "text": other, "replace": true })),
     );
-    assert!(
-        !after.replace("\r\n", "").contains('\n'),
-        "no mixed line endings"
+    assert_eq!(status, 200, "{v}");
+    assert_eq!(std::fs::read_to_string(&ui).unwrap(), other);
+    // The same over a file Fallow could not use: the message says so, and it is kept.
+    let unusable = filled
+        .replace("name: ui-checker", "name: old-checker")
+        .replace("model: claude-sonnet-5-5", "model: sonnet");
+    let old = config.join("agents").join("old-checker.md");
+    std::fs::write(&old, &unusable).unwrap();
+    let new = filled.replace("name: ui-checker", "name: old-checker");
+    let (status, v) = call(
+        tx,
+        "PUT",
+        "/api/agents/old-checker?scope=user",
+        Some(json!({ "text": new })),
     );
+    assert_eq!(status, 409, "{v}");
+    let why = v["error"].as_str().unwrap();
+    assert!(
+        why.contains("holds your own old-checker.md, which Fallow could not use"),
+        "{why}"
+    );
+    assert_eq!(std::fs::read_to_string(&old).unwrap(), unusable);
+
     drop(e);
     let _ = std::fs::remove_dir_all(&root);
 }

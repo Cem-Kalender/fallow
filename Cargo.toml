@@ -1,6 +1,6 @@
 [package]
 name = "fallow"
-version = "0.3.1"
+version = "0.4.0"
 edition = "2024"
 rust-version = "1.88"
 license = "MIT OR Apache-2.0"
@@ -164,6 +164,10 @@ required-features = ["automation"]
 
 [[test]]
 name = "visual_013"
+required-features = ["automation"]
+
+[[test]]
+name = "visual_017"
 required-features = ["automation"]
 
 # 016 (T025): drives the real macOS window through the `automation` build's page and commands.
