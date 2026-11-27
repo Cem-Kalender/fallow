@@ -109,10 +109,15 @@ impl Studio {
                     "agents",
                     &format!("{}.md", a.name),
                 );
-                let text = std::fs::read_to_string(&file)
-                    .ok()
-                    .or_else(|| shipped(DEFAULT_AGENTS, &a.name).map(str::to_string))
-                    .unwrap_or_default();
+                // A shipped default in force is the shipped text, also when an edited copy
+                // that cannot be used sits at its place (017 FR-018: that copy is listed under
+                // `unusable`).
+                let text = match a.source {
+                    Source::Default => shipped(DEFAULT_AGENTS, &a.name).map(str::to_string),
+                    _ => None,
+                }
+                .or_else(|| std::fs::read_to_string(&file).ok())
+                .unwrap_or_default();
                 let update = self.config.as_ref().and_then(|c| {
                     std::fs::read_to_string(c.join("agents").join(format!("{}.md.new", a.name)))
                         .ok()
@@ -132,7 +137,22 @@ impl Studio {
                 })
             })
             .collect();
-        Ok(json!({ "agents": agents, "problems": lib.problems }))
+        // 017 (FR-013, FR-018; contracts/web-api.md): each file that could not be used, with
+        // its problems at their lines and which definition of that name is in force meanwhile.
+        let unusable: Vec<Value> = lib
+            .unusable
+            .iter()
+            .map(|u| {
+                json!({
+                    "name": u.name, "file": u.file, "source": u.source, "text": u.text,
+                    "problems": u.problems.iter()
+                        .map(|p| json!({ "line": p.line, "message": p.message }))
+                        .collect::<Vec<_>>(),
+                    "in_force": u.in_force,
+                })
+            })
+            .collect();
+        Ok(json!({ "agents": agents, "problems": lib.problems, "unusable": unusable }))
     }
 
     /// `GET /api/pipelines?project=<p>`: the pipelines in force, whether each verifies and what
@@ -268,7 +288,9 @@ impl Studio {
     /// starts from, every required key with a comment saying what to write.
     pub fn agent_template(&self, name: &str) -> Result<Value, String> {
         check_name(name)?;
-        Ok(json!({ "text": agent::template(name, &defs::runtimes()) }))
+        // Only the runtimes set up on this machine (017, decided for the engineer).
+        let runtimes = defs::usable_runtimes(&self.settings);
+        Ok(json!({ "text": agent::template(name, &runtimes) }))
     }
 
     /// `PUT /api/agents/<name>`: checked as Fallow reads it; refused with the problems at their

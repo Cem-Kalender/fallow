@@ -444,6 +444,13 @@ pub mod registry {
         }
     }
 
+    /// 017: whether the runtime `name` is set up on this machine: it has a profile in the
+    /// settings (or is `claude`, whose program is found on the PATH). Its program may still be
+    /// missing; [`runtime`] says so at a call.
+    pub fn configured(name: &str, settings: &Settings) -> bool {
+        profile(name, settings).is_some()
+    }
+
     /// The program and leading arguments of `name`: its profile in the settings, or for
     /// `claude` the `claude` program on the PATH.
     fn profile(name: &str, settings: &Settings) -> Option<(String, Vec<String>)> {

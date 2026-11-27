@@ -66,6 +66,25 @@ pub fn runtimes() -> Vec<(&'static str, crate::agent::ModelNaming)> {
         .collect()
 }
 
+/// 017 (the template, decided for the engineer): the runtimes a new agent can use on this
+/// machine, those [`configured`](crate::agent::registry::configured) in `settings`: the test
+/// runtime `fake` only with an `[agents.fake]` profile. `claude` when none is.
+pub fn usable_runtimes(
+    settings: &crate::config::Settings,
+) -> Vec<(&'static str, crate::agent::ModelNaming)> {
+    let all = runtimes();
+    let usable: Vec<_> = all
+        .iter()
+        .filter(|(n, _)| crate::agent::registry::configured(n, settings))
+        .copied()
+        .collect();
+    if usable.is_empty() {
+        all.into_iter().filter(|(n, _)| *n == "claude").collect()
+    } else {
+        usable
+    }
+}
+
 /// What a library holds after loading: the definitions in force, and the files that could not be
 /// used, with why.
 #[derive(Debug, Clone, Serialize, Default)]
@@ -242,8 +261,9 @@ impl Library {
     }
 }
 
-/// A 64-bit FNV-1a hash, to tell whether a shipped file changed.
-fn fnv(s: &str) -> String {
+/// A 64-bit FNV-1a hash, to tell whether a shipped file changed: what `.shipped.json` records
+/// for each shipped file (017 T030: public, so a test can write a record as an earlier version did).
+pub fn fingerprint(s: &str) -> String {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
     for b in s.bytes() {
         h ^= u64::from(b);
@@ -275,7 +295,7 @@ pub fn install_defaults(user: &Path) -> Result<Vec<String>, String> {
         for (name, text) in files {
             let key = format!("{sub}/{name}.{ext}");
             let path = dir.join(format!("{name}.{ext}"));
-            let shipped = fnv(text);
+            let shipped = fingerprint(text);
             let write =
                 |p: &Path| std::fs::write(p, text).map_err(|e| format!("{}: {e}", p.display()));
             match std::fs::read_to_string(&path) {
@@ -291,7 +311,7 @@ pub fn install_defaults(user: &Path) -> Result<Vec<String>, String> {
                     if last.as_deref() == Some(shipped.as_str()) {
                         continue;
                     }
-                    let untouched = last.as_deref() == Some(fnv(&current).as_str());
+                    let untouched = last.as_deref() == Some(fingerprint(&current).as_str());
                     if untouched || current == *text {
                         write(&path)?;
                     } else {
@@ -320,6 +340,31 @@ mod tests {
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).unwrap();
         d
+    }
+
+    #[test]
+    fn a_new_agent_is_offered_the_runtimes_set_up_here() {
+        let names = |s: &crate::config::Settings| -> Vec<&str> {
+            usable_runtimes(s).iter().map(|(n, _)| *n).collect()
+        };
+        let parse = |text: &str| {
+            let mut n = Vec::new();
+            let s = crate::config::Settings::parse("settings.toml", text, &mut n);
+            assert!(n.is_empty(), "{n:?}");
+            s
+        };
+        // No `[agents.fake]`: the test runtime is not offered.
+        assert_eq!(names(&crate::config::Settings::default()), ["claude"]);
+        assert_eq!(names(&parse("")), ["claude"]);
+        // With its profile, it is.
+        assert_eq!(
+            names(&parse("[agents.fake]\ncommand = \"fake-agent\"\n")),
+            ["claude", "fake"]
+        );
+        // None set up (no runtime has a profile): still claude.
+        let mut none = crate::config::Settings::default();
+        none.agents.clear();
+        assert_eq!(names(&none), ["claude"]);
     }
 
     #[test]
@@ -467,7 +512,10 @@ mod tests {
         let mut r: BTreeMap<String, String> =
             serde_json::from_str(&std::fs::read_to_string(&rec).unwrap()).unwrap();
         r.insert("agents/builder.md".into(), "0000000000000000".into());
-        r.insert("agents/reviewer.md".into(), fnv(DEFAULT_AGENTS[2].1));
+        r.insert(
+            "agents/reviewer.md".into(),
+            fingerprint(DEFAULT_AGENTS[2].1),
+        );
         std::fs::write(&rec, serde_json::to_string(&r).unwrap()).unwrap();
         let news = install_defaults(&user).unwrap();
         assert_eq!(news, ["agents/builder.md"]);

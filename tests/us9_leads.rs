@@ -579,3 +579,70 @@ fn a_loop_question_goes_to_the_feature_sessions_lead() {
     )
     .unwrap();
 }
+
+/// 017 US3 AS5 (T031; FR-021): a spec session begun before 017 recorded its lead's model as the
+/// alias (`opus`). After the update the shipped lead names `claude-opus-5-5`: the session says
+/// its lead changed, and its next message starts a new agent session (no `--resume`) with the
+/// conversation kept.
+#[test]
+fn a_session_begun_on_an_alias_starts_a_new_agent_session_after_the_update() {
+    use fallow::run::engine::Msg;
+    let root = scratch("leads-alias");
+    let repo = repo(&root);
+    let scenario = root.join("scenario.toml");
+    std::fs::write(
+        &scenario,
+        r##"
+[[step]]
+kind = "lead_turn"
+forked = false
+when = "Before the update"
+output = { reply = "on 0.3.1", step = "none" }
+
+[[step]]
+kind = "lead_turn"
+forked = false
+model = "claude-opus-5-5"
+when = "After the update"
+output = { reply = "on the full name", step = "none" }
+"##,
+    )
+    .unwrap();
+    let e = start_studio(&root, &scenario, None);
+    let project = add(&e.tx, &repo);
+    let conv = feature(&e.tx, &project, "Kept");
+    say(&e.tx, &conv, "Before the update").unwrap();
+    let v = turn_ended(&e.tx, &conv, 1);
+    assert_eq!(v["turns"][0]["reply"], "on 0.3.1", "{v}");
+    let first = v["session"].as_str().unwrap().to_string();
+    e.tx.send(Msg::Shutdown).unwrap();
+    let fallow::service::ToolEngine { handle, .. } = e;
+    handle.join().unwrap();
+    // The log as 0.3.1 wrote it: the lead `lead` on `claude`, its model the alias.
+    let log = root
+        .join("data")
+        .join("conversations")
+        .join(&conv)
+        .join("events.jsonl");
+    let text = std::fs::read_to_string(&log).unwrap();
+    std::fs::write(
+        &log,
+        replace_found(&text, "\"model\":\"claude-opus-5-5\"", "\"model\":\"opus\""),
+    )
+    .unwrap();
+
+    let e = start_studio(&root, &scenario, None);
+    let tx = &e.tx;
+    let v = view(tx, &conv);
+    assert_eq!(v["lead"]["name"], "lead", "{v}");
+    assert_eq!(v["lead"]["model"], "claude-opus-5-5", "{v}");
+    assert_eq!(v["lead"]["changed"], true, "{v}");
+    say(tx, &conv, "After the update").unwrap();
+    let v = turn_ended(tx, &conv, 2);
+    assert_eq!(v["turns"][1]["reply"], "on the full name", "{v}");
+    assert!(v["turns"][1]["failure"].is_null(), "{v}");
+    // A new agent session, not the old one resumed; the conversation is kept.
+    assert_ne!(v["session"], first.as_str(), "{v}");
+    assert_eq!(v["turns"][0]["reply"], "on 0.3.1", "{v}");
+    assert_eq!(v["lead"]["changed"], false, "{v}");
+}

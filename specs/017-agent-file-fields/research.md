@@ -79,7 +79,7 @@ returns:                 # work for a maker, verdict for a checker, reply for a 
 ---
 ```
 
-The runtimes' part of the comments comes from `defs::runtimes()` (R-1), so a new runtime appears without touching the template. `name:` is the only value filled in.
+The runtimes' part of the comments comes from `defs::runtimes()` (R-1), so a new runtime appears without touching the template; the route passes only those usable on this machine (`defs::usable_runtimes(settings)`: a profile in the settings, `claude` when none; spec Clarifications, decided during the build). `name:` is the only value filled in.
 
 **Check of the subset**: a value followed by ` #` is a comment (`strip_comment`), so `description:             # one line…` reads as an empty `description` and is reported missing at its line. Full-line `#` comments are allowed. The template, untouched, fails with exactly 6 missing fields and the empty instructions (a test).
 

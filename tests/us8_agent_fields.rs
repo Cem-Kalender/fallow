@@ -93,11 +93,19 @@ fn an_agent_is_saved_as_its_whole_text() {
     let (status, v) = call(tx, "GET", "/api/agents/template?name=ui-checker", None);
     assert_eq!(status, 200, "{v}");
     let template = v["value"]["text"].as_str().unwrap().to_string();
+    // Only the runtimes set up here: these settings have no `[agents.fake]`, so the test
+    // runtime is not offered (017, decided for the engineer).
+    let usable = fallow::defs::usable_runtimes(&studio_settings(&scenario));
+    assert_eq!(
+        usable.iter().map(|(n, _)| *n).collect::<Vec<_>>(),
+        ["claude"]
+    );
     assert_eq!(
         template,
-        fallow::defs::agent::template("ui-checker", &fallow::defs::runtimes())
+        fallow::defs::agent::template("ui-checker", &usable)
     );
     assert!(template.contains("name: ui-checker"), "{template}");
+    assert!(!template.contains("fake"), "{template}");
     for bad in ["name=Bad%20Name", "name=", "name=a/b", "other=x"] {
         let (status, v) = call(tx, "GET", &format!("/api/agents/template?{bad}"), None);
         assert_eq!(status, 409, "{bad}: {v}");

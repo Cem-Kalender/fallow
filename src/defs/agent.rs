@@ -473,7 +473,8 @@ pub fn parse(
 
 /// 017 (FR-012, research R-5): the text a new agent starts from. Every required key, `name`
 /// filled in and the others without a value, each followed by a comment saying what to write;
-/// the model's comment gives each runtime's form (`runtimes`, [`crate::defs::runtimes`]).
+/// the model's comment gives each runtime's form (`runtimes`: those usable on this machine,
+/// [`crate::defs::usable_runtimes`]; the runtime's comment names the same ones).
 /// Saved untouched, [`parse`] refuses it with the six missing fields and the empty instructions.
 pub fn template(name: &str, runtimes: &[(&str, ModelNaming)]) -> String {
     let names: Vec<&str> = runtimes.iter().map(|(n, _)| *n).collect();
@@ -871,6 +872,29 @@ mod tests {
     }
 
     // ---- 017 US2 (FR-012, research R-5): the template a new agent starts from ----
+
+    #[test]
+    fn the_template_names_only_the_runtimes_it_is_given() {
+        let claude: Vec<_> = crate::defs::runtimes()
+            .into_iter()
+            .filter(|(n, _)| *n == "claude")
+            .collect();
+        let t = template("ui-checker", &claude);
+        let line = |key: &str| {
+            t.lines()
+                .find(|l| l.starts_with(&format!("{key}:")))
+                .unwrap()
+                .to_string()
+        };
+        assert!(
+            line("runtime").ends_with("which program runs it: claude"),
+            "{t}"
+        );
+        let model = line("model");
+        assert!(model.contains(&claude[0].1.hint()), "{model}");
+        assert!(!model.contains("fake"), "{model}");
+        assert!(!t.contains("fake"), "{t}");
+    }
 
     #[test]
     fn the_template_says_what_belongs_in_every_field() {

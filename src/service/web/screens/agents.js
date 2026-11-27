@@ -2,6 +2,8 @@
 // and the selected one in one editor holding its whole file, with the pipelines that use it.
 // Every field is written in the file; a save sends the whole text (017 contracts/web-api.md).
 // A new agent starts from the template Fallow serves, with a comment on every line.
+// 017 US3 (FR-013, FR-018): the files Fallow could not use are listed under the agents; each
+// opens in the same editor with its problems at their lines, and is saved at its own place.
 "use strict";
 (() => {
   const { h, raw, get, api, confirm, alertLine, saveFor } = Fallow;
@@ -12,6 +14,20 @@
   const agentOf = (name) => s.agents.find((a) => a.name === name);
   const opt = (v, label, cur) => h`<option value="${v}"${raw(v === cur ? " selected" : "")}>${label}</option>`;
   const SOURCE = { default: "default", user: "yours", project: "this project" };
+  // Which definition of a name runs while its file cannot be used (017 FR-018).
+  const IN_FORCE = { default: "the default is in force", user: "yours is in force", project: "this project's is in force" };
+  const inForce = (u) => IN_FORCE[u.in_force] || "not in force";
+  // A problem's text with its web addresses (https) as links, which the window opens in the
+  // engineer's browser on their click (017 FR-023; app.js linksLeaveByClick).
+  const linked = (text) => String(text).split(/(https:\/\/[^\s)]+)/).map((part, i) => (i % 2
+    ? h`<a href="${part}" target="_blank" rel="noopener">${part}</a>`
+    : part));
+  const brokenOf = () => (s.broken === null ? null : s.unusable[s.broken] || null);
+  // What the editor shows: an agent, a new one, or a file that could not be used.
+  const shownKey = () => {
+    const u = brokenOf();
+    return u ? `${u.source}:${u.name}.md` : (s.agent || s.newAgent || "");
+  };
   const GROUPS = [
     ["lead", "Lead"],
     ["assistant", "Assistant: codes with you in a session"],
@@ -35,18 +51,64 @@
             <span class="d mono">${a.runtime}${a.model ? ` · ${a.model}` : ""} · ${n ? `in ${n} pipeline${n === 1 ? "" : "s"}` : "in no pipeline"}${s.runtimes.some((r) => r.name === a.runtime && !r.installed) ? h` <span class="error">· not installed</span>` : ""}</span></button>`;
         })}`;
       })}
-      ${s.problems.length ? h`<div class="card pad-12"><div class="b small">Files Fallow could not use</div><ul class="problems">${s.problems.map((p) => h`<li class="mono">${p}</li>`)}</ul></div>` : ""}
+      ${unusable()}
     </aside>`;
   }
 
+  // "Files Fallow could not use" (017 FR-013): each agent file a button that opens it; the other
+  // problems (pipelines) as text.
+  function unusable() {
+    const other = s.problems.filter((p) => !s.unusable.some((u) => p.startsWith(`${u.file}:`)));
+    if (!s.unusable.length && !other.length) return "";
+    return h`<div class="card pad-12 mt-8"><div class="b small">Files Fallow could not use</div>
+      ${s.unusable.map((u, i) => {
+        const sel = i === s.broken;
+        const n = u.problems.length;
+        return h`<button class="ag-item${sel ? " sel" : ""}" data-act="broken" data-i="${String(i)}" aria-pressed="${sel ? "true" : "false"}" title="${u.file}">
+          <span class="row wrap gap-6"><b>${u.name}.md</b><span class="pill grey">${SOURCE[u.source] || u.source}</span><span class="pill orange">${n} problem${n === 1 ? "" : "s"}</span></span>
+          <span class="d">${inForce(u)}</span></button>`;
+      })}
+      ${other.length ? h`<ul class="problems">${other.map((p) => h`<li class="mono">${linked(p)}</li>`)}</ul>` : ""}
+    </div>`;
+  }
+
+  // A file Fallow could not use, open to be fixed: saved at its own place.
+  function brokenEditor(u) {
+    const lines = s.problems2.length ? problemLines() : u.problems.map((p) => ({ line: p.line, text: p.message }));
+    return h`<section class="card ag-editor" aria-label="${`The file ${u.name}.md, which Fallow could not use`}">
+      <div class="row wrap gap-8">
+        <h1 class="page-title">${u.name}</h1>
+        <span class="pill orange">cannot be used</span><span class="pill grey">${SOURCE[u.source] || u.source}</span>
+        <span class="grow"></span>
+        ${saveFor("ag-scope", s.project, u.source === "project" ? "project" : "user", "agents")}
+        <button class="btn" data-act="save">Save</button>
+      </div>
+      <div class="small muted mt-6">Fallow could not use this file: ${inForce(u)}. Fix it below and save it.</div>
+      <div class="row mt-12"><b class="mono">${u.name}.md</b><span class="small muted mono">${u.file}</span></div>
+      ${fileBox(u.name, lines)}
+    </section>`;
+  }
+
+  // The one editor: the whole file, and its problems at their lines (announced when shown).
+  function fileBox(name, lines) {
+    return h`<label for="ag-text" class="sr">${name}.md</label>
+      <textarea id="ag-text" class="def-text mt-6" spellcheck="false" rows="28" data-for="${shownKey()}">${s.text}</textarea>
+      ${lines.length ? h`<ul class="problems" role="alert">${lines.map((l) => h`<li>${l.line ? `line ${l.line}: ` : ""}${linked(l.text)}</li>`)}</ul>` : ""}`;
+  }
+
+  // A refused save's problems, `file:line: message` each.
+  const problemLines = () => s.problems2.map((p) => {
+    const m = p.match(/:(\d+): (.*)$/);
+    return m ? { line: +m[1], text: m[2] } : { line: 0, text: p };
+  });
+
   function editor() {
+    const broken = brokenOf();
+    if (broken) return brokenEditor(broken);
     const a = agentOf(s.agent);
     if (!a && !s.newAgent) return h`<section class="card ag-editor"><div class="empty small">Choose an agent.</div></section>`;
     const name = a ? a.name : s.newAgent;
-    const lines = s.problems2.map((p) => {
-      const m = p.match(/:(\d+): (.*)$/);
-      return m ? { line: +m[1], text: m[2] } : { line: 0, text: p };
-    });
+    const lines = problemLines();
     const used = a ? a.used_by : [];
     const scopeDefault = a && a.source === "project" ? "project" : (s.project ? "project" : "user");
     return h`<section class="card ag-editor" aria-label="${`The agent ${name}`}">
@@ -68,9 +130,7 @@
       <div class="small mt-8">Used in: ${used.length ? used.map((p, i) => h`${i ? " · " : ""}<a href="#/pipelines/${projectPart()}/${encodeURIComponent(p)}">${p}</a>`) : h`<span class="muted">no pipeline</span>`}</div>
       ${a && a.update ? h`<div class="notice small mt-8">An update of this default is beside your copy, in <span class="mono">${name}.md.new</span>. <button class="btn btn2 xs" data-act="show-update">${s.showUpdate ? "Hide it" : "Show it"}</button>${s.showUpdate ? h`<pre class="term">${a.update}</pre>` : ""}</div>` : ""}
       <div class="row mt-12"><b class="mono">${name}.md</b>${a ? "" : h`<span class="small muted">Fill in every line from its comment; the instructions go below the closing ---.</span>`}</div>
-      <label for="ag-text" class="sr">${name}.md</label>
-      <textarea id="ag-text" class="def-text mt-6" spellcheck="false" rows="28" data-for="${name}">${s.text}</textarea>
-      ${lines.length ? h`<ul class="problems" role="alert">${lines.map((l) => h`<li>${l.line ? `line ${l.line}: ` : ""}${l.text}</li>`)}</ul>` : ""}
+      ${fileBox(name, lines)}
       <div class="tiny muted mt-10">What Fallow adds around every agent: its own worktree · only the commands listed · a fixed result shape · Fallow commits and checks the work · limits on time, turns and cost</div>
     </section>`;
   }
@@ -81,7 +141,7 @@
     const focus = document.activeElement && document.activeElement.id;
     // Unsaved edits survive a redraw, but only for the agent still shown, and never across a
     // pick (a reset or a reload shows the file as it is now).
-    const name = s.agent || s.newAgent || "";
+    const name = shownKey();
     if (!s.fresh) {
       const keepText = document.getElementById("ag-text");
       if (keepText && keepText.dataset.for === name) s.text = keepText.value;
@@ -106,6 +166,12 @@
     s.runtimes = rt;
     s.agents = ag.agents;
     s.problems = ag.problems;
+    s.unusable = ag.unusable || [];
+    // The file shown stays shown while it is still listed (found again by its place and name).
+    if (s.brokenKey) {
+      const i = s.unusable.findIndex((u) => `${u.source}:${u.name}` === s.brokenKey);
+      s.broken = i < 0 ? null : i;
+    }
     s.projects = dash.projects || [];
     // The project's lead (009 US2).
     s.projectLead = null;
@@ -114,10 +180,17 @@
     }
   }
 
+  function focusItem(sel) {
+    const b = document.querySelector(sel);
+    if (b) b.focus();
+  }
+
   const isProjectLead = (a) => !!(s.projectLead && a.kind === "lead" && s.projectLead.name === a.name);
 
   function pick(name) {
     const a = agentOf(name);
+    s.broken = null;
+    s.brokenKey = null;
     s.agent = a ? a.name : null;
     s.newAgent = null;
     s.problems2 = [];
@@ -126,9 +199,27 @@
     s.fresh = true;
   }
 
+  // A file that could not be used, opened in the editor (017 FR-013).
+  function pickBroken(i) {
+    const u = s.unusable[i];
+    s.agent = null;
+    s.newAgent = null;
+    s.broken = i;
+    s.brokenKey = `${u.source}:${u.name}`;
+    s.problems2 = [];
+    s.showUpdate = false;
+    s.text = u.text;
+    s.fresh = true;
+  }
+
   const lf = (x) => String(x || "").replace(/\r\n/g, "\n").trim();
   // What the engineer changed in the file and did not save.
   function dirty() {
+    const u = brokenOf();
+    if (u) {
+      const text = document.getElementById("ag-text");
+      return lf(text ? text.value : s.text) !== lf(u.text);
+    }
     const a = agentOf(s.agent);
     if (!a) return !!s.newAgent;
     const text = document.getElementById("ag-text");
@@ -140,7 +231,7 @@
 
   async function enter(app, r) {
     s = { app, project: r.project || null, agents: [], runtimes: [], projects: [], problems: [], problems2: [],
-      agent: null, newAgent: null, text: "", showUpdate: false };
+      unusable: [], broken: null, brokenKey: null, agent: null, newAgent: null, text: "", showUpdate: false };
     try {
       await load();
     } catch (e) {
@@ -167,7 +258,7 @@
   }
 
   async function doSave() {
-    const name = s.agent || s.newAgent;
+    const name = s.agent || s.newAgent || (brokenOf() || {}).name;
     const scope = Fallow.scopeOf(document.getElementById("ag-scope").value, s.project);
     const url = `/api/agents/${encodeURIComponent(name)}?scope=${encodeURIComponent(scope)}`;
     try {
@@ -190,10 +281,25 @@
         {
           // Asked already: the address change that follows needs no second question.
           const to = `#/agents/${projectPart()}/${encodeURIComponent(el.dataset.name)}`;
-          if (to !== location.hash) s.asked = true;
-          location.hash = to;
+          if (to !== location.hash) {
+            s.asked = true;
+            location.hash = to;
+            return;
+          }
+          // The address is already this agent's (a file that could not be used was shown).
+          pick(el.dataset.name);
+          render();
+          focusItem(`.ag-item[data-name="${CSS.escape(el.dataset.name)}"]`);
         }
         return;
+      case "broken": {
+        const i = Number(el.dataset.i);
+        if (i === s.broken || !s.unusable[i] || !(await leaveOk())) return;
+        pickBroken(i);
+        render();
+        focusItem(`.ag-item[data-act="broken"][data-i="${i}"]`);
+        return;
+      }
       case "new-agent": {
         const n = await confirm({ title: "A new agent", text: "Its name, in a-z, 0-9 and -. It is saved as <name>.md.", ok: "Create", input: { label: "Name", value: "" } });
         if (!n) return;
