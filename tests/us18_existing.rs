@@ -705,9 +705,12 @@ fn finished_0_4_0_logs_fold_to_the_same_outcome() {
         let root = scratch(&format!("018-fold-{name}"));
         let dir = root.join("runs/1");
         std::fs::create_dir_all(&dir).unwrap();
+        // The root goes inside JSON strings, so it is put in JSON-escaped (a Windows path's `\`).
+        let quoted = serde_json::to_string(&root.display().to_string()).unwrap();
+        let root_json = &quoted[1..quoted.len() - 1];
         let log = std::fs::read_to_string(fixtures.join(format!("{name}.events.jsonl")))
             .unwrap()
-            .replace(ROOT_MARK, &root.display().to_string());
+            .replace(ROOT_MARK, root_json);
         std::fs::write(dir.join("events.jsonl"), log).unwrap();
         let (_, events, notes) = Log::<Event>::open(&dir).unwrap();
         assert!(notes.is_empty(), "{name}: {notes:?}");
