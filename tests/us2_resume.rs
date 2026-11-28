@@ -204,7 +204,24 @@ fn a_restart_while_builders_run_resumes_each_task() {
     // A working copy gone while Fallow was stopped is made again on its branch, with the
     // interrupted work committed there or not (research R-10).
     let wt = root.join("data/runs").join(id.to_string()).join("wt");
-    std::fs::remove_dir_all(wt.join("task-T005")).unwrap();
+    // On Windows an agent Fallow just stopped holds its working copy open until its process
+    // has ended. The builders sleep 30 s: if Fallow had not ended them, the copy would stay
+    // held for that long, so ten seconds of retries still proves they were stopped.
+    let copy = wt.join("task-T005");
+    let started = std::time::Instant::now();
+    loop {
+        match std::fs::remove_dir_all(&copy) {
+            Ok(()) => break,
+            Err(e) if started.elapsed() < std::time::Duration::from_secs(10) => {
+                let _ = e;
+                std::thread::sleep(std::time::Duration::from_millis(200));
+            }
+            Err(e) => panic!(
+                "{} still held 10 s after Fallow stopped: {e}",
+                copy.display()
+            ),
+        }
+    }
     let e = start_studio(&root, &root.join("scenario.toml"), None);
     let v = wait_for(&e.tx, id, "ready", |v| v["stage"] == "ready");
     for t in ["T004", "T005", "T006"] {
