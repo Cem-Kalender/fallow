@@ -1,6 +1,6 @@
 [package]
 name = "fallow"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2024"
 rust-version = "1.88"
 license = "MIT OR Apache-2.0"
@@ -168,6 +168,11 @@ required-features = ["automation"]
 
 [[test]]
 name = "visual_017"
+required-features = ["automation"]
+
+# 018 (T056): serves the Pipelines tab for checks/pipelines.js, through the automation build.
+[[test]]
+name = "visual_018"
 required-features = ["automation"]
 
 # 016 (T025): drives the real macOS window through the `automation` build's page and commands.

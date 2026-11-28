@@ -268,11 +268,15 @@ fn main() -> ExitCode {
             .append(true)
             .open(log)
         {
-            // One argument per line; a newline inside one is written as `\n`.
+            // One argument per line; a newline inside one is written as `\n`. One write per
+            // call, so the calls of agents running at once never interleave (018 review 1).
+            let mut block = String::new();
             for a in &args {
-                let _ = writeln!(f, "{}", a.replace('\n', "\\n"));
+                block.push_str(&a.replace('\n', "\\n"));
+                block.push('\n');
             }
-            let _ = writeln!(f, "---");
+            block.push_str("---\n");
+            let _ = f.write_all(block.as_bytes());
         }
     }
     // 009: playing an editor. `--record <file> <args...>` appends each argument, one per line,
@@ -491,13 +495,17 @@ fn main() -> ExitCode {
         return ExitCode::SUCCESS;
     };
     used.push(n);
-    let _ = std::fs::write(
-        &used_path,
-        used.iter()
-            .map(|u| u.to_string())
-            .collect::<Vec<_>>()
-            .join("\n"),
-    );
+    // Written to a file of its own and renamed over the record, so an agent killed while writing
+    // (a test's shutdown) leaves the old record or the new one, never half of one.
+    let tmp = used_path.with_extension(format!("used.{}", std::process::id()));
+    let text = used
+        .iter()
+        .map(|u| u.to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+    if std::fs::write(&tmp, text).is_ok() {
+        let _ = std::fs::rename(&tmp, &used_path);
+    }
     drop(lock);
     emit(
         json!({"type": "assistant", "session_id": session, "message": {"content": [{"type": "text", "text": format!("Working on {kind}.")}]}}),

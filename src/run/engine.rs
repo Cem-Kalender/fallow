@@ -3955,11 +3955,14 @@ impl Engine {
             }
             Err(problems) => json!({ "ok": false, "problems": problems }),
         };
-        let tasks: usize = std::fs::read_to_string(wd.join(&f.dir).join("tasks.md"))
+        let phases = std::fs::read_to_string(wd.join(&f.dir).join("tasks.md"))
             .ok()
             .and_then(|t| crate::speckit::tasks::read("tasks.md", &t).ok())
-            .map(|ps| ps.iter().map(|p| p.tasks.len()).sum())
-            .unwrap_or(0);
+            .unwrap_or_default();
+        let tasks: usize = phases.iter().map(|p| p.tasks.len()).sum();
+        // 018 (FR-022, research R-11): what each pipeline's builders will do over these tasks,
+        // from the groups the runner forms, under the setting that bounds the slots.
+        let max_parallel = self.ctx.settings.defaults.max_parallel;
         let lib = self.studio.library(Some(&p.path));
         let mut v = self.feature_summary(p, f);
         v["documents"] = json!(docs);
@@ -3977,8 +3980,18 @@ impl Engine {
         v["pipelines"] = json!(lib
             .pipelines
             .values()
-            .map(|pl| json!({ "name": pl.name, "verifying": pl.verifying, "missing": pl.missing }))
+            .map(|pl| json!({
+                "name": pl.name, "verifying": pl.verifying, "missing": pl.missing,
+                "builders": pl.caps.builders,
+                "statement": super::groups::lock_statement(pl.caps.builders, &phases, max_parallel),
+            }))
             .collect::<Vec<_>>());
+        // US4 review 1 (decision 1): a new lock of a feature whose loop is live keeps the loop's
+        // recorded pipeline; the form shows it, and what it will do for what is left.
+        v["relock"] = self
+            .live_loop(project, feature)
+            .and_then(|id| self.relock_statement(project, feature, id, &phases, max_parallel))
+            .unwrap_or(Value::Null);
         v["budget_suggestion"] = json!({
             "tasks": tasks,
             "usd": (tasks as f64 * p.budget_per_task.usd * 100.0).round() / 100.0,
@@ -4574,6 +4587,61 @@ impl Engine {
         Ok(json!({ "affected": a.stories, "why": a.why }))
     }
 
+    /// US4 review 1 (decision 1): what a new lock of the feature would go on with in loop `id`:
+    /// the pipeline the loop recorded (`pipeline_of`, not the library's current definition), and
+    /// its statement over the phases still to come, from the loop as the new lock (`phases`, the
+    /// feature's `tasks.md` now) would leave it: a done phase and a task already on the build
+    /// branch are skipped by the runner, so not counted.
+    fn relock_statement(
+        &self,
+        project: &str,
+        feature: &str,
+        id: u64,
+        phases: &[PhaseSpec],
+        max_parallel: u32,
+    ) -> Option<Value> {
+        let r = self.runs.get(&id)?;
+        let lib = super::feature::library(r, &self.ctx);
+        let pl = super::feature::pipeline_of(r, &lib).ok()?;
+        let affected: Vec<String> = self
+            .relock_preview(project, feature)
+            .ok()
+            .and_then(|v| serde_json::from_value(v["affected"].clone()).ok())
+            .unwrap_or_default();
+        // The new lock applied to a copy of the loop's state, as `relock` will record it.
+        let mut st = r.state.clone();
+        let lock = st.feature_loop.as_ref()?.lock + 1;
+        st.apply(&Logged {
+            seq: st.seq + 1,
+            at: super::time::rfc3339(super::time::unix_now()),
+            event: Event::Relocked {
+                lock,
+                commit: String::new(),
+                affected,
+                phases: phases.to_vec(),
+                reconciled_target: None,
+            },
+        });
+        let l = st.feature_loop.as_ref()?;
+        let to_come: Vec<PhaseSpec> = l
+            .phases
+            .iter()
+            .filter(|p| p.state != PhaseState::Done)
+            .map(|p| p.spec.clone())
+            .collect();
+        Some(json!({
+            "name": pl.name,
+            "verifying": pl.verifying,
+            "builders": pl.caps.builders,
+            "statement": super::groups::relock_statement(
+                pl.caps.builders,
+                &to_come,
+                max_parallel,
+                |t| l.merged_into_build(t),
+            ),
+        }))
+    }
+
     /// A new lock of an unlocked feature: the loop goes on, with the affected stories reopened
     /// (research S-17).
     fn relock(&mut self, project: &str, feature: &str, id: u64) -> Result<Value, String> {
@@ -5167,12 +5235,15 @@ impl Engine {
             Request::RelockPreview { project, feature } => self.relock_preview(&project, &feature),
             Request::Answer { id, text } => {
                 // A question relayed to the engineer is answered as such: committed first.
-                let waiting = self
-                    .runs
-                    .get(&id)
-                    .and_then(|r| r.state.feature_loop.as_ref())
-                    .and_then(super::questions::waiting)
-                    .map(|q| q.id.clone());
+                // 018 (review 1): the question the engineer was asked, when several wait.
+                let waiting = self.runs.get(&id).and_then(|r| {
+                    let needs = r.state.needs.as_ref().map(|n| n.why.as_str());
+                    r.state
+                        .feature_loop
+                        .as_ref()
+                        .and_then(|l| super::questions::asked(l, needs))
+                        .map(|q| q.id.clone())
+                });
                 match waiting {
                     Some(q) => self.question_answer(id, &q, &text, false),
                     None => run_mut(self, id)

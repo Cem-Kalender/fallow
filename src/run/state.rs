@@ -35,6 +35,8 @@ pub struct Step {
     pub queued_seq: u64,
     /// The event number of its start (0 until it starts).
     pub started_seq: u64,
+    /// 018: the event number of its end (0 until it ends), for how many ran at once.
+    pub finished_seq: u64,
     /// 007: a loop step's task (`T014`), phase and agent definition (`builder`).
     pub task: Option<String>,
     pub phase: Option<u32>,
@@ -304,6 +306,88 @@ pub struct LoopState {
     pub update_steps: Vec<(String, String, bool)>,
     /// 011: each merged update's number, merge commit and the target commit it merged in.
     pub update_merges: Vec<(u32, String, String)>,
+    /// 018: the groups of `[P]` tasks started, in order (none before 018, or with one builder).
+    pub groups: Vec<GroupState>,
+}
+
+/// 018 (data-model.md "Group"): a group of `[P]` tasks built at the same time, each in its own
+/// working copy (`worktrees/task-<id>`, branch `<build_branch>-<id>`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct GroupState {
+    pub phase: u32,
+    /// The build head when the group started: every task's working copy starts there.
+    pub base: String,
+    pub tasks: Vec<GroupTask>,
+    /// Every task merged and the merged result gated, or dropped by a new lock.
+    pub done: bool,
+    /// 018 (research R-6a): the loop's lock when the group started. A group in progress under
+    /// an older lock is taken in by the new one.
+    pub lock: u32,
+    /// Dropped by a new lock: its tasks not merged were reset to not built.
+    pub dropped: bool,
+    /// When it ended (done or dropped), and what of it Fallow could not remove.
+    pub ended_at: Option<String>,
+    pub left: Vec<String>,
+    /// 018 (review 2): the seq of its start and of its end (0 while in progress): a step queued
+    /// in between for one of its tasks or for the group itself is the group's.
+    #[serde(skip)]
+    pub started_seq: u64,
+    #[serde(skip)]
+    pub ended_seq: u64,
+}
+
+/// 018: a task of a group.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct GroupTask {
+    pub id: String,
+    /// The merge commit on the build branch, once merged.
+    pub merged: Option<String>,
+    /// The working commit its repair starts from after its latest overlap, until merged (its
+    /// second parent is the build head the task now builds on).
+    pub working: Option<String>,
+    /// Each overlap found, in order.
+    pub overlaps: Vec<GroupOverlap>,
+    /// When it was merged, and when each overlap was found (the loop's history).
+    pub merged_at: Option<String>,
+    pub overlaps_at: Vec<String>,
+    /// Not merged before a new lock: reset to not built (research R-6a).
+    pub dropped: bool,
+}
+
+/// 018: files a group task changed that tasks merged before it changed too.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct GroupOverlap {
+    pub files: Vec<String>,
+    pub with: Vec<String>,
+}
+
+impl LoopState {
+    /// 018: the group holding `task`, latest first (a task is in at most one group per lock). A
+    /// task a new lock dropped from its group is no longer in it (research R-6a).
+    pub fn group_of(&self, task: &str) -> Option<&GroupState> {
+        self.groups
+            .iter()
+            .rev()
+            .find(|g| g.tasks.iter().any(|t| t.id == task && !t.dropped))
+    }
+
+    fn group_task_mut(&mut self, task: &str) -> Option<&mut GroupTask> {
+        self.groups
+            .iter_mut()
+            .rev()
+            .find_map(|g| g.tasks.iter_mut().find(|t| t.id == task && !t.dropped))
+    }
+
+    /// 018 (review 1): whether `task`'s work is on the build branch: accepted, and, for a task
+    /// of a group, merged (an accepted group task waits for its merge).
+    pub fn merged_into_build(&self, task: &str) -> bool {
+        self.tasks
+            .get(task)
+            .is_some_and(|t| t.state == TaskState::Accepted)
+            && self
+                .group_of(task)
+                .is_none_or(|g| g.tasks.iter().any(|t| t.id == task && t.merged.is_some()))
+    }
 }
 
 /// 011: why a loop leaves its line for good: the merge asked for is not made later (others are
@@ -713,6 +797,7 @@ impl RunState {
                         verified_commit: None,
                         queued_seq: l.seq,
                         started_seq: 0,
+                        finished_seq: 0,
                         task: task.clone(),
                         phase: *phase,
                         def: def.clone(),
@@ -751,6 +836,7 @@ impl RunState {
                 if let Some(st) = self.steps.get_mut(n) {
                     st.end = Some(end.clone());
                     st.finished = Some(l.at.clone());
+                    st.finished_seq = l.seq;
                     st.cost_usd = *cost_usd;
                     st.duration_ms = Some(*duration_ms);
                     st.denials = denials.clone();
@@ -1019,6 +1105,7 @@ impl RunState {
                     unchecked: Vec::new(),
                     update_steps: Vec::new(),
                     update_merges: Vec::new(),
+                    groups: Vec::new(),
                 });
             }
             Event::Task {
@@ -1659,6 +1746,145 @@ impl RunState {
                     }
                 }
             }
+            Event::GroupStarted { phase, tasks, base } => {
+                if let Some(f) = self.feature_loop.as_mut() {
+                    // One group at a time: a start replaces one left unfinished (a log written
+                    // before review 1 started a group again after a new lock).
+                    f.groups.retain(|g| g.done);
+                    let lock = f.lock;
+                    // A task a group dropped by a new lock had merged, and the new lock kept as
+                    // it was, stays merged (research R-6a).
+                    let carried = |id: &str| {
+                        f.tasks
+                            .get(id)
+                            .is_some_and(|t| t.state == TaskState::Accepted)
+                            .then(|| {
+                                f.groups.iter().rev().filter(|g| g.dropped).find_map(|g| {
+                                    g.tasks
+                                        .iter()
+                                        .find(|t| t.id == id && !t.dropped && t.merged.is_some())
+                                })
+                            })
+                            .flatten()
+                            .map(|t| (t.merged.clone(), t.merged_at.clone()))
+                    };
+                    let tasks: Vec<GroupTask> = tasks
+                        .iter()
+                        .map(|id| {
+                            let (merged, merged_at) = carried(id).unwrap_or_default();
+                            GroupTask {
+                                id: id.clone(),
+                                merged,
+                                working: None,
+                                overlaps: Vec::new(),
+                                merged_at,
+                                overlaps_at: Vec::new(),
+                                dropped: false,
+                            }
+                        })
+                        .collect();
+                    f.groups.push(GroupState {
+                        phase: *phase,
+                        base: base.clone(),
+                        tasks,
+                        done: false,
+                        lock,
+                        dropped: false,
+                        ended_at: None,
+                        left: Vec::new(),
+                        started_seq: l.seq,
+                        ended_seq: 0,
+                    });
+                }
+            }
+            Event::TaskMerged { task, commit } => {
+                if let Some(t) = self
+                    .feature_loop
+                    .as_mut()
+                    .and_then(|f| f.group_task_mut(task))
+                {
+                    t.merged = Some(commit.clone());
+                    t.merged_at = Some(l.at.clone());
+                    t.working = None;
+                }
+            }
+            Event::TaskOverlap {
+                task,
+                files,
+                with,
+                working,
+            } => {
+                if let Some(t) = self
+                    .feature_loop
+                    .as_mut()
+                    .and_then(|f| f.group_task_mut(task))
+                {
+                    t.working = Some(working.clone());
+                    t.overlaps_at.push(l.at.clone());
+                    t.overlaps.push(GroupOverlap {
+                        files: files.clone(),
+                        with: with.clone(),
+                    });
+                }
+            }
+            Event::GroupDone {
+                phase,
+                first,
+                tasks,
+                left,
+            } => {
+                if let Some(f) = self.feature_loop.as_mut() {
+                    // The group in progress with these tasks (with its first task only, in a log
+                    // written before review 1).
+                    if let Some(g) = f.groups.iter_mut().rev().find(|g| {
+                        !g.done
+                            && g.phase == *phase
+                            && if tasks.is_empty() {
+                                g.tasks.first().is_some_and(|t| &t.id == first)
+                            } else {
+                                g.tasks.iter().map(|t| &t.id).eq(tasks.iter())
+                            }
+                    }) {
+                        g.done = true;
+                        g.ended_at = Some(l.at.clone());
+                        g.left = left.clone();
+                        g.ended_seq = l.seq;
+                    }
+                }
+            }
+            Event::GroupDropped {
+                phase,
+                tasks,
+                dropped,
+                left,
+            } => {
+                if let Some(f) = self.feature_loop.as_mut() {
+                    if let Some(g) = f.groups.iter_mut().rev().find(|g| {
+                        !g.done
+                            && g.phase == *phase
+                            && g.tasks.iter().map(|t| &t.id).eq(tasks.iter())
+                    }) {
+                        g.done = true;
+                        g.dropped = true;
+                        g.ended_at = Some(l.at.clone());
+                        g.left = left.clone();
+                        g.ended_seq = l.seq;
+                        for t in g.tasks.iter_mut().filter(|t| dropped.contains(&t.id)) {
+                            t.dropped = true;
+                            t.working = None;
+                        }
+                    }
+                    // Not built: its earlier steps are no longer its own.
+                    for id in dropped {
+                        if let Some(t) = f.tasks.get_mut(id) {
+                            t.state = TaskState::Pending;
+                            t.commit = None;
+                            t.repairs = 0;
+                            t.since = l.seq;
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -1760,4 +1986,372 @@ impl RunState {
 /// A commit's short form for the history.
 fn short(c: &str) -> &str {
     &c[..c.len().min(7)]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn logged(events: Vec<Event>) -> Vec<Logged> {
+        events
+            .into_iter()
+            .enumerate()
+            .map(|(i, event)| Logged {
+                seq: i as u64 + 1,
+                at: "2026-11-27T00:00:00Z".into(),
+                event,
+            })
+            .collect()
+    }
+
+    fn task(id: &str) -> TaskSpec {
+        TaskSpec {
+            id: id.into(),
+            story: Some("US1".into()),
+            parallel: true,
+            text: format!("{id} [P] [US1] x"),
+        }
+    }
+
+    /// A run with a loop whose phase 2 holds T004-T007, as 0.4.0 logged it.
+    fn before_018() -> Vec<Event> {
+        vec![
+            Event::RunCreated {
+                repo: PathBuf::from("/r"),
+                target: "main".into(),
+                start_commit: "a".repeat(40),
+                task: "t".into(),
+                mode: Mode::Squad,
+                autonomy: Autonomy::Medium,
+                limits: Limits {
+                    usd: 10.0,
+                    minutes: 120,
+                    step_minutes: 30,
+                },
+                roles: Default::default(),
+                repair_cap: 2,
+                gates: Vec::new(),
+                allow: Default::default(),
+                test_patterns: Vec::new(),
+                recorded: false,
+                left_out: Vec::new(),
+            },
+            Event::LoopCreated {
+                project: "p".into(),
+                feature: "001-calc".into(),
+                lock: 1,
+                lock_commit: "l".into(),
+                base_branch: "main".into(),
+                build_branch: "fallow/001-calc".into(),
+                pipeline: String::new(),
+                level: Level::Normal,
+                budget_usd: 5.0,
+                budget_minutes: 60,
+                phases: vec![PhaseSpec {
+                    n: 2,
+                    label: "2".into(),
+                    title: "User Story 1".into(),
+                    story: Some("US1".into()),
+                    tasks: ["T004", "T005", "T006", "T007"].map(task).to_vec(),
+                }],
+                when_verified: Default::default(),
+                update_limit: 3,
+                run_after: None,
+                switches: Default::default(),
+                spec_root: String::new(),
+            },
+        ]
+    }
+
+    #[test]
+    fn a_log_from_before_018_folds_without_groups() {
+        let s = RunState::fold(1, &logged(before_018())).unwrap();
+        assert!(s.feature_loop.unwrap().groups.is_empty());
+        // The loop's events as 0.4.0 wrote them read back as they are.
+        let json = serde_json::to_string(&before_018()[1]).unwrap();
+        assert!(!json.contains("group"), "{json}");
+        let back: Event = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, before_018()[1]);
+    }
+
+    #[test]
+    fn group_events_fold_into_the_loops_groups() {
+        let mut events = before_018();
+        events.extend([
+            Event::GroupStarted {
+                phase: 2,
+                tasks: vec!["T004".into(), "T005".into(), "T006".into(), "T007".into()],
+                base: "b0".into(),
+            },
+            Event::TaskMerged {
+                task: "T004".into(),
+                commit: "m4".into(),
+            },
+            Event::TaskMerged {
+                task: "T005".into(),
+                commit: "m5".into(),
+            },
+            Event::TaskOverlap {
+                task: "T007".into(),
+                files: vec!["calc/shared.py".into()],
+                with: vec!["T005".into()],
+                working: "w7".into(),
+            },
+        ]);
+        let s = RunState::fold(1, &logged(events.clone())).unwrap();
+        let g = &s.feature_loop.as_ref().unwrap().groups;
+        assert_eq!(g.len(), 1);
+        assert_eq!(
+            (g[0].phase, g[0].base.as_str(), g[0].done),
+            (2, "b0", false)
+        );
+        let ids: Vec<&str> = g[0].tasks.iter().map(|t| t.id.as_str()).collect();
+        assert_eq!(ids, ["T004", "T005", "T006", "T007"]);
+        assert_eq!(g[0].tasks[0].merged.as_deref(), Some("m4"));
+        assert_eq!(g[0].tasks[1].merged.as_deref(), Some("m5"));
+        assert_eq!(g[0].tasks[2].merged, None);
+        let t7 = &g[0].tasks[3];
+        assert_eq!(t7.merged, None);
+        assert_eq!(t7.working.as_deref(), Some("w7"));
+        assert_eq!(
+            t7.overlaps,
+            [GroupOverlap {
+                files: vec!["calc/shared.py".into()],
+                with: vec!["T005".into()],
+            }]
+        );
+        events.extend([
+            Event::TaskMerged {
+                task: "T006".into(),
+                commit: "m6".into(),
+            },
+            Event::TaskMerged {
+                task: "T007".into(),
+                commit: "m7".into(),
+            },
+            Event::GroupDone {
+                phase: 2,
+                first: "T004".into(),
+                tasks: Vec::new(),
+                left: Vec::new(),
+            },
+        ]);
+        let s = RunState::fold(1, &logged(events)).unwrap();
+        let g = &s.feature_loop.as_ref().unwrap().groups[0];
+        assert!(g.done);
+        assert_eq!(g.tasks[3].merged.as_deref(), Some("m7"));
+        assert_eq!(g.tasks[3].working, None, "merged: no working commit left");
+        assert_eq!(
+            g.tasks[3].overlaps.len(),
+            1,
+            "the overlap stays in the history"
+        );
+    }
+
+    #[test]
+    fn group_events_have_their_names() {
+        let names: Vec<&str> = [
+            Event::GroupStarted {
+                phase: 2,
+                tasks: Vec::new(),
+                base: String::new(),
+            },
+            Event::TaskMerged {
+                task: String::new(),
+                commit: String::new(),
+            },
+            Event::TaskOverlap {
+                task: String::new(),
+                files: Vec::new(),
+                with: Vec::new(),
+                working: String::new(),
+            },
+            Event::GroupDone {
+                phase: 2,
+                first: String::new(),
+                tasks: Vec::new(),
+                left: Vec::new(),
+            },
+            Event::GroupDropped {
+                phase: 2,
+                tasks: Vec::new(),
+                dropped: Vec::new(),
+                left: Vec::new(),
+            },
+        ]
+        .iter()
+        .map(|e| {
+            let json = serde_json::to_value(e).unwrap();
+            assert_eq!(
+                json["type"],
+                e.type_name(),
+                "the log's name is the event's name"
+            );
+            e.type_name()
+        })
+        .collect();
+        assert_eq!(
+            names,
+            [
+                "group_started",
+                "task_merged",
+                "task_overlap",
+                "group_done",
+                "group_dropped"
+            ]
+        );
+    }
+
+    fn accepted(id: &str) -> Event {
+        Event::Task {
+            id: id.into(),
+            state: TaskState::Accepted,
+            commit: Some(format!("c-{id}")),
+            repairs: 0,
+        }
+    }
+
+    /// 018 (research R-6a, review 1): a group dropped by a new lock keeps its merged tasks and
+    /// resets the others to not built; it is identified by its whole list of tasks.
+    #[test]
+    fn a_group_dropped_by_a_new_lock_resets_its_unmerged_tasks() {
+        let four: Vec<String> = ["T004", "T005", "T006", "T007"].map(String::from).to_vec();
+        let mut events = before_018();
+        events.extend([
+            Event::GroupStarted {
+                phase: 2,
+                tasks: four.clone(),
+                base: "b0".into(),
+            },
+            accepted("T004"),
+            Event::TaskMerged {
+                task: "T004".into(),
+                commit: "m4".into(),
+            },
+            accepted("T006"),
+        ]);
+        let s = RunState::fold(1, &logged(events.clone())).unwrap();
+        let l = s.feature_loop.as_ref().unwrap();
+        assert_eq!(l.groups[0].lock, 1);
+        // Only a task merged into the build branch counts as merged: T006 is accepted, not
+        // merged.
+        assert!(l.merged_into_build("T004"));
+        assert!(!l.merged_into_build("T006"));
+        assert!(!l.merged_into_build("T005"));
+        let n = events.len() as u64 + 1;
+        events.push(Event::GroupDropped {
+            phase: 2,
+            tasks: four.clone(),
+            dropped: vec!["T005".into(), "T006".into(), "T007".into()],
+            left: vec!["the branch fallow/001-calc-T006".into()],
+        });
+        let s = RunState::fold(1, &logged(events.clone())).unwrap();
+        let l = s.feature_loop.as_ref().unwrap();
+        let g = &l.groups[0];
+        assert!(g.done && g.dropped, "{g:?}");
+        assert_eq!(g.left, ["the branch fallow/001-calc-T006"]);
+        assert!(g.ended_at.is_some());
+        let dropped: Vec<bool> = g.tasks.iter().map(|t| t.dropped).collect();
+        assert_eq!(dropped, [false, true, true, true]);
+        assert_eq!(l.tasks["T004"].state, TaskState::Accepted);
+        assert!(l.merged_into_build("T004"));
+        for t in ["T005", "T006", "T007"] {
+            assert_eq!(l.tasks[t].state, TaskState::Pending, "{t}");
+            assert_eq!(l.tasks[t].commit, None);
+            assert_eq!(
+                l.tasks[t].since, n,
+                "{t}: its earlier steps are no longer its own"
+            );
+            assert!(l.group_of(t).is_none(), "{t} is in no group now");
+        }
+        assert!(l.group_of("T004").is_some());
+        // A new group with the same first task is another group: done only by its own end.
+        events.push(Event::GroupStarted {
+            phase: 2,
+            tasks: vec!["T004".into(), "T005".into()],
+            base: "b1".into(),
+        });
+        events.push(Event::GroupDone {
+            phase: 2,
+            first: "T004".into(),
+            tasks: vec!["T004".into(), "T005".into()],
+            left: Vec::new(),
+        });
+        let s = RunState::fold(1, &logged(events)).unwrap();
+        let g = &s.feature_loop.as_ref().unwrap().groups;
+        assert_eq!(g.len(), 2);
+        assert!(g[0].dropped && g[0].done);
+        assert!(g[1].done && !g[1].dropped);
+        assert_eq!(g[1].base, "b1");
+        // T004, merged before the new lock and kept by it, stays merged in the new group.
+        assert_eq!(g[1].tasks[0].merged.as_deref(), Some("m4"));
+        assert_eq!(g[1].tasks[1].merged, None);
+    }
+
+    fn queued(n: u32, kind: StepKind, part: &str, task: Option<&str>) -> Event {
+        Event::StepQueued {
+            n,
+            kind,
+            part: Some(part.into()),
+            resume: None,
+            reason: "r".into(),
+            task: task.map(str::to_string),
+            phase: Some(2),
+            def: Some("builder".into()),
+        }
+    }
+
+    /// 018 (research R-6a, review 2): every step of a group a new lock dropped, queued while it
+    /// was in progress, is the dropped group's: its tasks' steps, their points' steps, and the
+    /// steps of the group itself (its repair, tied to no one task), merged tasks included. A
+    /// step of the group the new lock gives, with the same part, is not.
+    #[test]
+    fn every_step_of_a_dropped_group_belongs_to_it() {
+        use crate::run::groups::dropped_step;
+        let three: Vec<String> = ["T004", "T005", "T006"].map(String::from).to_vec();
+        let mut events = before_018();
+        events.extend([
+            Event::GroupStarted {
+                phase: 2,
+                tasks: three.clone(),
+                base: "b0".into(),
+            },
+            queued(1, StepKind::Build, "T004", Some("T004")),
+            queued(2, StepKind::Review, "lint-checker@T004-end", None),
+            accepted("T004"),
+            Event::TaskMerged {
+                task: "T004".into(),
+                commit: "m4".into(),
+            },
+            queued(3, StepKind::Build, "T005", Some("T005")),
+            queued(4, StepKind::Repair, "group-T004-T006", None),
+            Event::GroupDropped {
+                phase: 2,
+                tasks: three.clone(),
+                dropped: vec!["T005".into(), "T006".into()],
+                left: Vec::new(),
+            },
+            Event::GroupStarted {
+                phase: 2,
+                tasks: three.clone(),
+                base: "b1".into(),
+            },
+            queued(5, StepKind::Repair, "group-T004-T006", None),
+            queued(6, StepKind::Build, "T005", Some("T005")),
+        ]);
+        let s = RunState::fold(1, &logged(events)).unwrap();
+        let l = s.feature_loop.as_ref().unwrap();
+        for n in 1..=4 {
+            assert!(
+                dropped_step(l, &s.steps[&n]),
+                "step {n} is the dropped group's"
+            );
+        }
+        for n in 5..=6 {
+            assert!(
+                !dropped_step(l, &s.steps[&n]),
+                "step {n} is the new group's"
+            );
+        }
+    }
 }

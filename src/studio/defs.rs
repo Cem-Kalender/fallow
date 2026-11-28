@@ -208,7 +208,7 @@ impl Studio {
                     .ok()
                     .or_else(|| shipped(DEFAULT_PIPELINES, &p.name).map(str::to_string))
                     .unwrap_or_else(|| p.to_toml());
-                let mut v = json!(p);
+                let mut v = pipeline_json(p);
                 v["file"] = json!(file);
                 v["text"] = json!(text);
                 v["shipped"] = json!(shipped(DEFAULT_PIPELINES, &p.name).is_some());
@@ -418,7 +418,7 @@ impl Studio {
         let kinds = |n: &str| lib.kind_of(n);
         let p = pipeline::parse(&format!("{name}.toml"), &name, text, Source::User, &kinds)
             .map_err(|ps| ps.join("\n"))?;
-        Ok(json!(p))
+        Ok(pipeline_json(&p))
     }
 
     /// `PUT /api/pipelines/<name>`: checked against the agents the scope sees.
@@ -437,7 +437,7 @@ impl Studio {
         let path = dir.join(&file);
         std::fs::write(&path, text).map_err(|e| format!("{}: {e}", path.display()))?;
         Ok(
-            json!({ "saved": path.display().to_string(), "verifying": p.verifying, "missing": p.missing }),
+            json!({ "saved": path.display().to_string(), "verifying": p.verifying, "missing": p.missing, "checks": p.checks() }),
         )
     }
 
@@ -493,4 +493,13 @@ impl Studio {
         }
         Ok(json!({ "reset": reset.is_some() }))
     }
+}
+
+/// 018 (contracts/web-api.md): a pipeline as the page receives it: its fields, `caps.builders`
+/// always (the file leaves out 1), and `checks`, what it checks in plain sentences (FR-002).
+fn pipeline_json(p: &pipeline::Pipeline) -> Value {
+    let mut v = json!(p);
+    v["caps"]["builders"] = json!(p.caps.builders);
+    v["checks"] = json!(p.checks());
+    v
 }

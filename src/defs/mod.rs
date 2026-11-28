@@ -47,6 +47,11 @@ pub const DEFAULT_PIPELINES: &[(&str, &str)] = &[
         include_str!("../../assets/pipelines/test-first.toml"),
     ),
     ("solo", include_str!("../../assets/pipelines/solo.toml")),
+    // 018 (contracts/pipeline.md "The defaults"): builders over [P] tasks.
+    (
+        "parallel",
+        include_str!("../../assets/pipelines/parallel.toml"),
+    ),
 ];
 
 /// Files read from one place: (name, file shown in problems, text).
@@ -272,6 +277,34 @@ pub fn fingerprint(s: &str) -> String {
     format!("{h:016x}")
 }
 
+/// `install_defaults`, with a sentence for the engineer for each file written as `.new` (what
+/// `fallow serve` prints at start). A default the record does not know yet (one that is new in
+/// this version, such as 018's `parallel`) whose name the engineer already uses is not "an
+/// update of the default": the engineer's file keeps the name and is the one used.
+pub fn install_defaults_said(user: &Path) -> Result<Vec<String>, String> {
+    let known: BTreeMap<String, String> = std::fs::read_to_string(user.join(".shipped.json"))
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or_default();
+    Ok(install_defaults(user)?
+        .into_iter()
+        .map(|key| {
+            if known.contains_key(&key) {
+                format!(
+                    "an update changed the default {key}; your edited copy is kept, the new one is {key}.new"
+                )
+            } else {
+                let (sub, file) = key.split_once('/').unwrap_or(("", key.as_str()));
+                let kind = if sub == "agents" { "an agent" } else { "a pipeline" };
+                let name = file.rsplit_once('.').map_or(file, |(n, _)| n);
+                format!(
+                    "Fallow now ships {kind} named {name}; yours ({key}) keeps the name and is the one used, and the shipped one is beside it as {file}.new"
+                )
+            }
+        })
+        .collect())
+}
+
 /// Copies the shipped defaults into `user` (`~/.fallow`) on first start, and never overwrites
 /// the engineer's changes (FR-025). When an update changes a default:
 /// - a copy the engineer never edited is replaced;
@@ -372,9 +405,12 @@ mod tests {
         let lib = Library::load(None, None);
         assert!(lib.problems.is_empty(), "{:?}", lib.problems);
         assert_eq!(lib.agents.len(), 7);
-        assert_eq!(lib.pipelines.len(), 3);
+        assert_eq!(lib.pipelines.len(), 4);
         assert!(lib.pipelines["standard"].verifying);
         assert!(!lib.pipelines["solo"].verifying);
+        // 018: the parallel default, verifying, with three builders.
+        assert!(lib.pipelines["parallel"].verifying);
+        assert_eq!(lib.pipelines["parallel"].caps.builders, 3);
     }
 
     #[test]
@@ -524,6 +560,35 @@ mod tests {
             std::fs::read_to_string(&builder).unwrap(),
             "edited by the engineer"
         );
+        let _ = std::fs::remove_dir_all(&user);
+    }
+
+    #[test]
+    fn what_start_says_tells_an_update_from_a_new_default() {
+        // An edited copy of a default the record knows: an update changed it.
+        let user = tmp("said");
+        install_defaults(&user).unwrap();
+        std::fs::write(user.join("agents/builder.md"), "edited by the engineer").unwrap();
+        let rec = user.join(".shipped.json");
+        let mut r: BTreeMap<String, String> =
+            serde_json::from_str(&std::fs::read_to_string(&rec).unwrap()).unwrap();
+        r.insert("agents/builder.md".into(), "0000000000000000".into());
+        // A default this version adds, whose name the engineer already used: no record of it.
+        r.remove("pipelines/parallel.toml");
+        std::fs::write(&rec, serde_json::to_string(&r).unwrap()).unwrap();
+        std::fs::write(
+            user.join("pipelines/parallel.toml"),
+            "name = \"parallel\"\n",
+        )
+        .unwrap();
+        assert_eq!(
+            install_defaults_said(&user).unwrap(),
+            [
+                "an update changed the default agents/builder.md; your edited copy is kept, the new one is agents/builder.md.new",
+                "Fallow now ships a pipeline named parallel; yours (pipelines/parallel.toml) keeps the name and is the one used, and the shipped one is beside it as parallel.toml.new",
+            ]
+        );
+        assert!(install_defaults_said(&user).unwrap().is_empty());
         let _ = std::fs::remove_dir_all(&user);
     }
 }

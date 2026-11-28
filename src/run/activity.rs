@@ -330,6 +330,60 @@ fn fallow_lines(run: &Run, last_line: &BTreeMap<u32, u64>) -> Vec<Value> {
             }
         }
     }
+    // 018 (FR-015, FR-024): the merges and overlaps of groups of [P] tasks.
+    if let Some(l) = run.state.feature_loop.as_ref() {
+        // 018 (research R-6a): a group a new lock dropped, and what Fallow could not remove.
+        for g in &l.groups {
+            let Some(at) = &g.ended_at else {
+                continue;
+            };
+            for t in g.tasks.iter().filter(|t| t.dropped) {
+                out.push(check(
+                    ms_of(at),
+                    Some(t.id.clone()),
+                    format!(
+                        "{} built alongside was not merged before the new lock: built again",
+                        t.id
+                    ),
+                    None,
+                    "Its working copy and branch were removed; it is built again under the new lock.".into(),
+                ));
+            }
+            for x in &g.left {
+                out.push(check(
+                    ms_of(at),
+                    None,
+                    format!("Fallow could not remove {x}: remove it by hand"),
+                    Some("fail"),
+                    String::new(),
+                ));
+            }
+        }
+        let mut seen_merge: Vec<(&str, Option<&str>)> = Vec::new();
+        for t in l.groups.iter().flat_map(|g| g.tasks.iter()) {
+            for (o, at) in t.overlaps.iter().zip(&t.overlaps_at) {
+                out.push(check(
+                    ms_of(at),
+                    Some(t.id.clone()),
+                    super::groups::overlap_line(&t.id, &o.files, &o.with),
+                    Some("fail"),
+                    String::new(),
+                ));
+            }
+            // Once, though a task merged before a new lock is in two groups.
+            let first = !seen_merge.contains(&(t.id.as_str(), t.merged.as_deref()));
+            seen_merge.push((t.id.as_str(), t.merged.as_deref()));
+            if let (Some(c), Some(at), true) = (&t.merged, &t.merged_at, first) {
+                out.push(check(
+                    ms_of(at),
+                    Some(t.id.clone()),
+                    format!("{} merged into the build branch (built alongside)", t.id),
+                    Some("ok"),
+                    format!("Merge commit {}", &c[..c.len().min(7)]),
+                ));
+            }
+        }
+    }
     for st in &run.state.steering {
         if st.kind == SteeringKind::Answer
             && (by_engineer.contains(&st.detail.as_deref().unwrap_or("").trim())
@@ -769,9 +823,14 @@ pub fn view(run: &Run, ctx: &Ctx) -> Result<Value, String> {
     let pipeline = pl.as_ref().map(|pl| {
         json!({
             "name": pl.name, "verifying": pl.verifying, "missing": pl.missing,
-            "caps": { "task_repairs": pl.caps.task_repairs, "review_rounds": pl.caps.review_rounds },
-            "steps": pl.steps.iter().map(|st| json!({
+            // 018 (data-model "Loop view"): the most builders on [P] tasks; `at` of every
+            // step, task steps included (the builder and the gates are "end").
+            "caps": { "task_repairs": pl.caps.task_repairs, "review_rounds": pl.caps.review_rounds, "builders": pl.caps.builders },
+            "steps": pl.steps.iter().enumerate().map(|(i, st)| json!({
                 "agent": st.agent, "when": format!("{:?}", st.when).to_lowercase(),
+                // 018: the one maker per task without `at`, for the graph (every step has `at`
+                // here).
+                "builder": pl.builder_index() == Some(i),
                 "at": if st.at() == At::Start { "start" } else { "end" },
                 "paths": st.paths, "checker": lib.agent(&st.agent).is_some_and(|d| d.kind == Kind::Checker),
                 // For the live graph (008 T043): what runs alongside, and where a failure goes.
@@ -781,6 +840,21 @@ pub fn view(run: &Run, ctx: &Ctx) -> Result<Value, String> {
             "reviews": pl.steps.iter().any(|st| st.when == When::Checkpoint && st.at() == At::End),
         })
     });
+    // 018 (contracts/web-api.md "The loop view"): the groups of [P] tasks, a row per task.
+    let groups: Vec<Value> = l
+        .groups
+        .iter()
+        .map(|g| {
+            json!({
+                "phase": g.phase, "done": g.done, "dropped": g.dropped,
+                "tasks": g.tasks.iter().map(|t| json!({
+                    "id": t.id, "state": group_task_state(run, t),
+                    "worktree": format!("task-{}", t.id), "merged": t.merged,
+                    "overlaps": t.overlaps.iter().map(|o| json!({ "files": o.files, "with": o.with })).collect::<Vec<_>>(),
+                })).collect::<Vec<_>>(),
+            })
+        })
+        .collect();
     let questions: Vec<Value> = l
         .questions
         .values()
@@ -828,7 +902,48 @@ pub fn view(run: &Run, ctx: &Ctx) -> Result<Value, String> {
         "paused_by_engineer": feature::paused_by_engineer(run),
         "questions": questions,
         "level": l.level,
+        "groups": groups,
     }))
+}
+
+/// 018: where a task of a group stands (contracts/web-api.md): `queued | building | repairing |
+/// accepted | merged | waiting | dropped`.
+fn group_task_state(run: &Run, t: &super::state::GroupTask) -> &'static str {
+    if t.merged.is_some() {
+        return "merged";
+    }
+    if t.dropped {
+        return "dropped";
+    }
+    let Some(l) = run.state.feature_loop.as_ref() else {
+        return "queued";
+    };
+    let status = l.tasks.get(&t.id);
+    match status.map(|s| s.state) {
+        Some(TaskState::Waiting) => return "waiting",
+        Some(TaskState::Accepted) if t.working.is_none() => return "accepted",
+        _ => {}
+    }
+    if t.working.is_some() {
+        return "repairing";
+    }
+    let since = status.map_or(0, |s| s.since);
+    match run
+        .state
+        .steps
+        .values()
+        .rev()
+        .find(|s| {
+            s.task.as_deref() == Some(t.id.as_str())
+                && s.queued_seq > since
+                && matches!(s.kind, StepKind::Build | StepKind::Repair)
+        })
+        .map(|s| s.kind)
+    {
+        None => "queued",
+        Some(StepKind::Repair) => "repairing",
+        Some(_) => "building",
+    }
 }
 
 /// What a failed criterion expected: its scenario's **Then** part, without the emphasis and the

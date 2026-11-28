@@ -22,7 +22,7 @@ the project's principles are in [`.specify/memory/constitution.md`](.specify/mem
   next turn. Clarify questions come as choices with a recommendation, open `[NEEDS CLARIFICATION]`
   markers are highlighted, and "Lock & start the loop" opens once tasks and analyze are done.
 - **The loop.** One builder works through the locked tasks, phase by phase, in one session per
-  phase. After each task Fallow commits it and runs the gates against the baseline; at each user
+  phase (a pipeline may allow more on `[P]` tasks, see below). After each task Fallow commits it and runs the gates against the baseline; at each user
   story's checkpoint a reviewer answers every criterion with what it ran; checkers a pipeline
   marks to run alongside each other run at the same time and are judged together. Failures go back
   to the builder for one repair, capped, then to you. A result a pipeline left unverified (for example
@@ -58,8 +58,35 @@ the project's principles are in [`.specify/memory/constitution.md`](.specify/mem
   missing one, or naming a model by a short name, is listed with its problems and not used. The
   Agents tab shows the selected agent's whole file in one editor; save for all your projects or
   this project only. A new agent starts from a template whose comments say what to fill in. The Pipelines tab draws a pipeline as a graph of Fallow's fixed steps, where you
-  add, change and remove steps; Standard, Test first and Solo ship with Fallow, and the lead can
+  add, change and remove steps with the + at each point, and says in plain sentences what the
+  pipeline checks; Standard, Test first, Solo and `parallel` ship with Fallow, and the lead can
   propose one, which is used only once you save it.
+  - *Points.* A step can run before or after each task, at the start or end of each phase, at
+    the start or end of each user story's checkpoint, and once at the start or end of the loop.
+    The builder (the one maker per task) and the gates are the task itself. A checker at a start
+    asks you when it fails (`on_fail = "engineer"`), since nothing of that point is built yet.
+  - *Checkers alongside each other.* Checkers at one point marked `parallel_with` each other run
+    at the same time at every point, are judged when all have finished, and pass only when all
+    passed; their findings go to one repair, after which all of them run again.
+  - *Builders on `[P]` tasks.* `[caps] builders` (1 to 8, 1 when not written) is the most
+    builders at once on a run of `[P]` tasks in one phase of `tasks.md`, each in its own working
+    copy; it is a maximum, not a promise. With no `[P]` tasks, or one in a row, one builder
+    works as before. Fallow merges the tasks in `tasks.md` order, never merges two that changed
+    the same file without a repair, and gates the merged result. The lock form says what the
+    builders will do for the feature's `tasks.md` before you lock.
+  - *The `parallel` default.* Up to 3 builders on `[P]` tasks, the gates after every task, and
+    the reviewer alongside the security reviewer at each user story's checkpoint. If you already
+    have a pipeline of your own named `parallel`, it keeps the name and is the one used; the
+    shipped one is put beside it as `parallel.toml.new`.
+  - *Pipelines from 0.4.0* load unchanged: one builder, the same steps and the same result;
+    Fallow 0.5.0 rewrites none of them, and loops locked with 0.4.0 go on with the pipeline they
+    recorded. They mean what they meant but for one change: checkers marked `parallel_with` each
+    other anywhere but at the end of a user story's checkpoint (per phase, once, or at a
+    checkpoint's start), which 0.4.0 ran one after the other, now run at the same time, as they
+    already did at a checkpoint's end. The other way round, Fallow 0.4.0 cannot use a pipeline
+    that uses 0.5.0's additions (`builders` other than 1, `at` on a task step, a checker per task
+    or at a start): it lists such a file with its problem. One saved with one builder and none
+    of them still works in 0.4.0.
 - **Light and dark.** The page follows your system's light or dark setting, switching with it
   without a reload. The control at the right of the top bar picks Light, Dark or System; Fallow
   remembers the choice across restarts. Text and controls meet WCAG AA contrast in both themes.

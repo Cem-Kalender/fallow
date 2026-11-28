@@ -502,6 +502,15 @@ dialog.confirm ul { margin: 10px 0 0; padding-left: 20px; color: var(--body); li
 /* Screen 3: the loop (mockup/Run.dc.html) */
 .loop-head .totals b { color: var(--ink); }
 .loop-body { align-items: flex-start; }
+/* 018 (FR-024): the builders of a group of [P] tasks, one row per task. */
+.builders .builder-rows { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.builder-row { font-size: 13px; color: var(--ink); padding: 4px 6px; border-radius: 4px; overflow-wrap: anywhere; }
+.builder-row .builder-state { color: var(--body); }
+.builder-row.building .builder-state, .builder-row.repairing .builder-state { color: var(--accent); font-weight: 600; }
+.builder-row.merged .builder-state { color: var(--ok); }
+.builder-row.waiting { background: var(--needs-bg); }
+.builder-row.waiting .builder-state { color: var(--needs-ink); font-weight: 600; }
+.builder-overlap { color: var(--needs-ink); margin-top: 2px; }
 .tree { flex: 1 1 260px; max-width: 320px; }
 .loop-main { flex: 999 1 520px; min-width: 0; }
 .checks { flex: 1 1 260px; max-width: 330px; min-width: 0; overflow-wrap: anywhere; }

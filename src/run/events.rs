@@ -627,6 +627,48 @@ pub enum Event {
         target_commit: String,
         commit: String,
     },
+    /// 018 (research R-5): the runner reached a group of `[P]` tasks; each is built in its own
+    /// working copy, starting from the build head `base`.
+    GroupStarted {
+        phase: u32,
+        tasks: Vec<String>,
+        base: String,
+    },
+    /// 018 (research R-6): a group task was merged into the build branch (`commit`, the merge
+    /// commit) and ticked in `tasks.md`.
+    TaskMerged {
+        task: String,
+        commit: String,
+    },
+    /// 018 (research R-6): a group task changed `files` that the group's merged tasks `with`
+    /// changed: it is not merged; its repair starts from the working commit `working`.
+    TaskOverlap {
+        task: String,
+        files: Vec<String>,
+        with: Vec<String>,
+        working: String,
+    },
+    /// 018: every task of the group starting with `first` (`tasks`: all of them; empty in logs
+    /// written before review 1) is merged and the merged result passed the gates. `left`: the
+    /// working copies and branches of the group Fallow could not remove.
+    GroupDone {
+        phase: u32,
+        first: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        tasks: Vec<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        left: Vec<String>,
+    },
+    /// 018 (research R-6a, decided after review 1): a new lock was taken in while the group of
+    /// `tasks` was in progress. Its tasks not merged (`dropped`) are reset to not built; their
+    /// working copies and branches were removed (`left`: what could not be).
+    GroupDropped {
+        phase: u32,
+        tasks: Vec<String>,
+        dropped: Vec<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        left: Vec<String>,
+    },
 }
 
 /// 011: a conflicting path of an update, as recorded.
@@ -834,6 +876,11 @@ impl Event {
             Event::WaitsFor { .. } => "waits_for",
             Event::WaitEnded { .. } => "wait_ended",
             Event::StartedFrom { .. } => "started_from",
+            Event::GroupStarted { .. } => "group_started",
+            Event::TaskMerged { .. } => "task_merged",
+            Event::TaskOverlap { .. } => "task_overlap",
+            Event::GroupDone { .. } => "group_done",
+            Event::GroupDropped { .. } => "group_dropped",
         }
     }
 }

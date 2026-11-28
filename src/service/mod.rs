@@ -229,12 +229,10 @@ pub fn serve(
         Err(e) => eprintln!("fallow: {e}"),
     }
     if let Some(dir) = &paths.dir {
-        match crate::defs::install_defaults(dir) {
-            Ok(news) => {
-                for n in news {
-                    eprintln!(
-                        "fallow: an update changed the default {n}; your edited copy is kept, the new one is {n}.new"
-                    );
+        match crate::defs::install_defaults_said(dir) {
+            Ok(said) => {
+                for s in said {
+                    eprintln!("fallow: {s}");
                 }
             }
             Err(e) => eprintln!("fallow: {e}"),

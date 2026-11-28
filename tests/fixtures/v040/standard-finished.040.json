@@ -1,0 +1,47 @@
+{
+  "stage": "ready",
+  "integrated": "075af8bd793a9620198bba27b2fb66a111c35805",
+  "outcome": [
+    true,
+    []
+  ],
+  "phases": [
+    "done",
+    "done",
+    "done"
+  ],
+  "tasks": {
+    "T001": {
+      "state": "accepted",
+      "commit": "cceaa0f1b658a36c7351fcac3067bb33c0df4961",
+      "repairs": 0
+    },
+    "T002": {
+      "state": "accepted",
+      "commit": "c4d73ff69246e8a07634972a3a35f9f41f3d3298",
+      "repairs": 0
+    },
+    "T003": {
+      "state": "accepted",
+      "commit": "1d44ce878cb2d6f46b7970fe52408de33d5c2e4c",
+      "repairs": 0
+    },
+    "T004": {
+      "state": "accepted",
+      "commit": "fb674c8ac59e048421c3c470f5404d8ca51e4759",
+      "repairs": 0
+    }
+  },
+  "verdicts": [
+    {
+      "approved": true,
+      "complete": true,
+      "missing": []
+    },
+    {
+      "approved": true,
+      "complete": true,
+      "missing": []
+    }
+  ]
+}
