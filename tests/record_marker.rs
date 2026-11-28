@@ -225,7 +225,10 @@ fn a_record_of_a_loop_with_builders_holds_numbers_only() {
     // No task id (T001…): matched as `T` and three digits, so a time such as "…T00:08:47Z"
     // (a run just after midnight UTC) is not taken for one.
     let task_id = regex::Regex::new(r"T\d{3}").unwrap();
-    assert!(!text.contains("calc/") && !task_id.is_match(&text), "{text}");
+    assert!(
+        !text.contains("calc/") && !task_id.is_match(&text),
+        "{text}"
+    );
     let r: serde_json::Value = serde_json::from_str(&text).unwrap();
     assert_eq!(r["builders_cap"], 3, "{r}");
     assert_eq!(r["builders_most"], 3, "{r}");
